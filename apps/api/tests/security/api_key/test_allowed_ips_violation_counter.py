@@ -719,7 +719,7 @@ async def test_ip_violation_creates_audit_log_entry(
     - ``action = 'api_key.ip_violation'`` (or ``'api_key.auto_revoke_ip_violation'``
       on the revoking call).
     - ``actor_user_id_hash`` derived from the key owner.
-    - ``detail`` containing ``api_key_id``, ``client_ip``, the
+    - ``detail`` containing ``api_key_id``, a redacted ``client_ip``, the
       ``allowed_cidrs`` snapshot, the new ``violation_count``, and the
       ``auto_revoked`` flag.
 
@@ -803,7 +803,15 @@ async def test_ip_violation_creates_audit_log_entry(
     detail = detail_row[0]
     # JSONB → dict via asyncpg
     assert detail.get("api_key_id") == str(api_key_id)
-    assert detail.get("client_ip") == "203.0.113.42"
+    client_ip_detail = detail.get("client_ip")
+    assert isinstance(client_ip_detail, dict)
+    assert client_ip_detail.get("redacted") is True
+    assert client_ip_detail.get("hash_version") == "v3"
+    client_ip_hash = client_ip_detail.get("hash")
+    assert isinstance(client_ip_hash, str)
+    assert len(client_ip_hash) == 64
+    assert all(char in "0123456789abcdef" for char in client_ip_hash)
+    assert "203.0.113.42" not in str(detail)
     assert detail.get("violation_count") == 1
     assert detail.get("auto_revoked") is False
 

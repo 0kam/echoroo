@@ -1719,6 +1719,11 @@ async def test_register_creates_user_successfully() -> None:
         patch.object(auth_mod, "enforce_password_policy", AsyncMock()),
         patch.object(UserRepository, "get_by_email", AsyncMock(return_value=None)),
         patch.object(UserRepository, "create", AsyncMock(side_effect=_fake_create)),
+        patch.object(
+            auth_mod.EmailVerificationService,
+            "issue_verification_token",
+            AsyncMock(),
+        ),
         patch.object(auth_mod, "_write_platform_audit", AsyncMock()),
     ):
         async with AsyncClient(

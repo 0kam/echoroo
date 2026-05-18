@@ -46,3 +46,10 @@
 - Do not report completion until the requested behavior is implemented and the relevant verification has been run or a concrete blocker is documented.
 - If verification is skipped or unavailable, state exactly what was not run and why.
 - Keep final reports concise and focused on changed behavior, files, and verification.
+
+## Active Technologies
+- Python 3.11 (FastAPI backend), TypeScript 5.x (SvelteKit 2 / Svelte 5 frontend) + FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2, Redis, transactional outbox + registered worker email dispatch, pyotp/WebAuthn, SvelteKit, TanStack Query, Playwright (010-email-verification-trusted-devices)
+- PostgreSQL 16+ for users/tokens/trusted devices; Redis for rate limits and replay/lockout counters; secure browser cookies for first-party session and trusted-device secrets (010-email-verification-trusted-devices)
+
+## Recent Changes
+- 010-email-verification-trusted-devices: Added Python 3.11 (FastAPI backend), TypeScript 5.x (SvelteKit 2 / Svelte 5 frontend) + FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2, Redis, transactional outbox + registered worker email dispatch, pyotp/WebAuthn, SvelteKit, TanStack Query, Playwright

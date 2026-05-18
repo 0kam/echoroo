@@ -6,6 +6,8 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+
+  let isEmailVerified = $derived(authStore.user?.email_verified_at != null);
 </script>
 
 <svelte:head>
@@ -35,11 +37,11 @@
               <dt class="text-sm font-medium text-stone-500">{m.dashboard_status_label()}</dt>
               <dd class="mt-1 text-sm text-stone-900">
                 <span
-                  class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {authStore.user.is_verified
+                  class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {isEmailVerified
                     ? 'bg-success-light text-success'
                     : 'bg-warning-light text-warning'}"
                 >
-                  {authStore.user.is_verified ? m.dashboard_status_verified() : m.dashboard_status_unverified()}
+                  {isEmailVerified ? m.dashboard_status_verified() : m.dashboard_status_unverified()}
                 </span>
                 {#if authStore.user.is_superuser}
                   <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">

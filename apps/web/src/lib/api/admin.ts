@@ -3,7 +3,7 @@
  */
 
 import type {
-  User,
+  AdminUserResponse,
   AdminUserListResponse,
   SystemSetting,
   AdminUserUpdateRequest,
@@ -39,8 +39,8 @@ export const adminApi = {
   /**
    * Update user (superuser only)
    */
-  updateUser: async (userId: string, data: AdminUserUpdateRequest): Promise<User> => {
-    return apiClient.patch<User>(`/api/v1/admin/users/${userId}`, data);
+  updateUser: async (userId: string, data: AdminUserUpdateRequest): Promise<AdminUserResponse> => {
+    return apiClient.patch<AdminUserResponse>(`/api/v1/admin/users/${userId}`, data);
   },
 
   /**

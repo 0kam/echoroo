@@ -7,10 +7,10 @@
   import { ApiError } from '$lib/api/client';
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { User } from '$lib/types';
+  import type { AdminUserResponse } from '$lib/types';
 
   // State
-  let users = $state<User[]>([]);
+  let users = $state<AdminUserResponse[]>([]);
   let total = $state(0);
   let page = $state(1);
   let limit = $state(20);
@@ -95,7 +95,7 @@
   /**
    * Toggle user active status
    */
-  async function toggleUserActive(user: User) {
+  async function toggleUserActive(user: AdminUserResponse) {
     try {
       await adminApi.updateUser(user.id, {
         is_active: !user.is_active,
@@ -123,7 +123,7 @@
   /**
    * Toggle user superuser status
    */
-  async function toggleUserSuperuser(user: User) {
+  async function toggleUserSuperuser(user: AdminUserResponse) {
     try {
       await adminApi.updateUser(user.id, {
         is_superuser: !user.is_superuser,

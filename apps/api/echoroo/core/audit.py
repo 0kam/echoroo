@@ -113,6 +113,11 @@ _EMAIL_RE: Final[re.Pattern[str]] = re.compile(
     r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 )
 
+_IPV4_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}"
+    r"(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\b"
+)
+
 # International phone: +<country><digits with any mix of space / dash>.
 # Enforced total digit count 8-16 (country + subscriber) to avoid matching
 # short arithmetic expressions like "+1 2 = 3".
@@ -176,12 +181,22 @@ _PII_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     _AWS_AKID_RE,
     _AWS_SECRET_RE,
     _EMAIL_RE,
+    _IPV4_RE,
     _IBAN_RE,
     _PHONE_INTL_RE,
     _PHONE_JP_RE,
     _CREDIT_CARD_RE,
     _US_SSN_RE,
     _JP_MY_NUMBER_RE,
+)
+
+_SENSITIVE_AUTH_KEY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(^|[_\-.])("
+    r"email|token|cookie|secret|ip|ua|user_agent|user-agent|verification_url"
+    r")($|[_\-.])"
+)
+_SAFE_SURROGATE_KEY_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?i)(^|[_\-.])(hash|hash_prefix|id)($|[_\-.])"
 )
 
 
@@ -272,6 +287,22 @@ def _build_redaction(original: str, *, hash_fn: HashFn | None = None) -> dict[st
         "hash_version": HASH_VERSION,
         "redacted": True,
     }
+
+
+def _sensitive_auth_key(key: str) -> bool:
+    """Return True for spec-010 auth keys whose raw values must not persist."""
+    normalised = _normalise(key)
+    if _SAFE_SURROGATE_KEY_RE.search(normalised):
+        return False
+    return bool(_SENSITIVE_AUTH_KEY_RE.search(normalised))
+
+
+def _sanitize_sensitive_auth_value(value: Any, *, hash_fn: HashFn | None = None) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return _build_redaction(value, hash_fn=hash_fn)
+    return sanitize_value(value, hash_fn=hash_fn)
 
 
 def _scan_string(value: str) -> bool:
@@ -394,7 +425,13 @@ def sanitize_value(value: Any, *, hash_fn: HashFn | None = None) -> Any:
     if isinstance(value, dict):
         out: dict[Any, Any] = {}
         for key, inner in value.items():
-            sanitised_value = sanitize_value(inner, hash_fn=hash_fn)
+            if isinstance(key, str) and _sensitive_auth_key(key):
+                sanitised_value = _sanitize_sensitive_auth_value(
+                    inner,
+                    hash_fn=hash_fn,
+                )
+            else:
+                sanitised_value = sanitize_value(inner, hash_fn=hash_fn)
             if isinstance(key, str) and _scan_string(key):
                 # Phase 2.11 P0-a: route the key marker through the same
                 # keyed hash used for value redaction so PII keys are not

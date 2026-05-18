@@ -2,3 +2,9 @@ node_modules/
 .svelte-kit/
 build/
 dist/
+.git/
+Dockerfile*
+.dockerignore
+*.log*
+.env*
+coverage/

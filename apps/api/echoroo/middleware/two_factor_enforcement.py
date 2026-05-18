@@ -257,6 +257,12 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
                 reason="two_factor_enrollment_required",
             )
 
+        if _trusted_device_session_used(request) and self._is_cooldown_restricted(request):
+            return await self._block_recent_step_up_required(
+                request=request,
+                user_id=user.id,
+            )
+
         cooldown_until = _cooldown_until(user)
         if cooldown_until is None:
             return await _call_next_with_response_polish(request, call_next)
@@ -352,6 +358,40 @@ class TwoFactorEnforcementMiddleware(BaseHTTPMiddleware):
             },
         )
 
+    async def _block_recent_step_up_required(
+        self,
+        *,
+        request: Request,
+        user_id: UUID,
+    ) -> JSONResponse:
+        logger.warning(
+            "2FA enforcement blocked request",
+            extra={
+                "user_id": str(user_id),
+                "path": request.url.path,
+                "method": request.method.upper(),
+                "reason": "trusted_device_recent_step_up_required",
+            },
+        )
+        await self._safe_audit(
+            request=request,
+            user_id=user_id,
+            detail={
+                "reason": "trusted_device_recent_step_up_required",
+                "status_code": 403,
+                "path": request.url.path,
+                "method": request.method.upper(),
+                "trusted_device_used": True,
+            },
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "Recent step-up required",
+                "error_code": "recent_step_up_required",
+            },
+        )
+
     async def _safe_audit(
         self,
         *,
@@ -385,6 +425,10 @@ def _cooldown_until(user: User) -> datetime | None:
     if cooldown_until.tzinfo is None:
         return cooldown_until.replace(tzinfo=UTC)
     return cooldown_until.astimezone(UTC)
+
+
+def _trusted_device_session_used(request: Request) -> bool:
+    return bool(getattr(request.state, "trusted_device_used", False))
 
 
 async def _call_next_with_response_polish(

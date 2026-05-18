@@ -289,8 +289,19 @@ class AuthService:
         Raises:
             HTTPException: If token is invalid or expired
         """
-        del token
-        _raise_phase4_stub()
+        from echoroo.services.email_verification_service import (
+            EmailVerificationError,
+            EmailVerificationService,
+        )
+
+        try:
+            result = await EmailVerificationService(self.db).verify_token(token)
+        except EmailVerificationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=exc.code,
+            ) from exc
+        return result.user
 
     async def request_password_reset(self, email: str) -> None:
         """Request password reset (always returns success for security).

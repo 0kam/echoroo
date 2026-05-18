@@ -115,6 +115,15 @@ class Settings(BaseSettings):
     )
     EMAIL_FROM: str = "noreply@echoroo.app"
 
+    # Email verification and trusted devices
+    EMAIL_VERIFICATION_ENFORCEMENT_ENABLED: bool = False
+    TRUSTED_DEVICE_REGISTRATION_ENABLED: bool = False
+    TRUSTED_DEVICE_BYPASS_ENABLED: bool = False
+    TRUSTED_DEVICE_COOKIE_NAME: str = "echoroo_trusted_device"
+    TRUSTED_DEVICE_COOKIE_TTL_SECONDS: int = 30 * 24 * 3600
+    EMAIL_VERIFICATION_TOKEN_TTL_SECONDS: int = 24 * 3600
+    EMAIL_VERIFICATION_RESEND_ACTIVE_TOKEN_CAP: int = 1
+
     # CAPTCHA (Cloudflare Turnstile)
     TURNSTILE_SECRET_KEY: str = Field(
         default="",

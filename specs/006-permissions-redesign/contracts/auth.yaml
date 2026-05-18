@@ -39,7 +39,7 @@ paths:
 
   /auth/login:
     post:
-      summary: パスワード認証（TOTP は別エンドポイント）
+      summary: パスワード認証（trusted device が有効な場合は complete session を返す）
       operationId: login
       requestBody:
         required: true
@@ -49,7 +49,7 @@ paths:
               $ref: '#/components/schemas/LoginRequest'
       responses:
         "200":
-          description: パスワード正解、次は 2FA チャレンジ
+          description: パスワード正解。trusted device が有効な非特権ログインでは complete、それ以外は 2FA 次状態
           content:
             application/json:
               schema:
@@ -61,28 +61,26 @@ paths:
 
   /auth/2fa/challenge:
     post:
-      summary: TOTP または バックアップコード検証
+      summary: TOTP または バックアップコード検証。成功時に device trust を任意登録
       operationId: verify2FA
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              oneOf:
-                - $ref: '#/components/schemas/TotpChallengeRequest'
-                - $ref: '#/components/schemas/BackupCodeChallengeRequest'
+              $ref: '#/components/schemas/TwoFactorChallengeRequest'
       responses:
         "200":
-          description: 2FA 検証成功、セッション発行。バックアップコードの場合は TOTP 再設定へ誘導
+          description: 2FA 検証成功、セッション発行。device trust 登録時は trusted-device cookie も発行
           headers:
             Set-Cookie:
               schema:
                 type: string
-                example: "session_id=xxx; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict"
+                example: "echoroo_session=...; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict, echoroo_trusted_device=...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TwoFactorVerifyResponse'
+                $ref: '#/components/schemas/TwoFactorChallengeResponse'
         "401":
           description: TOTP / バックアップコード不正
         "429":
@@ -108,7 +106,7 @@ paths:
 
   /auth/2fa/setup/totp/confirm:
     post:
-      summary: TOTP 設定確定（QR 読み込み後の最初の 6 桁を入力）
+      summary: TOTP 設定確定（QR 読み込み後の最初の 6 桁を入力）。成功時に device trust を任意登録
       operationId: confirmTotp
       security:
         - sessionCookie: []
@@ -117,15 +115,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [totp_code]
-              properties:
-                totp_code:
-                  type: string
-                  pattern: "^[0-9]{6}$"
+              $ref: '#/components/schemas/TotpSetupConfirmRequest'
       responses:
-        "204":
-          description: 2FA 有効化完了、バックアップコードはこのタイミングで 1 度のみ再表示
+        "200":
+          description: 2FA 有効化完了、バックアップコードを 1 度のみ再表示。device trust 登録時は trusted-device cookie も発行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpSetupConfirmResponse'
 
   /auth/2fa/webauthn/register:
     post:
@@ -236,6 +233,48 @@ paths:
         "204":
           description: パスワード変更、security_stamp 更新、全 refresh token 失効（FR-055）
 
+  /auth/verify-email:
+    post:
+      summary: メールアドレス検証
+      operationId: verifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        "200":
+          description: メールアドレス検証完了
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyEmailResponse'
+        "400":
+          description: token 不正、期限切れ、使用済み、superseded、または purpose/email 不一致
+
+  /auth/verify-email/resend:
+    post:
+      summary: メール検証リンク再送
+      operationId: resendVerificationEmail
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendVerificationEmailRequest'
+      responses:
+        "202":
+          description: 受付完了。enumeration 対策で account 存在有無を開示しない
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        "429":
+          description: 再送レート制限
+
 components:
   securitySchemes:
     sessionCookie:
@@ -277,11 +316,22 @@ components:
 
     RegisterResponse:
       type: object
+      required: [user_id, email, email_verified_at, email_verification_required, two_factor_setup_required]
+      additionalProperties: false
       properties:
         user_id:
           type: string
           format: uuid
-        verification_email_sent:
+        email:
+          type: string
+          format: email
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        email_verification_required:
+          type: boolean
+        two_factor_setup_required:
           type: boolean
 
     LoginRequest:
@@ -296,16 +346,42 @@ components:
           type: string
 
     LoginResponse:
+      oneOf:
+        - $ref: '#/components/schemas/LoginCompleteResponse'
+        - $ref: '#/components/schemas/LoginInterimResponse'
+      discriminator:
+        propertyName: login_state
+        mapping:
+          complete: '#/components/schemas/LoginCompleteResponse'
+          2fa_setup_required: '#/components/schemas/LoginInterimResponse'
+          2fa_required: '#/components/schemas/LoginInterimResponse'
+
+    LoginCompleteResponse:
       type: object
+      required: [login_state, access_token, expires_in]
+      additionalProperties: false
       properties:
-        challenge_token:
+        login_state:
           type: string
-          description: 2FA チャレンジで使う短期トークン（5 分有効）
-        totp_required:
+          const: complete
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        trusted_device_used:
           type: boolean
-        webauthn_required:
-          type: boolean
-          description: superuser の場合 true
+
+    LoginInterimResponse:
+      type: object
+      required: [login_state, interim_token]
+      additionalProperties: false
+      properties:
+        login_state:
+          type: string
+          enum: [2fa_setup_required, 2fa_required]
+        interim_token:
+          type: string
+          description: 2FA/setup challenge で使う短期 token
 
     TotpChallengeRequest:
       type: object
@@ -325,6 +401,38 @@ components:
           type: string
         backup_code:
           type: string
+
+    TwoFactorChallengeRequest:
+      type: object
+      required: [interim_token, method, code]
+      additionalProperties: false
+      properties:
+        interim_token:
+          type: string
+        method:
+          type: string
+          enum: [totp, backup_code]
+        code:
+          type: string
+        trust_device:
+          type: boolean
+          default: false
+        device_label:
+          type: string
+          maxLength: 100
+          description: NFKC-normalized label; control characters rejected; UI must HTML-escape on display.
+
+    TwoFactorChallengeResponse:
+      type: object
+      required: [access_token, expires_in]
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        trusted_device_created:
+          type: boolean
 
     TwoFactorVerifyResponse:
       type: object
@@ -349,6 +457,77 @@ components:
           items:
             type: string
             description: 12 桁 base32、一度のみ表示
+
+    TotpSetupConfirmRequest:
+      type: object
+      required: [interim_token, secret, totp_code]
+      additionalProperties: false
+      properties:
+        interim_token:
+          type: string
+        secret:
+          type: string
+        totp_code:
+          type: string
+          pattern: "^[0-9]{6}$"
+        trust_device:
+          type: boolean
+          default: false
+        device_label:
+          type: string
+          maxLength: 100
+          description: NFKC-normalized label; control characters rejected; UI must HTML-escape on display.
+
+    TotpSetupConfirmResponse:
+      type: object
+      required: [backup_codes, access_token, expires_in]
+      additionalProperties: false
+      properties:
+        backup_codes:
+          type: array
+          items:
+            type: string
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        trusted_device_created:
+          type: boolean
+
+    VerifyEmailRequest:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+
+    VerifyEmailResponse:
+      type: object
+      required: [email_verified_at]
+      additionalProperties: false
+      properties:
+        email_verified_at:
+          type: string
+          format: date-time
+
+    ResendVerificationEmailRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          description: pre-session resend 用。authenticated resend は current user を使う。
+
+    MessageResponse:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
 
     WebAuthnRegistrationRequest:
       type: object

@@ -141,6 +141,40 @@ async def send_verification_email(to: str, token: str) -> None:
         # Don't raise exception - email failure shouldn't block registration
 
 
+async def send_email_change_notification(to: str) -> None:
+    """Notify a previous mailbox that the account email address changed."""
+    recipient_hash = _safe_recipient_hash(to)
+
+    if not settings.RESEND_API_KEY:
+        logger.warning(
+            "email change notification skipped — RESEND_API_KEY not configured "
+            "(recipient_hash=%s)",
+            recipient_hash,
+        )
+        return
+
+    try:
+        resend.Emails.send(
+            {
+                "from": settings.EMAIL_FROM,
+                "to": to,
+                "subject": "Your Echoroo email address was changed",
+                "html": """
+                    <h2>Email address changed</h2>
+                    <p>The email address on your Echoroo account was changed.</p>
+                    <p>If you did not make this change, reset your password and
+                    contact support immediately.</p>
+                """,
+            }
+        )
+        logger.info("email change notification sent (recipient_hash=%s)", recipient_hash)
+    except Exception:
+        logger.exception(
+            "email change notification delivery failed (recipient_hash=%s)",
+            recipient_hash,
+        )
+
+
 async def send_password_reset_email(to: str, token: str) -> None:
     """Send password reset email.
 

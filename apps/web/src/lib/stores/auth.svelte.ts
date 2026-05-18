@@ -49,6 +49,15 @@ interface LoginResponse {
   user: User;
 }
 
+type CurrentUserResponse = User & {
+  is_verified?: boolean;
+};
+
+function normalizeCurrentUser(user: CurrentUserResponse): User {
+  const { is_verified: _legacyIsVerified, ...normalizedUser } = user;
+  return normalizedUser;
+}
+
 function createAuthStore() {
   const state = $state<AuthState>({
     user: null,
@@ -71,7 +80,7 @@ function createAuthStore() {
      * Set user and update authentication state
      */
     setUser(user: User | null) {
-      state.user = user;
+      state.user = user ? normalizeCurrentUser(user) : null;
       state.isAuthenticated = user !== null;
       state.isLoading = false;
     },
@@ -147,8 +156,8 @@ function createAuthStore() {
         // at ``/web-api/v1/users/me``. The legacy Bearer-only path
         // 401-ed for cookie-authenticated visitors and forced an
         // auto-logout right after a successful 2FA verify.
-        const user = await apiClient.get<User>('/web-api/v1/users/me');
-        state.user = user;
+        const user = await apiClient.get<CurrentUserResponse>('/web-api/v1/users/me');
+        state.user = normalizeCurrentUser(user);
         state.isAuthenticated = true;
       } catch (error) {
         // Clear client-side session state
@@ -205,7 +214,7 @@ function createAuthStore() {
         apiClient.setAccessToken(response.access_token);
 
         // Update state with user data
-        state.user = response.user;
+        state.user = normalizeCurrentUser(response.user);
         state.isAuthenticated = true;
       } catch (error) {
         state.user = null;
@@ -277,7 +286,7 @@ function createAuthStore() {
         apiClient.setAccessToken(response.access_token);
 
         // Update user data
-        state.user = response.user;
+        state.user = normalizeCurrentUser(response.user);
         state.isAuthenticated = true;
       } catch (error) {
         // Refresh failed, clear session

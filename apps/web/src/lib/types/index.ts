@@ -183,13 +183,13 @@ export interface PaginatedResponse<T> extends PaginationMeta {
 export interface User {
   id: string;
   email: string;
-  display_name?: string;
-  organization?: string;
+  display_name?: string | null;
+  organization?: string | null;
   is_active: boolean;
   is_superuser: boolean;
-  is_verified: boolean;
+  email_verified_at: string | null;
   created_at: string;
-  last_login_at?: string;
+  last_login_at?: string | null;
 }
 
 /**
@@ -787,15 +787,18 @@ export interface AdminUserUpdateRequest {
 }
 
 /**
- * Admin user response (alias for User)
+ * Admin user response keeps the legacy verification flag exposed by the
+ * legacy admin API surface.
  */
-export type AdminUserResponse = User;
+export interface AdminUserResponse extends User {
+  is_verified?: boolean;
+}
 
 /**
  * Admin user list response with pagination
  */
 export interface AdminUserListResponse extends PaginationMeta {
-  items: User[];
+  items: AdminUserResponse[];
 }
 
 /**

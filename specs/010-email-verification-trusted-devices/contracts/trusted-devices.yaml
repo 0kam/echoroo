@@ -1,0 +1,107 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Trusted Devices API Delta
+  version: "1.0.0"
+  description: >
+    Account-security trusted-device management endpoints for spec/010.
+
+servers:
+  - url: https://echoroo.app/web-api/v1
+    description: Production BFF
+  - url: http://localhost:8002/web-api/v1
+    description: Local dev BFF
+
+paths:
+  /account/trusted-devices:
+    get:
+      summary: List trusted devices for the current user
+      operationId: listTrustedDevices
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Trusted devices visible to the current user
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TrustedDeviceSummary"
+
+  /account/trusted-devices/{id}:
+    delete:
+      summary: Revoke one trusted device
+      operationId: revokeTrustedDevice
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Device revoked or already unavailable to this user
+        "403":
+          description: CSRF or authorization failure
+
+  /account/trusted-devices/revoke-all:
+    post:
+      summary: Revoke all trusted devices for the current user
+      operationId: revokeAllTrustedDevices
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: All active trusted devices revoked
+        "403":
+          description: CSRF or authorization failure
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: echoroo_session
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  schemas:
+    TrustedDeviceSummary:
+      type: object
+      additionalProperties: false
+      required: [id, label, created_at, last_used_at, expires_at, current_device]
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+        current_device:
+          type: boolean
+        last_seen_hint:
+          type: string
+          nullable: true
+          description: Audit-safe display hint, never raw IP or full User-Agent.

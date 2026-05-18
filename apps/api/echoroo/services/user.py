@@ -10,6 +10,12 @@ from echoroo.core.security import hash_password, verify_password
 from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.user import PasswordChangeRequest, UserUpdateRequest
+from echoroo.services.email import send_email_change_notification
+from echoroo.services.email_verification_service import (
+    EmailVerificationService,
+    normalize_email_for_verification,
+)
+from echoroo.services.trusted_device_service import TrustedDeviceService
 
 logger = logging.getLogger(__name__)
 
@@ -115,9 +121,61 @@ class UserService:
 
         # Update password
         user.password_hash = hash_password(request.new_password)
+        await TrustedDeviceService(self.db).revoke_all_for_user(
+            user=user,
+            reason="password_changed",
+        )
         await self.user_repo.update(user)
         await self.db.commit()
 
         # Revoke all existing tokens so that other active sessions are invalidated
         logger.info("Password changed for user %s; revoking all tokens", user_id)
         await self._auth_service.revoke_user_tokens(user_id)
+
+    async def change_email(
+        self,
+        user_id: UUID,
+        new_email: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> User:
+        """Change account email and reset email-trust dependent security state."""
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        normalized_email = normalize_email_for_verification(new_email)
+        existing = await self.user_repo.get_by_email(normalized_email)
+        if existing is not None and existing.id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already in use",
+            )
+
+        previous_email = user.email
+        user.email = normalized_email
+        user.email_verified_at = None
+        await TrustedDeviceService(self.db).revoke_all_for_user(
+            user=user,
+            reason="email_changed",
+        )
+        await EmailVerificationService(self.db).issue_verification_token(
+            user=user,
+            email=normalized_email,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        await self.user_repo.update(user)
+        await self.db.commit()
+
+        logger.info(
+            "Email changed for user %s; verification reset and trusted devices revoked",
+            user_id,
+        )
+        if previous_email:
+            await send_email_change_notification(previous_email)
+        return user

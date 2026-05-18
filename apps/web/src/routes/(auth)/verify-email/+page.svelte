@@ -25,6 +25,49 @@
   let resendSuccess = $state(false);
   let resendCooldown = $state(0);
 
+  type VerificationErrorContent = {
+    heading: string;
+    body: string;
+  };
+
+  const invalidVerificationErrorContent: VerificationErrorContent = {
+    heading: 'Verification link is invalid',
+    body: 'Request a new verification email or return to login.',
+  };
+
+  const expiredVerificationErrorContent: VerificationErrorContent = {
+    heading: 'Verification link has expired',
+    body: 'Send a fresh verification email to continue.',
+  };
+
+  const reusedVerificationErrorContent: VerificationErrorContent = {
+    heading: 'Verification link was already used',
+    body: 'Use the most recent verification email or request a new one.',
+  };
+
+  const verificationErrorContentByCode: Record<string, VerificationErrorContent> = {
+    ERR_EMAIL_VERIFICATION_INVALID: invalidVerificationErrorContent,
+    ERR_EMAIL_VERIFICATION_TOKEN_INVALID: invalidVerificationErrorContent,
+    ERR_EMAIL_VERIFICATION_EXPIRED: expiredVerificationErrorContent,
+    ERR_EMAIL_VERIFICATION_TOKEN_EXPIRED: expiredVerificationErrorContent,
+    ERR_EMAIL_VERIFICATION_REUSED: reusedVerificationErrorContent,
+    ERR_EMAIL_VERIFICATION_TOKEN_CONSUMED: reusedVerificationErrorContent,
+  };
+
+  const genericVerificationErrorContent: VerificationErrorContent = {
+    heading: 'Verification failed',
+    body: 'Request a new verification email or return to login.',
+  };
+
+  let verificationErrorContent = $state<VerificationErrorContent | null>(null);
+
+  function getVerificationErrorContent(err: unknown): VerificationErrorContent {
+    if (err instanceof ApiError && err.code) {
+      return verificationErrorContentByCode[err.code] ?? genericVerificationErrorContent;
+    }
+    return genericVerificationErrorContent;
+  }
+
   /**
    * Verify email with token
    */
@@ -33,16 +76,14 @@
 
     isVerifying = true;
     error = null;
+    verificationErrorContent = null;
 
     try {
       await verifyEmail(data.token);
       isVerified = true;
     } catch (err) {
-      if (err instanceof ApiError) {
-        error = err.detail || err.message;
-      } else {
-        error = 'An unexpected error occurred. Please try again.';
-      }
+      verificationErrorContent = getVerificationErrorContent(err);
+      error = verificationErrorContent.body;
     } finally {
       isVerifying = false;
     }
@@ -54,7 +95,7 @@
   async function handleResend() {
     isResending = true;
     resendSuccess = false;
-    error = null;
+    error = verificationErrorContent?.body ?? null;
 
     try {
       await resendVerificationEmail();
@@ -232,8 +273,20 @@
               />
             </svg>
           </div>
-          <h3 class="text-lg font-medium text-stone-900">Verification failed</h3>
-          <p class="mt-2 text-sm text-danger">{error}</p>
+          <h3 class="text-lg font-medium text-stone-900">
+            {verificationErrorContent?.heading ?? 'Verification failed'}
+          </h3>
+          <p class="mt-2 text-sm text-danger">
+            {verificationErrorContent?.body ?? error}
+          </p>
+
+          {#if resendSuccess}
+            <div class="mt-4 rounded-md bg-success-light p-4">
+              <p class="text-sm font-medium text-success">
+                Verification email sent successfully!
+              </p>
+            </div>
+          {/if}
 
           <div class="mt-6 space-y-3">
             <button
