@@ -26,6 +26,7 @@ from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection import Detection
 from echoroo.models.detection_run import DetectionRun
+from echoroo.models.email_verification_token import EmailVerificationToken
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
@@ -88,6 +89,7 @@ from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+from echoroo.models.trusted_device import TrustedDevice
 from echoroo.models.two_factor_reset_request import (
     TwoFactorConfirmationToken,
     TwoFactorResetMagicLink,
@@ -113,6 +115,7 @@ __all__ = [
     "ProjectMember",
     "ProjectTaxonSensitivityOverride",
     "ProjectTrustedUser",
+    "EmailVerificationToken",
     "PasswordResetToken",
     "Recorder",
     "Recording",
@@ -123,6 +126,7 @@ __all__ = [
     "TwoFactorConfirmationToken",
     "TwoFactorResetMagicLink",
     "TwoFactorResetRequest",
+    "TrustedDevice",
     "User",
     "UserLoginNotificationSeen",
     # Annotation models (existing)

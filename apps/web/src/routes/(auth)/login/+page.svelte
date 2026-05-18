@@ -17,7 +17,6 @@
     challengeTwoFactor,
     loginUser,
     WebAuthError,
-    type LoginState,
     type TwoFactorMethod,
   } from '$lib/api/web-auth';
   import { authStore } from '$lib/stores/auth.svelte';
@@ -45,6 +44,7 @@
   let interimToken = $state<string | null>(null);
   let twoFactorMethod = $state<TwoFactorMethod>('totp');
   let twoFactorCode = $state('');
+  let trustDevice = $state(false);
 
   // UI state
   let isSubmitting = $state(false);
@@ -54,6 +54,27 @@
   // Captcha reference
   let captchaComponent: { reset: () => void } | undefined = $state(undefined);
   let turnstileSiteKey = $state('');
+
+  async function completeLogin(accessToken: string) {
+    apiClient.setAccessToken(accessToken);
+
+    // Fetch the current user (cookie + access token already set by server).
+    // Use the BFF mirror at ``/web-api/v1/users/me`` so the session
+    // cookie alone authenticates the request — the legacy Bearer
+    // path 401-ed here and bounced the user back to /login right
+    // after a successful 2FA verify.
+    try {
+      const user = await apiClient.get<User>('/web-api/v1/users/me');
+      authStore.setUser(user);
+    } catch {
+      // The new web-auth backend may expose user data via a different
+      // endpoint. If /users/me fails we still consider login successful;
+      // the dashboard will retry via authStore.initialize().
+    }
+
+    const redirect = $page.url.searchParams.get('redirect');
+    await goto(redirect ? localizeHref(redirect) : localizeHref('/dashboard'));
+  }
 
   onMount(() => {
     turnstileSiteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
@@ -103,9 +124,13 @@
 
     try {
       const result = await loginUser({ email, password });
-      const state: LoginState = result.login_state;
 
-      if (state === '2fa_setup_required') {
+      if (result.login_state === 'complete') {
+        await completeLogin(result.access_token);
+        return;
+      }
+
+      if (result.login_state === '2fa_setup_required') {
         // Hand the interim_token to the setup page via session storage so it
         // is not exposed in the URL bar / browser history. The setup page
         // lives under (auth) (NOT (app)) so unauthenticated users can reach
@@ -121,6 +146,7 @@
       interimToken = result.interim_token;
       twoFactorMethod = 'totp';
       twoFactorCode = '';
+      trustDevice = false;
       step = 'two_factor';
       error = null;
       failedAttempts = 0;
@@ -169,26 +195,10 @@
         interimToken,
         twoFactorMethod,
         twoFactorCode.trim(),
+        { trustDevice },
       );
 
-      apiClient.setAccessToken(result.access_token);
-
-      // Fetch the current user (cookie + access token already set by server).
-      // Use the BFF mirror at ``/web-api/v1/users/me`` so the session
-      // cookie alone authenticates the request — the legacy Bearer
-      // path 401-ed here and bounced the user back to /login right
-      // after a successful 2FA verify.
-      try {
-        const user = await apiClient.get<User>('/web-api/v1/users/me');
-        authStore.setUser(user);
-      } catch {
-        // The new web-auth backend may expose user data via a different
-        // endpoint. If /users/me fails we still consider login successful;
-        // the dashboard will retry via authStore.initialize().
-      }
-
-      const redirect = $page.url.searchParams.get('redirect');
-      await goto(redirect ? localizeHref(redirect) : localizeHref('/dashboard'));
+      await completeLogin(result.access_token);
     } catch (err) {
       handleError(err);
       twoFactorCode = '';
@@ -382,6 +392,19 @@
             placeholder={m.auth_two_factor_enter_code_placeholder()}
           />
         </div>
+
+        <label class="flex items-start gap-2 text-sm text-stone-700">
+          <input
+            type="checkbox"
+            bind:checked={trustDevice}
+            disabled={isSubmitting}
+            data-testid="trust-device-checkbox"
+            class="mt-1 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+          <span>
+            Trust this device for 30 days
+          </span>
+        </label>
 
         {#if error}
           <div class="rounded-md bg-danger-light p-4" role="alert" data-testid="two-factor-error">

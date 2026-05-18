@@ -15,6 +15,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_login_at: datetime | None
+    email_verified_at: datetime | None
     two_factor_enabled: bool
 
     model_config = {"from_attributes": True}

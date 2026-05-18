@@ -150,6 +150,89 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /account/trusted-devices:
+    get:
+      summary: List trusted devices for the current user
+      operationId: listTrustedDevices
+      tags: [account-security]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Trusted devices visible to the current user.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrustedDeviceSummary'
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /account/trusted-devices/{id}:
+    delete:
+      summary: Revoke one trusted device
+      operationId: revokeTrustedDevice
+      tags: [account-security]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Device revoked or already unavailable to this user.
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "403":
+          description: CSRF or authorization failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /account/trusted-devices/revoke-all:
+    post:
+      summary: Revoke all trusted devices for the current user
+      operationId: revokeAllTrustedDevices
+      tags: [account-security]
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      responses:
+        "204":
+          description: All active trusted devices revoked.
+        "401":
+          description: Caller is not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "403":
+          description: CSRF or authorization failure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -161,6 +244,11 @@ components:
         (settings ``web_session_cookie_name``). Both DSR endpoints
         also accept the matching ``echoroo_csrf`` token via the
         production CSRF middleware.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: CSRF token required for state-changing first-party account operations.
 
   schemas:
     Error:
@@ -396,3 +484,31 @@ components:
         deleted_at:
           type: string
           format: date-time
+
+    TrustedDeviceSummary:
+      type: object
+      required: [id, label, created_at, last_used_at, expires_at, current_device]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+        current_device:
+          type: boolean
+        last_seen_hint:
+          type: string
+          nullable: true
+          description: Audit-safe display hint, never raw IP or full User-Agent.

@@ -37,6 +37,7 @@ from echoroo.core.redis import get_redis_connection
 from echoroo.core.settings import Settings, get_settings
 from echoroo.models.user import User
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.trusted_device_service import TrustedDeviceService
 
 ISSUER_NAME = "Echoroo"
 TOTP_SECRET_LENGTH = 32
@@ -527,6 +528,10 @@ class TwoFactorService:
         user.two_factor_reset_cooldown_until = datetime.now(UTC) + RESET_COOLDOWN
         self.rotate_security_stamp(user)
         self.db.add(user)
+        revoked_trusted_devices = await TrustedDeviceService(self.db).revoke_all_for_user(
+            user=user,
+            reason="two_factor_reset",
+        )
         await self._clear_totp_failures(user.id)
         await self._clear_backup_failures(user.id)
         if commit:
@@ -539,6 +544,7 @@ class TwoFactorService:
                     "target_user_id": str(user.id),
                     "reason": reason,
                     "cooldown_hours": 72,
+                    "trusted_devices_revoked": revoked_trusted_devices,
                 },
             )
             return None
@@ -555,6 +561,7 @@ class TwoFactorService:
                 "target_user_id": str(user.id),
                 "reason": reason,
                 "cooldown_hours": 72,
+                "trusted_devices_revoked": revoked_trusted_devices,
             },
         )
 

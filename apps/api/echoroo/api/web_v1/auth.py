@@ -43,9 +43,11 @@ from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.user import User
 from echoroo.repositories.superuser_credentials import get_default_store
 from echoroo.repositories.user import UserRepository
-from echoroo.schemas.auth import EmailVerifyRequest as LegacyEmailVerifyRequest
-from echoroo.schemas.auth import UserResponse as LegacyUserResponse
 from echoroo.schemas.web_v1.auth import (
+    EmailVerificationResendRequest,
+    EmailVerificationResendResponse,
+    EmailVerifyRequest,
+    EmailVerifyResponse,
     LoginRequest,
     LoginResponse,
     PasswordResetConfirmRequest,
@@ -68,8 +70,8 @@ from echoroo.schemas.web_v1.auth import (
 )
 from echoroo.services import outbox_service
 from echoroo.services.audit_service import AuditLogService
-from echoroo.services.auth import AuthService as LegacyAuthService
 from echoroo.services.auth_service import (
+    DEFAULT_RATE_LIMIT_POLICY,
     AccountLockedError,
     HibpChecker,
     HttpHibpChecker,
@@ -79,12 +81,17 @@ from echoroo.services.auth_service import (
     authenticate,
     enforce_password_policy,
 )
+from echoroo.services.email_verification_service import (
+    EmailVerificationError,
+    EmailVerificationService,
+)
 from echoroo.services.login_notification_service import LoginNotificationService
 from echoroo.services.step_up_token_service import (
     SCOPE_ADMIN_DESTRUCTIVE,
     STEP_UP_TOKEN_TTL_SECONDS,
     issue_step_up_token,
 )
+from echoroo.services.trusted_device_service import TrustedDeviceService
 from echoroo.services.two_factor_service import (
     BACKUP_FAIL_WINDOW_SECONDS,
     ISSUER_NAME,
@@ -135,8 +142,11 @@ _REGISTER_EMAIL_LIMIT = 5
 _REGISTER_WINDOW_SECONDS = 60 * 60
 _PASSWORD_RESET_MIN_RESPONSE_SECONDS = 0.05
 _PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=60)
+_EMAIL_VERIFICATION_RESEND_LIMIT = 5
+_EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS = 60 * 60
 # TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _register_windows: dict[str, list[float]] = {}
+_email_verification_resend_windows: dict[str, list[float]] = {}
 
 
 @dataclass(frozen=True)
@@ -235,6 +245,30 @@ def _rate_limit_register(*, ip: str, email: str) -> None:
             )
         window.append(now)
         _register_windows[key] = window
+
+
+def _rate_limit_email_verification_resend(*, ip: str, email: str) -> int | None:
+    now = time.monotonic()
+    cutoff = now - _EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS
+    scopes = (
+        f"email-verification-resend:ip:{ip}",
+        f"email-verification-resend:email:{email}",
+    )
+    retry_after = 0
+    for key in scopes:
+        window = [
+            timestamp
+            for timestamp in _email_verification_resend_windows.get(key, [])
+            if timestamp >= cutoff
+        ]
+        if len(window) >= _EMAIL_VERIFICATION_RESEND_LIMIT:
+            retry_after = max(
+                retry_after,
+                max(1, int(_EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS - (now - window[0]))),
+            )
+        window.append(now)
+        _email_verification_resend_windows[key] = window
+    return retry_after or None
 
 
 def _encode_reset_token(token: bytes) -> str:
@@ -816,6 +850,40 @@ def _set_session_cookies(
     response.headers[CSRF_HEADER_NAME] = csrf_token
 
 
+def _set_trusted_device_cookie(response: Response, *, raw_secret: str) -> None:
+    response.set_cookie(
+        key=settings.TRUSTED_DEVICE_COOKIE_NAME,
+        value=raw_secret,
+        max_age=settings.TRUSTED_DEVICE_COOKIE_TTL_SECONDS,
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="Strict",
+    )
+
+
+async def _maybe_issue_trusted_device(
+    *,
+    payload_trust_device: bool,
+    device_label: str | None,
+    response: Response,
+    request: Request,
+    user: User,
+    db: DbSession,
+) -> bool:
+    if not payload_trust_device or not settings.TRUSTED_DEVICE_REGISTRATION_ENABLED:
+        return False
+
+    issued = await TrustedDeviceService(db).issue_device(
+        user=user,
+        label=device_label,
+        ip=_client_ip(request),
+        user_agent=_user_agent(request),
+    )
+    _set_trusted_device_cookie(response, raw_secret=issued.raw_secret)
+    return True
+
+
 def _failed_refresh_response(detail: str) -> JSONResponse:
     """Build a 401 response that ALSO clears all session cookies.
 
@@ -916,6 +984,12 @@ async def register(
 
     try:
         await repo.create(user)
+        await EmailVerificationService(db).issue_verification_token(
+            user=user,
+            email=user.email,
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -930,7 +1004,12 @@ async def register(
         request=request,
         detail={"user_id": str(user.id)},
     )
-    return RegisterResponse(user_id=user.id, email=user.email)
+    return RegisterResponse(
+        user_id=user.id,
+        email=user.email,
+        email_verified_at=user.email_verified_at,
+        email_verification_required=user.email_verified_at is None,
+    )
 
 
 @router.post("/password-reset/request", status_code=status.HTTP_204_NO_CONTENT)
@@ -1101,13 +1180,20 @@ async def confirm_password_reset(
     db.add(user)
     db.add(reset_token)
     await _revoke_refresh_families_for_user(db, user.id)
+    revoked_trusted_devices = await TrustedDeviceService(db).revoke_all_for_user(
+        user=user,
+        reason="password_reset_confirmed",
+    )
     await db.commit()
 
     await _write_platform_audit(
         actor_user_id=user.id,
         action="auth.password_reset_completed",
         request=request,
-        detail={"user_id": str(user.id)},
+        detail={
+            "user_id": str(user.id),
+            "trusted_devices_revoked": revoked_trusted_devices,
+        },
     )
     return Response(
         status_code=status.HTTP_204_NO_CONTENT,
@@ -1116,15 +1202,8 @@ async def confirm_password_reset(
 
 
 # ---------------------------------------------------------------------------
-# /verify-email — spec/009 PR B follow-up
+# /verify-email
 # ---------------------------------------------------------------------------
-#
-# Mirrors the legacy ``POST /api/v1/auth/verify-email`` handler so the
-# frontend (apps/web/src/lib/api/auth.ts ``verifyEmail()``) — which was
-# rewired to the BFF path in PR B for forward consistency — can land its
-# call in production. research.md §D-3 understated this gap: the BFF
-# surface did not previously expose ``/verify-email``, so post-PR-B the
-# email-verification link 404'd.
 #
 # Auth posture: PUBLIC (no session yet, no auth dependency). The user is
 # verifying the email address attached to their account *before* their
@@ -1137,19 +1216,12 @@ async def confirm_password_reset(
 # above (same "POST from email link, no session, no CSRF token
 # possible" shape).
 #
-# Service call: reuses ``echoroo.services.auth.AuthService.verify_email``,
-# the exact entry point the legacy v1 handler invokes, so behaviour is
-# byte-identical (today: 501 Phase-4 stub; whatever the real Phase-4
-# implementation lands as, both surfaces inherit it).
-#
-# NOTE (spec/009 PR B follow-up): the frontend exposes a "resend
-# verification email" button that calls /verify-email/resend. Neither
-# the legacy v1 nor BFF surface implements this endpoint; the button
-# has been broken since before spec/009. Adding a working resend is
-# tracked separately and out of PR B scope.
+# The route delegates to ``EmailVerificationService`` for token lookup,
+# single-use consume, expiry, and account-email binding. Resend remains
+# US2 scope.
 @router.post(
     "/verify-email",
-    response_model=LegacyUserResponse,
+    response_model=EmailVerifyResponse,
     summary="Verify email address",
     description=(
         "Verify a user's email address using a one-time token issued in the "
@@ -1158,21 +1230,105 @@ async def confirm_password_reset(
         "``POST /api/v1/auth/verify-email`` surface (spec/009 PR B inventory "
         "gap follow-up)."
     ),
+    responses={400: {"description": "Invalid, expired, or already-used token"}},
 )
 async def verify_email(
-    payload: LegacyEmailVerifyRequest,
+    payload: EmailVerifyRequest,
     db: DbSession,
-) -> LegacyUserResponse:
+) -> EmailVerifyResponse | JSONResponse:
     """Verify user email with token (BFF mirror of legacy /api/v1/auth/verify-email)."""
-    auth_service = LegacyAuthService(db)
-    user = await auth_service.verify_email(payload.token)
-    return LegacyUserResponse.model_validate(user)
+    service = EmailVerificationService(db)
+    try:
+        result = await service.verify_token(payload.token)
+    except EmailVerificationError as exc:
+        await db.rollback()
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"code": exc.code},
+        )
+    await db.commit()
+    return EmailVerifyResponse(
+        user_id=result.user_id,
+        email=result.email,
+        email_verified_at=result.email_verified_at,
+        email_verification_required=False,
+    )
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post(
+    "/verify-email/resend",
+    response_model=EmailVerificationResendResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Resend email verification",
+    description=(
+        "Accept an email verification resend request without exposing whether "
+        "the account exists or is already verified."
+    ),
+    responses={
+        202: {"description": "Resend request accepted"},
+        429: {"description": "Too many resend attempts"},
+    },
+)
+async def resend_email_verification(
+    payload: EmailVerificationResendRequest,
+    request: Request,
+    db: DbSession,
+) -> EmailVerificationResendResponse | JSONResponse:
+    """Queue a replacement verification token while preserving anti-enumeration."""
+    try:
+        email = _normalize_email(payload.email)
+    except HTTPException:
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.email_verification_resend_requested",
+            request=request,
+            detail={"email_validation_failed": True},
+        )
+        return EmailVerificationResendResponse()
+
+    retry_after = _rate_limit_email_verification_resend(
+        ip=_client_ip(request),
+        email=email,
+    )
+    if retry_after is not None:
+        await _write_platform_audit(
+            actor_user_id=None,
+            action="auth.email_verification_resend_rate_limited",
+            request=request,
+            detail={"email_hash": compute_pii_hash(email)},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"code": "ERR_EMAIL_VERIFICATION_RESEND_RATE_LIMITED"},
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    user = await UserRepository(db).get_by_email(email)
+    if user is not None and user.deleted_at is None and user.email_verified_at is None:
+        await EmailVerificationService(db).issue_verification_token(
+            user=user,
+            email=user.email,
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+        await db.commit()
+    else:
+        await db.rollback()
+
+    await _write_platform_audit(
+        actor_user_id=user.id if user is not None and user.deleted_at is None else None,
+        action="auth.email_verification_resend_requested",
+        request=request,
+        detail={"email_hash": compute_pii_hash(email)},
+    )
+    return EmailVerificationResendResponse()
+
+
+@router.post("/login", response_model=LoginResponse, response_model_exclude_none=True)
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     db: DbSession,
 ) -> LoginResponse:
     # Phase 17 A-7 (T979b): if a ``?next=`` query parameter is present and
@@ -1246,6 +1402,47 @@ async def login(
             login_state="2fa_setup_required",
             interim_token=_issue_interim_token(user=user, scope="2fa_setup"),
         )
+    trusted_device_reject_reason = "disabled"
+    if settings.TRUSTED_DEVICE_BYPASS_ENABLED:
+        recent_failures = await _login_attempts.recent_failures(
+            email=email,
+            ip=_client_ip(request),
+            window_seconds=DEFAULT_RATE_LIMIT_POLICY.window_seconds,
+            now=datetime.now(UTC),
+        )
+        evaluation = await TrustedDeviceService(db).evaluate_login_bypass(
+            user=user,
+            raw_secret=request.cookies.get(settings.TRUSTED_DEVICE_COOKIE_NAME),
+            recent_password_failure=recent_failures.failure_count > 0,
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+        if evaluation.accepted:
+            await _write_platform_audit(
+                actor_user_id=user.id,
+                action="auth.trusted_device_bypass_accepted",
+                request=request,
+                detail={"user_id": str(user.id)},
+            )
+            access_token = await _issue_real_session(response=response, user=user, db=db)
+            await _record_login_notification(user=user, request=request)
+            return LoginResponse(
+                login_state="complete",
+                access_token=access_token,
+                expires_in=settings.web_access_token_ttl_seconds,
+                trusted_device_used=True,
+            )
+        trusted_device_reject_reason = evaluation.reject_reason or "unknown"
+
+    await _write_platform_audit(
+        actor_user_id=user.id,
+        action="auth.trusted_device_bypass_rejected",
+        request=request,
+        detail={
+            "user_id": str(user.id),
+            "reason": trusted_device_reject_reason,
+        },
+    )
     return LoginResponse(
         login_state="2fa_required",
         interim_token=_issue_interim_token(user=user, scope="2fa_challenge"),
@@ -1345,17 +1542,29 @@ async def setup_totp_confirm(
         raise _rate_limit_response(TOTP_FAIL_WINDOW_SECONDS) from exc
 
     access_token = await _issue_real_session(response=response, user=user, db=db)
+    trusted_device_created = await _maybe_issue_trusted_device(
+        payload_trust_device=payload.trust_device,
+        device_label=payload.device_label,
+        response=response,
+        request=request,
+        user=user,
+        db=db,
+    )
     await _write_platform_audit(
         actor_user_id=user.id,
         action="auth.two_factor_enrolled_via_login",
         request=request,
-        detail={"user_id": str(user.id)},
+        detail={
+            "user_id": str(user.id),
+            "trusted_device_created": trusted_device_created,
+        },
     )
     await _record_login_notification(user=user, request=request)
     return TotpSetupConfirmResponse(
         backup_codes=backup_codes,
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
+        trusted_device_created=trusted_device_created,
     )
 
 
@@ -1425,16 +1634,28 @@ async def two_factor_challenge(
         )
 
     access_token = await _issue_real_session(response=response, user=user, db=db)
+    trusted_device_created = await _maybe_issue_trusted_device(
+        payload_trust_device=payload.trust_device,
+        device_label=payload.device_label,
+        response=response,
+        request=request,
+        user=user,
+        db=db,
+    )
     await _write_platform_audit(
         actor_user_id=user.id,
         action="auth.two_factor_challenge_succeeded",
         request=request,
-        detail={"method": payload.method},
+        detail={
+            "method": payload.method,
+            "trusted_device_created": trusted_device_created,
+        },
     )
     await _record_login_notification(user=user, request=request)
     return TwoFactorChallengeResponse(
         access_token=access_token,
         expires_in=settings.web_access_token_ttl_seconds,
+        trusted_device_created=trusted_device_created,
     )
 
 

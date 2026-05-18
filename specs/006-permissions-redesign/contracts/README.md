@@ -11,7 +11,8 @@
 
 | ファイル | 範囲 | spec 参照 |
 |---|---|---|
-| [`auth.yaml`](./auth.yaml) | `/web-api/v1/auth/*` — login / 2FA challenge / TOTP setup / WebAuthn / backup codes / logout / refresh | US8、FR-065〜FR-073 |
+| [`auth.yaml`](./auth.yaml) | `/web-api/v1/auth/*` — login / email verification / 2FA challenge / TOTP setup / WebAuthn / backup codes / logout / refresh | US8、FR-065〜FR-073、spec/010 |
+| [`account.yaml`](./account.yaml) | `/web-api/v1/account/*` — DSR export/delete + trusted-device list/revoke | FR-105、FR-109、spec/010 |
 | [`projects.yaml`](./projects.yaml) | `/api/v1/projects/*` + `/web-api/v1/projects/*` — CRUD、visibility 変更、restricted_config、ownership transfer | US1〜US4、US7、US10、FR-001〜FR-024、FR-063、FR-085 |
 | [`trusted.yaml`](./trusted.yaml) | `/web-api/v1/projects/{id}/trusted-users` — 招待 / accept / revoke / extend | US5、FR-041〜FR-046 |
 | [`detections.yaml`](./detections.yaml) | `/api/v1/projects/{id}/detections/*` — list / get / export CSV / export ML dataset / vote / comment | US1、US2、US6、FR-025〜036、FR-037〜040 |
@@ -87,7 +88,7 @@ Error:
 |---|---|---|
 | `Cache-Control` | 検索 / 認証 / 個人データ系（detection list, export, 2FA, invitation） | `private, no-store`（FR-025c、species mask 漏洩対策） |
 | `Cache-Control` | 静的メタ（project metadata 一覧） | `private, max-age=60` |
-| `Set-Cookie` | `/web-api/v1/auth/2fa/challenge` 認証成功時のみ | `session_id=...; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict`（FR-097） |
+| `Set-Cookie` | `/web-api/v1/auth/2fa/challenge` 認証成功時 | `session_id=...; Path=/web-api/v1/; HttpOnly; Secure; SameSite=Strict`（FR-097）。spec/010 trusted-device 登録時は追加で `echoroo_trusted_device=...; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age<=2592000` |
 
 ## 認証 / 認可
 
@@ -128,7 +129,7 @@ components:
 | `/api/v1/*` | `apiKeyAuth: []` のみ | Cookie 受け入れず（送られても無視 + 401） |
 | `/web-api/v1/*` (read) | `sessionCookie: []` | API key 受け入れず（送られても 401） |
 | `/web-api/v1/*` (state-changing) | `sessionCookie: [], csrfToken: []` | 同上 |
-| `/web-api/v1/auth/register`, `/auth/login`, `/auth/password-reset/request` | なし（未認証公開） | — |
+| `/web-api/v1/auth/register`, `/auth/login`, `/auth/password-reset/request`, `/auth/verify-email`, `/auth/verify-email/resend` | なし（未認証公開） | — |
 
 各 contract YAML の path operation には `security:` ブロックを必ず明示。CI contract test で `servers` と `security` の組合せが上記表と一致することを検証。
 
@@ -152,7 +153,7 @@ components:
        csrfToken: []                       # Cookie + CSRF を AND で要求
    ```
 
-3. **未認証 operation**（`/web-api/v1/auth/register`, `/auth/login`, `/auth/password-reset/request`, `/auth/2fa/challenge`）:
+3. **未認証 operation**（`/web-api/v1/auth/register`, `/auth/login`, `/auth/password-reset/request`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/2fa/challenge`）:
    ```yaml
    security: []
    ```

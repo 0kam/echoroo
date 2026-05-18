@@ -11,19 +11,9 @@
  * cookie via the same helper pattern used by `lib/api/projects.ts`.
  *
  * NOTE on `verifyEmail` / `resendVerificationEmail`:
- *   - `/web-api/v1/auth/verify-email` IS now mirrored on the BFF surface
- *     (added as an in-scope follow-up in this same PR B; see the new
- *     handler in `apps/api/echoroo/api/web_v1/auth.py` and the test at
- *     `apps/api/tests/integration/api/web_v1/test_auth_verify_email.py`).
- *     It shares the same `AuthService.verify_email` service entry point
- *     as the programmatic auth surface, which is currently a Phase-4
- *     stub returning 501. Both surfaces will flip together when Phase 4
- *     lands the real implementation.
- *   - `/web-api/v1/auth/verify-email/resend` is intentionally NOT
- *     mirrored. The legacy v1 surface never exposed `/verify-email/
- *     resend` either, so this call has been broken at runtime since
- *     before spec/009 (the migration does not make matters worse).
- *     Tracked as a separate follow-up outside PR B scope.
+ *   - `/web-api/v1/auth/verify-email` and `/verify-email/resend` are
+ *     anonymous pre-session BFF endpoints. Structured backend error
+ *     codes are preserved in `ApiError.code` for safe UI branching.
  */
 import type {
   User,
@@ -73,6 +63,7 @@ const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   '/refresh',
   '/password-reset/request',
   '/verify-email',
+  '/verify-email/resend',
 ]);
 
 function getCsrfToken(): string | null {
@@ -96,6 +87,20 @@ function resolveBaseUrl(): string {
     return '';
   }
   return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
+}
+
+function extractErrorCode(errorData: unknown): string | null {
+  if (typeof errorData !== 'object' || errorData === null) {
+    return null;
+  }
+  const obj = errorData as Record<string, unknown>;
+  if (typeof obj.error === 'string' && obj.error.length > 0) {
+    return obj.error;
+  }
+  if (typeof obj.code === 'string' && obj.code.length > 0) {
+    return obj.code;
+  }
+  return null;
 }
 
 /**
@@ -125,7 +130,7 @@ async function postAuth<T>(path: string, body?: unknown): Promise<T> {
       typeof errorData === 'object' && errorData !== null && 'detail' in errorData
         ? String((errorData as { detail: unknown }).detail)
         : 'Request failed';
-    throw new ApiError(detail, response.status, detail);
+    throw new ApiError(detail, response.status, detail, extractErrorCode(errorData), errorData);
   }
 
   if (response.status === 204) return undefined as T;
@@ -210,11 +215,6 @@ export async function confirmPasswordReset(
 
 /**
  * Verify an email address with the token from the verification email.
- *
- * Frontend points at the BFF path `/web-api/v1/auth/verify-email`;
- * however, the BFF auth router does NOT yet expose this endpoint (see
- * module docstring). This call will 404 at runtime until the BFF
- * mirror lands as a follow-up to PR B.
  */
 export async function verifyEmail(token: string): Promise<MessageResponse> {
   return postAuth<MessageResponse>('/verify-email', { token });
@@ -255,12 +255,6 @@ export async function getCurrentUser(): Promise<User> {
 
 /**
  * Resend the email verification mail to the current user.
- *
- * As with `verifyEmail`, this points at the BFF mirror that does not
- * yet exist (`/web-api/v1/auth/verify-email/resend`). The legacy v1
- * surface never exposed a `/verify-email/resend` endpoint either, so
- * the resend button has always been broken; the migration preserves
- * that state until the BFF mirror lands.
  */
 export async function resendVerificationEmail(): Promise<MessageResponse> {
   return postAuth<MessageResponse>('/verify-email/resend');

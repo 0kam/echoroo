@@ -302,6 +302,7 @@ async def confirm_password_reset(
     response_model=UserResponse,
     summary="Verify email address",
     description="Verify email using token from registration email",
+    responses={400: {"description": "Invalid or expired token"}},
 )
 async def verify_email(
     request: EmailVerifyRequest,

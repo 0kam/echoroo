@@ -87,6 +87,7 @@ app.conf.include = [
     # at row-claim time (research.md §6, FR-104).
     "echoroo.workers.outbox_processor",
     "echoroo.workers.login_notification_dispatcher",
+    "echoroo.workers.email_verification_dispatcher",
     # Trusted overlay lifecycle workers (Phase 10 / FR-044, FR-045).
     # ``trusted_long_lived_invalidation`` is intentionally NOT listed here
     # — it is a coroutine started by the FastAPI lifespan, not a Celery

@@ -78,6 +78,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.user import User
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.trusted_device_service import TrustedDeviceService
 
 logger = logging.getLogger(__name__)
 
@@ -232,10 +233,15 @@ async def soft_delete_user(
     user.security_stamp = secrets.token_hex(32)
     user.deleted_at = now
     user.updated_at = now
+    revoked_trusted_devices = await TrustedDeviceService(session).revoke_all_for_user(
+        user=user,
+        reason="account_deleted",
+    )
 
     audit_detail: dict[str, Any] = {
         "user_id": str(user_id),
         "deleted_at": now.isoformat(),
+        "trusted_devices_revoked": revoked_trusted_devices,
     }
 
     return UserSoftDeleteOutcome(

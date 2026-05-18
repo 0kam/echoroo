@@ -130,7 +130,7 @@ export class WebAuthError extends ApiError {
   constructor(
     message: string,
     status: number,
-    public readonly headers: Headers,
+    public readonly headers: Headers
   ) {
     super(message, status, message);
     this.name = 'WebAuthError';
@@ -167,12 +167,21 @@ export interface LoginRequest {
   password: string;
 }
 
-export type LoginState = '2fa_setup_required' | '2fa_required';
+export type LoginState = '2fa_setup_required' | '2fa_required' | 'complete';
 
-export interface LoginResponse {
-  login_state: LoginState;
+interface LoginInterimResponse {
+  login_state: Exclude<LoginState, 'complete'>;
   interim_token: string;
 }
+
+interface LoginCompleteResponse {
+  login_state: 'complete';
+  access_token: string;
+  expires_in: number;
+  trusted_device_used?: boolean;
+}
+
+export type LoginResponse = LoginInterimResponse | LoginCompleteResponse;
 
 export interface TotpSetupResponse {
   secret: string;
@@ -186,14 +195,21 @@ export interface TotpConfirmResponse {
   backup_codes: string[];
   access_token: string;
   expires_in: number;
+  trusted_device_created?: boolean;
 }
 
 export interface TotpChallengeResponse {
   access_token: string;
   expires_in: number;
+  trusted_device_created?: boolean;
 }
 
 export type TwoFactorMethod = 'totp' | 'backup_code';
+
+export interface TrustDeviceOptions {
+  trustDevice?: boolean;
+  deviceLabel?: string;
+}
 
 // ---------- Endpoints ----------
 
@@ -218,11 +234,14 @@ export async function confirmTotpSetup(
   interimToken: string,
   secret: string,
   totpCode: string,
+  options: TrustDeviceOptions = {}
 ): Promise<TotpConfirmResponse> {
   const { data } = await postJson<TotpConfirmResponse>('/2fa/setup/totp/confirm', {
     interim_token: interimToken,
     secret,
     totp_code: totpCode,
+    trust_device: options.trustDevice,
+    device_label: options.deviceLabel,
   });
   return data;
 }
@@ -231,11 +250,14 @@ export async function challengeTwoFactor(
   interimToken: string,
   method: TwoFactorMethod,
   code: string,
+  options: TrustDeviceOptions = {}
 ): Promise<TotpChallengeResponse> {
   const { data } = await postJson<TotpChallengeResponse>('/2fa/challenge', {
     interim_token: interimToken,
     method,
     code,
+    trust_device: options.trustDevice,
+    device_label: options.deviceLabel,
   });
   return data;
 }

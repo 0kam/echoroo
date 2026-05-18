@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import unicodedata
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from echoroo.core.text import has_control_chars
 
@@ -29,7 +30,44 @@ class RegisterResponse(BaseModel):
 
     user_id: UUID
     email: str
+    email_verified_at: datetime | None = None
+    email_verification_required: bool = True
     two_factor_setup_required: bool = True
+
+
+class EmailVerifyRequest(BaseModel):
+    """Request body for ``POST /web-api/v1/auth/verify-email``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str
+
+
+class EmailVerifyResponse(BaseModel):
+    """Response body after an email verification token is consumed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    user_id: UUID
+    email: str
+    email_verified_at: datetime
+    email_verification_required: bool = False
+
+
+class EmailVerificationResendRequest(BaseModel):
+    """Request body for ``POST /web-api/v1/auth/verify-email/resend``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+
+
+class EmailVerificationResendResponse(BaseModel):
+    """Generic anti-enumeration response for email verification resend."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accepted: bool = True
 
 
 class LoginRequest(BaseModel):
@@ -42,12 +80,43 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Password-verified login state for T150b to complete."""
+    """Password-verified login state, or complete trusted-device login."""
 
     model_config = ConfigDict(extra="forbid")
 
-    login_state: str
-    interim_token: str
+    login_state: Literal["2fa_setup_required", "2fa_required", "complete"]
+    interim_token: str | None = None
+    access_token: str | None = None
+    expires_in: int | None = None
+    trusted_device_used: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_variant(self) -> LoginResponse:
+        """Reject mixed interim/complete response shapes."""
+        if self.login_state == "complete":
+            if (
+                self.interim_token is not None
+                or self.access_token is None
+                or self.expires_in is None
+                or self.trusted_device_used is None
+            ):
+                raise ValueError("complete login response requires only session fields")
+            return self
+
+        if (
+            self.interim_token is None
+            or self.access_token is not None
+            or self.expires_in is not None
+            or self.trusted_device_used is not None
+        ):
+            raise ValueError("interim login response requires only interim_token")
+        return self
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("exclude_none", True)
+        dumped = super().model_dump(*args, **kwargs)
+        assert isinstance(dumped, dict)
+        return dumped
 
 
 class RefreshResponse(BaseModel):
@@ -87,6 +156,8 @@ class TotpSetupConfirmRequest(BaseModel):
     interim_token: str
     secret: str
     totp_code: str
+    trust_device: bool = False
+    device_label: str | None = Field(default=None, max_length=100)
 
 
 class TotpSetupConfirmResponse(BaseModel):
@@ -97,6 +168,7 @@ class TotpSetupConfirmResponse(BaseModel):
     backup_codes: list[str]
     access_token: str
     expires_in: int
+    trusted_device_created: bool = False
 
 
 class TwoFactorChallengeRequest(BaseModel):
@@ -107,6 +179,8 @@ class TwoFactorChallengeRequest(BaseModel):
     interim_token: str
     method: Literal["totp", "backup_code"]
     code: str
+    trust_device: bool = False
+    device_label: str | None = Field(default=None, max_length=100)
 
 
 class TwoFactorChallengeResponse(BaseModel):
@@ -116,6 +190,7 @@ class TwoFactorChallengeResponse(BaseModel):
 
     access_token: str
     expires_in: int
+    trusted_device_created: bool = False
 
 
 class WebAuthnRegisterRequest(BaseModel):

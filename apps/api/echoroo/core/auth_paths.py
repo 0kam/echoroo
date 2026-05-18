@@ -25,6 +25,7 @@ Decision matrix
 * ``/web-api/v1/auth/password-reset/request`` — pre-session password reset.
 * ``/web-api/v1/auth/password-reset/confirm`` — pre-session password reset.
 * ``/web-api/v1/auth/verify-email``    — pre-session email verification (token from registration email).
+* ``/web-api/v1/auth/verify-email/resend`` — pre-session email verification resend.
 * ``/web-api/v1/auth/logout``          — idempotent session termination.
 
 Logout CSRF / auth exemption
@@ -85,6 +86,7 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/password-reset/request",
     "/web-api/v1/auth/password-reset/confirm",
     "/web-api/v1/auth/verify-email",
+    "/web-api/v1/auth/verify-email/resend",
     "/web-api/v1/auth/confirm-identity-for-2fa-reset",
     "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
     "/web-api/v1/auth/logout",

@@ -42,6 +42,7 @@
   let error = $state<string | null>(null);
   let isSubmitting = $state(false);
   let secretCopied = $state(false);
+  let trustDevice = $state(false);
 
   onMount(async () => {
     const interimToken =
@@ -89,6 +90,7 @@
         setupData.next_interim_token,
         setupData.secret,
         totpCode.trim(),
+        { trustDevice },
       );
       backupCodes = result.backup_codes;
       apiClient.setAccessToken(result.access_token);
@@ -248,6 +250,19 @@
               placeholder={m.auth_two_factor_enter_code_placeholder()}
             />
           </div>
+
+          <label class="flex items-start gap-2 text-sm text-stone-700">
+            <input
+              type="checkbox"
+              bind:checked={trustDevice}
+              disabled={isSubmitting}
+              data-testid="trust-device-checkbox"
+              class="mt-1 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+            <span>
+              Trust this device for 30 days
+            </span>
+          </label>
 
           {#if error}
             <div class="rounded-md bg-danger-light p-3" role="alert" data-testid="two-factor-setup-error">

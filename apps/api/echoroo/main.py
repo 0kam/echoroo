@@ -24,6 +24,9 @@ from echoroo.core.settings import get_settings
 from echoroo.middleware.api_key_ip_enforcement import DbIpEnforcer
 from echoroo.middleware.auth_router import AuthRouterConfig, AuthRouterMiddleware
 from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
+from echoroo.middleware.email_verification_enforcement import (
+    EmailVerificationEnforcementMiddleware,
+)
 from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
 from echoroo.middleware.security import (
@@ -133,6 +136,15 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     app.add_middleware(
         TwoFactorEnforcementMiddleware,
         enforcement_prefixes=("/web-api/v1/", "/api/v1/"),
+    )
+
+    # Email verification must run after AuthRouter has attached a
+    # principal but before 2FA enforcement can return its own protected
+    # action block. Starlette middleware is LIFO, so this call sits
+    # between TwoFactorEnforcement and AuthRouter.
+    app.add_middleware(
+        EmailVerificationEnforcementMiddleware,
+        session_factory=middleware_session_factory,
     )
 
     # AuthRouter must run BEFORE TwoFactorEnforcement so the latter can

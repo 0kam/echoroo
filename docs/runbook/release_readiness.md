@@ -102,6 +102,36 @@ window opens.
 - The `services/email.py` wrapper logs failures but does NOT
   re-raise — verify a sample reset-password / 2FA-reset email
   reaches the inbox before opening signups.
+- Email verification uses the transactional outbox event type
+  `auth.email_verification.requested`; confirm the Celery worker imports
+  `echoroo.workers.email_verification_dispatcher` before enabling
+  signup volume.
+- Confirm SPF, DKIM, and DMARC are valid for the production sender
+  domain and that provider bounce / complaint webhooks or dashboards
+  are visible to on-call.
+- Before enabling `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`, run a
+  staging registration → verification smoke test and confirm zero
+  `dead_letter` rows for `auth.email_verification.requested`.
+
+### 5a. Email verification and trusted-device rollout gates
+
+These flags default off and should be enabled in order:
+
+1. Deploy schema, services, workers, and UI with
+   `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED=false`,
+   `TRUSTED_DEVICE_REGISTRATION_ENABLED=false`, and
+   `TRUSTED_DEVICE_BYPASS_ENABLED=false`.
+2. Validate token issue, resend, and delivery monitoring before turning
+   on email enforcement.
+3. Enable trusted-device registration only after cookie attributes,
+   hash-only storage, list/revoke, and five-device cap checks pass.
+4. Enable trusted-device bypass only after admin no-bypass, revocation,
+   and high-risk step-up checks pass.
+
+Operational references:
+[docs/runbook/email_verification.md](email_verification.md),
+[docs/runbook/trusted_devices.md](trusted_devices.md), and
+[specs/010-email-verification-trusted-devices/rollout-checklist.md](../../specs/010-email-verification-trusted-devices/rollout-checklist.md).
 
 ### 6. Turnstile (Cloudflare CAPTCHA)
 
@@ -142,6 +172,10 @@ window opens.
   - 2FA reset queue stalled (> 24h dispatch delay = the runbook in
     `apps/api/echoroo/services/two_factor_reset_service.py` is
     designed around this SLA)
+  - verification-email outbox `dead_letter` count above zero
+  - verification-email provider bounce or delivery-failure rate above
+    the release threshold
+  - trusted-device bypass rejection spike by normalized reason
 
 ### 10. Bootstrap
 

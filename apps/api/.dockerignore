@@ -5,6 +5,12 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .coverage
+coverage/
 *.egg-info/
 test_audio.wav
 celerybeat-schedule
+.git/
+Dockerfile*
+.dockerignore
+*.log*
+.env*
