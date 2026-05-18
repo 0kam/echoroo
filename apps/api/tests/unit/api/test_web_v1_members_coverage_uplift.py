@@ -280,6 +280,8 @@ async def test_accept_project_invitation_happy_path_member() -> None:
     invitation = MagicMock()
     invitation.kind = ProjectInvitationKind.MEMBER
     invitation.project_id = uuid4()
+    invitation.email = current_user.email
+    invitation.accepted_at = None
     member = MagicMock()
     member.id = member_id
     outcome = MagicMock()

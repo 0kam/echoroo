@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy import text
 
@@ -27,7 +28,7 @@ from tests.integration.api.web_v1.test_auth_totp import (
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def _cleanup_privileged_rows(session_factory: object) -> None:
     yield
     async with session_factory() as session, session.begin():  # type: ignore[operator]

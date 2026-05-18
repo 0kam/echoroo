@@ -9,12 +9,15 @@ from __future__ import annotations
 import importlib
 import re
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.security import hash_password
+from echoroo.models.superuser import Superuser
 from echoroo.models.trusted_device import TrustedDevice
 from echoroo.models.user import User
 
@@ -159,3 +162,149 @@ async def test_revoke_device_and_revoke_all_mark_only_user_devices_revoked(
     assert revoked_count == 1
     assert second.device.revoked_at is not None
     assert other_device.device.revoked_at is None
+
+
+async def test_evaluate_login_bypass_rejects_unknown_secret(
+    db_session: AsyncSession,
+) -> None:
+    mod = _service_module()
+    user = await _create_user(db_session, "trusted-missing@example.com")
+
+    evaluation = await mod.TrustedDeviceService(db_session).evaluate_login_bypass(
+        user=user,
+        raw_secret="A" * 43,
+        recent_password_failure=False,
+    )
+
+    assert evaluation.accepted is False
+    assert evaluation.reject_reason == "not_found"
+
+
+async def test_evaluate_login_bypass_rejects_other_users_device(
+    db_session: AsyncSession,
+) -> None:
+    mod = _service_module()
+    user = await _create_user(db_session, "trusted-owner@example.com")
+    other = await _create_user(db_session, "trusted-device-owner@example.com")
+    service = mod.TrustedDeviceService(db_session)
+    issued = await service.issue_device(user=other, label="other")
+
+    evaluation = await service.evaluate_login_bypass(
+        user=user,
+        raw_secret=issued.raw_secret,
+        recent_password_failure=False,
+    )
+
+    assert evaluation.accepted is False
+    assert evaluation.device == issued.device
+    assert evaluation.reject_reason == "user_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("mutate_device", "expected_reason"),
+    [
+        (lambda device: setattr(device, "revoked_at", datetime.now(UTC)), "revoked"),
+        (
+            lambda device: setattr(
+                device,
+                "expires_at",
+                datetime.now(UTC) - timedelta(seconds=1),
+            ),
+            "expired",
+        ),
+        (
+            lambda device: setattr(device, "security_stamp", "old-security-stamp"),
+            "security_stamp_mismatch",
+        ),
+    ],
+)
+async def test_evaluate_login_bypass_rejects_inactive_or_stale_device(
+    db_session: AsyncSession,
+    mutate_device: object,
+    expected_reason: str,
+) -> None:
+    mod = _service_module()
+    user = await _create_user(db_session, f"trusted-{expected_reason}@example.com")
+    service = mod.TrustedDeviceService(db_session)
+    issued = await service.issue_device(user=user, label=expected_reason)
+    mutate_device(issued.device)  # type: ignore[operator]
+    await db_session.flush()
+
+    evaluation = await service.evaluate_login_bypass(
+        user=user,
+        raw_secret=issued.raw_secret,
+        recent_password_failure=False,
+    )
+
+    assert evaluation.accepted is False
+    assert evaluation.device == issued.device
+    assert evaluation.reject_reason == expected_reason
+
+
+async def test_evaluate_login_bypass_accepts_and_updates_last_used_metadata(
+    db_session: AsyncSession,
+) -> None:
+    mod = _service_module()
+    user = await _create_user(db_session, "trusted-accepted@example.com")
+    service = mod.TrustedDeviceService(db_session)
+    issued = await service.issue_device(user=user, label="Accepted")
+    now = datetime.now(UTC)
+
+    evaluation = await service.evaluate_login_bypass(
+        user=user,
+        raw_secret=issued.raw_secret,
+        recent_password_failure=False,
+        ip="203.0.113.55",
+        user_agent="pytest-agent",
+        now=now,
+    )
+
+    assert evaluation.accepted is True
+    assert evaluation.device == issued.device
+    assert issued.device.last_used_at == now
+    assert issued.device.last_ip_hash is not None
+    assert issued.device.last_user_agent_hash is not None
+
+
+async def test_is_privileged_user_detects_active_superuser_row(
+    db_session: AsyncSession,
+) -> None:
+    mod = _service_module()
+    user = await _create_user(db_session, "trusted-superuser@example.com")
+    db_session.add(
+        Superuser(
+            user_id=user.id,
+            added_by_id=None,
+            added_at=datetime.now(UTC),
+            webauthn_credentials=[],
+            allowed_ip_cidrs=[],
+            revoked_at=None,
+        )
+    )
+    await db_session.flush()
+
+    assert await mod.TrustedDeviceService(db_session)._is_privileged_user(user) is True
+
+
+async def test_security_stamp_rotation_listener_skips_non_persistent_users() -> None:
+    mod = _service_module()
+    transient_user = User(
+        id=uuid4(),
+        email="transient@example.com",
+        password_hash="hash",
+        display_name="Transient",
+        security_stamp="s" * 64,
+    )
+    fake_session = MagicMock()
+    fake_session.dirty = [transient_user]
+
+    mod._revoke_devices_on_security_stamp_rotation(fake_session, None, None)
+
+    fake_session.execute.assert_not_called()
+
+
+async def test_normalize_label_returns_none_for_missing_or_blank_label() -> None:
+    mod = _service_module()
+
+    assert mod._normalize_label(None) is None
+    assert mod._normalize_label("   ") is None
