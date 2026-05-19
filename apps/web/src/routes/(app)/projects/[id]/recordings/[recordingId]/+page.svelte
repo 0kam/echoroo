@@ -13,6 +13,8 @@
   import ViewportBar from '$lib/components/audio/ViewportBar.svelte';
   import ViewportToolbar from '$lib/components/audio/ViewportToolbar.svelte';
   import ScaleControls from '$lib/components/audio/ScaleControls.svelte';
+  import ClipList from '$lib/components/data/ClipList.svelte';
+  import ClipDetail from '$lib/components/data/ClipDetail.svelte';
 
   import {
     DEFAULT_SPECTROGRAM_SETTINGS,
@@ -29,6 +31,7 @@
     centerWindowOn,
   } from '$lib/utils/viewport';
   import { untrack } from 'svelte';
+  import type { Clip } from '$lib/types/data';
   import * as m from '$lib/paraglide/messages';
 
   // Route params
@@ -148,6 +151,7 @@
   let showEditModal = $state(false);
   let editNote = $state('');
   let editTimeExpansion = $state(1.0);
+  let selectedClip = $state<Clip | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -239,6 +243,10 @@
     if (confirm(m.recording_detail_delete_confirm())) {
       $deleteMut.mutate();
     }
+  }
+
+  function handleClipSelect(clip: Clip) {
+    selectedClip = clip;
   }
 
   function formatDuration(seconds: number): string {
@@ -493,6 +501,22 @@
         <p class="notes-content">{recording.note}</p>
       </div>
     {/if}
+
+    <!-- Clips section -->
+    <section class="clips-section" aria-label="Recording clips">
+      <ClipList
+        {projectId}
+        {recordingId}
+        selectedClipId={selectedClip?.id ?? null}
+        onSelect={handleClipSelect}
+      />
+
+      {#if selectedClip}
+        <div class="clip-detail-panel">
+          <ClipDetail {projectId} {recordingId} clip={selectedClip} />
+        </div>
+      {/if}
+    </section>
   {/if}
 
   <!-- Edit Modal -->
@@ -768,5 +792,16 @@
 
   :global(.dark) .notes-content {
     color: #a1a1aa;
+  }
+
+  .clips-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding-top: 0.5rem;
+  }
+
+  .clip-detail-panel {
+    max-width: 760px;
   }
 </style>

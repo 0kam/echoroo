@@ -490,12 +490,44 @@ test.describe('Seeded media permissions @e2e-media', () => {
             ) && [200, 206].includes(response.status()),
         { timeout: 30000 }
       );
+      const clipListResponsePromise = page.waitForResponse(
+        (response) =>
+          response
+            .url()
+            .includes(
+              `/web-api/v1/projects/${project.id}/recordings/${project.recordingId}/clips`
+            ) && response.status() === 200,
+        { timeout: 30000 }
+      );
+      const clipPreviewResponsePromise = page.waitForResponse(
+        (response) => {
+          const url = response.url();
+          return (
+            url.includes(
+              `/web-api/v1/projects/${project.id}/recordings/${project.recordingId}/spectrogram`
+            ) &&
+            url.includes('media_token=') &&
+            url.includes('start=') &&
+            url.includes('end=') &&
+            url.includes('width=160') &&
+            url.includes('height=60') &&
+            response.status() === 200
+          );
+        },
+        { timeout: 30000 }
+      );
 
       await page.goto(recordingPath);
       await spectrogramResponsePromise;
       await mediaTokenResponsePromise;
       await playbackResponsePromise;
+      await clipListResponsePromise;
+      await clipPreviewResponsePromise;
       await expect(page.locator('canvas[aria-label="Spectrogram visualization"]')).toBeVisible({
+        timeout: 30000,
+      });
+      const clipPreviewImage = page.getByTestId('clip-preview-image').first();
+      await expect(clipPreviewImage).toBeVisible({
         timeout: 30000,
       });
 
@@ -503,6 +535,51 @@ test.describe('Seeded media permissions @e2e-media', () => {
       await expect(playButton).toBeVisible({ timeout: 15000 });
       await playButton.click();
       await expect(page.locator('audio')).toHaveCount(1);
+
+      const clipDetailSpectrogramResponsePromise = page.waitForResponse(
+        (response) => {
+          const url = response.url();
+          return (
+            url.includes(
+              `/web-api/v1/projects/${project.id}/recordings/${project.recordingId}/spectrogram`
+            ) &&
+            url.includes('media_token=') &&
+            url.includes('start=') &&
+            url.includes('end=') &&
+            url.includes('width=600') &&
+            url.includes('height=200') &&
+            response.status() === 200
+          );
+        },
+        { timeout: 30000 }
+      );
+      const clipPlaybackResponsePromise = page.waitForResponse(
+        (response) => {
+          const url = response.url();
+          return (
+            url.includes(
+              `/web-api/v1/projects/${project.id}/recordings/${project.recordingId}/playback`
+            ) &&
+            url.includes('media_token=') &&
+            url.includes('start=') &&
+            url.includes('end=') &&
+            [200, 206].includes(response.status())
+          );
+        },
+        { timeout: 30000 }
+      );
+
+      const clipRow = clipPreviewImage.locator('xpath=ancestor::tr[1]');
+      await expect(clipRow).toBeVisible({ timeout: 15000 });
+      await clipRow.click();
+      await clipDetailSpectrogramResponsePromise;
+      await expect(page.getByTestId('clip-detail-spectrogram')).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId('clip-detail-audio')).toHaveAttribute(
+        'src',
+        /\/web-api\/v1\/projects\/.+\/recordings\/.+\/playback\?.*media_token=/
+      );
+      await page.getByTestId('clip-detail-play').click();
+      await clipPlaybackResponsePromise;
     });
   }
 });

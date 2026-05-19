@@ -242,7 +242,7 @@
 - [X] T094 [US7] Update verified commands, clip media seed notes, and residual risks in `specs/007-permission-test-coverage/e2e-roadmap.md`, `specs/007-permission-test-coverage/quickstart.md`, and related planning docs
 - [X] T096 [US7] Re-run the expanded media suite and full seeded permission Playwright set after Claude review follow-up
 
-**Checkpoint**: Media coverage is green independently and with the full seeded baseline for recording and clip API-primary media. Clip browser UI wiring and storage-backed export media flows remain future scope.
+**Checkpoint**: Media coverage is green independently and with the full seeded baseline for recording and clip API-primary media. Clip browser UI wiring is handled in US14; broader storage-backed export media flows remain future scope.
 
 ---
 
@@ -264,7 +264,7 @@
 - [X] T101 [US8] Run export/search suite, Prettier, ESLint, `npm run check`, and the full seeded permission Playwright set after dataset ZIP coverage
 - [X] T102 [US8] Re-run seed after lifecycle full-suite verification and update roadmap/tasks/contracts residual risks
 
-**Checkpoint**: Dataset export ZIP coverage is green independently and with the full seeded baseline for `include_audio=false`; dataset export with audio remains a future storage-contract slice. `export-recordings` and reference-audio permission-boundary guards are handled later in US9.
+**Checkpoint**: Dataset export ZIP coverage is green independently and with the full seeded baseline for `include_audio=false`; dataset export with audio is handled later in US12. `export-recordings` and reference-audio permission-boundary guards are handled later in US9.
 
 ---
 
@@ -307,7 +307,98 @@
 - [X] T112 [US10] Run seed, API static/type checks, E2E file Prettier/ESLint, `npm run check`, the export/search suite, and the full seeded permission Playwright set
 - [X] T113 [US10] Run bounded Claude review for the export-recordings seed/spec payload contract and update roadmap/tasks/contracts/data-model/quickstart/plan/spec notes
 
-**Checkpoint**: `export-recordings` is covered both at the permission boundary and through one deterministic successful CSV payload; reference-audio streaming and dataset export with audio remain future storage-contract slices.
+**Checkpoint**: `export-recordings` is covered both at the permission boundary and through one deterministic successful CSV payload; reference-audio streaming is handled in US11 and dataset export with audio is handled in US12.
+
+---
+
+## Phase 14: User Story 11 - Reference-audio Stream Confidence (Priority: P2)
+
+**Goal**: Cover one deterministic successful S3-backed `reference-audio` stream without changing the storage-free guard sessions.
+
+**Independent Test**: `E2E_EXPORT_SEARCH_ENABLED=1 npx playwright test tests/e2e/permissions/seeded-export-search.spec.ts --grep "owner can stream reference audio" --reporter=list --workers=1`
+
+### Tests for User Story 11
+
+- [X] T114 [US11] Review `reference-audio` storage contract and confirm the route reads `SearchSession.reference_audio_keys` directly through S3 rather than `AUDIO_ROOT`
+- [X] T115 [US11] Seed one deterministic reference WAV S3 object per exportable search session while leaving storage-free guard sessions at `reference_audio_keys=null`
+- [X] T116 [US11] Add owner E2E assertions for full `200` audio responses and `Range: bytes=0-3` `206` responses in `apps/web/tests/e2e/permissions/seeded-export-search.spec.ts`
+
+### Implementation for User Story 11
+
+- [X] T117 [US11] Run seed, API static/type checks, E2E file Prettier/ESLint, `npm run check`, the focused reference-audio test, and the export/search suite
+- [X] T118 [US11] Update roadmap, tasks, contracts, data model, quickstart, plan, and spec notes for reference-audio success coverage and remaining dataset audio ZIP risk
+
+**Checkpoint**: `reference-audio` is covered both at the permission boundary and through one deterministic successful full/Range WAV payload; dataset export with audio is handled in US12.
+
+---
+
+## Phase 15: User Story 12 - Dataset Export Audio ZIP Confidence (Priority: P2)
+
+**Goal**: Cover one deterministic successful dataset ZIP export with audio using the seeded S3-backed recording fixture.
+
+**Independent Test**: `E2E_EXPORT_SEARCH_ENABLED=1 npx playwright test tests/e2e/permissions/seeded-export-search.spec.ts --grep "owner can export seeded datasets with audio" --reporter=list --workers=1`
+
+### Tests for User Story 12
+
+- [X] T119 [US12] Review dataset export audio storage contract and confirm S3-only seeded recordings are skipped by the old `get_absolute_path()` path
+- [X] T120 [US12] Align dataset export `AudioService` construction with S3 cache settings in `apps/api/echoroo/api/v1/datasets.py`
+- [X] T121 [US12] Resolve `include_audio=true` recordings through `AudioService.ensure_file_local()` in `apps/api/echoroo/services/export.py`
+- [X] T122 [US12] Add role/visibility matrix E2E assertions for dataset ZIP `include_audio=true`, expected audio entry path, and inflated WAV `RIFF` bytes in `apps/web/tests/e2e/permissions/seeded-export-search.spec.ts`
+
+### Implementation for User Story 12
+
+- [X] T123 [US12] Run API static/type checks, E2E file Prettier/ESLint, the focused dataset-audio test, and the export/search suite
+- [X] T124 [US12] Update roadmap, tasks, contracts, data model, quickstart, plan, and spec notes for dataset audio ZIP success coverage and remaining broader payload risks
+
+**Checkpoint**: Dataset export is covered through role/status matrix checks with `include_audio=false` and through role/visibility matrix `include_audio=true` ZIP payload assertions for allowed cases.
+
+---
+
+## Phase 16: User Story 13 - Seeder Hygiene Follow-up (Priority: P2)
+
+**Goal**: Resolve Claude hygiene notes without changing seeded permission expectations.
+
+**Independent Test**: Run the seeder, inspect the emitted payload contract, and run the full seeded permission E2E set.
+
+### Tests for User Story 13
+
+- [X] T125 [US13] Review Claude hygiene notes for seeded API key grants, raw secret stdout duplication, fixture-user lockout state, and project lookup scope
+- [X] T126 [US13] Verify the updated seed payload keeps raw secrets in `env` while top-level users/API keys expose env-name metadata only
+
+### Implementation for User Story 13
+
+- [X] T127 [US13] Replace one-size seeded API key grants with role-scoped allowlists in `apps/api/echoroo/scripts/seed_e2e_permissions.py`
+- [X] T128 [US13] Narrow seeded project lookup by owner ID in `apps/api/echoroo/scripts/seed_e2e_permissions.py`
+- [X] T129 [US13] Reset fixture-user Redis 2FA failure and lockout keys best-effort on seed rerun in `apps/api/echoroo/scripts/seed_e2e_permissions.py`
+- [X] T130 [US13] Remove duplicated raw TOTP/API key values from top-level seed JSON while preserving `env`
+- [X] T131 [US13] Run seeder, API static/type checks, export/search E2E, full seeded permission E2E, and post-run seeder state restoration
+- [X] T132 [US13] Update README, roadmap, tasks, contracts, data model, quickstart, plan, and spec notes for the hygiene contract
+
+**Checkpoint**: Claude hygiene notes are resolved with the full seeded suite still green.
+
+---
+
+## Phase 17: User Story 14 - Clip Browser BFF Media Wiring (Priority: P2)
+
+**Goal**: Cover the recording-detail clip browser path through session BFF
+routes and scoped media-token URLs.
+
+**Independent Test**: `E2E_MEDIA_ENABLED=1 npx playwright test tests/e2e/permissions/seeded-media.spec.ts --grep "restricted recording detail wires media UI" --reporter=list --workers=1`
+
+### Tests for User Story 14
+
+- [X] T133 [US14] Review clip browser data flow and confirm browser code should use `/web-api/v1` session routes for clip list/detail rather than `/api/v1` API-key routes
+- [X] T134 [US14] Add owner/trusted E2E assertions for tokenized clip preview spectrogram, detail spectrogram, and playback wiring in `apps/web/tests/e2e/permissions/seeded-media.spec.ts`
+
+### Implementation for User Story 14
+
+- [X] T135 [US14] Add read-only clip list/detail BFF adapters in `apps/api/echoroo/api/web_v1/projects/_media.py`
+- [X] T136 [US14] Wire clip list/detail browser calls and clip preview/detail media URLs through scoped recording media-token helpers in `apps/web/src/lib/api/clips.ts`, `apps/web/src/lib/components/data/ClipList.svelte`, `apps/web/src/lib/components/data/ClipDetail.svelte`, and `apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte`
+- [X] T137 [US14] Run API static/type checks for the BFF adapter and frontend checks for changed clip/media files
+- [X] T138 [US14] Run the focused clip browser media test and the full media suite
+- [X] T139 [US14] Update roadmap, tasks, contracts, data model, quickstart, plan, and spec notes for completed clip browser BFF media-token coverage
+
+**Checkpoint**: Clip browser list/detail requests use session BFF routes, and the restricted recording detail smoke verifies tokenized clip preview, detail spectrogram, and playback URLs for owner/trusted users.
 
 ---
 
@@ -327,7 +418,11 @@
 - **US7 Media (Phase 10)**: Depends on seeded recording/clip IDs and real WAV fixture storage. It is independent of Export/Search but requires Claude review for storage/media auth/browser wiring.
 - **US8 Dataset Export ZIP (Phase 11)**: Depends on seeded dataset IDs and API keys. It extends Export/Search but deliberately avoids audio-storage requirements.
 - **US9 Search Storage Gate Guards (Phase 12)**: Depends on seeded search sessions and explicit backend action registration. It extends Export/Search while deliberately avoiding successful storage-backed payload assertions.
-- **US10 Export-recordings CSV Payload (Phase 13)**: Depends on seeded recordings, deterministic embeddings, and exportable search sessions. It extends Export/Search with one successful CSV body assertion while avoiding S3/reference-audio storage.
+- **US10 Export-recordings CSV Payload (Phase 13)**: Depends on seeded recordings, deterministic embeddings, and exportable search sessions. It extends Export/Search with one successful CSV body assertion while leaving S3 reference-audio storage to US11.
+- **US11 Reference-audio Stream (Phase 14)**: Depends on deterministic WAV fixtures, S3/LocalStack availability, and exportable search sessions. It extends Export/Search with one successful S3-backed full/Range stream assertion.
+- **US12 Dataset Export Audio ZIP (Phase 15)**: Depends on seeded recording WAV objects, S3 cache configuration, and the Export/Search suite harness. It extends dataset ZIP coverage with role/visibility matrix audio payload assertions for allowed cases.
+- **US13 Seeder Hygiene (Phase 16)**: Depends on the completed seeded suite surface. It must preserve all existing E2E expectations while tightening fixture output and API key grants.
+- **US14 Clip Browser BFF Media Wiring (Phase 17)**: Depends on US7 media fixtures and the recording-detail browser surface. It extends Media with session BFF list/detail and media-token assertions.
 
 ### User Story Dependencies
 
@@ -341,6 +436,10 @@
 - **US8 (P2)**: Requires seeded dataset IDs. It depends on the Export/Search suite harness but not on search result storage, reference audio, or media fixtures.
 - **US9 (P2)**: Requires seeded storage-free search sessions and API keys. It depends on the Export/Search suite harness and backend action gates but not on seeded result archives or reference-audio objects.
 - **US10 (P2)**: Requires seeded deterministic embeddings and exportable search sessions. It depends on the Export/Search suite harness and seeded recordings but not on S3 audio objects.
+- **US11 (P2)**: Requires seeded deterministic reference WAV objects in S3 and exportable search sessions. It depends on the Export/Search suite harness and should remain separate from dataset audio ZIP work.
+- **US12 (P2)**: Requires seeded deterministic recording WAV objects in S3 and the dataset export audio path to use `AudioService.ensure_file_local()`. It depends on the Export/Search suite harness and remains separate from broader dataset ZIP payload breadth beyond the seeded single-recording fixture.
+- **US13 (P2)**: Requires all seeded API key users and suites so role-scoped grants can be verified against the complete matrix.
+- **US14 (P2)**: Requires seeded clips, browser-session auth, and the existing recording media-token helper path.
 
 ### Within Each User Story
 
@@ -358,8 +457,8 @@
 - T041-T045 can run in parallel with US1/US2 because they only update roadmap documentation, but coordinate writes to `e2e-roadmap.md`.
 - Never run the vote/comment mutation suite in parallel with another suite that mutates the same seeded annotations.
 - Trusted Overlay lifecycle mutates only disposable lifecycle overlays and should be run after a fresh seed. Do not run it in parallel with tests that assume the lifecycle overlay remains active.
-- Export/Search is API-primary and read-only in the completed slice. Dataset ZIP `include_audio=false` is also read-only and storage-light. Search storage gate guards are read-only and assert 403 vs fixture-missing 404 only. The exportable search session covers one deterministic successful `export-recordings` CSV body. Keep future audio-backed ZIP, successful reference-audio streaming, and broader CSV body checks separate until those contracts are reviewed.
-- Media is read-only after seeding and can run with other read-only suites. Keep future clip browser UI/BFF media-token or storage-backed export media checks separate until those contracts are reviewed.
+- Export/Search is API-primary and read-only in the completed slice. Dataset ZIP `include_audio=false` is also read-only and storage-light. Search storage gate guards are read-only and assert 403 vs fixture-missing 404 only. The exportable search session covers one deterministic successful `export-recordings` CSV body and one deterministic S3-backed `reference-audio` full/Range stream. Dataset ZIP `include_audio=true` covers role/visibility matrix payload assertions for allowed cases. Keep broader CSV body checks separate until those contracts are reviewed.
+- Media is read-only after seeding and can run with other read-only suites. Clip browser UI/BFF media-token coverage is complete; keep future storage-backed export media checks separate until those contracts are reviewed.
 
 ## Parallel Example: After Foundational
 
@@ -395,7 +494,11 @@ Both workers must not revert existing seeded helper, seed script, or README chan
 8. Deliver US8 Dataset Export ZIP permission coverage.
 9. Deliver US9 Search Storage Gate Guard coverage.
 10. Deliver US10 Export-recordings CSV Payload coverage.
-11. Run cross-cutting verification for implemented stories.
+11. Deliver US11 Reference-audio Stream coverage.
+12. Deliver US12 Dataset Export Audio ZIP coverage.
+13. Deliver US13 Seeder Hygiene follow-up.
+14. Deliver US14 Clip Browser BFF Media Wiring coverage.
+15. Run cross-cutting verification for implemented stories.
 
 ### Verification Commands
 
@@ -407,6 +510,7 @@ Changed-file scope reviewed on 2026-05-18:
 
 - Seeder/docs/helper baseline: `apps/api/echoroo/scripts/seed_e2e_permissions.py`, `apps/api/README.md`, and shared seeded E2E helpers.
 - New E2E suites: `seeded-data-surfaces.spec.ts`, `seeded-vote-comment.spec.ts`, `seeded-trusted-overlay.spec.ts`, `seeded-export-search.spec.ts`, and `seeded-media.spec.ts`.
+- Clip browser media wiring: `apps/api/echoroo/api/web_v1/projects/_media.py`, `apps/web/src/lib/api/clips.ts`, `apps/web/src/lib/components/data/ClipList.svelte`, `apps/web/src/lib/components/data/ClipDetail.svelte`, and `apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte`.
 - Planning and handoff docs: this tasks file plus the feature plan, spec, contracts, quickstart, data model, research notes, and roadmap.
 - Tooling ignore/config updates: web Docker, Prettier, and ESLint ignores for generated coverage/log/env output.
 
@@ -414,9 +518,9 @@ Residual risks:
 
 - Data Surfaces detection detail cases are explicit skips because the current detection list path returns no seeded minimal annotation rows.
 - Trusted Overlay lifecycle covers owner edit/extend/revoke, admin mutation denial, expired-filter listing, fresh invite issuance, and post-revoke capability denial. Invitation accept/re-grant activation remains future scope because the signed token is delivered through email/outbox.
-- Export/Search currently validates search session status, CSV content type, dataset ZIP shape for `include_audio=false`, search storage guard 403/404 boundaries, and one deterministic successful `export-recordings` CSV body.
-- Media covers seeded recording audio/playback/spectrogram/download bytes, clip audio/spectrogram/download bytes, and representative owner/trusted recording browser media wiring.
-- Successful reference-audio streaming and dataset export with audio remain out of scope pending storage and payload contract review.
-- Clip browser UI/BFF media-token wiring remains out of scope; clip API-primary media/download is covered by the media suite.
+- Export/Search currently validates search session status, CSV content type, dataset ZIP shape for `include_audio=false`, role/visibility matrix dataset ZIP audio payloads for `include_audio=true`, search storage guard 403/404 boundaries, one deterministic successful `export-recordings` CSV body, and one deterministic successful `reference-audio` full/Range WAV stream.
+- Media covers seeded recording audio/playback/spectrogram/download bytes, clip audio/spectrogram/download bytes, representative owner/trusted recording browser media wiring, and clip browser UI/BFF media-token wiring.
+- Broader dataset audio ZIP payload checks beyond the seeded single-recording fixture remain out of scope pending storage and payload contract review.
+- Clip browser UI/BFF media-token wiring is covered through restricted recording detail smoke tests for owner/trusted users; broader UX behavior beyond list/select/detail media loading remains out of scope.
 - Guest public explore list currently includes restricted project metadata; current tests assert private metadata non-leak rather than restricted ID absence.
 - `npm run check` passes with 0 errors and existing Svelte warnings unrelated to this slice.

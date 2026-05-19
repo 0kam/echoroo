@@ -83,7 +83,7 @@ Seed permission fixtures into a local development database without wiping existi
 uv run python -m echoroo.scripts.seed_e2e_permissions --confirm
 ```
 
-The command writes a JSON payload to stdout with user emails, IDs, password, TOTP secrets, project IDs, site IDs, dataset IDs, recording IDs, clip IDs, detection IDs, annotation IDs, search session IDs, trusted overlay IDs, API keys, and an `env` object containing representative `E2E_*` environment variables. It also creates deterministic WAV fixtures for the seeded recording paths in local object storage, falling back to `AUDIO_ROOT` when object storage is unavailable. Treat this output as sensitive test-only material because it includes active TOTP secrets and raw API keys. Re-running it updates only rows using the selected fixture prefix.
+The command writes a JSON payload to stdout with user emails, IDs, project IDs, site IDs, dataset IDs, recording IDs, clip IDs, detection IDs, annotation IDs, search session IDs, trusted overlay IDs, API key metadata, and an `env` object containing representative `E2E_*` environment variables. Raw TOTP secrets, the shared password, and raw API keys are emitted only through `env`; top-level user/API-key/credential payloads reference the corresponding env variable names. It also creates deterministic WAV fixtures for the seeded recording paths in local object storage, falling back to `AUDIO_ROOT` when object storage is unavailable. Treat this output as sensitive test-only material because `env` includes active TOTP secrets and raw API keys. Re-running it updates only rows using the selected fixture prefix.
 
 The flat `env` payload includes public and restricted fixture object IDs for browser specs:
 

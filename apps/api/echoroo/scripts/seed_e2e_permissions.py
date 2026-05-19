@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core import s3
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.permissions import Permission
+from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
 from echoroo.models.annotation import Annotation
@@ -115,22 +116,61 @@ TRUSTED_PERMISSION_VALUES = (
 )
 TRUSTED_DURATION_SECONDS = 30 * 24 * 3600
 API_KEY_DURATION_SECONDS = 30 * 24 * 3600
-API_KEY_PERMISSION_VALUES = (
+PUBLIC_AUTHENTICATED_PERMISSION_VALUES = (
+    Permission.VIEW_PROJECT_METADATA.value,
+    Permission.VIEW_DATASET_LIST.value,
     Permission.VIEW_MEDIA.value,
     Permission.VIEW_DETECTION.value,
-    Permission.VIEW_PRECISE_LOCATION.value,
+    Permission.SEARCH_WITHIN_PROJECT.value,
+    Permission.SEARCH_CROSS_PROJECT.value,
     Permission.DOWNLOAD.value,
     Permission.EXPORT.value,
-    Permission.SEARCH_WITHIN_PROJECT.value,
     Permission.VOTE.value,
     Permission.COMMENT.value,
-    Permission.MANAGE_DATASET.value,
-    Permission.MANAGE_DATASET_ADMIN.value,
-    Permission.MANAGE_MEMBERS.value,
-    Permission.MANAGE_TRUSTED.value,
-    Permission.EDIT_PROJECT.value,
-    Permission.DELETE_PROJECT.value,
 )
+
+
+def _permission_value_union(*permission_groups: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(sorted({permission for group in permission_groups for permission in group}))
+
+
+API_KEY_MEMBER_PERMISSION_VALUES = _permission_value_union(
+    PUBLIC_AUTHENTICATED_PERMISSION_VALUES,
+    (
+        Permission.VIEW_PRECISE_LOCATION.value,
+        Permission.MANAGE_DATASET.value,
+    ),
+)
+API_KEY_ADMIN_PERMISSION_VALUES = _permission_value_union(
+    API_KEY_MEMBER_PERMISSION_VALUES,
+    (
+        Permission.MANAGE_DATASET_ADMIN.value,
+        Permission.MANAGE_MEMBERS.value,
+        Permission.EDIT_PROJECT.value,
+    ),
+)
+API_KEY_OWNER_PERMISSION_VALUES = _permission_value_union(
+    API_KEY_ADMIN_PERMISSION_VALUES,
+    (
+        Permission.MANAGE_TRUSTED.value,
+        Permission.DELETE_PROJECT.value,
+    ),
+)
+API_KEY_ROLE_PERMISSION_VALUES: dict[str, tuple[str, ...]] = {
+    "owner": API_KEY_OWNER_PERMISSION_VALUES,
+    "admin": API_KEY_ADMIN_PERMISSION_VALUES,
+    "member": API_KEY_MEMBER_PERMISSION_VALUES,
+    "viewer": PUBLIC_AUTHENTICATED_PERMISSION_VALUES,
+    "trusted": _permission_value_union(
+        PUBLIC_AUTHENTICATED_PERMISSION_VALUES,
+        TRUSTED_PERMISSION_VALUES,
+    ),
+    "trusted_lifecycle": _permission_value_union(
+        PUBLIC_AUTHENTICATED_PERMISSION_VALUES,
+        TRUSTED_PERMISSION_VALUES,
+    ),
+    "nonmember": PUBLIC_AUTHENTICATED_PERMISSION_VALUES,
+}
 API_KEY_ENV_NAMES: dict[str, str] = {
     "owner": "E2E_OWNER_API_KEY",
     "admin": "E2E_ADMIN_API_KEY",
@@ -140,6 +180,12 @@ API_KEY_ENV_NAMES: dict[str, str] = {
     "trusted_lifecycle": "E2E_TRUSTED_LIFECYCLE_API_KEY",
     "nonmember": "E2E_NONMEMBER_API_KEY",
 }
+TWO_FACTOR_FAILURE_KEY_TEMPLATES = (
+    "2fa:totp_fail:{user_id}",
+    "2fa:totp_consecutive_fail:{user_id}",
+    "2fa:totp_lock:{user_id}",
+    "2fa:backup_fail:{user_id}",
+)
 
 RESTRICTED_CONFIG: dict[str, Any] = {
     "allow_media_playback": True,
@@ -360,6 +406,35 @@ def _ensure_recording_media_fixture(path: str) -> str:
         return "local"
 
 
+def _ensure_reference_audio_fixture(path: str) -> None:
+    """Ensure an exportable search session reference audio object exists in S3."""
+    payload = _fixture_wav_bytes()
+    expected_sha256 = hashlib.sha256(payload).hexdigest()
+    settings = get_settings()
+    client = s3.get_s3_client()
+    s3.ensure_bucket_exists(client)
+
+    existing = s3.verify_object_exists(
+        path,
+        expected_size=len(payload),
+        expected_sha256=expected_sha256,
+        client=client,
+    )
+    if existing["exists"] and existing["size_match"] and existing["sha256_match"]:
+        return
+
+    client.put_object(
+        Bucket=settings.S3_BUCKET,
+        Key=path,
+        Body=payload,
+        ContentType="audio/wav",
+        Metadata={
+            "source": "seed_e2e_permissions",
+            "sha256": expected_sha256,
+        },
+    )
+
+
 async def _upsert_user(
     session: AsyncSession,
     *,
@@ -401,6 +476,20 @@ async def _upsert_user(
     return user, totp_secret
 
 
+async def _clear_two_factor_failure_state(user: User) -> None:
+    """Best-effort cleanup for Redis-backed 2FA failure and lockout counters."""
+    keys = [template.format(user_id=user.id) for template in TWO_FACTOR_FAILURE_KEY_TEMPLATES]
+    try:
+        redis = await get_redis_connection()
+        await redis.delete(*keys)
+    except Exception as exc:  # noqa: BLE001 - fixture seeding must not depend on Redis.
+        logger.warning(
+            "Unable to clear Redis 2FA failure state for fixture user %s: %s",
+            user.id,
+            exc,
+        )
+
+
 async def _upsert_api_key(
     session: AsyncSession,
     *,
@@ -414,7 +503,7 @@ async def _upsert_api_key(
     raw_key = f"{key_prefix}_{raw_secret}"
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=API_KEY_DURATION_SECONDS)
-    granted_permissions = sorted(API_KEY_PERMISSION_VALUES)
+    granted_permissions = list(API_KEY_ROLE_PERMISSION_VALUES[role])
 
     result = await session.execute(sa.select(ApiKey).where(ApiKey.prefix == key_prefix))
     api_key = result.scalar_one_or_none()
@@ -463,7 +552,10 @@ async def _upsert_project(
     """Create or update one fixture project by deterministic name."""
     name = f"{prefix} E2E {kind.title()} Permission Project"
     result = await session.execute(
-        sa.select(Project).where(Project.name == name).order_by(Project.created_at.asc()).limit(1)
+        sa.select(Project)
+        .where(Project.name == name, Project.owner_id == owner.id)
+        .order_by(Project.created_at.asc())
+        .limit(1)
     )
     project = result.scalar_one_or_none()
 
@@ -1049,6 +1141,8 @@ async def _upsert_exportable_search_session(
 ) -> SearchSession:
     """Seed one completed SearchSession with deterministic exportable results."""
     name = f"{prefix} E2E {kind.title()} Exportable Search Session"
+    reference_audio_key = f"e2e/{prefix}/{kind}/reference-audio-0.wav"
+    _ensure_reference_audio_fixture(reference_audio_key)
     result = await session.execute(
         sa.select(SearchSession)
         .where(
@@ -1115,7 +1209,7 @@ async def _upsert_exportable_search_session(
             confirmed_count=0,
             rejected_count=0,
             celery_job_id=None,
-            reference_audio_keys=None,
+            reference_audio_keys=[reference_audio_key],
             started_at=started_at,
             completed_at=completed_at,
             error_message=None,
@@ -1132,7 +1226,7 @@ async def _upsert_exportable_search_session(
         search_session.confirmed_count = 0
         search_session.rejected_count = 0
         search_session.celery_job_id = None
-        search_session.reference_audio_keys = None
+        search_session.reference_audio_keys = [reference_audio_key]
         search_session.started_at = started_at
         search_session.completed_at = completed_at
         search_session.error_message = None
@@ -1141,12 +1235,12 @@ async def _upsert_exportable_search_session(
     return search_session
 
 
-def _user_payload(user: User, *, role: str, totp_secret: str) -> dict[str, str]:
+def _user_payload(user: User, *, role: str) -> dict[str, str]:
     return {
         "role": role,
         "id": str(user.id),
         "email": user.email,
-        "totp_secret": totp_secret,
+        "totp_secret_env": f"E2E_{role.upper()}_TOTP_SECRET",
     }
 
 
@@ -1184,7 +1278,7 @@ def _search_session_payload(search_session: SearchSession) -> dict[str, Any]:
     }
 
 
-def _api_key_payload(api_key: ApiKey, *, role: str, raw_key: str) -> dict[str, Any]:
+def _api_key_payload(api_key: ApiKey, *, role: str) -> dict[str, Any]:
     return {
         "role": role,
         "id": str(api_key.id),
@@ -1195,7 +1289,7 @@ def _api_key_payload(api_key: ApiKey, *, role: str, raw_key: str) -> dict[str, A
         "revoked_at": None,
         "allowed_ip_cidrs": api_key.allowed_ip_cidrs,
         "granted_permissions": list(api_key.granted_permissions),
-        "raw_key": raw_key,
+        "raw_key_env": API_KEY_ENV_NAMES[role],
     }
 
 
@@ -1285,6 +1379,7 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
                 )
                 users[role] = user
                 totp_secrets[role] = totp_secret
+                await _clear_two_factor_failure_state(user)
 
             api_keys: dict[str, ApiKey] = {}
             raw_api_keys: dict[str, str] = {}
@@ -1402,7 +1497,6 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
                     role: _user_payload(
                         user,
                         role=role,
-                        totp_secret=totp_secrets[role],
                     )
                     for role, user in users.items()
                 },
@@ -1418,7 +1512,6 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
                     role: _api_key_payload(
                         api_key,
                         role=role,
-                        raw_key=raw_api_keys[role],
                     )
                     for role, api_key in api_keys.items()
                 },
@@ -1434,8 +1527,10 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
                     for kind, overlay in trusted_overlays.items()
                 },
                 "credentials": {
-                    "password": password,
-                    "totp_secrets": dict(totp_secrets),
+                    "password_env": "E2E_PASSWORD",
+                    "totp_secret_env": {
+                        role: f"E2E_{role.upper()}_TOTP_SECRET" for role in USER_ROLES
+                    },
                 },
                 "env": _env_payload(
                     prefix=prefix,

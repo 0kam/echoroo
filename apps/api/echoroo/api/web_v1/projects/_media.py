@@ -16,6 +16,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
+from echoroo.api.v1 import clips as legacy_clips
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
 from echoroo.core.actions import (
@@ -28,6 +29,8 @@ from echoroo.core.auth import DEFAULT_MEDIA_TTL, MediaTokenScope, issue_media_to
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
+from echoroo.schemas.clip import ClipDetailResponse, ClipListResponse
+from echoroo.schemas.recording import RecordingDetailResponse
 
 router = APIRouter()
 
@@ -92,7 +95,7 @@ async def issue_recording_media_token(
 
 @router.get(
     "/{project_id}/recordings/{recording_id}",
-    response_model=legacy_recordings.RecordingDetailResponse,
+    response_model=RecordingDetailResponse,
     summary="Get recording details",
     description="BFF adapter for the legacy project recording detail endpoint.",
 )
@@ -103,7 +106,7 @@ async def get_recording(
     current_user: CurrentUser,
     service: legacy_recordings.RecordingServiceDep,
     db: DbSession,
-) -> legacy_recordings.RecordingDetailResponse:
+) -> RecordingDetailResponse:
     """Delegate recording detail reads to the legacy handler."""
     await gate_action(
         action=RECORDING_LIST_ACTION,
@@ -115,6 +118,66 @@ async def get_recording(
     return await legacy_recordings.get_recording(
         project_id=project_id,
         recording_id=recording_id,
+        request=request,
+        current_user=current_user,
+        service=service,
+        db=db,
+    )
+
+
+@router.get(
+    "/{project_id}/recordings/{recording_id}/clips",
+    response_model=ClipListResponse,
+    summary="List recording clips",
+    description="BFF adapter for the legacy project recording clip list endpoint.",
+)
+async def list_clips(
+    project_id: UUID,
+    recording_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_clips.ClipServiceDep,
+    db: DbSession,
+    page: int = 1,
+    page_size: int = 50,
+    sort_by: str = "start_time",
+    sort_order: str = "asc",
+) -> ClipListResponse:
+    """Delegate clip list reads to the legacy handler."""
+    return await legacy_clips.list_clips(
+        project_id=project_id,
+        recording_id=recording_id,
+        request=request,
+        current_user=current_user,
+        service=service,
+        db=db,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
+
+@router.get(
+    "/{project_id}/recordings/{recording_id}/clips/{clip_id}",
+    response_model=ClipDetailResponse,
+    summary="Get recording clip",
+    description="BFF adapter for the legacy project recording clip detail endpoint.",
+)
+async def get_clip(
+    project_id: UUID,
+    recording_id: UUID,
+    clip_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_clips.ClipServiceDep,
+    db: DbSession,
+) -> ClipDetailResponse:
+    """Delegate clip detail reads to the legacy handler."""
+    return await legacy_clips.get_clip(
+        project_id=project_id,
+        recording_id=recording_id,
+        clip_id=clip_id,
         request=request,
         current_user=current_user,
         service=service,

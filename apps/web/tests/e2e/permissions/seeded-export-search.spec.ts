@@ -6,6 +6,7 @@
  */
 
 import { expect, test, type APIResponse } from '@playwright/test';
+import { inflateRawSync } from 'node:zlib';
 import {
   backendApiUrl,
   expectStatus,
@@ -249,6 +250,52 @@ interface ErrorDetailResponse {
   detail?: unknown;
 }
 
+function extractZipEntry(zipBody: Buffer, entryPath: string): Buffer | null {
+  let offset = 0;
+
+  while (offset <= zipBody.length - 30) {
+    const signature = zipBody.readUInt32LE(offset);
+    if (signature !== 0x04034b50) {
+      break;
+    }
+
+    const flags = zipBody.readUInt16LE(offset + 6);
+    const compressionMethod = zipBody.readUInt16LE(offset + 8);
+    const compressedSize = zipBody.readUInt32LE(offset + 18);
+    const fileNameLength = zipBody.readUInt16LE(offset + 26);
+    const extraFieldLength = zipBody.readUInt16LE(offset + 28);
+    const fileNameStart = offset + 30;
+    const fileNameEnd = fileNameStart + fileNameLength;
+    const dataStart = fileNameEnd + extraFieldLength;
+    const dataEnd = dataStart + compressedSize;
+
+    expect(fileNameEnd, 'ZIP local filename should be within body').toBeLessThanOrEqual(
+      zipBody.length
+    );
+    expect(dataEnd, 'ZIP local file data should be within body').toBeLessThanOrEqual(
+      zipBody.length
+    );
+    expect(flags & 0x08, 'ZIP entries should include local sizes').toBe(0);
+
+    const fileName = zipBody.subarray(fileNameStart, fileNameEnd).toString('utf8');
+    const compressedData = zipBody.subarray(dataStart, dataEnd);
+
+    if (fileName === entryPath) {
+      if (compressionMethod === 0) {
+        return compressedData;
+      }
+      if (compressionMethod === 8) {
+        return inflateRawSync(compressedData);
+      }
+      throw new Error(`Unsupported ZIP compression method ${compressionMethod} for ${entryPath}`);
+    }
+
+    offset = dataEnd;
+  }
+
+  return null;
+}
+
 async function expectCsvResponse(
   response: APIResponse,
   expected: number,
@@ -268,7 +315,8 @@ async function expectCsvResponse(
 async function expectDatasetZipResponse(
   response: APIResponse,
   expected: number,
-  label: string
+  label: string,
+  expectedAudioPath?: string
 ): Promise<void> {
   await expectStatus(response, expected, label);
   if (expected !== 200) {
@@ -293,6 +341,14 @@ async function expectDatasetZipResponse(
   expect(zipText, `${label} ZIP should include datapackage.json`).toContain('datapackage.json');
   expect(zipText, `${label} ZIP should include deployments.csv`).toContain('deployments.csv');
   expect(zipText, `${label} ZIP should include media.csv`).toContain('media.csv');
+  if (expectedAudioPath) {
+    expect(zipText, `${label} ZIP should include audio entry`).toContain(expectedAudioPath);
+    const audioEntry = extractZipEntry(body, expectedAudioPath);
+    expect(audioEntry, `${label} ZIP should include readable audio entry`).not.toBeNull();
+    expect(audioEntry?.subarray(0, 4).toString('ascii'), `${label} ZIP audio WAV magic`).toBe(
+      'RIFF'
+    );
+  }
 }
 
 function parseCsvLine(line: string): string[] {
@@ -362,6 +418,50 @@ async function expectExportRecordingsCsvResponse(
     '1.0000',
     '1.0000',
   ]);
+}
+
+async function expectReferenceAudioResponse(
+  response: APIResponse,
+  project: SeededExportSearchProject
+): Promise<void> {
+  await expectStatus(response, 200, `${project.visibility} exportable reference audio`);
+
+  const headers = response.headers();
+  expect(
+    headers['content-type'] ?? '',
+    `${project.visibility} exportable reference audio should return an audio content type`
+  ).toContain('audio/');
+  expect(
+    headers['accept-ranges'] ?? '',
+    `${project.visibility} exportable reference audio should advertise byte ranges`
+  ).toBe('bytes');
+
+  const body = await response.body();
+  expect(
+    body.length,
+    `${project.visibility} exportable reference audio body should not be empty`
+  ).toBeGreaterThan(0);
+  expect(body.subarray(0, 4).toString('ascii'), `${project.visibility} WAV magic`).toBe('RIFF');
+}
+
+async function expectReferenceAudioRangeResponse(
+  response: APIResponse,
+  project: SeededExportSearchProject
+): Promise<void> {
+  await expectStatus(response, 206, `${project.visibility} exportable reference audio range`);
+
+  const headers = response.headers();
+  expect(
+    headers['accept-ranges'] ?? '',
+    `${project.visibility} exportable reference audio range should advertise byte ranges`
+  ).toBe('bytes');
+  expect(
+    headers['content-range'] ?? '',
+    `${project.visibility} exportable reference audio range should include content-range`
+  ).toMatch(/^bytes 0-3\//);
+
+  const body = await response.body();
+  expect(body.toString('ascii'), `${project.visibility} WAV range magic`).toBe('RIFF');
 }
 
 async function expectJsonDetailForExpected404(
@@ -519,6 +619,24 @@ test.describe('Seeded export/search permissions @e2e-export-search', () => {
           expected.datasetExportZip,
           `${role} dataset ZIP export ${visibility}`
         );
+
+        const datasetExportZipWithAudioResponse = await page.request.get(
+          backendApiUrl(
+            `/api/v1/projects/${project.id}/datasets/${project.datasetId}/export?include_audio=true`
+          ),
+          {
+            headers,
+            failOnStatusCode: false,
+          }
+        );
+        await expectDatasetZipResponse(
+          datasetExportZipWithAudioResponse,
+          expected.datasetExportZip,
+          `${role} dataset ZIP export with audio ${visibility}`,
+          expected.datasetExportZip === 200
+            ? `data/e2e/${FIXTURE_PREFIX}/${visibility}/fixture.wav`
+            : undefined
+        );
       }
     });
   }
@@ -541,6 +659,33 @@ test.describe('Seeded export/search permissions @e2e-export-search', () => {
       );
 
       await expectExportRecordingsCsvResponse(response, project);
+    }
+  });
+
+  test('owner can stream reference audio for seeded exportable search sessions', async ({
+    page,
+  }) => {
+    const headers = { Authorization: `Bearer ${USERS.owner.apiKey}` };
+
+    for (const visibility of VISIBILITIES) {
+      const project = PROJECTS[visibility];
+      const referenceAudioUrl = backendApiUrl(
+        `/api/v1/projects/${project.id}/search/sessions/${project.exportableSearchSessionId}/reference-audio/0`
+      );
+      const response = await page.request.get(referenceAudioUrl, {
+        headers,
+        failOnStatusCode: false,
+      });
+      await expectReferenceAudioResponse(response, project);
+
+      const rangeResponse = await page.request.get(referenceAudioUrl, {
+        headers: {
+          ...headers,
+          Range: 'bytes=0-3',
+        },
+        failOnStatusCode: false,
+      });
+      await expectReferenceAudioRangeResponse(rangeResponse, project);
     }
   });
 });

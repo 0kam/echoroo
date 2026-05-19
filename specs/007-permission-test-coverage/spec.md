@@ -2,7 +2,7 @@
 
 **Feature Branch**: `007-permission-test-coverage`
 **Created**: 2026-05-15
-**Status**: US1/US2/US3 plus Trusted Overlay lifecycle, Export/Search API-primary plus Dataset ZIP plus Search storage gate guards plus Export-recordings success CSV, and Media plus Clip API-primary complete
+**Status**: US1/US2/US3 plus Trusted Overlay lifecycle, Export/Search API-primary plus Dataset ZIP with audio plus Search storage gate guards plus Export-recordings success CSV plus Reference-audio success stream, Media plus Clip API-primary, and Clip browser BFF media-token wiring complete
 **Input**: Roadmap continuation from `specs/007-permission-test-coverage/e2e-roadmap.md`
 
 ## User Scenarios & Testing
@@ -88,6 +88,8 @@ completion gate documented before code changes begin.
   test intentionally depends on prior mutation state.
 - Data surface tests must not assert successful audio or spectrogram rendering;
   that belongs to the media slice.
+- Clip browser tests must use `/web-api/v1` session routes for list/detail and
+  scoped media-token URLs for preview, spectrogram, and playback rendering.
 - Public project tests must distinguish intentional public overlays from role
   membership permissions.
 
@@ -118,7 +120,8 @@ completion gate documented before code changes begin.
 ### Key Entities
 
 - **Seeded User**: One of owner, admin, member, viewer, nonmember, or trusted,
-  with email, password, TOTP secret, user ID, and raw API key.
+  with email, user ID, and env bindings for the shared password, TOTP secret,
+  and raw API key.
 - **Seeded Project**: Public or restricted project with visibility-specific
   permission behavior, content rows, and trusted overlay.
 - **Seeded Content Fixture**: Site, dataset, recording, clip, detection, and annotation

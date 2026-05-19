@@ -9,13 +9,14 @@ Fields:
 - `email`: login email emitted as `E2E_<ROLE>_EMAIL`
 - `user_id`: UUID emitted as `E2E_<ROLE>_USER_ID`
 - `password`: shared local password emitted as `E2E_PASSWORD`
-- `totp_secret`: TOTP secret emitted as `E2E_<ROLE>_TOTP_SECRET`
-- `api_key`: raw local API key emitted as `E2E_<ROLE>_API_KEY`
+- `totp_secret_env`: top-level metadata naming `E2E_<ROLE>_TOTP_SECRET`; the raw secret is emitted only in `env`
+- `api_key_env`: top-level API key metadata naming `E2E_<ROLE>_API_KEY`; the raw key is emitted only in `env`
 
 Validation rules:
 - All seeded users must be present before any suite runs.
 - API keys are local-only secrets and must be regenerated through the seeder.
 - The latest seed JSON must be used for test execution.
+- Seeder reruns reset fixture-user 2FA failure/lockout Redis keys on a best-effort basis.
 
 ## SeededProject
 
@@ -114,6 +115,8 @@ Validation rules:
   unavailable.
 - Media tests assert bytes and content type for recording and clip media
   endpoints, not exact waveform contents.
+- Dataset audio ZIP tests assert the expected archive entry and inflated WAV
+  `RIFF` bytes for allowed role/visibility `include_audio=true` exports.
 
 ## SeededClipFixture
 
@@ -133,7 +136,8 @@ Relationships:
 Validation rules:
 - Clip API-primary media tests assert `/audio`, `/spectrogram`, and `/download`
   status/content type/non-empty bytes.
-- Clip browser UI and BFF media-token wiring remain future scope.
+- Clip browser UI tests assert session BFF list/detail loading plus tokenized
+  preview spectrogram, detail spectrogram, and playback URLs.
 
 ## VoteCommentState
 
@@ -190,10 +194,8 @@ Validation rules:
   `"Session has no results to export"` and denied callers receive 403.
 - `reference-audio/0` guard tests assert allowed callers receive
   `"Reference audio source index 0 not found"` and denied callers receive 403.
-- Export/Search tests must not assert broader CSV row content, consume unrelated
-  streaming export bodies, assert successful reference-audio streaming, or
-  assert audio-backed ZIP file bodies until the corresponding fixtures exist.
-- Successful reference-audio flows remain future scope.
+- Export/Search tests must not assert broader CSV row content or consume
+  unrelated streaming export bodies until the corresponding fixtures exist.
 
 ## SeededExportableSearchSession
 
@@ -212,7 +214,8 @@ Fields:
 - `rejected_count`: `0`
 - `results`: one `BatchSearchResponse`-shaped result keyed by a deterministic
   UUID-shaped species key
-- `reference_audio_keys`: `null`
+- `reference_audio_keys`: one deterministic S3 object key for
+  `e2e/{prefix}/{visibility}/reference-audio-0.wav`
 
 Relationships:
 - Exportable search session belongs to the seeded project.
@@ -221,14 +224,19 @@ Relationships:
   `parameters` and `results`.
 - The result match references the seeded deterministic `Embedding` row for the
   same recording and model name.
+- The reference audio key points at an S3-backed deterministic WAV fixture; the
+  route reads this object directly through S3 rather than `AUDIO_ROOT`.
 
 Validation rules:
 - Export/Search tests may consume the owner `export-recordings` CSV body for
   the exportable session and assert the header, one seeded recording row,
   species labels, and `1.0000` aggregate values.
+- Export/Search tests may stream the owner `reference-audio/0` response for the
+  exportable session and assert full `200` audio bytes plus `206` Range bytes.
 - Exportable sessions must not replace the storage-free sessions used for the
   403/404 guard checks.
-- Broader multi-row/multi-role CSV body assertions remain future scope.
+- Broader multi-row/multi-role CSV body assertions and multi-role dataset audio
+  ZIP bodies remain future scope.
 
 ## TrustedLifecycleState
 

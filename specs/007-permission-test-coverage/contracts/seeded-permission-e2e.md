@@ -12,7 +12,7 @@ The command writes JSON with:
 
 - `env`: shell-exportable environment variables for Playwright suites.
 - `projects`: structured public/restricted project payloads.
-- `api_keys`: raw local API keys and metadata.
+- `api_keys`: API key metadata and the env variable name containing the raw local key.
 
 ## Required Environment Contract
 
@@ -138,6 +138,7 @@ GET /api/v1/projects/{projectId}/search/sessions/{searchSessionId}/export/csv
 GET /api/v1/projects/{projectId}/search/sessions/{searchSessionId}/export-recordings
 GET /api/v1/projects/{projectId}/search/sessions/{searchSessionId}/reference-audio/0
 GET /api/v1/projects/{projectId}/datasets/{datasetId}/export?include_audio=false
+GET /api/v1/projects/{projectId}/datasets/{datasetId}/export?include_audio=true
 ```
 
 Expected current statuses:
@@ -155,16 +156,18 @@ Expected current statuses:
 The completed Export/Search slice asserts status and CSV `content-type` only.
 The exportable search-session check additionally consumes one deterministic
 `export-recordings` CSV body for owner access and asserts the exact header,
-seeded recording filename, species labels, and `1.0000` aggregate values. The
-dataset ZIP export check uses `include_audio=false` and asserts ZIP content
-type, ZIP magic bytes, and expected metadata entries only. The
+seeded recording filename, species labels, and `1.0000` aggregate values. It
+also streams one deterministic S3-backed reference WAV for owner access and
+asserts full `200` plus Range `206` audio responses. The dataset ZIP export
+checks use `include_audio=false` for the role/status matrix and
+`include_audio=true` role/visibility payload assertions for allowed cases,
+verifying the expected audio entry and inflated WAV `RIFF` bytes. The
 `export-recordings` and `reference-audio/0` checks are storage-free permission
 guards: allowed callers reach deterministic fixture-missing 404 responses
 (`"Session has no results to export"` and
 `"Reference audio source index 0 not found"`), while denied callers receive 403
-before storage-backed processing. Successful reference-audio streaming and
-dataset export with `include_audio=true` remain out of scope until their
-payload/storage contracts are reviewed.
+before storage-backed processing. Broader multi-role dataset audio ZIP payload
+assertions beyond the seeded single-recording fixture remain future scope.
 
 Media endpoints:
 
@@ -176,6 +179,15 @@ GET /api/v1/projects/{projectId}/recordings/{recordingId}/download
 GET /api/v1/projects/{projectId}/recordings/{recordingId}/clips/{clipId}/audio
 GET /api/v1/projects/{projectId}/recordings/{recordingId}/clips/{clipId}/spectrogram
 GET /api/v1/projects/{projectId}/recordings/{recordingId}/clips/{clipId}/download
+```
+
+Clip browser BFF endpoints:
+
+```http
+GET /web-api/v1/projects/{projectId}/recordings/{recordingId}/clips
+GET /web-api/v1/projects/{projectId}/recordings/{recordingId}/clips/{clipId}
+GET /web-api/v1/projects/{projectId}/recordings/{recordingId}/spectrogram?start={clipStart}&end={clipEnd}&media_token={token}
+GET /web-api/v1/projects/{projectId}/recordings/{recordingId}/playback?start={clipStart}&end={clipEnd}&media_token={token}
 ```
 
 Expected current statuses:
@@ -201,7 +213,9 @@ current backend routes it through `RECORDING_MEDIA_ACTION`; it is not used to
 assert `Permission.DOWNLOAD`. Clip audio/spectrogram are `VIEW_MEDIA`-gated;
 clip download is `DOWNLOAD`-gated. Guest clip media requests are expected to
 return 401 because the clip routes currently require an authenticated
-`CurrentUser`.
+`CurrentUser`. The clip browser smoke asserts owner/trusted session access
+through `/web-api/v1` list/detail routes plus scoped media tokens on preview,
+detail spectrogram, and playback URLs.
 
 Trusted overlay lifecycle endpoints:
 
@@ -244,7 +258,9 @@ Browser UI checks use:
 
 UI assertions must prefer stable headings, accessible names, and existing
 `data-testid` attributes. Data Surfaces must avoid media playback and
-spectrogram rendering; the Media suite owns those checks. Detection service
+spectrogram rendering; the Media suite owns those checks, including
+`clip-preview-image`, `clip-detail-spectrogram`, `clip-detail-audio`, and
+`clip-detail-play`. Detection service
 success should not be a hard gate for Data Surfaces unless the implementation
 first verifies the current deferred dependencies are stable in the local stack.
 

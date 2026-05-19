@@ -1,13 +1,18 @@
 <script lang="ts">
-  import type { ClipDetail } from '$lib/types/data';
-  import { getClipSpectrogramUrl, getClipAudioUrl, getClipDownloadUrl, updateClip } from '$lib/api/clips';
+  import type { Clip, ClipDetail } from '$lib/types/data';
+  import {
+    getAuthenticatedClipPlaybackUrl,
+    getAuthenticatedClipSpectrogramUrl,
+    getClipDownloadUrl,
+    updateClip,
+  } from '$lib/api/clips';
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
 
   interface Props {
     projectId: string;
     recordingId: string;
-    clip: ClipDetail;
+    clip: Clip | ClipDetail;
   }
 
   let { projectId, recordingId, clip = $bindable() }: Props = $props();
@@ -16,6 +21,13 @@
 
   let audioElement = $state<HTMLAudioElement | undefined>(undefined);
   let isPlaying = $state(false);
+  let spectrogramUrl = $state<string | null>(null);
+  let audioUrl = $state<string | null>(null);
+  let mediaLoadError = $state<string | null>(null);
+  let mediaRequestId = 0;
+  const clipDuration = $derived(
+    'duration' in clip ? clip.duration : clip.end_time - clip.start_time
+  );
 
   // Note update mutation
   const noteMutation = createMutation({
@@ -44,16 +56,54 @@
   function handleNoteSave(newNote: string) {
     $noteMutation.mutate(newNote);
   }
+
+  $effect(() => {
+    const currentProjectId = projectId;
+    const currentRecordingId = recordingId;
+    const currentClip = clip;
+
+    mediaRequestId += 1;
+    const requestId = mediaRequestId;
+    spectrogramUrl = null;
+    audioUrl = null;
+    mediaLoadError = null;
+
+    void (async () => {
+      try {
+        const [nextSpectrogramUrl, nextAudioUrl] = await Promise.all([
+          getAuthenticatedClipSpectrogramUrl(currentProjectId, currentRecordingId, currentClip, {
+            width: 600,
+            height: 200,
+          }),
+          getAuthenticatedClipPlaybackUrl(currentProjectId, currentRecordingId, currentClip),
+        ]);
+
+        if (requestId !== mediaRequestId) return;
+        spectrogramUrl = nextSpectrogramUrl;
+        audioUrl = nextAudioUrl;
+      } catch {
+        if (requestId !== mediaRequestId) return;
+        mediaLoadError = 'Failed to load clip media.';
+      }
+    })();
+  });
 </script>
 
 <div class="overflow-hidden rounded-lg border border-card bg-surface-card">
   <!-- Spectrogram -->
   <div class="w-full bg-stone-900">
-    <img
-      src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 600, height: 200 })}
-      alt="Clip spectrogram"
-      class="block h-auto w-full"
-    />
+    {#if spectrogramUrl}
+      <img
+        src={spectrogramUrl}
+        alt="Clip spectrogram"
+        data-testid="clip-detail-spectrogram"
+        class="block h-auto w-full"
+      />
+    {:else}
+      <div class="flex h-48 items-center justify-center text-sm text-stone-400">
+        {mediaLoadError ?? 'Loading clip spectrogram...'}
+      </div>
+    {/if}
   </div>
 
   <!-- Controls -->
@@ -61,12 +111,14 @@
     <div class="flex items-center gap-2 text-sm">
       <span class="font-medium text-stone-500">Time range:</span>
       <span class="font-mono font-semibold text-stone-900">{formatTime(clip.start_time)} - {formatTime(clip.end_time)}</span>
-      <span class="text-xs text-stone-500">({clip.duration.toFixed(2)}s)</span>
+      <span class="text-xs text-stone-500">({clipDuration.toFixed(2)}s)</span>
     </div>
 
     <div class="flex gap-3">
       <button
         onclick={togglePlay}
+        disabled={!audioUrl}
+        data-testid="clip-detail-play"
         class="flex items-center gap-2 rounded-md border border-primary-600 bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400 dark:border-primary-500"
       >
         {#if isPlaying}
@@ -114,7 +166,8 @@
   <!-- Audio element (hidden) -->
   <audio
     bind:this={audioElement}
-    src={getClipAudioUrl(projectId, recordingId, clip.id)}
+    src={audioUrl ?? undefined}
+    data-testid="clip-detail-audio"
     onended={() => { isPlaying = false; }}
     onpause={() => { isPlaying = false; }}
     onplay={() => { isPlaying = true; }}

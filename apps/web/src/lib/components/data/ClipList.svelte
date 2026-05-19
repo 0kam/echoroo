@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { listClips, deleteClip, getClipSpectrogramUrl } from '$lib/api/clips';
+  import { listClips, deleteClip, getAuthenticatedClipSpectrogramUrl } from '$lib/api/clips';
   import type { Clip } from '$lib/types/data';
   import DeleteConfirmDialog from '$lib/components/ui/DeleteConfirmDialog.svelte';
   import * as m from '$lib/paraglide/messages';
@@ -8,11 +8,12 @@
   interface Props {
     projectId: string;
     recordingId: string;
-    onSelect?: (clipId: string) => void;
+    selectedClipId?: string | null;
+    onSelect?: (clip: Clip) => void;
     onEdit?: (clip: Clip) => void;
   }
 
-  let { projectId, recordingId, onSelect, onEdit }: Props = $props();
+  let { projectId, recordingId, selectedClipId = null, onSelect, onEdit }: Props = $props();
 
   let page = $state(1);
   const pageSize = 20;
@@ -20,6 +21,8 @@
   let sortOrder = $state('asc');
   let clipToDelete = $state<Clip | null>(null);
   let showDeleteDialog = $state(false);
+  let previewUrls = $state<Record<string, string>>({});
+  let previewRequestId = 0;
 
   const queryClient = useQueryClient();
 
@@ -34,16 +37,18 @@
     })
   );
 
-  const deleteMut = createMutation({
-    mutationFn: (clipId: string) => deleteClip(projectId, recordingId, clipId),
-    meta: { projectId },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clips', projectId, recordingId] });
-      queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
-      clipToDelete = null;
-      showDeleteDialog = false;
-    },
-  });
+  const deleteMut = $derived(
+    createMutation({
+      mutationFn: (clipId: string) => deleteClip(projectId, recordingId, clipId),
+      meta: { projectId },
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['clips', projectId, recordingId] });
+        queryClient.invalidateQueries({ queryKey: ['recording', projectId, recordingId] });
+        clipToDelete = null;
+        showDeleteDialog = false;
+      },
+    })
+  );
 
   function formatTime(seconds: number): string {
     const mins = Math.floor(seconds / 60);
@@ -87,6 +92,39 @@
       page--;
     }
   }
+
+  $effect(() => {
+    const clips = $clipsQuery.data?.items ?? [];
+    const currentProjectId = projectId;
+    const currentRecordingId = recordingId;
+
+    previewRequestId += 1;
+    const requestId = previewRequestId;
+    previewUrls = {};
+
+    if (!clips.length) return;
+
+    void (async () => {
+      const entries = await Promise.all(
+        clips.map(async (clip) => {
+          try {
+            const url = await getAuthenticatedClipSpectrogramUrl(
+              currentProjectId,
+              currentRecordingId,
+              clip,
+              { width: 160, height: 60 }
+            );
+            return [clip.id, url] as const;
+          } catch {
+            return [clip.id, ''] as const;
+          }
+        })
+      );
+
+      if (requestId !== previewRequestId) return;
+      previewUrls = Object.fromEntries(entries.filter(([, url]) => url));
+    })();
+  });
 </script>
 
 <div class="w-full">
@@ -158,18 +196,23 @@
         <tbody>
           {#each $clipsQuery.data.items as clip (clip.id)}
             <tr
-              class="border-b border-stone-100 transition-colors last:border-b-0 hover:bg-stone-50 {onSelect ? 'cursor-pointer' : ''}"
-              onclick={() => onSelect?.(clip.id)}
+              class="border-b border-stone-100 transition-colors last:border-b-0 hover:bg-stone-50 {selectedClipId === clip.id ? 'bg-primary-50' : ''} {onSelect ? 'cursor-pointer' : ''}"
+              onclick={() => onSelect?.(clip)}
               role={onSelect ? 'button' : undefined}
               tabindex={onSelect ? 0 : undefined}
-              onkeydown={(e) => e.key === 'Enter' && onSelect?.(clip.id)}
+              onkeydown={(e) => e.key === 'Enter' && onSelect?.(clip)}
             >
               <td class="p-2">
-                <img
-                  src={getClipSpectrogramUrl(projectId, recordingId, clip.id, { width: 160, height: 60 })}
-                  alt="Clip preview"
-                  class="block h-16 w-40 rounded bg-stone-900 object-cover"
-                />
+                {#if previewUrls[clip.id]}
+                  <img
+                    src={previewUrls[clip.id]}
+                    alt="Clip preview"
+                    data-testid="clip-preview-image"
+                    class="block h-16 w-40 rounded bg-stone-900 object-cover"
+                  />
+                {:else}
+                  <div class="h-16 w-40 rounded bg-stone-900" aria-label="Clip preview loading"></div>
+                {/if}
               </td>
               <td class="px-4 py-3">
                 <span class="font-mono text-sm font-medium text-stone-900">
