@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from echoroo.api.v1.recordings import get_audio_service
+from echoroo.api.v1.clips import get_audio_service as _get_audio_service_clips
+from echoroo.api.v1.datasets import get_audio_service as _get_audio_service_datasets
+from echoroo.api.v1.recordings import (
+    get_audio_service as _get_audio_service_recordings,
+)
 from echoroo.core.database import get_db
 from echoroo.core.settings import get_settings
 from echoroo.main import create_app
@@ -1244,7 +1248,10 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             s3_audio_cache_dir=str(audio_cache_tmp_root),
         )
 
-    app.dependency_overrides[get_audio_service] = override_get_audio_service
+    # Register every route-local factory that constructs AudioService.
+    app.dependency_overrides[_get_audio_service_clips] = override_get_audio_service
+    app.dependency_overrides[_get_audio_service_datasets] = override_get_audio_service
+    app.dependency_overrides[_get_audio_service_recordings] = override_get_audio_service
 
     # Patch RateLimiter.__call__ with a no-op that uses correct FastAPI types
     # so they are injected rather than treated as query params
