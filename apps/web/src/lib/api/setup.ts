@@ -5,18 +5,20 @@
 
 import { apiClient } from './client';
 import type {
-  User,
+  SetupCompleteResponse,
   SetupInitializeRequest,
 } from '$lib/types';
 
 // Re-export types for convenience
-export type { SetupInitializeRequest };
+export type { SetupCompleteResponse, SetupInitializeRequest };
 
 /**
  * Initialize system setup by creating first admin user
  * @param data - Admin user credentials and info
- * @returns Created admin user
+ * @returns Created admin user and one-time setup artifacts
  */
-export async function initializeSetup(data: SetupInitializeRequest): Promise<User> {
-  return apiClient.post<User>('/api/v1/setup/initialize', data);
+export async function initializeSetup(
+  data: SetupInitializeRequest
+): Promise<SetupCompleteResponse> {
+  return apiClient.post<SetupCompleteResponse>('/api/v1/setup/initialize', data);
 }

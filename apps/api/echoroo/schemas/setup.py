@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+SETUP_MIN_PASSWORD_LENGTH = 16
+
 
 class SetupStatusResponse(BaseModel):
     """Response schema for GET /setup/status.
@@ -29,7 +31,7 @@ class SetupInitializeRequest(BaseModel):
 
     Attributes:
         email: Email address for the first admin user
-        password: Password (min 8 characters)
+        password: Password (min 16 characters)
         display_name: Optional display name
     """
 
@@ -40,8 +42,8 @@ class SetupInitializeRequest(BaseModel):
     )
     password: str = Field(
         ...,
-        min_length=8,
-        description="Password with minimum 8 characters",
+        min_length=SETUP_MIN_PASSWORD_LENGTH,
+        description="Password with minimum 16 characters",
         examples=["SecurePassword123!"],
     )
     display_name: str | None = Field(
@@ -61,10 +63,8 @@ class UserResponse(BaseModel):
         id: User UUID
         email: User email
         display_name: Display name
-        organization: Organization
-        is_active: Active status
-        is_superuser: Superuser status
-        is_verified: Verification status
+        email_verified_at: Email verification timestamp
+        two_factor_enabled: Whether 2FA is enabled for the user
         created_at: Creation timestamp
         updated_at: Last update timestamp
     """
@@ -72,11 +72,38 @@ class UserResponse(BaseModel):
     id: UUID = Field(..., description="User unique identifier")
     email: str = Field(..., description="User email address")
     display_name: str | None = Field(None, description="Display name")
-    organization: str | None = Field(None, description="Organization")
-    is_active: bool = Field(..., description="Account active status")
-    is_superuser: bool = Field(..., description="Superuser flag")
-    is_verified: bool = Field(..., description="Email verified status")
+    email_verified_at: datetime | None = Field(
+        None,
+        description="Email verification timestamp",
+    )
+    two_factor_enabled: bool = Field(..., description="2FA enabled status")
     created_at: datetime = Field(..., description="Account creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
 
     model_config = {"from_attributes": True}
+
+
+class SetupCompleteResponse(BaseModel):
+    """Response schema for successful setup initialization."""
+
+    user: UserResponse = Field(..., description="Created bootstrap user")
+    totp_secret_base32: str = Field(
+        ...,
+        description="Plain TOTP base32 secret shown once during setup",
+    )
+    totp_provisioning_uri: str = Field(
+        ...,
+        description="Authenticator provisioning URI for the bootstrap user",
+    )
+    bootstrap_token: str = Field(
+        ...,
+        description="One-time WebAuthn bootstrap token",
+    )
+    bootstrap_token_expires_at: datetime = Field(
+        ...,
+        description="Expiration timestamp for the bootstrap token",
+    )
+    webauthn_registration_url: str = Field(
+        ...,
+        description="Relative URL for WebAuthn credential registration",
+    )

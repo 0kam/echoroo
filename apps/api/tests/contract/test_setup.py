@@ -1,27 +1,33 @@
-"""Contract tests for setup endpoints.
+"""Contract tests for setup endpoints."""
 
-These tests verify that the API contract matches the OpenAPI specification.
-Tests should fail initially (TDD) until implementation is complete.
-
-Note (Phase 16 Batch 6b): ``/api/v1/setup/initialize`` is a Phase 4 stub
-returning ``501 NOT IMPLEMENTED`` (see ``echoroo.services.setup.SetupService``)
-and the response asserts reference the dropped User columns ``is_active`` /
-``is_verified`` / ``is_superuser``. Skipped pending the setup-flow rewrite
-described in the original Phase 4 docstring.
-"""
+import re
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-pytest.skip(
-    (
-        "Legacy /api/v1/setup contract suite — endpoint stubbed in Phase 4 "
-        "and assertions reference columns dropped in Phase 13 (is_active / "
-        "is_verified / is_superuser). Re-enable once setup flow is rewritten."
-    ),
-    allow_module_level=True,
-)
+_BOOTSTRAP_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_TOKEN_PATTERN = re.compile(r"^[A-Za-z1-9]{32}$")
+
+
+@pytest.fixture(autouse=True)
+def _patch_setup_external_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep setup contract tests independent from KMS and audit-chain services."""
+
+    async def _noop_audit(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "echoroo.services.setup._encrypt_totp_secret",
+        lambda _secret: b"encrypted",
+    )
+    monkeypatch.setattr("echoroo.services.setup._current_dek_version", lambda: 1)
+    monkeypatch.setattr(
+        "echoroo.services.setup._generate_bootstrap_token",
+        lambda: _BOOTSTRAP_TOKEN,
+    )
+    monkeypatch.setattr("echoroo.services.setup._write_bootstrap_audit", _noop_audit)
+    monkeypatch.setattr("echoroo.services.setup.trigger_post_commit_audit", _noop_audit)
 
 
 @pytest.mark.asyncio
@@ -103,25 +109,36 @@ class TestSetupInitializeEndpoint:
         assert response.status_code == 201
         data = response.json()
 
-        # Verify user structure
-        assert "id" in data
-        assert "email" in data
-        assert "display_name" in data
-        assert "is_superuser" in data
-        assert "is_verified" in data
-        assert "is_active" in data
-        assert "created_at" in data
+        # Verify response structure
+        assert "user" in data
+        assert "totp_secret_base32" in data
+        assert "totp_provisioning_uri" in data
+        assert "bootstrap_token" in data
+        assert "bootstrap_token_expires_at" in data
+        assert "webauthn_registration_url" in data
+
+        user = data["user"]
+        assert "id" in user
+        assert "email" in user
+        assert "display_name" in user
+        assert "created_at" in user
+        assert "updated_at" in user
+        assert "two_factor_enabled" in user
 
         # Verify values
-        assert data["email"] == "admin@example.com"
-        assert data["display_name"] == "Admin User"
-        assert data["is_superuser"] is True
-        assert data["is_verified"] is True
-        assert data["is_active"] is True
+        assert user["email"] == "admin@example.com"
+        assert user["display_name"] == "Admin User"
+        assert user["two_factor_enabled"] is True
+        assert data["bootstrap_token"] == _BOOTSTRAP_TOKEN
+        assert _TOKEN_PATTERN.fullmatch(data["bootstrap_token"]) is not None
+        assert set(data["bootstrap_token"]).isdisjoint({"0", "O", "I", "l"})
+        assert data["webauthn_registration_url"].endswith(data["bootstrap_token"])
 
         # Ensure password is NOT in response
         assert "password" not in data
         assert "password_hash" not in data
+        assert "password" not in user
+        assert "password_hash" not in user
 
     async def test_initialize_setup_minimal_fields(
         self, client: AsyncClient, db_session: AsyncSession
@@ -142,9 +159,8 @@ class TestSetupInitializeEndpoint:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["email"] == "admin@example.com"
-        # display_name can be None
-        assert "display_name" in data
+        assert data["user"]["email"] == "admin@example.com"
+        assert data["user"]["display_name"] == "admin"
 
     async def test_initialize_setup_invalid_email(
         self, client: AsyncClient, db_session: AsyncSession
@@ -167,7 +183,7 @@ class TestSetupInitializeEndpoint:
     async def test_initialize_setup_short_password(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        """Test setup with password shorter than 8 characters.
+        """Test setup with password shorter than 16 characters.
 
         Expected:
             - Status 422 (Validation Error)
