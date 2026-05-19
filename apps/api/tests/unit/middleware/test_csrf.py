@@ -93,6 +93,125 @@ def test_csrf_rejects_malformed() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Regression: cookie / middleware / settings TTL must stay in lock-step.
+#
+# Previously the csrf cookie pinned to ``web_access_token_ttl_seconds`` (15min)
+# and the middleware fell back to a hard-coded 24h default while the session
+# / refresh cookies lived for 30 days. Result: 15 min after login the cookie
+# disappeared client-side and any unsafe request started failing with 403
+# csrf_failed even though the session was still valid — visible to users as
+# random auto-logout. The setting below pins all three to the same source.
+# ---------------------------------------------------------------------------
+
+
+def test_csrf_ttl_setting_matches_refresh_window() -> None:
+    """Default CSRF TTL must equal the refresh-token window.
+
+    If these drift, the cookie or middleware token expires before the
+    session does and the user gets surprise 403 csrf_failed responses.
+    """
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    assert settings.web_csrf_ttl_seconds == settings.web_refresh_token_ttl_seconds
+
+
+def test_session_cookies_use_csrf_ttl_setting() -> None:
+    """``_set_session_cookies`` must stamp the csrf cookie's Max-Age with
+    ``web_csrf_ttl_seconds`` (not the access-token TTL) AND must keep the
+    other security attributes (``SameSite=Strict``, the dev/prod-conditional
+    ``Secure``, and ``HttpOnly`` absent so JS can read the double-submit
+    value). Locking these down in one place catches the case where a future
+    edit fixes the TTL but accidentally widens or narrows another attribute.
+    """
+    from starlette.responses import Response
+
+    from echoroo.api.web_v1.auth import _set_session_cookies
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    response = Response()
+    _set_session_cookies(
+        response,
+        refresh_token="dummy.refresh.token",
+        family_id="family-abc",
+    )
+
+    csrf_header = next(
+        (
+            raw
+            for key, raw in response.raw_headers
+            if key == b"set-cookie"
+            and raw.split(b"=", 1)[0] == settings.web_csrf_cookie_name.encode()
+        ),
+        None,
+    )
+    assert csrf_header is not None, "csrf cookie must be set"
+    cookie_str = csrf_header.decode("ascii").lower()
+    assert f"max-age={settings.web_csrf_ttl_seconds}" in cookie_str, cookie_str
+    assert "samesite=strict" in cookie_str, cookie_str
+    # CSRF cookie is the public half of a double-submit pattern — JS must
+    # be able to read it, so HttpOnly must NOT be set on this cookie.
+    assert "httponly" not in cookie_str, cookie_str
+    # Dev runs over plain HTTP; staging/production cookies must be Secure.
+    if settings.ENVIRONMENT == "development":
+        assert "secure" not in cookie_str, cookie_str
+    else:
+        assert "secure" in cookie_str, cookie_str
+
+
+def test_csrf_ttl_inherits_refresh_when_env_unset(monkeypatch) -> None:
+    """Operators who only override the refresh TTL must see the CSRF
+    window follow automatically — otherwise the drift this hotfix removes
+    silently returns. The settings validator is the enforcement point;
+    this test pins that behaviour.
+
+    Settings uses ``case_sensitive=True`` so the env var names must match
+    the lowercase field names exactly (see ``SettingsConfigDict`` in
+    ``core/settings.py``).
+    """
+    from echoroo.core.settings import Settings
+
+    monkeypatch.delenv("web_csrf_ttl_seconds", raising=False)
+    monkeypatch.setenv("web_refresh_token_ttl_seconds", str(7 * 24 * 3600))
+
+    s = Settings()
+    assert s.web_refresh_token_ttl_seconds == 7 * 24 * 3600
+    assert s.web_csrf_ttl_seconds == 7 * 24 * 3600
+
+
+def test_csrf_ttl_respects_explicit_env_override(monkeypatch) -> None:
+    """An explicit ``web_csrf_ttl_seconds`` env value must win over the
+    inherit default so operators retain a knob for shorter rotation
+    policies."""
+    from echoroo.core.settings import Settings
+
+    monkeypatch.setenv("web_csrf_ttl_seconds", "3600")
+    monkeypatch.setenv("web_refresh_token_ttl_seconds", str(30 * 24 * 3600))
+
+    s = Settings()
+    assert s.web_csrf_ttl_seconds == 3600
+
+
+def test_app_wires_csrf_middleware_with_csrf_ttl_setting() -> None:
+    """The app-level :class:`CsrfMiddleware` must read its TTL from the
+    ``web_csrf_ttl_seconds`` setting so cookie and verifier agree."""
+    from echoroo.core.settings import get_settings
+    from echoroo.main import create_app
+    from echoroo.middleware.csrf import CsrfMiddleware
+
+    settings = get_settings()
+    app = create_app()
+    csrf_layer = next(
+        (m for m in app.user_middleware if m.cls is CsrfMiddleware),
+        None,
+    )
+    assert csrf_layer is not None, "CsrfMiddleware must be registered"
+    config = csrf_layer.kwargs["config"]
+    assert config.ttl_seconds == settings.web_csrf_ttl_seconds
+
+
+# ---------------------------------------------------------------------------
 # Phase 2.10 #6 — middleware-level path exemption
 # ---------------------------------------------------------------------------
 

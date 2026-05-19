@@ -828,7 +828,7 @@ def _set_session_cookies(
     response.set_cookie(
         key=settings.web_csrf_cookie_name,
         value=csrf_token,
-        max_age=settings.web_access_token_ttl_seconds,
+        max_age=settings.web_csrf_ttl_seconds,
         path="/",
         secure=secure_cookie,
         httponly=False,
