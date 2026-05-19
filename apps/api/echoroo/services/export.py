@@ -1,5 +1,6 @@
 """Export service for CamtrapDP-style dataset export."""
 
+import asyncio
 import csv
 import io
 import json
@@ -384,9 +385,10 @@ class ExportService:
 
                     for recording in recordings:
                         try:
-                            file_path = self.audio_service.get_absolute_path(recording.path)
-                            if file_path.exists():
-                                zf.write(file_path, f"data/{recording.path}")
+                            file_path = await asyncio.to_thread(
+                                self.audio_service.ensure_file_local, recording.path
+                            )
+                            zf.write(file_path, f"data/{recording.path}")
                         except Exception:
                             pass  # Skip files that can't be read
 

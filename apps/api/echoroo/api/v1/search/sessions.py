@@ -157,7 +157,9 @@ async def get_search_session(
 
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     merged_results = await session_service.get_session_results_with_review_status(
         session_id, project_id, session=session
@@ -224,7 +226,9 @@ async def delete_search_session(
     """
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     # Snapshot old reference-audio S3 keys BEFORE the service mutates the ORM
     # instance. reference_audio_keys is a JSON column; a value copy ensures the
@@ -242,9 +246,7 @@ async def delete_search_session(
         try:
             delete_object(key)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-            logger.warning(
-                "Failed to delete reference audio %s after session delete: %s", key, exc
-            )
+            logger.warning("Failed to delete reference audio %s after session delete: %s", key, exc)
 
     return Response(status_code=204)
 
@@ -280,7 +282,9 @@ async def update_search_session(
     """
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     session.name = name
     await db.commit()
@@ -396,9 +400,7 @@ async def rerun_search_session(
         try:
             delete_object(key)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup
-            logger.warning(
-                "Failed to delete stale reference audio %s after rerun: %s", key, exc
-            )
+            logger.warning("Failed to delete stale reference audio %s after rerun: %s", key, exc)
 
     # Dispatch Celery task
     from echoroo.workers.search_tasks import run_batch_search
@@ -425,6 +427,9 @@ async def stream_reference_audio(
     project_id: UUID,
     session_id: UUID,
     source_index: int,
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
     range: str | None = Header(None),
 ) -> StreamingResponse:
@@ -434,6 +439,9 @@ async def stream_reference_audio(
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
         source_index: Index into the session's reference_audio_keys list
+        request: FastAPI request
+        current_user: Authenticated caller
+        db: Database session
         session_service: Authorized search session service
         range: Optional HTTP Range header for partial content streaming
 
@@ -447,9 +455,21 @@ async def stream_reference_audio(
     """
     import mimetypes
 
+    from echoroo.core.actions import SEARCH_SESSION_REFERENCE_AUDIO_ACTION
+    from echoroo.core.permissions import gate_action
+
+    await gate_action(
+        action=SEARCH_SESSION_REFERENCE_AUDIO_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     if not session.reference_audio_keys or source_index >= len(session.reference_audio_keys):
         raise HTTPException(
@@ -611,9 +631,7 @@ async def _build_species_labels(
                 )
             ).fetchall()
             # Build: tag_id -> scientific_name from DB
-            tag_id_to_sci: dict[str, str] = {
-                str(row[0]): str(row[1]) for row in tag_rows if row[1]
-            }
+            tag_id_to_sci: dict[str, str] = {str(row[0]): str(row[1]) for row in tag_rows if row[1]}
             for key in unmapped_keys:
                 if key in tag_id_to_sci:
                     species_labels[key] = tag_id_to_sci[key]
@@ -790,7 +808,9 @@ async def _compute_similarity_aggregates(
         Missing species and missing recordings default to an empty inner
         dict so callers can use ``.get(...)`` chaining.
     """
-    del all_recordings  # accepted for plan-prescribed signature parity; SQL spans all project embeddings
+    del (
+        all_recordings
+    )  # accepted for plan-prescribed signature parity; SQL spans all project embeddings
 
     # Determine optional dataset filter from session parameters.
     dataset_id_str: str | None = None
@@ -929,35 +949,39 @@ def _write_recordings_csv(
             common_name = species_common_names.get(sp_key, "")
             rec_agg = agg.get(sp_key, {}).get(rec_id)
             if rec_agg is not None:
-                writer.writerow([
-                    rec_filename,
-                    rec_datetime or "",
-                    sci_name,
-                    common_name,
-                    f"{rec_agg['max_sim']:.4f}",
-                    f"{rec_agg['min_sim']:.4f}",
-                    f"{rec_agg['avg_sim']:.4f}",
-                ])
+                writer.writerow(
+                    [
+                        rec_filename,
+                        rec_datetime or "",
+                        sci_name,
+                        common_name,
+                        f"{rec_agg['max_sim']:.4f}",
+                        f"{rec_agg['min_sim']:.4f}",
+                        f"{rec_agg['avg_sim']:.4f}",
+                    ]
+                )
             else:
-                writer.writerow([
-                    rec_filename,
-                    rec_datetime or "",
-                    sci_name,
-                    common_name,
-                    "",
-                    "",
-                    "",
-                ])
+                writer.writerow(
+                    [
+                        rec_filename,
+                        rec_datetime or "",
+                        sci_name,
+                        common_name,
+                        "",
+                        "",
+                        "",
+                    ]
+                )
 
     csv_content = output.getvalue()
     date_str = datetime.now(UTC).strftime("%Y%m%d")
     safe_name = (
         (session.name or str(session.id))
-        .replace('"', '_')
-        .replace('\n', '_')
-        .replace('\r', '_')
-        .replace(' ', '_')
-        .replace('/', '-')
+        .replace('"', "_")
+        .replace("\n", "_")
+        .replace("\r", "_")
+        .replace(" ", "_")
+        .replace("/", "-")
     )
     filename = f"search_summary_{safe_name}_{date_str}.csv"
     return csv_content, filename
@@ -976,6 +1000,8 @@ def _write_recordings_csv(
 async def export_search_session_recordings_csv(
     project_id: UUID,
     session_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
     locale: str = Query(default="en", description="Locale for common names (en, ja)"),
@@ -990,6 +1016,8 @@ async def export_search_session_recordings_csv(
     Args:
         project_id: Project UUID (path parameter)
         session_id: Session UUID (path parameter)
+        request: FastAPI request
+        current_user: Authenticated caller
         db: Database session
         session_service: Authorized search session service
 
@@ -1002,9 +1030,21 @@ async def export_search_session_recordings_csv(
         403: Access denied to project
         404: Session not found or has no results
     """
+    from echoroo.core.actions import SEARCH_SESSION_EXPORT_RECORDINGS_ACTION
+    from echoroo.core.permissions import gate_action
+
+    await gate_action(
+        action=SEARCH_SESSION_EXPORT_RECORDINGS_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     if not session.results:
         raise HTTPException(
@@ -1057,9 +1097,7 @@ async def export_search_session_recordings_csv(
     # (same pattern as distribution/time-distribution APIs).
     # Aggregate per recording: MAX, MIN, AVG similarity.
     agg = (
-        await _compute_similarity_aggregates(
-            session_snapshot, species_keys, all_recordings, db
-        )
+        await _compute_similarity_aggregates(session_snapshot, species_keys, all_recordings, db)
         if all_recordings
         else {}
     )
@@ -1185,7 +1223,9 @@ async def get_session_similarity_distribution(
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
     bin_width: float = Query(default=0.05, ge=0.01, le=0.5, description="Histogram bin width"),
-    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
+    species_key: str | None = Query(
+        default=None, description="Filter to a single species by its result key"
+    ),
 ) -> SessionDistributionResponse:
     """Get a similarity histogram for all project embeddings vs. the session's reference vectors.
 
@@ -1213,7 +1253,9 @@ async def get_session_similarity_distribution(
     """
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
@@ -1261,7 +1303,9 @@ async def get_session_time_distribution(
     session_id: UUID,
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
-    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
+    species_key: str | None = Query(
+        default=None, description="Filter to a single species by its result key"
+    ),
 ) -> SessionTimeDistributionResponse:
     """Get average similarity per (date, hour) for all project embeddings.
 
@@ -1284,7 +1328,9 @@ async def get_session_time_distribution(
     """
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
@@ -1343,10 +1389,16 @@ async def sample_session_similarity_range(
     session_id: UUID,
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
-    min_similarity: float = Query(default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"),
-    max_similarity: float = Query(default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"),
+    min_similarity: float = Query(
+        default=0.0, ge=0.0, le=1.0, description="Lower bound (inclusive)"
+    ),
+    max_similarity: float = Query(
+        default=1.0, ge=0.0, le=1.0, description="Upper bound (inclusive)"
+    ),
     limit: int = Query(default=20, ge=1, le=200, description="Maximum number of results to return"),
-    species_key: str | None = Query(default=None, description="Filter to a single species by its result key"),
+    species_key: str | None = Query(
+        default=None, description="Filter to a single species by its result key"
+    ),
 ) -> SessionSampleResponse:
     """Return a random sample of embeddings within a given similarity range.
 
@@ -1379,7 +1431,9 @@ async def sample_session_similarity_range(
 
     session = await session_service.get_session(session_id, project_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
+        )
 
     query_vectors = await _get_query_vectors_from_session(session, db, species_key=species_key)
     if not query_vectors:
@@ -1480,9 +1534,7 @@ async def _get_query_vectors_from_session(
         WHERE e.id IN ({in_clause})
         """
     )
-    rows = (
-        await db.execute(fetch_sql, in_params)
-    ).fetchall()
+    rows = (await db.execute(fetch_sql, in_params)).fetchall()
 
     from echoroo.services.search import _parse_vector_text
 

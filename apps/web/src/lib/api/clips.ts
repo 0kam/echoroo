@@ -4,15 +4,20 @@
 
 import type {
   ClipCreate,
+  Clip,
   ClipDetail,
   ClipGenerateRequest,
   ClipGenerateResponse,
   ClipListResponse,
+  PlaybackParams,
+  SpectrogramParams,
   ClipUpdate,
 } from '$lib/types/data';
 import { apiClient } from './client';
+import { getAuthenticatedRecordingMediaUrl, getPlaybackUrl, getSpectrogramUrl } from './recordings';
 
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 export interface ListClipsParams {
   projectId: string;
@@ -33,7 +38,8 @@ export async function listClips(params: ListClipsParams): Promise<ClipListRespon
   if (params.sortBy) searchParams.append('sort_by', params.sortBy);
   if (params.sortOrder) searchParams.append('sort_order', params.sortOrder);
 
-  const url = `${API_BASE}/projects/${params.projectId}/recordings/${params.recordingId}/clips?${searchParams}`;
+  const query = searchParams.toString();
+  const url = `${WEB_API_BASE}/projects/${params.projectId}/recordings/${params.recordingId}/clips${query ? `?${query}` : ''}`;
   return apiClient.get<ClipListResponse>(url);
 }
 
@@ -46,7 +52,7 @@ export async function getClip(
   clipId: string
 ): Promise<ClipDetail> {
   return apiClient.get<ClipDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`
   );
 }
 
@@ -146,6 +152,46 @@ export function getClipSpectrogramUrl(
   if (params?.width) url.searchParams.append('width', params.width.toString());
   if (params?.height) url.searchParams.append('height', params.height.toString());
   return url.toString();
+}
+
+/**
+ * Get an authenticated same-origin BFF URL for clip audio playback.
+ *
+ * Native <audio> cannot send Authorization headers, so this reuses the
+ * recording playback BFF with clip start/end bounds plus a scoped media token.
+ */
+export async function getAuthenticatedClipPlaybackUrl(
+  projectId: string,
+  recordingId: string,
+  clip: Pick<Clip, 'start_time' | 'end_time'>,
+  params?: Omit<PlaybackParams, 'start' | 'end'>
+): Promise<string> {
+  const url = getPlaybackUrl(projectId, recordingId, {
+    ...params,
+    start: clip.start_time,
+    end: clip.end_time,
+  });
+  return getAuthenticatedRecordingMediaUrl(projectId, recordingId, 'playback', url);
+}
+
+/**
+ * Get an authenticated same-origin BFF URL for a clip spectrogram image.
+ *
+ * Native <img> cannot send Authorization headers, so this reuses the recording
+ * spectrogram BFF with clip start/end bounds plus a scoped media token.
+ */
+export async function getAuthenticatedClipSpectrogramUrl(
+  projectId: string,
+  recordingId: string,
+  clip: Pick<Clip, 'start_time' | 'end_time'>,
+  params?: Omit<SpectrogramParams, 'start' | 'end'>
+): Promise<string> {
+  const url = getSpectrogramUrl(projectId, recordingId, {
+    ...params,
+    start: clip.start_time,
+    end: clip.end_time,
+  });
+  return getAuthenticatedRecordingMediaUrl(projectId, recordingId, 'spectrogram', url);
 }
 
 /**

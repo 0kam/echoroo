@@ -64,7 +64,11 @@ def get_audio_service() -> AudioService:
     Returns:
         AudioService instance
     """
-    return AudioService(settings.AUDIO_ROOT, settings.AUDIO_CACHE_DIR)
+    return AudioService(
+        settings.AUDIO_ROOT,
+        settings.AUDIO_CACHE_DIR,
+        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
+    )
 
 
 def get_dataset_service(db: DbSession) -> DatasetService:
@@ -687,7 +691,7 @@ async def export_dataset(
             raise HTTPException(status_code=404, detail="Dataset not found")
 
         # Generate safe filename (strip characters that break Content-Disposition header)
-        safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', dataset.name)
+        safe_name = _re.sub(r"[^a-zA-Z0-9_\-]", "_", dataset.name)
         filename = f"{safe_name}_export.zip"
 
         return StreamingResponse(
@@ -749,9 +753,15 @@ async def get_datetime_config(
     assert isinstance(sample_filenames, list)
 
     return DatetimeConfigResponse(
-        datetime_pattern=config["datetime_pattern"] if isinstance(config["datetime_pattern"], str) else None,
-        datetime_format=config["datetime_format"] if isinstance(config["datetime_format"], str) else None,
-        datetime_timezone=config["datetime_timezone"] if isinstance(config["datetime_timezone"], str) else None,
+        datetime_pattern=config["datetime_pattern"]
+        if isinstance(config["datetime_pattern"], str)
+        else None,
+        datetime_format=config["datetime_format"]
+        if isinstance(config["datetime_format"], str)
+        else None,
+        datetime_timezone=config["datetime_timezone"]
+        if isinstance(config["datetime_timezone"], str)
+        else None,
         sample_filenames=sample_filenames,
         parse_summary=DatetimeParseSummary(**summary_data),
     )
@@ -856,7 +866,9 @@ async def test_datetime_pattern(
     await service.get_by_id(current_user.id, project_id, dataset_id)
 
     sample_filenames = await service.recording_repo.get_sample_filenames(dataset_id)
-    results = await service.test_datetime_pattern_bulk(sample_filenames, body.pattern, body.format_str, body.timezone)
+    results = await service.test_datetime_pattern_bulk(
+        sample_filenames, body.pattern, body.format_str, body.timezone
+    )
 
     return [DatetimeTestResult(**r) for r in results]
 

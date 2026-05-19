@@ -15,3 +15,10 @@ apps/api/echoroo/repositories/annotation.py:select_from-Annotation:direct-select
 apps/api/echoroo/services/detection_export.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/services/search_session.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/workers/evaluation_tasks.py:select-Annotation:direct-select-outside-search-gate  # legacy: Phase 3 US11 T1xx
+
+# Admin seed script: runs as a CLI under operator privileges to bootstrap
+# E2E test fixtures (projects + role-based memberships + sample detections).
+# SearchGate enforces user-scoped result filtering for HTTP responses;
+# bypassing it from an admin tool with no caller context is intentional.
+apps/api/echoroo/scripts/seed_e2e_permissions.py:select-Detection:direct-select-outside-search-gate  # admin seed CLI, no HTTP caller
+apps/api/echoroo/scripts/seed_e2e_permissions.py:select-Annotation:direct-select-outside-search-gate  # admin seed CLI, no HTTP caller
