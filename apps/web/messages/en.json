@@ -394,6 +394,7 @@
   "setup_continue_to_login": "Continue to login",
   "setup_copy": "Copy",
   "setup_copied": "Copied",
+  "setup_copy_failed_message": "Copy failed. Select the value and copy it manually.",
 
   "common_loading": "Loading...",
   "common_save": "Save",

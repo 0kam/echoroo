@@ -394,6 +394,7 @@
   "setup_continue_to_login": "ログインへ進む",
   "setup_copy": "コピー",
   "setup_copied": "コピー済み",
+  "setup_copy_failed_message": "コピーできませんでした。値を選択して手動でコピーしてください。",
 
   "common_loading": "読み込み中...",
   "common_save": "保存",

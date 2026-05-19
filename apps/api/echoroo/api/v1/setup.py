@@ -1,6 +1,6 @@
 """Setup API endpoints for initial system configuration."""
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import get_db
@@ -12,6 +12,7 @@ from echoroo.schemas.setup import (
 from echoroo.services.setup import SetupService
 
 router = APIRouter(prefix="/setup", tags=["setup"])
+_SETUP_NOT_AVAILABLE_DETAIL = "Setup not available"
 
 
 def _client_ip(request: Request) -> str:
@@ -93,9 +94,18 @@ async def initialize_setup(
     response.headers["Cache-Control"] = "no-store, no-cache, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
-    return await service.initialize_setup(
-        payload,
-        request_id=_request_id(request),
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
-    )
+    try:
+        return await service.initialize_setup(
+            payload,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_403_FORBIDDEN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=_SETUP_NOT_AVAILABLE_DETAIL,
+                headers=dict(exc.headers) if exc.headers is not None else None,
+            ) from exc
+        raise

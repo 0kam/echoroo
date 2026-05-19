@@ -36,12 +36,17 @@ from echoroo.services.two_factor_service import (
     _security_stamp,
 )
 
-_SETUP_ALREADY_DONE_DETAIL = "Setup already completed or users already exist"
+_SETUP_ALREADY_DONE_DETAIL: Final[str] = (
+    "Setup already completed or users already exist"
+)
 
 # Stable advisory-lock key for the first-run setup critical section.
 _SETUP_INITIALIZE_LOCK_KEY: Final[int] = (
     int.from_bytes(hashlib.sha256(b"setup_initialize").digest()[:8], "big")
     & 0x7FFFFFFFFFFFFFFF
+)
+_AUDIT_CHAIN_UNAVAILABLE_DETAIL: Final[str] = (
+    "Audit chain unavailable; setup not finalized"
 )
 
 
@@ -49,6 +54,13 @@ def _setup_forbidden() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=_SETUP_ALREADY_DONE_DETAIL,
+    )
+
+
+def _audit_chain_unavailable() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=_AUDIT_CHAIN_UNAVAILABLE_DETAIL,
     )
 
 
@@ -89,15 +101,24 @@ async def _write_bootstrap_audit(
     user_agent: str,
     detail: dict[str, Any],
 ) -> None:
-    from echoroo.scripts.init_superuser import _write_bootstrap_audit as helper
+    from echoroo.core.database import AsyncSessionLocal
+    from echoroo.scripts.init_superuser import AUDIT_ACTION_BOOTSTRAP
+    from echoroo.services.audit_service import AuditLogService
 
-    await helper(
-        actor_user_id=actor_user_id,
-        request_id=request_id,
-        ip=ip,
-        user_agent=user_agent,
-        detail=detail,
-    )
+    async with AsyncSessionLocal() as audit_session:
+        try:
+            await AuditLogService(audit_session).write_platform_event(
+                actor_user_id=actor_user_id,
+                action=AUDIT_ACTION_BOOTSTRAP,
+                request_id=request_id or f"bootstrap-{uuid4()}",
+                ip=ip or "127.0.0.1",
+                user_agent=user_agent or "echoroo.api.setup",
+                detail=detail,
+            )
+            await audit_session.commit()
+        except Exception:
+            await audit_session.rollback()
+            raise
 
 
 class SetupService:
@@ -160,17 +181,26 @@ class SetupService:
         Raises:
             HTTPException: 403 if setup is already completed or users exist
         """
-        # Fast-fail without taking the global lock; the authoritative guard is
-        # the same check repeated after pg_advisory_xact_lock serializes setup.
-        await self._ensure_setup_allowed()
+        setup_request: SetupInitializeRequest | None = request
+        del request
 
-        display_name = self._resolve_display_name(
-            request.display_name,
-            str(request.email),
-        )
+        secret: str | None = None
+        provisioning_uri: str | None = None
+        bootstrap_token: str | None = None
         outcome: SuperuserActionOutcome | None = None
+        should_rollback = False
 
         try:
+            # Fast-fail without taking the global lock; the authoritative guard is
+            # the same check repeated after pg_advisory_xact_lock serializes setup.
+            await self._ensure_setup_allowed()
+            assert setup_request is not None
+            display_name = self._resolve_display_name(
+                setup_request.display_name,
+                str(setup_request.email),
+            )
+
+            should_rollback = True
             await self._acquire_initialize_lock()
             # Re-check under the advisory lock so concurrent initializes cannot
             # both observe an empty database and create competing genesis users.
@@ -178,7 +208,7 @@ class SetupService:
 
             secret = pyotp.random_base32(length=TOTP_SECRET_LENGTH)
             provisioning_uri = pyotp.TOTP(secret).provisioning_uri(
-                name=str(request.email),
+                name=str(setup_request.email),
                 issuer_name=ISSUER_NAME,
             )
             encrypted_secret = _encrypt_totp_secret(secret)
@@ -189,8 +219,8 @@ class SetupService:
 
             user_row = User(
                 id=uuid4(),
-                email=str(request.email),
-                password_hash=hash_password(request.password),
+                email=str(setup_request.email),
+                password_hash=hash_password(setup_request.password),
                 display_name=display_name,
                 two_factor_enabled=True,
                 two_factor_secret_encrypted=encrypted_secret,
@@ -226,8 +256,36 @@ class SetupService:
             )
             await self.system_repo.mark_setup_completed(outcome.superuser_id)
 
-            response = SetupCompleteResponse(
-                user=UserResponse.model_validate(user_row),
+            user_response = UserResponse.model_validate(user_row)
+            user_id = user_response.id
+            user_email = user_response.email
+            user_display_name = user_response.display_name
+
+            try:
+                await _write_bootstrap_audit(
+                    actor_user_id=user_id,
+                    request_id=outcome.request_id,
+                    ip=outcome.ip,
+                    user_agent=outcome.user_agent,
+                    detail={
+                        "user_id": str(user_id),
+                        "superuser_id": str(outcome.superuser_id),
+                        "email": user_email,
+                        "display_name": user_display_name,
+                        "bootstrap_token_expires_at": (
+                            bootstrap_token_expires.isoformat()
+                        ),
+                    },
+                )
+            except Exception as exc:
+                raise _audit_chain_unavailable() from exc
+
+            await self.session.commit()
+            should_rollback = False
+            await trigger_post_commit_audit(outcome)
+
+            return SetupCompleteResponse(
+                user=user_response,
                 totp_secret_base32=secret,
                 totp_provisioning_uri=provisioning_uri,
                 bootstrap_token=bootstrap_token,
@@ -236,29 +294,19 @@ class SetupService:
                     f"/admin/webauthn/register?token={bootstrap_token}"
                 ),
             )
-
-            await self.session.commit()
         except Exception:
-            await self.session.rollback()
+            if should_rollback:
+                await self.session.rollback()
             raise
-
-        assert outcome is not None
-        await _write_bootstrap_audit(
-            actor_user_id=response.user.id,
-            request_id=outcome.request_id,
-            ip=outcome.ip,
-            user_agent=outcome.user_agent,
-            detail={
-                "user_id": str(response.user.id),
-                "superuser_id": str(outcome.superuser_id),
-                "email": response.user.email,
-                "display_name": response.user.display_name,
-                "bootstrap_token_expires_at": bootstrap_token_expires.isoformat(),
-            },
-        )
-        await trigger_post_commit_audit(outcome)
-
-        return response
+        finally:
+            setup_request = None
+            secret = None
+            provisioning_uri = None
+            bootstrap_token = None
+            del setup_request
+            del secret
+            del provisioning_uri
+            del bootstrap_token
 
     async def _acquire_initialize_lock(self) -> None:
         await self.session.execute(

@@ -28,6 +28,7 @@ from echoroo.middleware.email_verification_enforcement import (
     EmailVerificationEnforcementMiddleware,
 )
 from echoroo.middleware.logging import RequestLoggingMiddleware
+from echoroo.middleware.no_store_setup import NoStoreSetupMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
 from echoroo.middleware.security import (
     SecurityHeadersMiddleware,
@@ -227,6 +228,7 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
             allow_legacy_session_fallback=True,
         ),
     )
+    app.add_middleware(NoStoreSetupMiddleware)
 
     # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]

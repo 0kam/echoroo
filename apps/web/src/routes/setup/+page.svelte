@@ -28,6 +28,7 @@
   let setupResult = $state<SetupCompleteResponse | null>(null);
   let qrCodeDataUrl = $state<string | null>(null);
   let copiedField = $state<CopyField | null>(null);
+  let copyErrorMessage = $state<string | null>(null);
 
   // Validation errors
   let emailError = $state<string | null>(null);
@@ -68,18 +69,63 @@
     }).format(new Date(value));
   }
 
-  async function copyToClipboard(value: string, field: CopyField) {
+  function selectCopyField(event: FocusEvent) {
+    const target = event.currentTarget;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      target.select();
+    }
+  }
+
+  function copyWithExecCommand(value: string): boolean {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '0';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
     try {
-      await navigator.clipboard.writeText(value);
+      return document.execCommand('copy');
+    } catch {
+      return false;
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+
+  async function copyToClipboard(value: string, field: CopyField) {
+    copyErrorMessage = null;
+    let copied = false;
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+
+    if (!copied) {
+      copied = copyWithExecCommand(value);
+    }
+
+    if (copied) {
       copiedField = field;
       window.setTimeout(() => {
         if (copiedField === field) {
           copiedField = null;
         }
       }, 2000);
-    } catch {
-      copiedField = null;
+      return;
     }
+
+    copiedField = null;
+    copyErrorMessage = m.setup_copy_failed_message();
   }
 
   /**
@@ -184,6 +230,12 @@
           <p class="text-stone-600">{m.setup_success_subtitle()}</p>
         </div>
 
+        {#if copyErrorMessage}
+          <div class="mb-6 rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-danger" role="alert">
+            <p class="text-sm">{copyErrorMessage}</p>
+          </div>
+        {/if}
+
         <div class="grid gap-6 md:grid-cols-[auto_1fr] md:items-start">
           <div class="flex justify-center">
             {#if qrCodeDataUrl}
@@ -207,9 +259,12 @@
                   {copiedField === 'totp_secret' ? m.setup_copied() : m.setup_copy()}
                 </button>
               </div>
-              <p class="mt-1 break-all rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-sm text-stone-900">
-                {setupResult.totp_secret_base32}
-              </p>
+              <input
+                value={setupResult.totp_secret_base32}
+                readonly
+                onfocus={selectCopyField}
+                class="mt-1 w-full rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-sm text-stone-900"
+              />
             </div>
 
             <div>
@@ -223,9 +278,13 @@
                   {copiedField === 'totp_uri' ? m.setup_copied() : m.setup_copy()}
                 </button>
               </div>
-              <p class="mt-1 break-all rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-xs text-stone-900">
-                {setupResult.totp_provisioning_uri}
-              </p>
+              <textarea
+                value={setupResult.totp_provisioning_uri}
+                readonly
+                rows="3"
+                onfocus={selectCopyField}
+                class="mt-1 w-full resize-y rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-xs text-stone-900"
+              ></textarea>
             </div>
           </div>
         </div>
@@ -242,9 +301,12 @@
                 {copiedField === 'bootstrap_token' ? m.setup_copied() : m.setup_copy()}
               </button>
             </div>
-            <p class="mt-1 break-all rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-sm text-stone-900">
-              {setupResult.bootstrap_token}
-            </p>
+            <input
+              value={setupResult.bootstrap_token}
+              readonly
+              onfocus={selectCopyField}
+              class="mt-1 w-full rounded-md border border-stone-200 bg-stone-50 px-3 py-2 font-mono text-sm text-stone-900"
+            />
             <p class="mt-1 text-xs text-stone-500">
               {m.setup_bootstrap_expires({
                 expires: formatExpiration(setupResult.bootstrap_token_expires_at),

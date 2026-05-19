@@ -1,10 +1,11 @@
 """Integration tests for complete setup workflow."""
 
+import asyncio
 import re
 
 import pytest
-from httpx import AsyncClient
-from sqlalchemy import select
+from httpx import AsyncClient, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.superuser import Superuser
@@ -13,6 +14,17 @@ from echoroo.models.user import User
 
 _BOOTSTRAP_TOKEN = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _TOKEN_PATTERN = re.compile(r"^[A-Za-z1-9]{32}$")
+_NO_STORE_HEADERS = {
+    "cache-control": "no-store, no-cache, max-age=0",
+    "pragma": "no-cache",
+    "expires": "0",
+}
+
+
+def _assert_no_store_headers(response: Response) -> None:
+    headers = response.headers
+    for name, value in _NO_STORE_HEADERS.items():
+        assert headers[name] == value
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +67,7 @@ class TestSetupFlow:
         # Step 1: Check initial status
         response = await client.get("/api/v1/setup/status")
         assert response.status_code == 200
+        _assert_no_store_headers(response)
         assert response.json()["setup_required"] is True
         assert response.json()["setup_completed"] is False
 
@@ -66,6 +79,7 @@ class TestSetupFlow:
         }
         response = await client.post("/api/v1/setup/initialize", json=setup_data)
         assert response.status_code == 201
+        _assert_no_store_headers(response)
 
         data = response.json()
         user_data = data["user"]
@@ -82,6 +96,7 @@ class TestSetupFlow:
         # Step 3: Verify setup status changed
         response = await client.get("/api/v1/setup/status")
         assert response.status_code == 200
+        _assert_no_store_headers(response)
         assert response.json()["setup_required"] is False
         assert response.json()["setup_completed"] is True
 
@@ -136,6 +151,8 @@ class TestSetupFlow:
             },
         )
         assert response.status_code == 403
+        _assert_no_store_headers(response)
+        assert response.json()["detail"] == "Setup not available"
 
     async def test_setup_with_existing_user(
         self, client: AsyncClient, db_session: AsyncSession
@@ -167,3 +184,78 @@ class TestSetupFlow:
 
         # Should fail because users already exist
         assert response.status_code == 403
+        _assert_no_store_headers(response)
+        assert response.json()["detail"] == "Setup not available"
+
+    async def test_setup_audit_append_failure_aborts_http_setup(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """HTTP setup must fail closed if the bootstrap audit row cannot append."""
+
+        async def _fail_audit(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("audit unavailable")
+
+        monkeypatch.setattr(
+            "echoroo.services.setup._write_bootstrap_audit",
+            _fail_audit,
+        )
+
+        response = await client.post(
+            "/api/v1/setup/initialize",
+            json={
+                "email": "admin-audit-failure@example.com",
+                "password": "SuperSecurePassword123!",
+            },
+        )
+
+        assert response.status_code == 500
+        _assert_no_store_headers(response)
+        assert response.json()["detail"] == (
+            "Audit chain unavailable; setup not finalized"
+        )
+
+        user_count = await db_session.scalar(select(func.count()).select_from(User))
+        superuser_count = await db_session.scalar(
+            select(func.count()).select_from(Superuser)
+        )
+        assert user_count == 0
+        assert superuser_count == 0
+
+    async def test_concurrent_setup_posts_create_exactly_one_superuser(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Concurrent empty-DB setup attempts serialize to one success."""
+
+        first_payload = {
+            "email": "admin-race-one@example.com",
+            "password": "SuperSecurePassword123!",
+        }
+        second_payload = {
+            "email": "admin-race-two@example.com",
+            "password": "AnotherSecurePassword123!",
+        }
+
+        first_response, second_response = await asyncio.gather(
+            client.post("/api/v1/setup/initialize", json=first_payload),
+            client.post("/api/v1/setup/initialize", json=second_payload),
+        )
+
+        responses = [first_response, second_response]
+        status_codes = sorted(response.status_code for response in responses)
+        assert status_codes == [201, 403]
+        for response in responses:
+            _assert_no_store_headers(response)
+        forbidden_response = next(
+            response for response in responses if response.status_code == 403
+        )
+        assert forbidden_response.json()["detail"] == "Setup not available"
+
+        user_count = await db_session.scalar(select(func.count()).select_from(User))
+        superuser_count = await db_session.scalar(
+            select(func.count()).select_from(Superuser)
+        )
+        assert user_count == 1
+        assert superuser_count == 1
