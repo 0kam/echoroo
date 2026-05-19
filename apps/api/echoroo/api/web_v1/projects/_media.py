@@ -21,6 +21,8 @@ from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
 from echoroo.core.actions import (
     ANNOTATION_PROJECT_EXPORT_ACTION,
+    CLIP_GET_ACTION,
+    CLIP_LIST_ACTION,
     DATASET_EXPORT_ACTION,
     RECORDING_LIST_ACTION,
     RECORDING_MEDIA_ACTION,
@@ -144,6 +146,13 @@ async def list_clips(
     sort_order: str = "asc",
 ) -> ClipListResponse:
     """Delegate clip list reads to the legacy handler."""
+    await gate_action(
+        action=CLIP_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_clips.list_clips(
         project_id=project_id,
         recording_id=recording_id,
@@ -174,6 +183,13 @@ async def get_clip(
     db: DbSession,
 ) -> ClipDetailResponse:
     """Delegate clip detail reads to the legacy handler."""
+    await gate_action(
+        action=CLIP_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
     return await legacy_clips.get_clip(
         project_id=project_id,
         recording_id=recording_id,
