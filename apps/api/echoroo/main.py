@@ -122,6 +122,7 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
             session_secret=settings.web_session_secret,
             protected_prefix="/web-api/v1",
             cookie_name=settings.web_session_cookie_name,
+            ttl_seconds=settings.web_csrf_ttl_seconds,
         ),
     )
     # Phase 15 T155b: 2FA enforcement now covers BOTH the first-party

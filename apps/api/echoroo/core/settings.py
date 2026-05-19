@@ -150,6 +150,19 @@ class Settings(BaseSettings):
     )
     web_access_token_ttl_seconds: int = 900
     web_refresh_token_ttl_seconds: int = 30 * 24 * 3600
+    # CSRF token / cookie lifetime. Default 0 means "inherit
+    # ``web_refresh_token_ttl_seconds``" (see ``_inherit_csrf_ttl_default``
+    # below) so the double-submit cookie stays valid for as long as the
+    # session itself. If these drift apart, the cookie or the middleware
+    # TTL expires before the session does and unsafe requests start
+    # failing 403 csrf_failed even though the session is alive (the
+    # previous configuration pinned the cookie to the 15min access TTL
+    # and the middleware to a hard-coded 24h default, neither matched
+    # the 30d session window). Override (env: WEB_CSRF_TTL_SECONDS) only
+    # if you need a strictly shorter CSRF rotation than refresh; the
+    # token already rotates on every login / refresh, so the worst-case
+    # reuse window in practice is one refresh cycle.
+    web_csrf_ttl_seconds: int = 0
     web_interim_token_ttl_seconds: int = 900
     webauthn_interim_token_ttl_seconds: int = 300
     web_app_base_url: str = "https://echoroo.app"
@@ -402,6 +415,23 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [cidr.strip() for cidr in value.split(",") if cidr.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _inherit_csrf_ttl_default(self) -> "Settings":
+        """Default CSRF TTL inherits from the refresh-token window.
+
+        The CSRF double-submit cookie and middleware verifier MUST NOT
+        expire before the session does — otherwise unsafe requests start
+        failing 403 csrf_failed mid-session. Keeping ``web_csrf_ttl_seconds``
+        a sentinel (``0``) here means an operator who tunes
+        ``WEB_REFRESH_TOKEN_TTL_SECONDS`` does not silently re-introduce
+        the drift this hotfix exists to remove; the CSRF window follows.
+        Setting ``WEB_CSRF_TTL_SECONDS`` to a positive value still works
+        as an explicit override (e.g. for a shorter rotation policy).
+        """
+        if self.web_csrf_ttl_seconds <= 0:
+            self.web_csrf_ttl_seconds = self.web_refresh_token_ttl_seconds
+        return self
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
