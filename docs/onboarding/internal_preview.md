@@ -50,16 +50,11 @@ docker exec echoroo-backend uv run alembic current
 
 ## 4. Create Initial Superuser
 
-Use the CLI bootstrap script. One admin is enough for an internal preview; production FR-111 requires at least three active superusers.
+Open `/setup` in the frontend and submit the initial administrator form. One admin is enough for an internal preview; production FR-111 requires at least three active superusers.
 
-```bash
-docker exec -it echoroo-backend uv run python -m echoroo.scripts.init_superuser \
-  --email admin@echoroo.app \
-  --display-name "Preview Admin" \
-  --confirm
-```
+The setup screen creates the bootstrap superuser through `POST /api/v1/setup/initialize` and then displays the one-time TOTP secret, TOTP provisioning URI, QR code, 24-hour bootstrap token, and `webauthn_registration_url`.
 
-Save the one-time output immediately. It includes the TOTP secret, TOTP provisioning URI, 24-hour bootstrap token, and `webauthn_registration_url`.
+Save the one-time output immediately. The plaintext TOTP secret and bootstrap token are not recoverable after leaving the success screen.
 
 For the production requirement, register WebAuthn credentials within 24 hours. For preview only, the admin can log in with TOTP without completing WebAuthn registration.
 
@@ -114,7 +109,7 @@ Keep detailed scripts in the trial plan. This document only points to the paths 
 
 ## 8. Known Limits (Out Of Scope / Known Bugs)
 
-- The `/setup` HTTP endpoint is implemented at [setup.py](../../apps/api/echoroo/api/v1/setup.py), but preview uses CLI `init_superuser`.
+- The `/setup` HTTP endpoint and frontend wizard are functional. With an empty database, open `http://localhost:3001/setup` and create the initial superuser from the browser. The CLI `init_superuser` remains available for automated and non-interactive setup paths.
 - Email verification flow is in progress; the trial should not depend on email-verification-required paths.
 - 2FA reset admin operation: DB schema exists, admin UI is not implemented.
 - API token management UI: not implemented; use CLI or seed data only.

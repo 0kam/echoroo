@@ -859,6 +859,31 @@ export interface SetupInitializeRequest {
   display_name?: string;
 }
 
+/**
+ * User payload returned by the setup initialization endpoint
+ */
+export interface SetupUserResponse {
+  id: string;
+  email: string;
+  display_name?: string | null;
+  email_verified_at?: string | null;
+  two_factor_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Setup initialize response with one-time bootstrap artifacts
+ */
+export interface SetupCompleteResponse {
+  user: SetupUserResponse;
+  totp_secret_base32: string;
+  totp_provisioning_uri: string;
+  bootstrap_token: string;
+  bootstrap_token_expires_at: string;
+  webauthn_registration_url: string;
+}
+
 // ============================================
 // Legacy Type Aliases (for backwards compatibility)
 // ============================================
