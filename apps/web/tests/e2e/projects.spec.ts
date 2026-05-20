@@ -14,7 +14,6 @@ const testUser = {
 const testProject = {
   name: 'Test Project',
   description: 'This is a test project for bioacoustic analysis',
-  targetTaxa: 'Passeriformes',
 };
 
 const testMember = {
@@ -49,7 +48,6 @@ test.describe('Project Management', () => {
     // Fill in project details
     await page.fill('input[name="name"]', testProject.name);
     await page.fill('textarea[name="description"]', testProject.description);
-    await page.fill('input[name="targetTaxa"]', testProject.targetTaxa);
 
     // Select visibility (default is private)
     await page.check('input[name="visibility"][value="private"]');

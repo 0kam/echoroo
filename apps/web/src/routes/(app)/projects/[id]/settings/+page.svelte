@@ -13,17 +13,6 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { buildProjectContext, can } from '$lib/utils/permissions';
 
-  // Predefined taxa options
-  const TARGET_TAXA_OPTIONS = [
-    { value: 'Birds', label: 'Birds' },
-    { value: 'Anurans', label: 'Anurans' },
-    { value: 'Insects', label: 'Insects' },
-    { value: 'Bats', label: 'Bats' },
-    { value: 'Land mammals', label: 'Land mammals' },
-    { value: 'Fishes', label: 'Fishes' },
-    { value: 'Cetaceans', label: 'Cetaceans' },
-  ];
-
   // Get project ID from URL
   const projectId = $derived($page.params.id!);
 
@@ -31,25 +20,10 @@
   let project = $state<Project | null>(null);
   let name = $state('');
   let description = $state('');
-  let selectedTaxa = $state<string[]>([]);
   // Visibility radio supports public / restricted / private (Phase 8 /
   // FR-014). All three options are surfaced in the form below; the
   // selected value is round-tripped via projectData.visibility on save.
   let visibility = $state<'private' | 'public' | 'restricted'>('private');
-
-  // Derived comma-separated string for API
-  const targetTaxa = $derived(selectedTaxa.join(', '));
-
-  /**
-   * Toggle a taxon selection
-   */
-  function toggleTaxon(value: string) {
-    if (selectedTaxa.includes(value)) {
-      selectedTaxa = selectedTaxa.filter((t) => t !== value);
-    } else {
-      selectedTaxa = [...selectedTaxa, value];
-    }
-  }
 
   let isLoading = $state(true);
   let isSaving = $state(false);
@@ -97,14 +71,6 @@
       // Initialize form fields
       name = projectData.name;
       description = projectData.description || '';
-      // Parse comma-separated taxa string into array of selected values
-      const rawTaxa = projectData.target_taxa || '';
-      selectedTaxa = rawTaxa
-        ? rawTaxa
-            .split(',')
-            .map((t) => t.trim())
-            .filter((t) => TARGET_TAXA_OPTIONS.some((opt) => opt.value === t))
-        : [];
       visibility = projectData.visibility;
     } catch (err) {
       if (err instanceof ApiError) {
@@ -167,7 +133,6 @@
       const updated = await projectsApi.update(projectId, {
         name: name.trim(),
         description: description.trim() || undefined,
-        target_taxa: targetTaxa || undefined,
         visibility,
       });
 
@@ -347,41 +312,6 @@
               class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
               placeholder={m.project_settings_description_placeholder()}
             ></textarea>
-          </div>
-
-          <!-- Target Taxa -->
-          <div>
-            <span class="block text-sm font-medium text-stone-700" id="target-taxa-label">
-              {m.project_settings_target_taxa_label()}
-            </span>
-            <div
-              class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
-              role="group"
-              aria-labelledby="target-taxa-label"
-            >
-              {#each TARGET_TAXA_OPTIONS as option (option.value)}
-                <label
-                  class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors
-                    {selectedTaxa.includes(option.value)
-                    ? 'border-primary-500 bg-primary-50 text-primary-700'
-                    : 'border-stone-200 bg-surface-card text-stone-700 hover:bg-stone-50'}
-                    {isSaving ? 'cursor-not-allowed opacity-50' : ''}"
-                >
-                  <input
-                    type="checkbox"
-                    value={option.value}
-                    checked={selectedTaxa.includes(option.value)}
-                    disabled={isSaving}
-                    onchange={() => toggleTaxon(option.value)}
-                    class="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  {option.label}
-                </label>
-              {/each}
-            </div>
-            <p class="mt-1 text-xs text-stone-500">
-              {m.project_settings_target_taxa_hint()}
-            </p>
           </div>
 
           <!-- Visibility -->
