@@ -311,6 +311,84 @@ async def test_create_public_project_with_empty_config_succeeds(
 
 
 @pytest.mark.asyncio
+async def test_create_project_with_target_taxa(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    response = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Project Target Taxa {uuid.uuid4()}",
+            "description": "created with target taxa",
+            "target_taxa": "Birds, Anurans",
+            "visibility": ProjectVisibility.PUBLIC.value,
+            "license": ProjectLicense.CC_BY.value,
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["target_taxa"] == "Birds, Anurans"
+
+
+@pytest.mark.asyncio
+async def test_create_project_without_target_taxa_is_null(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    response = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Project No Target Taxa {uuid.uuid4()}",
+            "description": "created without target taxa",
+            "visibility": ProjectVisibility.PUBLIC.value,
+            "license": ProjectLicense.CC_BY.value,
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["target_taxa"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_project_target_taxa(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    create = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Project Update Target Taxa {uuid.uuid4()}",
+            "description": "created before target taxa update",
+            "visibility": ProjectVisibility.PUBLIC.value,
+            "license": ProjectLicense.CC_BY.value,
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+    assert create.status_code == 201, create.text
+
+    project_id = create.json()["id"]
+    update = await client.patch(
+        f"/web-api/v1/projects/{project_id}",
+        json={"target_taxa": "Bats, Insects"},
+        headers=owner_headers,
+    )
+
+    assert update.status_code == 200, update.text
+    assert update.json()["target_taxa"] == "Bats, Insects"
+
+
+@pytest.mark.asyncio
 async def test_project_member_mutations_bff_contract(
     client: AsyncClient,
     db_session: AsyncSession,

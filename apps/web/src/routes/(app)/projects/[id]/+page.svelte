@@ -476,6 +476,13 @@
           {/if}
         </div>
 
+        {#if project.target_taxa}
+          <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
+            <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_detail_target_taxa_heading()}</h2>
+            <p class="whitespace-pre-wrap text-sm text-stone-700">{project.target_taxa}</p>
+          </div>
+        {/if}
+
         <!-- Quick Navigation -->
         <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <a

@@ -333,6 +333,7 @@ class ProjectService:
         project = Project(
             name=request.name,
             description=request.description,
+            target_taxa=request.target_taxa,
             visibility=request.visibility,
             license=request.license,
             restricted_config=final_restricted_config,
@@ -475,6 +476,8 @@ class ProjectService:
             project.name = request.name
         if request.description is not None:
             project.description = request.description
+        if request.target_taxa is not None:
+            project.target_taxa = request.target_taxa
         if request.visibility is not None:
             project.visibility = request.visibility
         if request.license is not None:

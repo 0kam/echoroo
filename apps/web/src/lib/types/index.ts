@@ -436,6 +436,7 @@ export interface Project {
   id: string;
   name: string;
   description?: string;
+  target_taxa?: string;
   visibility: ProjectVisibility;
   license?: ProjectLicense | string;
   /**
@@ -482,6 +483,7 @@ export type ProjectResponse = Project;
 export interface ProjectCreateRequest {
   name: string;
   description?: string;
+  target_taxa?: string;
   visibility: ProjectVisibility;
   license: ProjectLicense;
 }
@@ -492,6 +494,7 @@ export interface ProjectCreateRequest {
 export interface ProjectUpdateRequest {
   name?: string;
   description?: string;
+  target_taxa?: string;
   visibility?: ProjectVisibility;
   license?: ProjectLicense;
 }

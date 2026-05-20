@@ -51,6 +51,11 @@ class Project(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Project description",
     )
+    target_taxa: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+        doc="Operator-typed comma-separated focus taxa (e.g. 'Birds, Anurans').",
+    )
     visibility: Mapped[ProjectVisibility] = mapped_column(
         Enum(
             ProjectVisibility,

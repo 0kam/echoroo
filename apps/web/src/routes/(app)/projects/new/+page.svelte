@@ -23,6 +23,7 @@
   // Form state
   let name = $state('');
   let description = $state('');
+  let targetTaxa = $state('');
   let visibility = $state<'public' | 'restricted'>('restricted');
   // License is required (FR-085). Empty string is the "unselected" sentinel
   // that disables the submit button until the user picks one of the four
@@ -168,6 +169,7 @@
       const project = await projectsApi.create({
         name: name.trim(),
         description: description.trim() || undefined,
+        target_taxa: targetTaxa.trim() || undefined,
         visibility,
         license: selectedLicense,
       });
@@ -399,6 +401,24 @@
               {licenseFieldError}
             </p>
           {/if}
+        </div>
+
+        <!-- Target Taxa -->
+        <div>
+          <label for="targetTaxa" class="block text-sm font-medium text-stone-700">
+            {m.project_new_target_taxa_label()}
+          </label>
+          <input
+            id="targetTaxa"
+            name="targetTaxa"
+            type="text"
+            maxlength="500"
+            bind:value={targetTaxa}
+            disabled={isSubmitting}
+            class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:cursor-not-allowed disabled:bg-stone-100 sm:text-sm"
+            placeholder="Birds, Anurans"
+          />
+          <p class="mt-1 text-xs text-stone-500">{m.project_new_target_taxa_hint()}</p>
         </div>
       </div>
 
