@@ -57,6 +57,7 @@ function makeProjectResponse(role: Role | null, visibility: Visibility) {
     id: FAKE_PROJECT_ID,
     name: 'Smoke Matrix Test Project',
     description: 'A test project for permission smoke matrix',
+    target_taxa: 'Birds, Anurans',
     visibility,
     status: 'active',
     owner: {

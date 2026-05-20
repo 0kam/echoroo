@@ -145,6 +145,11 @@ class ProjectCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=200, description="Project name")
     description: str | None = Field(None, description="Project description")
+    target_taxa: str | None = Field(
+        None,
+        max_length=500,
+        description="Operator-typed comma-separated focus taxa (optional).",
+    )
     # Phase 7 polish round 2 (Major 2): contract ``ProjectCreateRequest``
     # marks ``visibility`` as ``required`` (projects.yaml:408). A pydantic
     # default would silently fill the field on omission and emit 201 instead
@@ -168,8 +173,15 @@ class ProjectCreateRequest(BaseModel):
 class ProjectUpdateRequest(BaseModel):
     """Project update request schema."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(None, min_length=1, max_length=200, description="Project name")
     description: str | None = Field(None, description="Project description")
+    target_taxa: str | None = Field(
+        None,
+        max_length=500,
+        description="Operator-typed comma-separated focus taxa (optional).",
+    )
     visibility: ProjectVisibility | None = Field(None, description="Project visibility level")
     license: ProjectLicense | None = Field(None, description="Project data license")
     restricted_config: dict[str, Any] | None = Field(
@@ -206,6 +218,10 @@ class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: str | None
+    target_taxa: str | None = Field(
+        None,
+        description="Operator-typed comma-separated focus taxa.",
+    )
     visibility: ProjectVisibility
     license: ProjectLicense
     restricted_config: dict[str, Any]

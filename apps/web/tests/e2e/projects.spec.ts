@@ -14,6 +14,7 @@ const testUser = {
 const testProject = {
   name: 'Test Project',
   description: 'This is a test project for bioacoustic analysis',
+  targetTaxa: 'Birds, Anurans',
 };
 
 const testMember = {
@@ -48,6 +49,7 @@ test.describe('Project Management', () => {
     // Fill in project details
     await page.fill('input[name="name"]', testProject.name);
     await page.fill('textarea[name="description"]', testProject.description);
+    await page.fill('input[name="targetTaxa"]', testProject.targetTaxa);
 
     // Select visibility (default is restricted)
     await page.check('input[name="visibility"][value="restricted"]');
@@ -61,6 +63,7 @@ test.describe('Project Management', () => {
     // Verify project was created
     await expect(page.locator('h1')).toContainText(testProject.name);
     await expect(page.locator('text=' + testProject.description)).toBeVisible();
+    await expect(page.locator('text=' + testProject.targetTaxa)).toBeVisible();
   });
 
   test('should edit project settings', async ({ page }) => {
@@ -82,7 +85,9 @@ test.describe('Project Management', () => {
 
     // Update project name
     const updatedName = 'Updated ' + testProject.name;
+    const updatedTargetTaxa = 'Bats, Insects';
     await page.fill('input[name="name"]', updatedName);
+    await page.fill('input[name="targetTaxa"]', updatedTargetTaxa);
 
     // Change visibility to public
     await page.check('input[name="visibility"][value="public"]');
@@ -98,6 +103,7 @@ test.describe('Project Management', () => {
 
     // Verify changes
     await expect(page.locator('h1')).toContainText(updatedName);
+    await expect(page.locator('text=' + updatedTargetTaxa)).toBeVisible();
     await expect(page.locator('text=Public')).toBeVisible();
   });
 
