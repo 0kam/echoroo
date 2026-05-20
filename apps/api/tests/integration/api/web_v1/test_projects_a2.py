@@ -13,6 +13,7 @@ from echoroo.core.settings import get_settings
 from echoroo.models.enums import ProjectLicense, ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.user import User
+from echoroo.services.project import DEFAULT_RESTRICTED_CONFIG
 from tests.integration.api.web_v1._helpers import (
     assert_api_key_cross_rejected,
     assert_audit_actor_kind_session,
@@ -224,6 +225,89 @@ async def test_project_create_update_delete_bff_contract(
         "/web-api/v1/projects/",
         body=create_body,
     )
+
+
+@pytest.mark.asyncio
+async def test_create_restricted_project_with_empty_config_uses_defaults(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    response = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Restricted Defaults {uuid.uuid4()}",
+            "description": "restricted project with empty config",
+            "visibility": ProjectVisibility.RESTRICTED.value,
+            "license": ProjectLicense.CC_BY.value,
+            "restricted_config": {},
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 201, response.text
+    restricted_config = response.json()["restricted_config"]
+    assert set(restricted_config) == set(DEFAULT_RESTRICTED_CONFIG)
+    assert restricted_config == DEFAULT_RESTRICTED_CONFIG
+
+
+@pytest.mark.asyncio
+async def test_create_restricted_project_user_override_wins(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    response = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Restricted Override {uuid.uuid4()}",
+            "description": "restricted project with config overrides",
+            "visibility": ProjectVisibility.RESTRICTED.value,
+            "license": ProjectLicense.CC_BY.value,
+            "restricted_config": {
+                "allow_media_playback": True,
+                "public_location_precision_h3_res": 5,
+            },
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 201, response.text
+    expected_config = {
+        **DEFAULT_RESTRICTED_CONFIG,
+        "allow_media_playback": True,
+        "public_location_precision_h3_res": 5,
+    }
+    restricted_config = response.json()["restricted_config"]
+    assert set(restricted_config) == set(DEFAULT_RESTRICTED_CONFIG)
+    assert restricted_config == expected_config
+
+
+@pytest.mark.asyncio
+async def test_create_public_project_with_empty_config_succeeds(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    response = await client.post(
+        "/web-api/v1/projects",
+        json={
+            "name": f"A2 Public Empty Config {uuid.uuid4()}",
+            "description": "public project with empty config",
+            "visibility": ProjectVisibility.PUBLIC.value,
+            "license": ProjectLicense.CC_BY.value,
+            "restricted_config": {},
+        },
+        headers=owner_headers,
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 201, response.text
 
 
 @pytest.mark.asyncio

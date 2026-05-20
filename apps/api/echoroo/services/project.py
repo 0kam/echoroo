@@ -32,6 +32,23 @@ from echoroo.services.license_service import record_initial_license
 
 ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
 
+# spec/006 spec.md:490 — defaults applied when a Restricted project is
+# created without explicit restricted_config values. Bool toggles default
+# OFF (conservative — minimal default exposure to Authenticated callers);
+# the public H3 resolution defaults to 2 (very coarse, ≈1,500 km hex —
+# safer than leaking precise coordinates). Owners / Admins can adjust
+# via `PATCH /projects/{id}/restricted-config` after creation.
+DEFAULT_RESTRICTED_CONFIG: dict[str, Any] = {
+    "allow_media_playback": False,
+    "allow_detection_view": False,
+    "mask_species_in_detection": False,
+    "allow_download": False,
+    "allow_export": False,
+    "allow_voting_and_comments": False,
+    "public_location_precision_h3_res": 2,
+    "allow_precise_location_to_viewer": False,
+}
+
 
 def scrub_owner_email_for_visibility(
     response: ProjectResponse,
@@ -304,13 +321,21 @@ class ProjectService:
                 detail="User not found",
             )
 
+        if request.visibility == ProjectVisibility.RESTRICTED:
+            final_restricted_config = {
+                **DEFAULT_RESTRICTED_CONFIG,
+                **(request.restricted_config or {}),
+            }
+        else:
+            final_restricted_config = request.restricted_config or {}
+
         # Create project
         project = Project(
             name=request.name,
             description=request.description,
             visibility=request.visibility,
             license=request.license,
-            restricted_config=request.restricted_config,
+            restricted_config=final_restricted_config,
             owner_id=user_id,
         )
 
