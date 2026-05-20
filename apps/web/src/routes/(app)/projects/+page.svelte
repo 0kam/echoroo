@@ -205,18 +205,12 @@
           <!-- Project Header -->
           <div class="mb-4 flex items-start justify-between">
             <h3 class="text-lg font-semibold text-stone-900">{project.name}</h3>
-            <!--
-              Three-way visibility badge. `restricted` was added by
-              the Permissions Redesign (FR-014); `private` survives
-              only as a legacy literal for unmigrated projects.
-            -->
+            <!-- Visibility badge: public or restricted. -->
             <span
               class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {project.visibility ===
               'public'
                 ? 'bg-success-light text-success'
-                : project.visibility === 'restricted'
-                  ? 'bg-warning-light text-warning'
-                  : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
+                : 'bg-warning-light text-warning'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
@@ -227,9 +221,7 @@
                   />
                 </svg>
                 {m.project_visibility_public()}
-              {:else if project.visibility === 'restricted'}
-                <!-- Key icon, distinct from the closed-padlock used for
-                     legacy private projects. -->
+              {:else}
                 <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
                   <path
                     fill-rule="evenodd"
@@ -238,15 +230,6 @@
                   />
                 </svg>
                 {m.project_visibility_restricted()}
-              {:else}
-                <svg class="mr-1 h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fill-rule="evenodd"
-                    d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
-                {m.project_visibility_private()}
               {/if}
             </span>
           </div>

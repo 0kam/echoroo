@@ -49,8 +49,8 @@ test.describe('Project Management', () => {
     await page.fill('input[name="name"]', testProject.name);
     await page.fill('textarea[name="description"]', testProject.description);
 
-    // Select visibility (default is private)
-    await page.check('input[name="visibility"][value="private"]');
+    // Select visibility (default is restricted)
+    await page.check('input[name="visibility"][value="restricted"]');
 
     // Submit form
     await page.click('button[type="submit"]:has-text("Create Project")');

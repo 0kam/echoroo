@@ -111,7 +111,7 @@ test.describe('Phase 7 US10 — License-required project create (T324, FR-085)',
 
     // Fill in the required, license-independent fields.
     await page.fill('input[name="name"]', uniqueProjectName('Phase7 Disabled'));
-    // visibility defaults to "private" via the radio group, no action needed.
+    // visibility defaults to "restricted" via the radio group, no action needed.
 
     const submitBtn = page.locator('[data-testid="project-create-submit"]');
     await expect(submitBtn).toBeVisible();

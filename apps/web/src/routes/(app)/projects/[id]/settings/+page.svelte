@@ -20,10 +20,9 @@
   let project = $state<Project | null>(null);
   let name = $state('');
   let description = $state('');
-  // Visibility radio supports public / restricted / private (Phase 8 /
-  // FR-014). All three options are surfaced in the form below; the
+  // Visibility radio supports public / restricted (Phase 8 / FR-014). The
   // selected value is round-tripped via projectData.visibility on save.
-  let visibility = $state<'private' | 'public' | 'restricted'>('private');
+  let visibility = $state<'public' | 'restricted'>('restricted');
 
   let isLoading = $state(true);
   let isSaving = $state(false);
@@ -317,13 +316,7 @@
           <!-- Visibility -->
           <div>
             <span class="block text-sm font-medium text-stone-700" id="visibility-label">{m.project_settings_visibility_label()}</span>
-            <!--
-              Three-way radio group. `restricted` is the current
-              recommended visibility introduced by the Permissions
-              Redesign (FR-014). `private` is shown only as a legacy
-              option so existing private projects can be reopened
-              without the radio appearing unselected.
-            -->
+            <!-- Visibility radio group: public or restricted. -->
             <div class="mt-2 space-y-2" role="radiogroup" aria-labelledby="visibility-label">
               <label class="flex items-start">
                 <input
@@ -370,30 +363,6 @@
                     <span class="text-sm font-medium text-stone-700">{m.project_settings_visibility_restricted_label()}</span>
                   </div>
                   <p class="text-xs text-stone-500">{m.project_settings_visibility_restricted_hint()}</p>
-                </div>
-              </label>
-
-              <label class="flex items-start">
-                <input
-                  type="radio"
-                  name="visibility"
-                  value="private"
-                  bind:group={visibility}
-                  disabled={isSaving}
-                  class="mt-0.5 h-4 w-4 border-stone-300 text-primary-600 focus:ring-primary-500"
-                />
-                <div class="ml-3">
-                  <div class="flex items-center">
-                    <svg class="mr-1.5 h-4 w-4 text-stone-500" fill="currentColor" viewBox="0 0 20 20">
-                      <path
-                        fill-rule="evenodd"
-                        d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    <span class="text-sm font-medium text-stone-700">{m.project_settings_visibility_private_label()}</span>
-                  </div>
-                  <p class="text-xs text-stone-500">{m.project_settings_visibility_private_hint()}</p>
                 </div>
               </label>
             </div>

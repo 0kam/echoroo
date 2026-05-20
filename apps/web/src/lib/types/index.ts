@@ -327,13 +327,11 @@ export interface APITokenCreateResponse extends APIToken {
  * Project visibility enum.
  *
  * NOTE: `'restricted'` was introduced by the Permissions Redesign
- * (Phase 8 / FR-014). The legacy `'private'` literal is kept here for
- * backwards compatibility with older frontend call-sites that have not
- * yet been migrated; the backend contract
- * (`specs/006-permissions-redesign/contracts/projects.yaml`) only
- * accepts `public` and `restricted`.
+ * (Phase 8 / FR-014). The backend contract
+ * (`specs/006-permissions-redesign/contracts/projects.yaml`) accepts
+ * `public` and `restricted`.
  */
-export type ProjectVisibility = 'private' | 'public' | 'restricted';
+export type ProjectVisibility = 'public' | 'restricted';
 
 /**
  * H3 resolutions allowed for the
