@@ -10,17 +10,6 @@
   import * as m from '$lib/paraglide/messages';
   import type { ProjectLicense } from '$lib/types';
 
-  // Predefined taxa options
-  const TARGET_TAXA_OPTIONS = [
-    { value: 'Birds', label: 'Birds' },
-    { value: 'Anurans', label: 'Anurans' },
-    { value: 'Insects', label: 'Insects' },
-    { value: 'Bats', label: 'Bats' },
-    { value: 'Land mammals', label: 'Land mammals' },
-    { value: 'Fishes', label: 'Fishes' },
-    { value: 'Cetaceans', label: 'Cetaceans' },
-  ];
-
   // License options (FR-085 — must match contracts/projects.yaml enum).
   // The label and hint are pulled from i18n at render time so locale switches
   // pick up the translated copy without re-mounting the component.
@@ -34,21 +23,17 @@
   // Form state
   let name = $state('');
   let description = $state('');
-  let selectedTaxa = $state<string[]>([]);
-  let visibility = $state<'private' | 'public'>('private');
+  let visibility = $state<'public' | 'restricted'>('restricted');
   // License is required (FR-085). Empty string is the "unselected" sentinel
   // that disables the submit button until the user picks one of the four
   // CC options. We narrow to ProjectLicense before sending to the API.
   let license = $state<'' | ProjectLicense>('');
 
-  // Derived comma-separated string for API
-  const targetTaxa = $derived(selectedTaxa.join(', '));
-
   // Form validity guards (FR-085: license required, name required).
   // Submit button is disabled until BOTH name and license are filled in.
   const nameValid = $derived(name.trim().length > 0 && name.trim().length <= 200);
   const licenseSelected = $derived(license !== '');
-  const visibilitySelected = $derived(visibility === 'private' || visibility === 'public');
+  const visibilitySelected = $derived(visibility === 'public' || visibility === 'restricted');
   const formValid = $derived(nameValid && licenseSelected && visibilitySelected);
 
   /**
@@ -93,17 +78,6 @@
   // Field-level error for the license field — surfaced inline under the
   // dropdown so screen readers pick it up via aria-describedby.
   let licenseFieldError = $state<string | null>(null);
-
-  /**
-   * Toggle a taxon selection
-   */
-  function toggleTaxon(value: string) {
-    if (selectedTaxa.includes(value)) {
-      selectedTaxa = selectedTaxa.filter((t) => t !== value);
-    } else {
-      selectedTaxa = [...selectedTaxa, value];
-    }
-  }
 
   // UI state
   let isSubmitting = $state(false);
@@ -194,7 +168,6 @@
       const project = await projectsApi.create({
         name: name.trim(),
         description: description.trim() || undefined,
-        target_taxa: targetTaxa || undefined,
         visibility,
         license: selectedLicense,
       });
@@ -335,41 +308,6 @@
           <p class="mt-1 text-xs text-stone-500">{m.project_new_description_hint()}</p>
         </div>
 
-        <!-- Target Taxa -->
-        <div>
-          <span class="block text-sm font-medium text-stone-700" id="target-taxa-label">
-            {m.project_new_target_taxa_label()}
-          </span>
-          <div
-            class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
-            role="group"
-            aria-labelledby="target-taxa-label"
-          >
-            {#each TARGET_TAXA_OPTIONS as option (option.value)}
-              <label
-                class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors
-                  {selectedTaxa.includes(option.value)
-                  ? 'border-primary-500 bg-primary-50 text-primary-700'
-                  : 'border-stone-200 bg-surface-card text-stone-700 hover:bg-stone-50'}
-                  {isSubmitting ? 'cursor-not-allowed opacity-50' : ''}"
-              >
-                <input
-                  type="checkbox"
-                  value={option.value}
-                  checked={selectedTaxa.includes(option.value)}
-                  disabled={isSubmitting}
-                  onchange={() => toggleTaxon(option.value)}
-                  class="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
-                />
-                {option.label}
-              </label>
-            {/each}
-          </div>
-          <p class="mt-1 text-xs text-stone-500">
-            {m.project_new_target_taxa_hint()}
-          </p>
-        </div>
-
         <!-- Visibility -->
         <div>
           <span class="block text-sm font-medium text-stone-700" id="visibility-label">{m.project_new_visibility_label()}</span>
@@ -378,7 +316,7 @@
               <input
                 type="radio"
                 name="visibility"
-                value="private"
+                value="restricted"
                 bind:group={visibility}
                 disabled={isSubmitting}
                 class="mt-0.5 h-4 w-4 border-stone-300 text-primary-600 focus:ring-primary-500"
@@ -388,13 +326,13 @@
                   <svg class="mr-1.5 h-4 w-4 text-stone-500" fill="currentColor" viewBox="0 0 20 20">
                     <path
                       fill-rule="evenodd"
-                      d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
+                      d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 2 2 0 012 2 1 1 0 102 0 4 4 0 00-4-4z"
                       clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="text-sm font-medium text-stone-700">{m.project_new_visibility_private_label()}</span>
+                  <span class="text-sm font-medium text-stone-700">{m.project_new_visibility_restricted_label()}</span>
                 </div>
-                <p class="text-xs text-stone-500">{m.project_new_visibility_private_hint()}</p>
+                <p class="text-xs text-stone-500">{m.project_new_visibility_restricted_hint()}</p>
               </div>
             </label>
 

@@ -307,19 +307,12 @@
         <div>
           <div class="flex items-center space-x-3">
             <h1 class="text-3xl font-bold text-stone-900">{project.name}</h1>
-            <!--
-              Three-way visibility badge. The Permissions Redesign
-              introduced `restricted` (FR-014). Legacy `private` projects
-              still exist in the type union for backwards compatibility,
-              but new projects only ship `public` / `restricted`.
-            -->
+            <!-- Visibility badge: public or restricted. -->
             <span
               class="inline-flex items-center rounded-full px-3 py-1 text-sm font-medium {project.visibility ===
               'public'
                 ? 'bg-success-light text-success'
-                : project.visibility === 'restricted'
-                  ? 'bg-warning-light text-warning'
-                  : 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300'}"
+                : 'bg-warning-light text-warning'}"
             >
               {#if project.visibility === 'public'}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
@@ -330,13 +323,7 @@
                   />
                 </svg>
                 {m.project_detail_visibility_public()}
-              {:else if project.visibility === 'restricted'}
-                <!--
-                  Restricted = key icon, signalling per-capability
-                  gating. Distinct from the closed-padlock used for
-                  legacy private projects so users can tell the two
-                  apart at a glance.
-                -->
+              {:else}
                 <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
                   <path
                     fill-rule="evenodd"
@@ -345,15 +332,6 @@
                   />
                 </svg>
                 {m.project_detail_visibility_restricted()}
-              {:else}
-                <svg class="mr-1.5 h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                  <path
-                    fill-rule="evenodd"
-                    d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
-                {m.project_detail_visibility_private()}
               {/if}
             </span>
           </div>
@@ -497,14 +475,6 @@
             <p class="text-sm italic text-stone-400">{m.project_detail_no_description()}</p>
           {/if}
         </div>
-
-        <!-- Target Taxa -->
-        {#if project.target_taxa}
-          <div class="mb-6 rounded-lg bg-surface-card p-6 shadow">
-            <h2 class="mb-4 text-lg font-semibold text-stone-900">{m.project_detail_target_taxa_heading()}</h2>
-            <p class="text-sm text-stone-700">{project.target_taxa}</p>
-          </div>
-        {/if}
 
         <!-- Quick Navigation -->
         <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

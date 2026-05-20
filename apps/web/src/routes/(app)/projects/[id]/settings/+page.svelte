@@ -13,17 +13,6 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { buildProjectContext, can } from '$lib/utils/permissions';
 
-  // Predefined taxa options
-  const TARGET_TAXA_OPTIONS = [
-    { value: 'Birds', label: 'Birds' },
-    { value: 'Anurans', label: 'Anurans' },
-    { value: 'Insects', label: 'Insects' },
-    { value: 'Bats', label: 'Bats' },
-    { value: 'Land mammals', label: 'Land mammals' },
-    { value: 'Fishes', label: 'Fishes' },
-    { value: 'Cetaceans', label: 'Cetaceans' },
-  ];
-
   // Get project ID from URL
   const projectId = $derived($page.params.id!);
 
@@ -31,25 +20,9 @@
   let project = $state<Project | null>(null);
   let name = $state('');
   let description = $state('');
-  let selectedTaxa = $state<string[]>([]);
-  // Visibility radio supports public / restricted / private (Phase 8 /
-  // FR-014). All three options are surfaced in the form below; the
+  // Visibility radio supports public / restricted (Phase 8 / FR-014). The
   // selected value is round-tripped via projectData.visibility on save.
-  let visibility = $state<'private' | 'public' | 'restricted'>('private');
-
-  // Derived comma-separated string for API
-  const targetTaxa = $derived(selectedTaxa.join(', '));
-
-  /**
-   * Toggle a taxon selection
-   */
-  function toggleTaxon(value: string) {
-    if (selectedTaxa.includes(value)) {
-      selectedTaxa = selectedTaxa.filter((t) => t !== value);
-    } else {
-      selectedTaxa = [...selectedTaxa, value];
-    }
-  }
+  let visibility = $state<'public' | 'restricted'>('restricted');
 
   let isLoading = $state(true);
   let isSaving = $state(false);
@@ -97,14 +70,6 @@
       // Initialize form fields
       name = projectData.name;
       description = projectData.description || '';
-      // Parse comma-separated taxa string into array of selected values
-      const rawTaxa = projectData.target_taxa || '';
-      selectedTaxa = rawTaxa
-        ? rawTaxa
-            .split(',')
-            .map((t) => t.trim())
-            .filter((t) => TARGET_TAXA_OPTIONS.some((opt) => opt.value === t))
-        : [];
       visibility = projectData.visibility;
     } catch (err) {
       if (err instanceof ApiError) {
@@ -167,7 +132,6 @@
       const updated = await projectsApi.update(projectId, {
         name: name.trim(),
         description: description.trim() || undefined,
-        target_taxa: targetTaxa || undefined,
         visibility,
       });
 
@@ -349,51 +313,10 @@
             ></textarea>
           </div>
 
-          <!-- Target Taxa -->
-          <div>
-            <span class="block text-sm font-medium text-stone-700" id="target-taxa-label">
-              {m.project_settings_target_taxa_label()}
-            </span>
-            <div
-              class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3"
-              role="group"
-              aria-labelledby="target-taxa-label"
-            >
-              {#each TARGET_TAXA_OPTIONS as option (option.value)}
-                <label
-                  class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors
-                    {selectedTaxa.includes(option.value)
-                    ? 'border-primary-500 bg-primary-50 text-primary-700'
-                    : 'border-stone-200 bg-surface-card text-stone-700 hover:bg-stone-50'}
-                    {isSaving ? 'cursor-not-allowed opacity-50' : ''}"
-                >
-                  <input
-                    type="checkbox"
-                    value={option.value}
-                    checked={selectedTaxa.includes(option.value)}
-                    disabled={isSaving}
-                    onchange={() => toggleTaxon(option.value)}
-                    class="h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  {option.label}
-                </label>
-              {/each}
-            </div>
-            <p class="mt-1 text-xs text-stone-500">
-              {m.project_settings_target_taxa_hint()}
-            </p>
-          </div>
-
           <!-- Visibility -->
           <div>
             <span class="block text-sm font-medium text-stone-700" id="visibility-label">{m.project_settings_visibility_label()}</span>
-            <!--
-              Three-way radio group. `restricted` is the current
-              recommended visibility introduced by the Permissions
-              Redesign (FR-014). `private` is shown only as a legacy
-              option so existing private projects can be reopened
-              without the radio appearing unselected.
-            -->
+            <!-- Visibility radio group: public or restricted. -->
             <div class="mt-2 space-y-2" role="radiogroup" aria-labelledby="visibility-label">
               <label class="flex items-start">
                 <input
@@ -440,30 +363,6 @@
                     <span class="text-sm font-medium text-stone-700">{m.project_settings_visibility_restricted_label()}</span>
                   </div>
                   <p class="text-xs text-stone-500">{m.project_settings_visibility_restricted_hint()}</p>
-                </div>
-              </label>
-
-              <label class="flex items-start">
-                <input
-                  type="radio"
-                  name="visibility"
-                  value="private"
-                  bind:group={visibility}
-                  disabled={isSaving}
-                  class="mt-0.5 h-4 w-4 border-stone-300 text-primary-600 focus:ring-primary-500"
-                />
-                <div class="ml-3">
-                  <div class="flex items-center">
-                    <svg class="mr-1.5 h-4 w-4 text-stone-500" fill="currentColor" viewBox="0 0 20 20">
-                      <path
-                        fill-rule="evenodd"
-                        d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    <span class="text-sm font-medium text-stone-700">{m.project_settings_visibility_private_label()}</span>
-                  </div>
-                  <p class="text-xs text-stone-500">{m.project_settings_visibility_private_hint()}</p>
                 </div>
               </label>
             </div>

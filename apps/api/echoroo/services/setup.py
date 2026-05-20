@@ -226,6 +226,7 @@ class SetupService:
                 two_factor_secret_encrypted=encrypted_secret,
                 two_factor_secret_dek_version=encrypted_secret_dek_version,
                 two_factor_backup_codes_hashed=None,
+                email_verified_at=datetime.now(UTC),
                 security_stamp=_security_stamp(),
             )
             self.session.add(user_row)

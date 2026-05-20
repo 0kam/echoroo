@@ -193,6 +193,26 @@ class TestProjectEndpoints:
 
         assert response.status_code == 422  # Validation error
 
+    async def test_create_project_rejects_legacy_private_visibility(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+    ) -> None:
+        """Test POST /api/v1/projects rejects legacy private visibility."""
+        project_data = {
+            "name": "Legacy Private Project",
+            "visibility": "private",
+            "license": "CC-BY",
+        }
+
+        response = await client.post(
+            "/api/v1/projects",
+            headers=auth_headers,
+            json=project_data,
+        )
+
+        assert response.status_code == 422
+
     async def test_create_project_unauthorized(self, client: AsyncClient) -> None:
         """Test POST /api/v1/projects requires authentication."""
         project_data = {"name": "Test Project"}

@@ -292,11 +292,7 @@ export interface BuildProjectContextArgs {
  *   5. Authenticated AND `project.current_user_role == null` (or project still undefined
  *      after load) → `authenticated_non_member`
  *
- * Visibility: derived from `project.visibility`. Note the `Project`
- * type allows `'private'` for backwards compatibility, but the
- * permissions redesign (006) deprecated Private — we map it to
- * `'restricted'` with no `restrictedConfig`, which yields non-member
- * access of zero (correct legacy semantics).
+ * Visibility: derived from `project.visibility`.
  */
 export function buildProjectContext(args: BuildProjectContextArgs): ProjectContext {
   const { authStore, project, projectQueryState, pendingInvitationToken } = args;
@@ -357,10 +353,7 @@ export function buildProjectContext(args: BuildProjectContextArgs): ProjectConte
 }
 
 /**
- * Map the wider `ProjectVisibility` ('private' | 'public' | 'restricted')
- * down to the `ProjectContext` visibility ('public' | 'restricted').
- * Legacy `private` is treated as `restricted` with no toggles, which
- * preserves the "members only, nothing for non-members" semantics.
+ * Map `ProjectVisibility` down to the `ProjectContext` visibility.
  */
 function normalizeVisibility(
   visibility: ProjectVisibility | undefined

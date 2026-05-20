@@ -114,7 +114,7 @@
   </header>
 
   <!-- Page content (flex-1 so it fills remaining height) -->
-  <div class="flex flex-1 overflow-hidden">
+  <div class="flex min-h-0 flex-1 overflow-y-auto">
     {#if authStore.isLoading}
       <!-- Block child routes from rendering until auth initialization is complete -->
       <div class="flex w-full items-center justify-center">

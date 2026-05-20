@@ -10,9 +10,8 @@
    * --------------------------------
    * - The toggles only apply to Restricted projects (FR-001 / FR-014).
    *   We render the editable form ONLY when
-   *   `project.visibility === 'restricted'`. All other visibilities
-   *   (including legacy `'private'`) get a notice instead, since
-   *   posting to the PATCH endpoint would be rejected with 422
+   *   `project.visibility === 'restricted'`. Public projects get a
+   *   notice instead, since posting to the PATCH endpoint would be rejected with 422
    *   `ERR_RESTRICTED_CONFIG_NOT_APPLICABLE` for non-restricted
    *   projects.
    * - When the caller is not allowed to edit
@@ -278,11 +277,10 @@
     </p>
   {:else if !isRestricted}
     <!--
-      Legacy `'private'` visibility (or any non-public, non-restricted
-      future value). The PATCH endpoint rejects these with 422
-      ERR_RESTRICTED_CONFIG_NOT_APPLICABLE, so we render a non-editable
-      notice instead of the form. This avoids dirty-state edits that
-      can never be saved.
+      Non-public, non-restricted future value. The PATCH endpoint rejects
+      these with 422 ERR_RESTRICTED_CONFIG_NOT_APPLICABLE, so we render a
+      non-editable notice instead of the form. This avoids dirty-state edits
+      that can never be saved.
     -->
     <p
       data-testid="restricted-toggles-not-applicable-notice"
