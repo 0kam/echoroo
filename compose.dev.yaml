@@ -127,6 +127,12 @@ services:
       - AUDIO_ROOT=/data/audio
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
+      # spec/011 NFR-011-010 — invitation token signing (KID + HMAC).
+      # Required at every boot (dev + staging + prod). The 32-char minimum
+      # only applies in prod/staging, but we keep the default strong so the
+      # same defaults work if ENVIRONMENT is flipped.
+      - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
+      - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
       - TEST_MODE=${TEST_MODE:-false}
       - TEST_TOTP_SECRET_BASE32=${TEST_TOTP_SECRET_BASE32:-}
       - S3_ENDPOINT_URL=http://localstack:4566
@@ -189,6 +195,11 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_KMS_REGION=us-east-1
       - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      # Invitation token signing — mirror backend (spec/011 NFR-011-010);
+      # celery_app imports echoroo settings at startup, which validates
+      # the invitation kid envelope at every boot.
+      - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
+      - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
     volumes:
       - ./apps/api:/app
       - backend-data:/data
@@ -230,6 +241,11 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_KMS_REGION=us-east-1
       - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      # Invitation token signing — mirror backend (spec/011 NFR-011-010);
+      # celery_app imports echoroo settings at startup, which validates
+      # the invitation kid envelope at every boot.
+      - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
+      - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
     volumes:
       - ./apps/api:/app
       - backend-data:/data
@@ -263,6 +279,11 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_KMS_REGION=us-east-1
       - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      # Invitation token signing — mirror backend (spec/011 NFR-011-010);
+      # celery_app imports echoroo settings at startup, which validates
+      # the invitation kid envelope at every boot.
+      - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
+      - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
     volumes:
       - ./apps/api:/app
       - ./config/redis/tls:/etc/redis/tls:ro

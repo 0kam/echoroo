@@ -8,6 +8,24 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+# spec/011 NFR-011-010 — invitation token kid + HMAC defensive bootstrap.
+# ``echoroo.core.settings.Settings`` requires INVITATION_TOKEN_KID_NEW and
+# INVITATION_TOKEN_HMAC_KEY to be non-empty at every boot (dev / staging /
+# prod). Any test-collection-time ``from echoroo...`` import below
+# transitively constructs Settings (via get_settings() / database.py), so a
+# missing env crashes the entire collection. CI sets these explicitly; this
+# os.environ.setdefault block is a belt-and-braces safety net for local
+# `uv run pytest` (e.g. dev shells without docker exec) so collection never
+# fails for a developer who forgot to source the env. Strength check is
+# prod/staging-only so these short fixtures are accepted.
+import os as _os
+
+_os.environ.setdefault("INVITATION_TOKEN_KID_NEW", "test-kid")
+_os.environ.setdefault(
+    "INVITATION_TOKEN_HMAC_KEY",
+    "test-invitation-hmac-key-32-chars-min-padding-xxxxxxxx",
+)
+
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
