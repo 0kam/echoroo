@@ -110,6 +110,11 @@ def upgraded_db(alembic_db_url: str) -> str:
     env = {
         "DATABASE_URL": alembic_db_url.replace("postgresql://", "postgresql+asyncpg://"),
         "ALEMBIC_SYNC_URL": alembic_db_url,
+        # spec/011 NFR-011-010: Settings validator now refuses an empty
+        # invitation-token kid / HMAC at every boot, so the subprocess
+        # that loads echoroo.core.settings must carry both values too.
+        "INVITATION_TOKEN_KID_NEW": "test-kid",
+        "INVITATION_TOKEN_HMAC_KEY": "test-invitation-hmac-key-32-chars-min-padding-xxxxxxxx",
     }
     result = subprocess.run(
         ["uv", "run", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
