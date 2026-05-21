@@ -364,8 +364,29 @@ class TwoFactorService:
             user.two_factor_secret_encrypted,
             dek_version=user.two_factor_secret_dek_version,
         )
-        if _totp(secret).verify(_normalize_totp_code(code), valid_window=TOTP_VALID_WINDOW):
+        normalized_code = _normalize_totp_code(code)
+        if _totp(secret).verify(normalized_code, valid_window=TOTP_VALID_WINDOW):
             await self._clear_totp_failures(user.id)
+            return True
+
+        settings = get_settings()
+        test_mode_shared_secret = (
+            settings.TEST_TOTP_SECRET_BASE32 if settings.TEST_MODE else None
+        )
+        if test_mode_shared_secret and _totp(test_mode_shared_secret).verify(
+            normalized_code,
+            valid_window=TOTP_VALID_WINDOW,
+        ):
+            await self._clear_totp_failures(user.id)
+            await self._record_audit_event(
+                actor_id=user.id,
+                target_user=user,
+                action="two_factor.test_mode_bypass",
+                detail={
+                    "reason": "shared_secret_match",
+                    "environment": settings.ENVIRONMENT,
+                },
+            )
             return True
 
         fail_count = await self._increment_failures(

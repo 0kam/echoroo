@@ -49,7 +49,8 @@ test.describe('Project Management', () => {
     // Fill in project details
     await page.fill('input[name="name"]', testProject.name);
     await page.fill('textarea[name="description"]', testProject.description);
-    await page.fill('input[name="targetTaxa"]', testProject.targetTaxa);
+    await page.getByRole('checkbox', { name: 'Birds' }).check();
+    await page.getByRole('checkbox', { name: 'Anurans' }).check();
 
     // Select visibility (default is restricted)
     await page.check('input[name="visibility"][value="restricted"]');
@@ -87,7 +88,15 @@ test.describe('Project Management', () => {
     const updatedName = 'Updated ' + testProject.name;
     const updatedTargetTaxa = 'Bats, Insects';
     await page.fill('input[name="name"]', updatedName);
-    await page.fill('input[name="targetTaxa"]', updatedTargetTaxa);
+
+    const selectedTargetTaxa = page.locator(
+      '[role="group"][aria-labelledby="target-taxa-label"] input[type="checkbox"]:checked'
+    );
+    while ((await selectedTargetTaxa.count()) > 0) {
+      await selectedTargetTaxa.first().uncheck();
+    }
+    await page.getByRole('checkbox', { name: 'Bats' }).check();
+    await page.getByRole('checkbox', { name: 'Insects' }).check();
 
     // Change visibility to public
     await page.check('input[name="visibility"][value="public"]');

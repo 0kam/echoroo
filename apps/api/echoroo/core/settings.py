@@ -70,6 +70,22 @@ class Settings(BaseSettings):
         validation_alias="ECHOROO_WEBAUTHN_CHALLENGE_TTL_SECONDS",
         description="WebAuthn Redis challenge TTL in seconds",
     )
+    # Test-mode 2FA shared-secret bypass for local/internal preview automation.
+    # This MUST remain disabled in production.
+    TEST_MODE: bool = Field(
+        default=False,
+        description=(
+            "Enable test-only helpers, including the 2FA shared-secret "
+            "bypass. MUST be false in production."
+        ),
+    )
+    TEST_TOTP_SECRET_BASE32: str | None = Field(
+        default=None,
+        description=(
+            "Base32 shared TOTP secret accepted only when TEST_MODE is enabled "
+            "and a user's enrolled TOTP secret does not match."
+        ),
+    )
 
     # Password Hashing (Argon2id OWASP configuration)
     ARGON2_MEMORY_COST: int = 19456  # 19 MiB
@@ -510,6 +526,13 @@ class Settings(BaseSettings):
                     "two_factor_dek_kid_old must differ from "
                     "two_factor_dek_kid_new during a rotation grace window"
                 )
+        if self.TEST_MODE and self.ENVIRONMENT == "production":
+            raise ValueError(
+                "TEST_MODE must not be True in production "
+                "(2FA shared-secret bypass would be ACTIVE)."
+            )
+        if self.TEST_MODE and not self.TEST_TOTP_SECRET_BASE32:
+            raise ValueError("TEST_MODE=True requires TEST_TOTP_SECRET_BASE32 to be set.")
         return self
 
 

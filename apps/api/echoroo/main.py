@@ -1,5 +1,6 @@
 """FastAPI application factory and configuration."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -42,6 +43,7 @@ from echoroo.services.session_verification import (
     JwtSessionVerifier,
 )
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
@@ -55,6 +57,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
         app: FastAPI application instance (required by FastAPI signature)
     """
     # Startup
+    if settings.TEST_MODE:
+        logger.warning(
+            "TEST_MODE is enabled, 2FA shared-secret bypass is ACTIVE. "
+            "DO NOT use in production. ENVIRONMENT=%s",
+            settings.ENVIRONMENT,
+        )
     await get_redis_connection()
     await init_rate_limiter()
     yield

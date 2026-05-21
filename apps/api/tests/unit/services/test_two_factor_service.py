@@ -8,9 +8,11 @@ from uuid import uuid4
 
 import pyotp
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.selectable import Select
 
+from echoroo.core.settings import Settings
 from echoroo.models.user import User
 from echoroo.services import two_factor_service as two_factor_module
 from echoroo.services.two_factor_service import (
@@ -24,6 +26,8 @@ from echoroo.services.two_factor_service import (
     TwoFactorRateLimitedError,
     TwoFactorService,
 )
+
+SHARED_TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 
 
 class _Result:
@@ -128,6 +132,52 @@ def _service(user: User) -> TwoFactorService:
     return TwoFactorService(_FakeSession(user), _FakeRedis())  # type: ignore[arg-type]
 
 
+def _strong_production_settings(**overrides: Any) -> dict[str, Any]:
+    settings: dict[str, Any] = {
+        "ENVIRONMENT": "production",
+        "JWT_SECRET_KEY": "strong-jwt-secret-that-is-long-enough-1234",
+        "web_session_secret": "strong-web-session-secret-that-is-long-enough-1234",
+        "S3_SECRET_KEY": "strong-s3-secret",
+        "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY": ("strong-two-factor-reset-hmac-secret-1234"),
+    }
+    settings.update(overrides)
+    return settings
+
+
+def _decrypt_user_totp_secret(user: User) -> str:
+    assert user.two_factor_secret_encrypted is not None
+    return two_factor_module._decrypt_totp_secret(
+        user.two_factor_secret_encrypted,
+        dek_version=user.two_factor_secret_dek_version,
+    )
+
+
+def _shared_secret_code_not_matching_enrolled(enrolled_secret: str) -> tuple[str, str]:
+    candidate_secrets = [
+        SHARED_TEST_TOTP_SECRET,
+        "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+        "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+    ]
+    enrolled_totp = pyotp.TOTP(enrolled_secret)
+    for shared_secret in candidate_secrets:
+        code = pyotp.TOTP(shared_secret).now()
+        if not enrolled_totp.verify(code, valid_window=two_factor_module.TOTP_VALID_WINDOW):
+            return shared_secret, code
+    raise AssertionError("could not find shared TOTP code distinct from enrolled secret")
+
+
+def _totp_code_matching_no_secret(*secrets: str) -> str:
+    totps = [pyotp.TOTP(secret) for secret in secrets]
+    for value in range(1_000_000):
+        code = f"{value:06d}"
+        if all(
+            not totp.verify(code, valid_window=two_factor_module.TOTP_VALID_WINDOW)
+            for totp in totps
+        ):
+            return code
+    raise AssertionError("could not find non-matching TOTP code")
+
+
 async def _confirmed_user(user: User) -> tuple[TwoFactorService, list[str]]:
     service = _service(user)
     artifacts = await service.begin_enrollment(user)
@@ -181,6 +231,105 @@ async def test_totp_verify_accepts_valid_code_and_rejects_invalid_code() -> None
 
     assert await service.verify_totp(user, pyotp.TOTP(two_factor_module._decrypt_totp_secret(user.two_factor_secret_encrypted)).now())
     assert await service.verify_totp(user, "not-a-code") is False
+
+
+def test_test_mode_in_production_refuses_startup() -> None:
+    with pytest.raises((ValueError, ValidationError), match="TEST_MODE"):
+        Settings(
+            **_strong_production_settings(
+                TEST_MODE=True,
+                TEST_TOTP_SECRET_BASE32=SHARED_TEST_TOTP_SECRET,
+            )
+        )
+
+
+def test_test_mode_without_shared_secret_refuses_startup() -> None:
+    with pytest.raises((ValueError, ValidationError), match="TEST_TOTP_SECRET_BASE32"):
+        Settings(TEST_MODE=True, TEST_TOTP_SECRET_BASE32=None)
+
+
+@pytest.mark.asyncio
+async def test_test_mode_bypass_accepts_shared_secret_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+    enrolled_secret = _decrypt_user_totp_secret(user)
+    shared_secret, shared_code = _shared_secret_code_not_matching_enrolled(enrolled_secret)
+    _stub_settings(
+        monkeypatch,
+        test_mode=True,
+        test_totp_secret_base32=shared_secret,
+        environment="development",
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "_record_audit_event", audit)
+
+    assert await service.verify_totp(user, shared_code) is True
+
+    audit.assert_awaited_once()
+    assert audit.call_args.kwargs["action"] == "two_factor.test_mode_bypass"
+    assert audit.call_args.kwargs["detail"] == {
+        "reason": "shared_secret_match",
+        "environment": "development",
+    }
+
+
+@pytest.mark.asyncio
+async def test_test_mode_bypass_rejects_wrong_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+    enrolled_secret = _decrypt_user_totp_secret(user)
+    wrong_code = _totp_code_matching_no_secret(
+        enrolled_secret,
+        SHARED_TEST_TOTP_SECRET,
+    )
+    _stub_settings(
+        monkeypatch,
+        test_mode=True,
+        test_totp_secret_base32=SHARED_TEST_TOTP_SECRET,
+    )
+
+    assert await service.verify_totp(user, wrong_code) is False
+
+
+@pytest.mark.asyncio
+async def test_test_mode_off_rejects_shared_secret_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+    enrolled_secret = _decrypt_user_totp_secret(user)
+    shared_secret, shared_code = _shared_secret_code_not_matching_enrolled(enrolled_secret)
+    _stub_settings(
+        monkeypatch,
+        test_mode=False,
+        test_totp_secret_base32=shared_secret,
+    )
+
+    assert await service.verify_totp(user, shared_code) is False
+
+
+@pytest.mark.asyncio
+async def test_enrolled_secret_still_works_with_test_mode_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+    enrolled_secret = _decrypt_user_totp_secret(user)
+    _stub_settings(
+        monkeypatch,
+        test_mode=True,
+        test_totp_secret_base32=SHARED_TEST_TOTP_SECRET,
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "_record_audit_event", audit)
+
+    assert await service.verify_totp(user, pyotp.TOTP(enrolled_secret).now()) is True
+
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -438,6 +587,9 @@ def _stub_settings(
     alias_new: str = "alias/echoroo-totp-dek",
     kid_old: int | None = None,
     alias_old: str | None = None,
+    test_mode: bool = False,
+    test_totp_secret_base32: str | None = None,
+    environment: str = "development",
 ) -> None:
     """Return a Settings-like stub from ``two_factor_service.get_settings``."""
 
@@ -446,6 +598,9 @@ def _stub_settings(
         two_factor_dek_cmk_alias_new = alias_new
         two_factor_dek_kid_old = kid_old
         two_factor_dek_cmk_alias_old = alias_old
+        TEST_MODE = test_mode
+        TEST_TOTP_SECRET_BASE32 = test_totp_secret_base32
+        ENVIRONMENT = environment
 
     monkeypatch.setattr(
         two_factor_module, "get_settings", lambda: _StubSettings()
