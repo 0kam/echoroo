@@ -44,7 +44,7 @@
 
 ### Database
 
-- [ ] T010 Create migration `apps/api/alembic/versions/0021_zero_email_additive.py` (FR-011-002 partial / FR-011-122 / FR-011-203 / FR-011-301):
+- [x] T010 Create migration `apps/api/alembic/versions/0021_zero_email_additive.py` (FR-011-002 partial / FR-011-122 / FR-011-203 / FR-011-301):
   - `users.must_change_password BOOLEAN NOT NULL DEFAULT false`
   - `users.temp_password_expires_at TIMESTAMPTZ NULL`
   - `users.email_change_cooldown_until TIMESTAMPTZ NULL` (grep-verified absent from current schema; required by FR-011-305 24h cool-off)
@@ -52,19 +52,19 @@
   - CHECK `ck_project_invitations_ownership_transfer_kind_member`: `(ownership_transfer_on_accept = false OR kind = 'member')`
   - New table `user_banner_dismissals(user_id, audit_table, audit_log_id, dismissed_at)` with composite PK + CHECK `audit_table IN ('project_audit_log', 'platform_audit_log')` + FK only on `user_id` (polymorphic — no FK on audit_log_id; per data-model.md §user_banner_dismissals)
   - `downgrade()` raises (forward-only, NFR-011-002)
-- [ ] T011 Add `apps/api/tests/unit/test_migration_0021.py` (P): apply + rollback-raise tests; assert all columns/tables/CHECK constraints present after upgrade
+- [x] T011 Add `apps/api/tests/unit/test_migration_0021.py` (P): apply + rollback-raise tests; assert all columns/tables/CHECK constraints present after upgrade
 
 ### Settings + env validation
 
-- [ ] T012 In `apps/api/echoroo/core/settings.py` add the five new env vars (NFR-011-010, data-model.md §Settings):
+- [x] T012 In `apps/api/echoroo/core/settings.py` add the five new env vars (NFR-011-010, data-model.md §Settings):
   - `INVITATION_TOKEN_KID_NEW: str` (required at every boot)
   - `INVITATION_TOKEN_KID_OLD: str | None` (optional after grace)
   - `INVITATION_TOKEN_KID_GRACE_HOURS: int = 24`
   - `INVITATION_TOKEN_HMAC_KEY: str` (required at every boot)
   - `INVITATION_TOKEN_HMAC_KEY_OLD: str | None`
   - `model_validator(mode='after')` raises `ValueError` when `INVITATION_TOKEN_KID_OLD` is set without `INVITATION_TOKEN_HMAC_KEY_OLD` (and vice versa) — mirror the A-12 pattern at `core/settings.py:516-528`
-- [ ] T013 [P] Remove `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`, `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` from `apps/api/echoroo/core/settings.py` (FR-011-006)
-- [ ] T014 [P] Add `apps/api/tests/unit/core/test_invitation_token_kid_settings.py`: assert presence, defaults, refuse-to-start co-presence validator
+- [ ] T013 [P] **SPLIT ACROSS Step 2 / 3 / 10** — Remove the legacy email settings in the same PR as the consumer cleanup so settings + readers stay in sync: `RESEND_API_KEY`/`EMAIL_FROM` move to Step 2 (with `services/email.py` rewrite), `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED` to Step 3 (middleware atomic swap), `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` to Step 10 (`services/email_verification_service.py` deletion). Avoids `AttributeError` between PRs.
+- [x] T014 [P] Add `apps/api/tests/unit/core/test_invitation_token_kid_settings.py`: assert presence, defaults, refuse-to-start co-presence validator
 
 ### Audit substrate
 

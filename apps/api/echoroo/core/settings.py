@@ -1,10 +1,18 @@
 """Application settings and configuration management."""
 
+import re
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+# spec/011 NFR-011-010 — invitation token kid character class. The wire
+# envelope ``{token}.{exp}.{kid}.{mac}`` is decoded via ``rsplit('.', 3)``
+# so kids MUST NOT contain ``.``; we additionally restrict to URL-safe
+# characters to keep operator pasting safe.
+_INVITATION_TOKEN_KID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class Settings(BaseSettings):
@@ -411,12 +419,148 @@ class Settings(BaseSettings):
         ),
     )
 
+    # spec/011 NFR-011-010 — invitation token signing key + kid rotation.
+    #
+    # Mirrors the Phase 17 A-12 ``_NEW`` / ``_OLD`` env-driven rotation
+    # pattern (see ``two_factor_reset_confirmation_hmac_*`` above) so a
+    # rotation only needs env var changes — no source code bump.
+    #
+    # Wire envelope: the new invitation token format is
+    # ``{token}.{exp}.{kid}.{mac}`` (4-part). Verification accepts:
+    #
+    #   * a 4-part envelope whose ``kid`` matches
+    #     ``INVITATION_TOKEN_KID_NEW`` (preferred) or
+    #     ``INVITATION_TOKEN_KID_OLD`` (during the grace window); or
+    #   * a 3-part legacy envelope whose MAC verifies under
+    #     ``INVITATION_TOKEN_HMAC_KEY_OLD`` (initial deploy / grace only).
+    #
+    # The two ``_OLD`` slots MUST be set together or both unset (see the
+    # model validator below). Operators close a rotation by unsetting
+    # both ``_OLD`` env vars once the grace window has elapsed.
+    invitation_token_kid_new: str = Field(
+        default="",
+        validation_alias="INVITATION_TOKEN_KID_NEW",
+        description=(
+            "Active kid stamped on newly issued invitation tokens "
+            "(NFR-011-010). Required at every boot in EVERY environment "
+            "(dev / staging / production) — an empty value trips the "
+            "model_validator non-empty guard regardless of ENVIRONMENT. "
+            "The 32-char minimum strength bar on the companion "
+            "INVITATION_TOKEN_HMAC_KEY is the only env-conditional check "
+            "(prod / staging only)."
+        ),
+    )
+    invitation_token_kid_old: str | None = Field(
+        default=None,
+        validation_alias="INVITATION_TOKEN_KID_OLD",
+        description=(
+            "Previous kid accepted during the rotation grace window. "
+            "Required at the initial spec/011 deploy so 3-part legacy "
+            "tokens in flight remain verifiable; optional after the "
+            "grace window expires. MUST be paired with "
+            "``INVITATION_TOKEN_HMAC_KEY_OLD``."
+        ),
+    )
+    invitation_token_kid_grace_hours: int = Field(
+        default=24,
+        validation_alias="INVITATION_TOKEN_KID_GRACE_HOURS",
+        description=(
+            "Hours past the invitation TTL during which ``_OLD`` kid "
+            "tokens (and 3-part legacy envelopes) remain verifiable. "
+            "Default 24 (NFR-011-010)."
+        ),
+    )
+    invitation_token_hmac_key: str = Field(
+        default="",
+        validation_alias="INVITATION_TOKEN_HMAC_KEY",
+        description=(
+            "HMAC-SHA256 signing key for the NEW invitation token kid "
+            "(NFR-011-010). Required (non-empty) at every boot in EVERY "
+            "environment (dev / staging / production). The 32-char "
+            "minimum length is enforced only in production / staging — "
+            "dev / test fixtures may use shorter values."
+        ),
+    )
+    invitation_token_hmac_key_old: str | None = Field(
+        default=None,
+        validation_alias="INVITATION_TOKEN_HMAC_KEY_OLD",
+        description=(
+            "HMAC-SHA256 signing key for the OLD invitation token kid "
+            "(NFR-011-010). MUST be paired with "
+            "``INVITATION_TOKEN_KID_OLD``; both unset means no rotation "
+            "in progress. Min 32 chars in production / staging."
+        ),
+    )
+
     @field_validator("webauthn_origins", mode="before")
     @classmethod
     def parse_webauthn_origins(cls, value: Any) -> Any:
         """Accept ECHOROO_WEBAUTHN_ORIGINS as a comma-separated list."""
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
+
+    # spec/011 NFR-011-010 — invitation token kid format guard.
+    #
+    # The wire envelope is the 4-part ``{token}.{exp}.{kid}.{mac}`` string;
+    # any ``.`` (or other delimiter) inside the kid would silently break
+    # ``str.rsplit('.', 3)`` decoding and route a token to the wrong key.
+    # We therefore normalise whitespace and reject any kid that does not
+    # match ``^[A-Za-z0-9_-]+$`` at parse time, before the env-aware
+    # ``model_validator`` runs the co-presence / non-empty checks.
+    #
+    # ``KID_NEW`` retains an empty-string default purely as the
+    # Pydantic "unset" sentinel — the env-agnostic non-empty guard in
+    # ``validate_production_secrets`` (see below) rejects that default
+    # at boot in EVERY environment (dev / staging / production), so no
+    # ENVIRONMENT is allowed to boot without an explicit value. The
+    # 32-char minimum strength bar on the companion HMAC key is the
+    # only env-conditional check (prod / staging only). ``KID_OLD``
+    # normalises empty / whitespace to ``None`` to match the
+    # ``str | None`` semantics of its companion
+    # ``INVITATION_TOKEN_HMAC_KEY_OLD`` slot.
+    @field_validator(
+        "invitation_token_kid_new",
+        "invitation_token_kid_old",
+        mode="before",
+    )
+    @classmethod
+    def _normalise_invitation_token_kid(
+        cls, value: Any, info: Any
+    ) -> Any:
+        is_old = info.field_name == "invitation_token_kid_old"
+        if value is None:
+            return None if is_old else ""
+        if not isinstance(value, str):
+            return value
+        stripped = value.strip()
+        if stripped == "":
+            return None if is_old else ""
+        if not _INVITATION_TOKEN_KID_PATTERN.fullmatch(stripped):
+            raise ValueError(
+                "INVITATION_TOKEN_KID_{NEW,OLD} must match "
+                "[A-Za-z0-9_-]+ — invitation token envelope is a 4-part "
+                "`.`-separated string, dots and other delimiters in kid "
+                "would break parsing"
+            )
+        return stripped
+
+    # spec/011 NFR-011-010 — ``HMAC_KEY_OLD`` empty-string → None.
+    # Pydantic Settings binds env vars as raw strings, so an operator
+    # setting ``INVITATION_TOKEN_HMAC_KEY_OLD=`` (e.g. via .env) would
+    # otherwise land as the empty string and trip the co-presence /
+    # strength guards downstream. Normalising to ``None`` here matches
+    # the ``str | None`` typing + the "unset" intent.
+    @field_validator(
+        "invitation_token_hmac_key_old",
+        mode="before",
+    )
+    @classmethod
+    def _normalise_invitation_token_hmac_key_old(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip() == "":
+            return None
         return value
 
     @field_validator("TRUSTED_PROXY_CIDRS", mode="before")
@@ -526,6 +670,68 @@ class Settings(BaseSettings):
                     "two_factor_dek_kid_old must differ from "
                     "two_factor_dek_kid_new during a rotation grace window"
                 )
+            # spec/011 NFR-011-010 (prod / staging strength bar):
+            # the 32-char minimum for HMAC keys only applies in
+            # production / staging — dev / test workflows are allowed
+            # weaker fixtures. Non-empty / co-presence / distinct-kid
+            # guards live outside this branch and run in every
+            # environment (see below).
+            if len(self.invitation_token_hmac_key) < 32:
+                raise ValueError(
+                    "INVITATION_TOKEN_HMAC_KEY must be a strong "
+                    "secret (min 32 chars) in production/staging — see "
+                    "specs/011-zero-email-deployment/spec.md NFR-011-010"
+                )
+            old_hmac_prod = self.invitation_token_hmac_key_old
+            if old_hmac_prod is not None and len(old_hmac_prod) < 32:
+                raise ValueError(
+                    "INVITATION_TOKEN_HMAC_KEY_OLD, when set during a "
+                    "rotation grace window, must be a strong secret "
+                    "(min 32 chars) in production/staging — see "
+                    "specs/011-zero-email-deployment/spec.md NFR-011-010"
+                )
+        # spec/011 NFR-011-010 — non-empty + co-presence + distinct-kid
+        # guards run in EVERY environment (dev / staging / production).
+        # The spec is explicit that ``KID_NEW`` + ``HMAC_KEY`` are
+        # "required at every boot"; the only env-conditional bar is the
+        # 32-char minimum strength check in the prod / staging block
+        # above. This keeps dev fixtures from drifting into a state that
+        # would silently 500 on first invitation token issue / verify.
+        if not self.invitation_token_kid_new:
+            raise ValueError(
+                "INVITATION_TOKEN_KID_NEW must be set at every boot "
+                "— see specs/011-zero-email-deployment/spec.md "
+                "NFR-011-010"
+            )
+        if not self.invitation_token_hmac_key:
+            raise ValueError(
+                "INVITATION_TOKEN_HMAC_KEY must be set at every boot "
+                "— see specs/011-zero-email-deployment/spec.md "
+                "NFR-011-010"
+            )
+        # Co-presence guard for invitation token ``_OLD`` slot — always
+        # enforced (dev / staging / production) so a half-configured
+        # rotation never silently routes legacy tokens to the wrong key.
+        # Both ``_OLD`` slots normalise empty / whitespace → ``None`` at
+        # parse time (see the ``mode="before"`` validators above), so a
+        # simple ``is None`` test here is exact.
+        old_kid_str = self.invitation_token_kid_old
+        old_hmac_key = self.invitation_token_hmac_key_old
+        kid_set = old_kid_str is not None
+        hmac_set = old_hmac_key is not None
+        if kid_set != hmac_set:
+            raise ValueError(
+                "INVITATION_TOKEN_KID_OLD and INVITATION_TOKEN_HMAC_KEY_OLD "
+                "must be set together (or both unset) — see "
+                "specs/011-zero-email-deployment/spec.md NFR-011-010"
+            )
+        if kid_set and old_kid_str == self.invitation_token_kid_new:
+            raise ValueError(
+                "INVITATION_TOKEN_KID_OLD must differ from "
+                "INVITATION_TOKEN_KID_NEW during a rotation grace "
+                "window — see "
+                "specs/011-zero-email-deployment/spec.md NFR-011-010"
+            )
         if self.TEST_MODE and self.ENVIRONMENT == "production":
             raise ValueError(
                 "TEST_MODE must not be True in production "
