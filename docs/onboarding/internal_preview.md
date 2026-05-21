@@ -126,7 +126,29 @@ Before PR #86 the CSRF cookie expired after 15 minutes (`web_access_token_ttl_se
 3. Open browser DevTools **Application > Cookies** and check that `echoroo_csrf` shows the same `Max-Age` / `Expires` as `echoroo_refresh` (the long-lived session cookie). Both should be on the order of 30 days, not 15 minutes.
 4. A `403 csrf_failed` response or an auto-logout at this point is a regression matching pre-PR-#86 behavior.
 
-## 10. Troubleshooting
+## 10. Test Mode (2FA bypass for browser testing)
+
+For Playwright tests and internal preview workflows only, the backend can accept a shared TOTP secret after the user's enrolled TOTP secret fails. Enable it only through development environment configuration:
+
+```bash
+TEST_MODE=true
+TEST_TOTP_SECRET_BASE32=JBSWY3DPEHPK3PXP
+```
+
+Generate a matching browser-test code with either command:
+
+```bash
+oathtool --totp -b JBSWY3DPEHPK3PXP
+python -c "import pyotp; print(pyotp.TOTP('JBSWY3DPEHPK3PXP').now())"
+```
+
+When `TEST_MODE=true` and `TEST_TOTP_SECRET_BASE32` is set in `.env`, the 2FA challenge accepts a code generated from the shared secret for ANY user. The user's enrolled secret is always checked first, and enrolled-secret success does not emit the bypass audit event.
+
+When enabled, startup logs `TEST_MODE is enabled, 2FA shared-secret bypass is ACTIVE. DO NOT use in production. ENVIRONMENT=%s`. A successful shared-secret match emits the audit action `two_factor.test_mode_bypass` with reason `shared_secret_match` and the current environment.
+
+Never enable `TEST_MODE` in production and NEVER ship it to a prod-facing deployment. Startup settings validation refuses `TEST_MODE=true` in production and refuses `TEST_MODE=true` without `TEST_TOTP_SECRET_BASE32`. `compose.dev.yaml` passes these variables through for development; `compose.preview.yaml` intentionally does not.
+
+## 11. Troubleshooting
 
 If the frontend fails, check logs:
 
@@ -155,7 +177,7 @@ For CSRF 403 regressions, confirm the branch includes PR #86:
 git log --oneline --decorate --all --grep '#86'
 ```
 
-## 11. Related Links
+## 12. Related Links
 
 - [specs/006-permissions-redesign/quickstart.md](../../specs/006-permissions-redesign/quickstart.md)
 - [docs/runbook/release_readiness.md](../runbook/release_readiness.md)
