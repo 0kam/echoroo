@@ -1,0 +1,80 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Zero-email Deployment — Trusted-overlay Invitation URL Surfacing (FR-011-103)
+  version: "0.1.0"
+  description: |
+    Modifies the existing POST /web-api/v1/projects/{project_id}/trusted-users endpoint
+    (spec/006 FR-046..056) to include `invitation_url` in its response. This is the
+    formal supersede of spec/006 FR-051 by FR-011-103 — the plain-text invitation
+    token now leaves the process exclusively through the admin's API response
+    rather than the outbound-email outbox.
+
+paths:
+  /web-api/v1/projects/{project_id}/trusted-users:
+    post:
+      summary: Issue a Trusted-overlay invitation (existing endpoint, response shape modified)
+      operationId: issueProjectTrustedUserInvitation
+      tags: [invitations, trusted-overlay]
+      parameters:
+        - in: path
+          name: project_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, granted_permissions, trusted_duration_seconds]
+              properties:
+                email:
+                  type: string
+                  format: email
+                granted_permissions:
+                  type: array
+                  items: { type: string }
+                  description: Permission codes overlaid by the Trusted role (spec/006 FR-047).
+                trusted_duration_seconds:
+                  type: integer
+                  minimum: 60
+                  description: How long the overlay remains valid after acceptance.
+      responses:
+        "201":
+          description: |
+            Trusted invitation issued. Response includes the one-shot URL.
+            **CHANGED FROM spec/006**: the previous response did not expose the URL
+            (FR-051 mandated outbox-only); FR-011-103 supersedes this so the URL is
+            visible to the issuing admin. The outbox-enqueue side effect is removed.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["no-store, no-cache, must-revalidate, private"] }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitation_id, invitation_url, expires_at]
+                properties:
+                  invitation_id: { type: string, format: uuid }
+                  invitation_url:
+                    type: string
+                    format: uri
+                    description: |
+                      One-shot URL containing the signed token envelope (4-part with kid).
+                      MUST be scrubbed from telemetry / access logs (research.md R13).
+                  expires_at: { type: string, format: date-time }
+                  bound_email_hash: { type: string }
+        "400": { description: Validation failure }
+        "403": { description: Caller is not Owner of the project (FR-050) }
+        "404": { description: Project not found (anti-enumeration) }
+        "429": { description: Rate-limited (FR-056) }
+      security:
+        - sessionCookie: []
+      x-permission: MANAGE_TRUSTED
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: echoroo_session

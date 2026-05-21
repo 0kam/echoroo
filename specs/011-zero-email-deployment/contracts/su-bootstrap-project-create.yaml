@@ -1,0 +1,106 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Zero-email Deployment — SU Project Bootstrap (intended_owner_email)
+  version: "0.1.0"
+  description: |
+    Project creation extension for system superuser bootstrap (FR-011-120..125).
+    The existing project-creation endpoint accepts an optional `intended_owner_email`
+    field; the field is silently dropped server-side for non-superuser callers
+    (anti-enumeration). On superuser submit, the create-project transaction
+    atomically creates the project and issues an Admin invitation with
+    ownership_transfer_on_accept=true.
+
+paths:
+  /web-api/v1/projects:
+    post:
+      summary: Create a project (extended with intended_owner_email)
+      operationId: createProject
+      tags: [projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, visibility]
+              properties:
+                name: { type: string, maxLength: 200 }
+                visibility:
+                  type: string
+                  enum: [public, restricted]
+                # ... other existing fields ...
+                intended_owner_email:
+                  type: string
+                  format: email
+                  nullable: true
+                  description: |
+                    Optional. **System superuser only.** For non-superuser callers,
+                    this field is silently dropped at the handler (no 403, no
+                    audit-log mention, no response-shape difference). When
+                    supplied by the system superuser, the create-project
+                    transaction additionally issues an Admin-role invitation with
+                    ownership_transfer_on_accept=true; the response's
+                    invitation_url field is populated.
+                  x-superuser-only-field: true
+      responses:
+        "201":
+          description: |
+            Project created. When intended_owner_email was supplied by the system
+            superuser, response also includes the bootstrap invitation URL.
+            Anti-enumeration: when a non-superuser sends `intended_owner_email`,
+            the field is silently dropped server-side, the response has the SAME
+            shape (`invitation_url: null` and the same Cache-Control header) as the
+            no-bootstrap case. Non-superusers cannot learn the field exists via the
+            response shape.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                enum: ["no-store, no-cache, must-revalidate, private"]
+              description: |
+                Cache-Control no-store is ALWAYS set on this endpoint (not only
+                when invitation_url is present). Setting it uniformly prevents the
+                header itself from leaking whether intended_owner_email was
+                accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project:
+                    $ref: "#/components/schemas/ProjectSummary"
+                  invitation_url:
+                    type: string
+                    format: uri
+                    nullable: true
+                    description: |
+                      Present only when intended_owner_email was supplied by the
+                      system superuser. One-shot; not recoverable; scrub from
+                      telemetry / access logs.
+                  invitation_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+        "400": { description: Validation failure }
+        "403": { description: Caller lacks project-create permission }
+      security:
+        - sessionCookie: []
+      x-permission: PROJECT_CREATE  # (existing)
+
+components:
+  schemas:
+    ProjectSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        visibility: { type: string, enum: [public, restricted] }
+        owner_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: echoroo_session
