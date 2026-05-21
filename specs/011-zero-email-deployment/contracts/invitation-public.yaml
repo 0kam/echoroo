@@ -1,0 +1,197 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Zero-email Deployment — Invitation Resolver / Accept (Public, TOKEN_AUTH_ONLY)
+  version: "0.1.0"
+  description: |
+    Token-authenticated public endpoints for invitation resolution and acceptance.
+    Classified TOKEN_AUTH_ONLY per spec/007 — exempt from gate_action middleware,
+    registered in the spec/007 public-token allowlist. Rate-limited per NFR-011-006
+    (per-IP 10/min, global 200/min, response timing constant 200-400ms for invalid
+    tokens to deny existence oracles).
+
+paths:
+  /web-api/v1/auth/invitations/{token}:
+    get:
+      summary: Resolve invitation context for the landing page
+      operationId: resolveInvitation
+      tags: [invitations-public]
+      parameters:
+        - $ref: "#/components/parameters/Token"
+      responses:
+        "200":
+          description: |
+            Context for the signup / accept form. The `is_logged_in` flag tells the
+            frontend which payload shape to send on accept (signup vs existing-user
+            confirmation).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationContext"
+        "404":
+          description: |
+            Generic "invitation no longer valid". Returned for: expired, revoked,
+            already-accepted, deleted project, never-issued token, and any other
+            failure cause. Response status, body length, and end-to-end timing MUST
+            be indistinguishable across causes (target 300ms ± 50ms total, with
+            pre-response padding applied to invalid tokens to meet the bound).
+      security:
+        - {}                # no auth required
+        - sessionCookie: []  # session cookie OPTIONAL; if present, resolver returns is_logged_in=true and authenticated_email_matches_bound
+      x-token-auth-only: true
+      x-response-timing:
+        target_ms: 300
+        jitter_ms: 50
+        padding: pre-response
+
+  /web-api/v1/auth/invitations/{token}/accept:
+    post:
+      summary: Accept the invitation (signup or logged-in branch)
+      operationId: acceptInvitation
+      tags: [invitations-public]
+      parameters:
+        - $ref: "#/components/parameters/Token"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/AcceptNewUserPayload"
+                - $ref: "#/components/schemas/AcceptExistingUserPayload"
+      responses:
+        "201":
+          description: |
+            Account membership added. For the new-user branch, a session is established.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptResponse"
+        "404":
+          description: |
+            Generic "invitation no longer valid" — covers email mismatch on the
+            existing-user branch (anti-enumeration). Same shape, timing, and length
+            as the resolver's invalid response.
+        "409":
+          description: |
+            Existing user is already a project member at the same or higher role.
+            Returned only when the email matches the bound email and the membership
+            row already exists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail: { type: string, example: "already a member" }
+        "429":
+          description: Rate-limited (NFR-011-006).
+      security:
+        - {}
+        - sessionCookie: []
+      x-token-auth-only: true
+      x-response-timing:
+        target_ms: 300
+        jitter_ms: 50
+        padding: pre-response
+
+components:
+  parameters:
+    Token:
+      in: path
+      name: token
+      required: true
+      schema:
+        type: string
+        description: Signed token envelope (FR-011-104 `signed_token_envelope`).
+
+  schemas:
+    InvitationContext:
+      type: object
+      required: [project_name, role, bound_email, expires_at, is_logged_in, authenticated_email_matches_bound]
+      properties:
+        project_name: { type: string }
+        role:
+          type: string
+          enum: [viewer, member, admin]
+        kind:
+          type: string
+          enum: [member, trusted]
+        bound_email:
+          type: string
+          format: email
+          description: Read-only on the signup form.
+        expires_at: { type: string, format: date-time }
+        is_bootstrap:
+          type: boolean
+          description: |
+            True if ownership_transfer_on_accept is set. The frontend can render
+            "you are about to become the owner of {project_name}" copy.
+        is_logged_in:
+          type: boolean
+          description: |
+            True if the resolver request carried a valid session cookie. When true,
+            the frontend uses the AcceptExistingUserPayload shape; when false,
+            AcceptNewUserPayload is required.
+        authenticated_email_matches_bound:
+          type: boolean
+          description: |
+            Only meaningful when is_logged_in=true. True if the authenticated user's
+            canonicalised email matches the invitation's bound email. When false
+            with is_logged_in=true, the frontend MUST show a "sign out and sign up
+            with a different account" affordance — never let the user accept under
+            a mismatched identity.
+
+    AcceptNewUserPayload:
+      type: object
+      required: [email, password, totp_enrollment]
+      properties:
+        email:
+          type: string
+          format: email
+          description: |
+            MUST canonicalize-equal the bound email. Mismatch → generic 404 (no leak).
+        password:
+          type: string
+          minLength: 12
+        totp_enrollment:
+          type: object
+          required: [totp_secret_signed, totp_initial_code]
+          properties:
+            totp_secret_signed:
+              type: string
+              description: Server-signed envelope of the TOTP secret (existing 2FA enrollment flow).
+            totp_initial_code:
+              type: string
+              minLength: 6
+              maxLength: 6
+
+    AcceptExistingUserPayload:
+      type: object
+      description: |
+        Used when the caller already has an authenticated session. Frontend detects
+        this via the `is_logged_in` field in the resolver context (omitted here for
+        brevity) and sends this simpler payload.
+      required: [accept]
+      properties:
+        accept:
+          type: boolean
+          const: true
+
+    AcceptResponse:
+      type: object
+      required: [project_id, role, kind, ownership_transferred, membership_created]
+      properties:
+        project_id: { type: string, format: uuid }
+        role: { type: string, enum: [viewer, member, admin] }
+        kind:
+          type: string
+          enum: [member, trusted]
+          description: |
+            The invitation kind that was just accepted. Invariant:
+            `ownership_transferred=true` implies `kind=member`. Enforced by
+            services/invitation_service.accept_invitation (R5 guard).
+        ownership_transferred:
+          type: boolean
+          description: True if FR-011-123 ownership-transfer-on-accept fired.
+        membership_created:
+          type: boolean
+          description: True if a new ProjectMember (or ProjectTrustedUser) row was inserted.

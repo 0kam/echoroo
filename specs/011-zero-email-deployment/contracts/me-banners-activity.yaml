@@ -1,0 +1,184 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Zero-email Deployment — Me Banners + Activity
+  version: "0.1.0"
+  description: |
+    In-app banner and activity view endpoints (FR-011-301..310). Banners surface
+    formerly-emailed security notifications (new device login, API key revoke,
+    email change, 2FA reset). The activity view is the permanent record.
+
+paths:
+  /web-api/v1/me/banners:
+    get:
+      summary: List undismissed banners for the authenticated user
+      operationId: listMeBanners
+      tags: [me]
+      responses:
+        "200":
+          description: List of undismissed audit events (≤ 30 days old) targeting this user.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/BannerItem" }
+      security:
+        - sessionCookie: []
+      x-permission: USER_BANNER_LIST_ACTION
+
+  /web-api/v1/me/banners/dismiss:
+    post:
+      summary: Dismiss a banner
+      operationId: dismissMeBanner
+      tags: [me]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [audit_table, audit_log_id]
+              properties:
+                audit_table:
+                  type: string
+                  enum: [project_audit_log, platform_audit_log]
+                audit_log_id:
+                  type: string
+                  format: uuid
+      responses:
+        "204":
+          description: |
+            Dismissal recorded (idempotent — second call returns 204 too).
+            Banner will not appear again in `GET /me/banners` for this user.
+        "404":
+          description: |
+            audit row not found OR not targeting this user OR caller unauthenticated
+            (anti-enumeration → same response status, body, and timing for all three).
+      security:
+        - sessionCookie: []
+      x-permission: USER_BANNER_DISMISS_ACTION
+      x-csrf-required: true
+
+  /web-api/v1/me/activity:
+    get:
+      summary: List the authenticated user's audit history (permanent record)
+      operationId: listMeActivity
+      tags: [me]
+      parameters:
+        - in: query
+          name: cursor
+          required: false
+          schema: { type: string }
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Reverse-chronological audit events targeting this user. Dismissal does not filter this list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ActivityItem" }
+                  next_cursor:
+                    type: string
+                    nullable: true
+      security:
+        - sessionCookie: []
+      x-permission: USER_ACTIVITY_LIST_ACTION
+
+components:
+  schemas:
+    BannerItem:
+      type: object
+      required: [audit_table, audit_log_id, action, occurred_at, summary]
+      properties:
+        audit_table:
+          type: string
+          enum: [project_audit_log, platform_audit_log]
+          description: |
+            Which audit table the row lives in. Required by the dismiss endpoint
+            because `user_banner_dismissals` is polymorphic over the two tables.
+        audit_log_id: { type: string, format: uuid }
+        action:
+          type: string
+          description: |
+            Banner-eligible audit-action strings (a strict subset of all audit actions):
+            auth.login.new_device,
+            platform.api_key.revoke,
+            platform.user.email_changed,
+            platform.user.two_factor_reset_by_superuser,
+            auth.trusted_device.revoke_all.
+          enum:
+            - auth.login.new_device
+            - platform.api_key.revoke
+            - platform.user.email_changed
+            - platform.user.two_factor_reset_by_superuser
+            - auth.trusted_device.revoke_all
+        occurred_at: { type: string, format: date-time }
+        summary:
+          type: string
+          description: Short, A-13 redacted description suitable for inline display.
+        link:
+          type: string
+          format: uri
+          nullable: true
+          description: Optional link to the activity view detail page.
+
+    ActivityItem:
+      type: object
+      description: |
+        Activity items cover the full audit history of the authenticated user
+        — strictly a superset of BannerItem (which is a banner-eligible subset).
+        Activity covers any action present in `project_audit_log` (where the user
+        is actor or target) and `platform_audit_log` (where the user is actor or
+        the `detail.target_user_id` matches), including
+        `project.ownership.bootstrap_transfer` whose payload exposes the
+        `pre_transfer_action_summary` JSON to the new owner.
+      required: [audit_table, audit_log_id, action, occurred_at]
+      properties:
+        audit_table:
+          type: string
+          enum: [project_audit_log, platform_audit_log]
+        audit_log_id: { type: string, format: uuid }
+        action:
+          type: string
+          description: |
+            Any audit-action string. Not enum-restricted because activity is a
+            full history view. Banner-eligible items appear here too.
+        occurred_at: { type: string, format: date-time }
+        project_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Present only for project_audit_log rows.
+        actor_user_id:
+          type: string
+          format: uuid
+          nullable: true
+        details:
+          type: object
+          additionalProperties: true
+          description: |
+            Per-action detail payload. For auth.login.new_device: device fingerprint
+            hash + IP region. For platform.user.email_changed: old/new email
+            local-part hash. For project.ownership.bootstrap_transfer:
+            pre_transfer_action_summary JSON (R6 destructive-action allowlist
+            preserves target_id for destructive entries; all other entries are
+            action + timestamp only).
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: echoroo_session

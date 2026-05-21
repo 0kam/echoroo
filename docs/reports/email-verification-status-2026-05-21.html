@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>Email Verification 機能 現状調査レポート — 2026-05-21</title>
+<style>
+  :root {
+    --bg: #faf4ed;        /* rose-pine dawn base */
+    --surface: #fffaf3;
+    --overlay: #f2e9e1;
+    --text: #575279;
+    --subtle: #797593;
+    --muted: #9893a5;
+    --love: #b4637a;
+    --gold: #ea9d34;
+    --rose: #d7827e;
+    --pine: #286983;
+    --foam: #56949f;
+    --iris: #907aa9;
+    --highlight: #f4ede8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans",
+                 "Yu Gothic UI", "Meiryo", sans-serif;
+    line-height: 1.7;
+    max-width: 960px;
+    margin: 2rem auto;
+    padding: 0 1.5rem;
+  }
+  header {
+    border-bottom: 2px solid var(--rose);
+    padding-bottom: 1rem;
+    margin-bottom: 2rem;
+  }
+  h1 { color: var(--love); margin: 0 0 0.25rem; font-size: 1.7rem; }
+  h2 {
+    color: var(--pine);
+    border-left: 4px solid var(--foam);
+    padding-left: 0.7rem;
+    margin-top: 2.5rem;
+  }
+  h3 { color: var(--iris); margin-top: 1.6rem; }
+  .meta { color: var(--subtle); font-size: 0.9rem; }
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  .badge-ok    { background: #d7e3d4; color: #406b3a; }
+  .badge-warn  { background: #f7e2c2; color: #8a5a1a; }
+  .badge-bad   { background: #f2cfd6; color: #8c3e54; }
+  .badge-info  { background: #cfe1e7; color: #285060; }
+  .callout {
+    background: var(--highlight);
+    border-left: 4px solid var(--gold);
+    padding: 0.8rem 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+  }
+  .callout-danger { border-left-color: var(--love); background: #fbeaee; }
+  .callout-good   { border-left-color: var(--pine); background: #e3eef2; }
+  code {
+    background: var(--overlay);
+    color: var(--love);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.92em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  pre {
+    background: #2a273f;
+    color: #e0def4;
+    padding: 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0;
+    background: var(--surface);
+    font-size: 0.92rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    border-bottom: 1px solid var(--overlay);
+    vertical-align: top;
+  }
+  th { background: var(--overlay); color: var(--pine); font-weight: 600; }
+  tr:hover { background: var(--highlight); }
+  ul, ol { padding-left: 1.4rem; }
+  li { margin: 0.25rem 0; }
+  .file {
+    font-family: monospace;
+    font-size: 0.88em;
+    color: var(--foam);
+  }
+  .flow {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    margin: 1rem 0;
+  }
+  .flow ol { margin: 0; }
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--overlay);
+    border-radius: 6px;
+    padding: 1rem;
+  }
+  .card h4 { margin: 0 0 0.4rem; color: var(--pine); }
+  .stamp {
+    display: inline-block;
+    background: var(--love);
+    color: var(--surface);
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+  }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--overlay);
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="stamp">INVESTIGATION REPORT</div>
+  <h1>Email Verification 機能 現状調査レポート</h1>
+  <div class="meta">
+    調査日: 2026-05-21 ・ 対象ブランチ: <code>claude/unruffled-kowalevski-7b4461</code> ・
+    対象 main HEAD: <code>c22ed23e</code>
+  </div>
+</header>
+
+<section>
+  <h2>エグゼクティブ・サマリ</h2>
+  <div class="callout callout-danger">
+    <strong>結論:</strong> メール確認機能の <em>backend / frontend のコード</em> は
+    実装済みで動作可能だが、<strong>dev / preview 環境では実際にメールが届かない</strong>
+    ため「機能していない」状態になっている。原因は <code>RESEND_API_KEY</code> が空のまま、
+    かつ <strong>MailHog/Mailpit などの dev SMTP キャッチャが存在しない</strong> こと。
+    エンドユーザーから見た発火点は <em>CLI superuser の未認証バッジ</em> だが、根本は
+    「<strong>メール送信そのものが skip されている</strong>」「<strong>確認リンクの導線を
+    ユーザーが受け取れない</strong>」というインフラ欠落である。
+  </div>
+
+  <div class="summary-grid">
+    <div class="card">
+      <h4>実装済み (動く)</h4>
+      <ul>
+        <li><span class="badge badge-ok">OK</span> Token 発行・検証 (AES-GCM seal)</li>
+        <li><span class="badge badge-ok">OK</span> <code>email_verified_at</code> column / migration</li>
+        <li><span class="badge badge-ok">OK</span> Resend SDK 連携 (本番想定)</li>
+        <li><span class="badge badge-ok">OK</span> Verify endpoint / Resend endpoint</li>
+        <li><span class="badge badge-ok">OK</span> Frontend verify-email ページ</li>
+        <li><span class="badge badge-ok">OK</span> Profile の認証バッジ</li>
+        <li><span class="badge badge-ok">OK</span> Enforcement middleware (default OFF)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>機能していない / 不整合</h4>
+      <ul>
+        <li><span class="badge badge-bad">BAD</span> dev で実メール送信なし (RESEND_API_KEY 空)</li>
+        <li><span class="badge badge-bad">BAD</span> MailHog 等の dev mail catcher 不在</li>
+        <li><span class="badge badge-bad">BAD</span> CLI <code>init_superuser</code> が <code>email_verified_at</code> を立てない</li>
+        <li><span class="badge badge-warn">WARN</span> HTTP <code>/setup</code> は自動で verified にする (整合性欠如)</li>
+        <li><span class="badge badge-warn">WARN</span> Enforcement middleware は default OFF、誰も実機で踏んでいない</li>
+        <li><span class="badge badge-warn">WARN</span> Resend 失敗時のリトライ / Outbox dispatcher の dev 稼働確認なし</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>1. 機能はどこまで動くか</h2>
+
+  <h3>1.1 トークン発行〜検証 (コード上は完成)</h3>
+  <div class="flow">
+    <ol>
+      <li><code>POST /web-api/v1/auth/register</code> で <code>EmailVerificationService.issue_verification_token()</code> が呼ばれる</li>
+      <li>DB に <code>email_verification_tokens</code> 行が作られ、AES-GCM で seal した token を発行</li>
+      <li><strong>本来はここで Resend API 経由でメール送信</strong> &mdash; ただし dev では skip (詳細 §2)</li>
+      <li>ユーザーがメール本文の <code>/verify-email?token=...</code> をクリック</li>
+      <li>Frontend が <code>POST /web-api/v1/auth/verify-email</code> 呼出</li>
+      <li>Service が unseal + <code>users.email_verified_at = now()</code> セット</li>
+      <li>Profile タブで「メール認証済み」バッジ表示</li>
+    </ol>
+  </div>
+
+  <h3>1.2 Enforcement middleware は default OFF</h3>
+  <pre><code># apps/api/echoroo/middleware/email_verification_enforcement.py:68-69
+if not settings.EMAIL_VERIFICATION_ENFORCEMENT_ENABLED:
+    return await call_next(request)  # スキップ (デフォルト)</code></pre>
+  <p>
+    <code>EMAIL_VERIFICATION_ENFORCEMENT_ENABLED: bool = False</code> がデフォルトのため、
+    未認証ユーザーでも全エンドポイントを叩ける。
+    <strong>「未認証バッジが出ても実害がないので誰も気付かない」</strong> という構造になっている。
+  </p>
+</section>
+
+<section>
+  <h2>2. 「メール確認機能が機能していない」の正体</h2>
+
+  <div class="callout callout-danger">
+    <strong>核心の発見:</strong> dev 環境では Resend API キーが未設定で、メール送信処理が
+    <em>silently skip</em> される。register したユーザーには <strong>そもそも確認メールが
+    届かない</strong>。
+  </div>
+
+  <h3>2.1 Resend SDK が常に「skip モード」</h3>
+  <pre><code># apps/api/echoroo/services/email.py:110-116
+if not settings.RESEND_API_KEY:
+    logger.warning(
+        "verification email skipped — RESEND_API_KEY not configured "
+        "(recipient_hash=%s)",
+        recipient_hash,
+    )
+    return  # ← raise しないので呼び出し元は成功扱い</code></pre>
+
+  <h3>2.2 dev 環境の env 設定</h3>
+  <table>
+    <tr><th>項目</th><th>値</th><th>影響</th></tr>
+    <tr><td><span class="file">.env.example:64</span></td><td><code>RESEND_API_KEY=</code> (空)</td><td>dev で skip 経路に入る</td></tr>
+    <tr><td><span class="file">compose.dev.yaml:132</span></td><td><code>RESEND_API_KEY=${RESEND_API_KEY:-}</code></td><td>空のまま container に渡る</td></tr>
+    <tr><td>MailHog / Mailpit container</td><td><strong>無し</strong></td><td>dev で実メールをキャッチする手段なし</td></tr>
+    <tr><td><code>EMAIL_FROM</code></td><td><code>noreply@echoroo.app</code> (default)</td><td>本番想定値</td></tr>
+  </table>
+
+  <h3>2.3 dev で「メール確認」を試したときの実挙動</h3>
+  <div class="flow">
+    <ol>
+      <li>ユーザーが <code>/register</code> でサインアップ</li>
+      <li>backend ログに <code>verification email skipped — RESEND_API_KEY not configured</code> が出る</li>
+      <li>メールボックスには何も届かない</li>
+      <li>Profile を見ると「メール未確認」バッジが永久に残る</li>
+      <li>ただし enforcement middleware が OFF なので、UI 上は全部使える</li>
+      <li>「未確認バッジ」だけが浮いている状態 = <strong>これがユーザーが見た問題の正体</strong></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2>3. HTTP <code>/setup</code> と CLI <code>init_superuser</code> の差分</h2>
+
+  <h3>3.1 HTTP setup は自動で verified にする</h3>
+  <pre><code># apps/api/echoroo/services/setup.py:220-231 (PR #88 / commit c4a40253)
+user = User(
+    email=email,
+    ...
+    email_verified_at=datetime.now(UTC),  # ← 自動セット
+)</code></pre>
+
+  <h3>3.2 CLI init_superuser はセットしない</h3>
+  <pre><code># apps/api/echoroo/scripts/init_superuser.py (現状)
+user_row = User(
+    email=email,
+    password_hash=hash_password(password),
+    display_name=display_name,
+    two_factor_enabled=True,
+    two_factor_secret_encrypted=encrypted_secret,
+    ...
+    # ← email_verified_at の指定なし (None のまま)
+)</code></pre>
+
+  <div class="callout">
+    <strong>根本原因の分析:</strong> 同じ「<em>operator が自分で typed した email でブートストラップ
+    する</em>」フローなのに、HTTP 側だけ「typed = verified」とみなす設計が入った。
+    CLI 側は実装漏れ。<br/>
+    どちらが正しいかは哲学次第:
+    <ul>
+      <li><strong>HTTP 側に合わせる</strong> &rarr; CLI も自動 verified、整合性は取れるが
+        「メール所有確認」のセキュリティ価値はゼロ</li>
+      <li><strong>CLI 側に合わせる</strong> &rarr; HTTP setup も verification mail 経由にする、
+        UX は悪化するが筋は通る</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>4. ユーザーが「未認証」表示を踏むフロー</h2>
+  <div class="flow">
+    <ol>
+      <li>運用者が <code>./scripts/docker.sh dev</code> でセットアップ</li>
+      <li>CLI <code>init_superuser</code> または HTTP <code>/setup</code> でアカウント作成</li>
+      <li>CLI 経由 &rarr; <code>email_verified_at = NULL</code> のまま</li>
+      <li>UI でログイン &rarr; Profile に「メール未認証」バッジ</li>
+      <li>resend ボタンを押す &rarr; backend は token を発行し直すが、
+        <code>send_verification_email()</code> は <strong>RESEND_API_KEY 空でスキップ</strong></li>
+      <li>メールは永久に届かず、バッジが消える手段がない</li>
+    </ol>
+  </div>
+
+  <p>
+    すなわち今ユーザーが踏んでいるのは <strong>二重の問題</strong>:
+  </p>
+  <ol>
+    <li>CLI ユーザーが verified にならない (③ の指摘内容)</li>
+    <li>resend してもメールが来ない (dev インフラ欠落)</li>
+  </ol>
+</section>
+
+<section>
+  <h2>5. 実装済みコンポーネント一覧</h2>
+  <table>
+    <tr><th>コンポーネント</th><th>パス</th><th>状態</th></tr>
+    <tr><td>User model <code>email_verified_at</code></td><td><span class="file">apps/api/echoroo/models/user.py:63-66</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>EmailVerificationToken model</td><td><span class="file">apps/api/echoroo/models/email_verification_token.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Alembic migration</td><td><span class="file">apps/api/alembic/versions/0019_email_verification_trusted_devices.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Token service (issue/verify)</td><td><span class="file">apps/api/echoroo/services/email_verification_service.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Resend SDK 送信 (skip 含む)</td><td><span class="file">apps/api/echoroo/services/email.py:92-142</span></td><td><span class="badge badge-warn">SKIP</span></td></tr>
+    <tr><td>Outbox dispatcher worker</td><td><span class="file">apps/api/echoroo/workers/email_verification_dispatcher.py</span></td><td><span class="badge badge-info">要確認</span></td></tr>
+    <tr><td>Enforcement middleware</td><td><span class="file">apps/api/echoroo/middleware/email_verification_enforcement.py</span></td><td><span class="badge badge-warn">OFF</span></td></tr>
+    <tr><td>Register endpoint (token issue)</td><td><span class="file">apps/api/echoroo/api/web_v1/auth.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Verify endpoint</td><td><span class="file">apps/api/echoroo/api/web_v1/auth.py</span> <code>/verify-email</code></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Resend endpoint (rate-limited)</td><td><span class="file">.../auth.py</span> <code>/verify-email/resend</code></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>HTTP setup auto-verify</td><td><span class="file">apps/api/echoroo/services/setup.py:229</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>CLI init_superuser</td><td><span class="file">apps/api/echoroo/scripts/init_superuser.py</span></td><td><span class="badge badge-bad">MISSING</span></td></tr>
+    <tr><td>Frontend verify-email page</td><td><span class="file">apps/web/src/routes/(auth)/verify-email/+page.svelte</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Frontend profile badge</td><td><span class="file">apps/web/src/routes/(app)/profile/+page.svelte</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Settings flag</td><td><span class="file">apps/api/echoroo/core/settings.py:128, 135</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Pytest: enforcement</td><td><span class="file">tests/security/authentication/test_email_verification_required.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Pytest: setup flow auto-verify</td><td><span class="file">tests/integration/test_setup_flow.py</span></td><td><span class="badge badge-ok">OK</span></td></tr>
+    <tr><td>Pytest: init_superuser email_verified_at</td><td>&mdash;</td><td><span class="badge badge-bad">NONE</span></td></tr>
+    <tr><td>Dev mail catcher (MailHog/Mailpit)</td><td>&mdash;</td><td><span class="badge badge-bad">NONE</span></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>6. 推奨修正オプション</h2>
+
+  <h3>Option A &mdash; 最小 (15 分)</h3>
+  <div class="card">
+    <strong>対象:</strong> <code>scripts/init_superuser.py</code> に <code>email_verified_at=datetime.now(UTC)</code> を追加 + テスト 1 本。<br/>
+    <strong>解消する問題:</strong> ③ の不整合のみ。CLI superuser のバッジが消える。<br/>
+    <strong>残る問題:</strong> 一般ユーザーが register したときの「メールが届かない」は未解決。<br/>
+    <strong>適している場面:</strong> launch 前に最低限の整合性だけ取りたい / そもそも一般 register を
+    まだ開放していない場合。
+  </div>
+
+  <h3>Option B &mdash; 中 (1-2 時間) <span class="badge badge-info">推奨</span></h3>
+  <div class="card">
+    <strong>A に加えて:</strong>
+    <ul>
+      <li><code>compose.dev.yaml</code> に <strong>Mailpit container</strong> を追加 (port 8025 UI)</li>
+      <li><code>services/email.py</code> に「<code>RESEND_API_KEY</code> が空かつ <code>APP_ENV=development</code> なら
+        SMTP (Mailpit) にフォールバック」の分岐</li>
+      <li>または、Resend を使わず <code>aiosmtplib</code> で直接送信するパスを dev 用に切る</li>
+      <li>dev でも実際に確認メールが Mailpit に届き、リンクをクリックして verified に到達する end-to-end が動く</li>
+    </ul>
+    <strong>解消する問題:</strong> ③ + メール本体が届かない問題。<br/>
+    <strong>残る問題:</strong> Enforcement middleware は依然 OFF (これは launch 戦略次第)。
+  </div>
+
+  <h3>Option C &mdash; 大 (半日〜)</h3>
+  <div class="card">
+    <strong>B に加えて:</strong>
+    <ul>
+      <li>Enforcement middleware を <code>development</code> でも <strong>ON で運用してみる</strong></li>
+      <li>HTTP <code>/setup</code> の auto-verify をやめ、setup 完了時にも verify mail を送る統一フロー</li>
+      <li>本番向け Resend API key を取得し <code>compose.preview.yaml</code> / production env に注入</li>
+      <li>「未認証ユーザーが詰まる」エラー画面 (ERR_EMAIL_VERIFICATION_REQUIRED) の UX 整備</li>
+    </ul>
+    <strong>解消する問題:</strong> セキュリティ仕様としてメール確認を完全に機能させる。<br/>
+    <strong>適している場面:</strong> 一般ユーザーに開く launch 直前。
+  </div>
+</section>
+
+<section>
+  <h2>7. 次アクションの提案</h2>
+  <ol>
+    <li><strong>意思決定が要る点</strong>:
+      <ul>
+        <li>launch までに「メール確認」を本気でやるか / バッジだけの飾りにするか</li>
+        <li>HTTP <code>/setup</code> の auto-verify は意図的か / 仕様ミスか</li>
+        <li>dev で Mailpit を採用するか (preview env も同様)</li>
+      </ul>
+    </li>
+    <li><strong>意思決定後</strong>: Option A〜C のいずれかを SSA + Codex で実装。</li>
+    <li><strong>必須テスト</strong>: CLI init_superuser での <code>email_verified_at</code> セット有無を pytest で固定。
+      二度と回帰しないようにする。</li>
+  </ol>
+</section>
+
+<footer>
+  Report generated 2026-05-21 ・ Worktree:
+  <code>unruffled-kowalevski-7b4461</code> ・
+  Repository HEAD <code>c22ed23e</code>
+</footer>
+
+</body>
+</html>

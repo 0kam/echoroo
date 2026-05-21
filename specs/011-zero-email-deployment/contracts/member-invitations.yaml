@@ -1,0 +1,267 @@
+openapi: 3.0.3
+info:
+  title: Echoroo Zero-email Deployment — Member-kind Invitations
+  version: "0.1.0"
+  description: |
+    HTTP contracts for the new Member-kind invitation endpoints introduced by
+    spec/011 (FR-011-101..115). Adds the missing single-invite, bulk-invite,
+    listing, and revocation endpoints alongside the existing Trusted-overlay
+    invitation routes (which are modified separately to surface the URL too).
+
+paths:
+  /web-api/v1/projects/{project_id}/invitations:
+    post:
+      summary: Issue a single Member-kind invitation
+      operationId: issueProjectMemberInvitation
+      tags: [invitations]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: Bound recipient address; NFKC-normalised + casefolded before storage.
+                role:
+                  type: string
+                  enum: [viewer, member, admin]
+      responses:
+        "201":
+          description: Invitation issued. Response carries the one-shot URL.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["no-store, no-cache, must-revalidate, private"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationCreateResponse"
+        "400": { $ref: "#/components/responses/InvalidPayload" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "409": { $ref: "#/components/responses/DuplicatePendingInvitation" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+      security:
+        - sessionCookie: []
+      x-permission: PROJECT_MEMBER_INVITATION_ISSUE_ACTION
+
+    get:
+      summary: List invitations for a project
+      operationId: listProjectInvitations
+      tags: [invitations]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: query
+          name: kind
+          required: false
+          schema: { type: string, enum: [member, trusted] }
+        - in: query
+          name: status
+          required: false
+          schema: { type: string, enum: [pending, accepted, declined, revoked, expired] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/InvitationListItem" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+      security:
+        - sessionCookie: []
+      x-permission: MANAGE_MEMBERS
+
+  /web-api/v1/projects/{project_id}/invitations/bulk:
+    post:
+      summary: Issue many Member-kind invitations in one operation
+      operationId: bulkIssueProjectMemberInvitations
+      tags: [invitations]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, emails]
+              properties:
+                role:
+                  type: string
+                  enum: [viewer, member, admin]
+                emails:
+                  type: array
+                  items: { type: string, format: email }
+                  minItems: 1
+                  maxItems: 50
+      responses:
+        "207":
+          description: Multi-status. Each row reports its own outcome.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["no-store, no-cache, must-revalidate, private"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkInvitationResponse"
+        "400": { $ref: "#/components/responses/InvalidPayload" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "404": { $ref: "#/components/responses/ProjectNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+      security:
+        - sessionCookie: []
+      x-permission: PROJECT_MEMBER_INVITATION_ISSUE_ACTION
+
+  /web-api/v1/projects/{project_id}/invitations/{invitation_id}/revoke:
+    post:
+      summary: Revoke a pending invitation
+      operationId: revokeProjectInvitation
+      tags: [invitations]
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - in: path
+          name: invitation_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                  description: |
+                    Free-form, A-13 PII detector applies. Optional.
+      responses:
+        "200":
+          description: Revoked. Subsequent acceptance attempts return the generic invalid response.
+        "404":
+          description: |
+            Invitation not found OR project not found OR caller lacks permission (anti-enumeration →
+            same response body, status, and timing for all three cases). 403 is intentionally
+            collapsed into 404 to prevent invitation_id existence oracles.
+      security:
+        - sessionCookie: []
+      x-permission: MANAGE_MEMBERS
+
+components:
+  parameters:
+    ProjectId:
+      in: path
+      name: project_id
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    InvitationCreateResponse:
+      type: object
+      required: [invitation_id, invitation_url, expires_at]
+      properties:
+        invitation_id:
+          type: string
+          format: uuid
+        invitation_url:
+          type: string
+          format: uri
+          description: |
+            One-shot URL containing the signed token envelope. NOT recoverable
+            after this response — admins must revoke + reissue if they lose it.
+            Telemetry / access logs MUST scrub this field.
+        expires_at:
+          type: string
+          format: date-time
+        bound_email_hash:
+          type: string
+          description: Hex digest of the canonicalised email (for admin reference only).
+
+    InvitationListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [member, trusted] }
+        role:
+          type: string
+          enum: [viewer, member, admin]
+          nullable: true
+        status: { type: string, enum: [pending, accepted, declined, revoked, expired] }
+        bound_email: { type: string, format: email }
+        issued_by: { type: string, format: uuid }
+        issued_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        accepted_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        revoked_reason: { type: string, nullable: true }
+        ownership_transfer_on_accept:
+          type: boolean
+          description: True only for SU-bootstrap invitations.
+
+    BulkInvitationResponse:
+      type: array
+      description: |
+        Per-email outcome rows in submission order. FR-011-113 requires the
+        top-level response to be an array, not wrapped in an object.
+      items:
+        type: object
+        required: [email, status]
+        properties:
+          email: { type: string, format: email }
+          status:
+            type: string
+            enum: [issued, duplicate_pending, rate_limited, error]
+          invitation_url:
+            type: string
+            format: uri
+            nullable: true
+            description: Present only when status=issued.
+          invitation_id:
+            type: string
+            format: uuid
+            nullable: true
+          error_message:
+            type: string
+            nullable: true
+
+  responses:
+    InvalidPayload:
+      description: Validation failure
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
+              rows:
+                type: array
+                description: Present on bulk-validation failure
+                items:
+                  type: object
+                  properties:
+                    email: { type: string }
+                    error: { type: string }
+    PermissionDenied:
+      description: Caller lacks the required permission (403)
+    ProjectNotFound:
+      description: Project does not exist (404 / generic anti-enumeration page)
+    DuplicatePendingInvitation:
+      description: A pending invitation already exists for this email on this project (409)
+    RateLimited:
+      description: Per-issuer rate limit exceeded (429)
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: echoroo_session

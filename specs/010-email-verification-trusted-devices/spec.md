@@ -2,7 +2,7 @@
 
 **Feature Branch**: `010-email-verification-trusted-devices`
 **Created**: 2026-05-18
-**Status**: Draft
+**Status**: PARTIALLY SUPERSEDED (2026-05-21) — the *Email Verification* portion of this spec is fully obsoleted by `specs/011-zero-email-deployment/` and is being removed from the codebase. The *Trusted Device* portion remains active and is unaffected. New work referencing this spec should treat all email-verification user stories, FRs, data-model entries, contracts, and tasks below as historical context only; do not introduce or maintain code that implements them.
 **Input**: Product/security decision to improve the first-party authentication experience by implementing real email-address verification and a server-bound trusted-device mechanism before relaxing the current "TOTP on every password login" behavior for non-privileged users.
 **Amends**: `specs/006-permissions-redesign/` authentication requirements (FR-065 to FR-073, especially the blanket "all users TOTP on every login" posture)
 
