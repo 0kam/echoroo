@@ -167,6 +167,28 @@ def test_issue_admin_recovery_rejects_non_positive_ttl() -> None:
         )
 
 
+def test_issue_admin_recovery_rejects_non_bool_password_verified() -> None:
+    """The issuer MUST refuse non-:class:`bool` ``password_verified``.
+
+    Without the strict ``isinstance(..., bool)`` guard, a caller bug
+    (or downstream JSON deserialisation) that passes ``1``, ``"true"``,
+    ``"false"``, ``[]``, etc. would be silently coerced into the
+    literal ``True`` / ``False`` singleton by ``bool(...)`` and bypass
+    the verifier's ``factors.password is True`` defence-in-depth
+    check. The strict guard is the contract that keeps that defence
+    meaningful.
+    """
+    for bad_value in (1, 0, "true", "false", "True", "False", [], [True], None):
+        with pytest.raises(TypeError, match="password_verified must be a strict bool"):
+            issue_admin_recovery_step_up_token(
+                user_id=uuid4(),
+                security_stamp="ss",
+                assertion_id="aid",
+                password_verified=bad_value,  # type: ignore[arg-type]
+                second_factor="totp",
+            )
+
+
 # ---------------------------------------------------------------------------
 # factors invariant — verify-time enforcement
 # ---------------------------------------------------------------------------

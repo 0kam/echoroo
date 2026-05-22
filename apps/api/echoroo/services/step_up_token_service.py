@@ -229,6 +229,12 @@ def issue_admin_recovery_step_up_token(
             user's current password and the API verified it before
             calling this helper. ``False`` is accepted for issuance
             but the verifier will refuse such a token at gate-time.
+            MUST be a strict :class:`bool` — non-bool inputs (e.g.
+            ``1``, ``"false"``, ``[1]``) raise :class:`TypeError`
+            here so a buggy caller cannot accidentally smuggle a
+            truthy non-bool value into ``factors.password`` and
+            satisfy the verifier's ``is True`` check by JSON
+            serialisation coincidence.
         second_factor: Which 2FA mode just succeeded.
         ttl_seconds: Token lifetime in seconds. Defaults to
             :data:`STEP_UP_TOKEN_TTL_SECONDS` (5 minutes).
@@ -239,6 +245,17 @@ def issue_admin_recovery_step_up_token(
     settings = get_settings()
     if ttl_seconds <= 0:
         raise ValueError("ttl_seconds must be positive")
+    # Strict type guard — see ``password_verified`` doc above. We
+    # deliberately reject ``int`` / ``str`` / ``list`` etc. instead of
+    # silently coercing with ``bool(...)``; the verifier's
+    # ``factors.password is True`` check is defence-in-depth that we
+    # would otherwise defeat by normalising every truthy value into
+    # the ``True`` singleton at issuance.
+    if not isinstance(password_verified, bool):
+        raise TypeError(
+            "password_verified must be a strict bool (True or False); "
+            f"got {type(password_verified).__name__}"
+        )
     now = datetime.now(UTC)
     expires_at = now + timedelta(seconds=ttl_seconds)
     payload: dict[str, Any] = {
@@ -252,8 +269,10 @@ def issue_admin_recovery_step_up_token(
         "exp": int(expires_at.timestamp()),
         # ``factors`` is part of the signed payload so a downstream
         # gate cannot be fooled by replacing the claim post-issuance.
+        # ``password`` is stored as-is (no ``bool(...)`` coercion) so
+        # the verifier sees the exact value the caller passed.
         "factors": {
-            "password": bool(password_verified),
+            "password": password_verified,
             "second_factor": second_factor,
         },
     }
