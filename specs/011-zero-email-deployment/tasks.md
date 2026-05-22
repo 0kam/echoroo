@@ -107,13 +107,13 @@
 
 ### Step-up token extension (existing service)
 
-- [ ] T040 Extend `apps/api/echoroo/services/step_up_token_service.py`:
+- [x] T040 Extend `apps/api/echoroo/services/step_up_token_service.py`:
   - Add new scope constant `SCOPE_ADMIN_RECOVERY: Final[str] = "admin_recovery"`
   - Modify `StepUpTokenClaims` dataclass: add `factors: dict[str, Any] | None = None`
   - Add `issue_admin_recovery_step_up_token(*, user_id, security_stamp, assertion_id, password_verified: bool, second_factor: Literal["totp", "webauthn"]) -> tuple[str, datetime]` — payload `factors = {"password": password_verified, "second_factor": second_factor}`; scope `"admin_recovery"`
   - Modify `verify_step_up_token`: when `expected_scope == "admin_recovery"`, additionally require `payload["factors"]["password"] is True` and `payload["factors"]["second_factor"] in {"totp", "webauthn"}` — raise `StepUpTokenInvalidError` otherwise
-- [ ] T041 Extend `apps/api/echoroo/middleware/step_up.py`: `require_step_up_token(scope=SCOPE_ADMIN_RECOVERY)` factory variant (the existing factory already takes a scope parameter; ensure it works with the new constant) and the new error codes thread through correctly
-- [ ] T042 [P] Add `apps/api/tests/unit/services/test_step_up_admin_recovery_token.py`: issue + verify path, factors invariant enforced, scope confusion (admin_destructive token rejected for admin_recovery, vice versa), security_stamp rotation revocation
+- [x] T041 Extend `apps/api/echoroo/middleware/step_up.py`: `require_step_up_token(scope=SCOPE_ADMIN_RECOVERY)` factory variant (the existing factory already takes a scope parameter; ensure it works with the new constant) and the new error codes thread through correctly
+- [x] T042 [P] Add `apps/api/tests/unit/services/test_step_up_admin_recovery_token.py`: issue + verify path, factors invariant enforced, scope confusion (admin_destructive token rejected for admin_recovery, vice versa), security_stamp rotation revocation
 
 ### Invitation envelope 4-part + outcome reshape
 
@@ -357,7 +357,7 @@
 - [ ] T400 [US5] In `apps/api/echoroo/services/two_factor_service.py` (or `two_factor_reset_service.py` admin-disable path) wire `require_step_up_token(SCOPE_ADMIN_RECOVERY)` to the admin-disable endpoint
 - [ ] T401 [US5] [P] On admin 2FA disable, invalidate target's other sessions + call `TrustedDeviceService.revoke_all_for_user(target_user)` (FR-011-306, FR-011-402)
 - [ ] T402 [US5] [P] On admin 2FA disable, emit `platform.user.two_factor_reset_by_superuser` audit (T020) — replaces the previous outbound email
-- [ ] T403 [US5] [P] Remove the `send_2fa_reset_dispatched` call-site from `apps/api/echoroo/services/two_factor_reset_service.py` (T100 stubbed it; T403 deletes the call)
+- [x] T403 [US5] [P] Remove the `send_2fa_reset_magic_link` call-site from `apps/api/echoroo/services/two_factor_reset_service.py` (T100 stubbed it; T403 deletes the call). Also drops the now-unreferenced `send_2fa_reset_magic_link` helper + `EmailDeliverySuppressed` exception from `services/email.py` and updates integration tests that monkeypatched the deleted symbol.
 - [ ] T404 [US5] [P] Add `apps/api/tests/integration/test_admin_2fa_reset_side_effects.py`: step-up enforced, sessions invalidated, trusted devices revoked, audit emitted, no email enqueued
 - [ ] T405 [US5] [P] Add Playwright e2e `apps/web/tests/e2e/admin-2fa-reset.spec.ts` (US5 AC1): admin disables target user's 2FA, target re-enrolls successfully
 

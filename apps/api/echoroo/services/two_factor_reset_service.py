@@ -47,7 +47,6 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import AsyncSessionLocal
-from echoroo.core.kms import compute_pii_hash
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.two_factor_reset_request import (
     DISPATCHABLE_STATUSES,
@@ -278,27 +277,26 @@ async def issue_magic_link(
     The caller is responsible for committing the surrounding
     transaction.
 
-    Round-3 Fix R2-1 (audit-path coherence):
-    Email dispatch failures used to be swallowed here, which silently
-    left a usable magic-link row in the DB while the caller still
-    audited the request as ``magic_link_dispatched`` — a confusing
-    "delivered" claim for an undelivered token. The contract is now:
+    spec/011 Step 4 (T403): the outbound-email branch is removed.
+    Historically this helper called
+    ``email_service.send_2fa_reset_magic_link`` after persisting the
+    token-hash row, wrapped in a ``try/except`` that wrote a
+    ``two_factor_reset.email_notification_failed`` audit and rolled
+    back the supporting row on transport failure. spec/011's
+    zero-email deployment deletes the outbound-email channel; the
+    self-service magic-link UX is replaced by the new step-up token
+    surface (FR-011-206). The helper now only mints the token and
+    persists the hash — no transport, no rollback, no audit
+    side-effect. The caller still owns audit + commit.
 
-    * On email success, return the raw token; the caller commits the
-      surrounding TX and writes the dispatched audit row.
-    * On email failure, write a service-layer
-      ``two_factor_reset.email_notification_failed`` audit row (with
-      ``stage='magic_link_issuance'``), roll back the surrounding TX
-      so the magic-link DB row is NOT persisted, and re-raise. The
-      caller's existing ``except`` arm already writes a second
-      ``email_notification_failed`` audit row (with the request
-      envelope) and returns 202 to preserve enumeration defence.
-
-    Net audit trail on failure:
-    * service:  ``email_notification_failed`` (stage=magic_link_issuance, no envelope)
-    * caller:   ``email_notification_failed`` (stage=magic_link_issuance, with envelope)
-    No ``magic_link_dispatched`` row is written, so the dashboard never
-    sees a phantom "delivered" event for an undelivered token.
+    The original ``magic_link_dispatched`` audit was written by the
+    *caller* (see ``api/web_v1/auth_confirm_identity.py``) after this
+    function returned the raw token; that flow keeps working
+    unchanged. The legacy caller-side rollback arm that fired on
+    transport failure is now unreachable from this helper but is left
+    in place by the caller during the incremental refactor — a future
+    step removes the entire ``/confirm-identity-for-2fa-reset``
+    surface alongside the producer cleanup in Step 10.
     """
     issued_at = now or datetime.now(UTC)
     raw = secrets.token_urlsafe(_MAGIC_LINK_BYTES)
@@ -315,26 +313,6 @@ async def issue_magic_link(
         )
     )
 
-    try:
-        await email_service.send_2fa_reset_magic_link(user.email, raw)
-    except Exception as exc:  # noqa: BLE001 — propagate to caller for rollback
-        # Service-layer audit (no request envelope yet — caller owns
-        # that). Written in a fresh session so the rollback below does
-        # not erase it.
-        await _write_platform_audit(
-            actor_user_id=user.id,
-            action=AUDIT_ACTION_EMAIL_FAILED,
-            detail={
-                "stage": "magic_link_issuance",
-                "user_id": str(user.id),
-                "email_hash": compute_pii_hash(user.email),
-                "error": exc.__class__.__name__,
-            },
-        )
-        # Drop the unsendable magic-link row so the caller's outer TX
-        # cannot accidentally commit a token nobody received.
-        await session.rollback()
-        raise
     return raw
 
 

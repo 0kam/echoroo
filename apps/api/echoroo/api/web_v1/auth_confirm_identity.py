@@ -211,8 +211,17 @@ async def request_confirm_identity(
     # post-rollback audit + success path safe.
     user_id_for_audit: UUID = user.id
 
-    # Issue + persist the magic link. The service helper sends the
-    # email; failures are swallowed there so the response stays 202.
+    # Issue + persist the magic link. spec/011 Step 4 (T403) removed
+    # the outbound-email branch from ``issue_magic_link``; the
+    # remaining exception path here catches DB-level failures during
+    # token-hash persistence. The audit action name +
+    # ``stage="magic_link_issuance"`` label below are LEGACY from the
+    # email era — the entire ``/confirm-identity-for-2fa-reset``
+    # surface is removed wholesale in Step 10 (US1) alongside the
+    # producer cleanup, at which point both the action constant and
+    # the surrounding endpoint disappear. Keeping the labels stable
+    # for now avoids a churn-only migration during the incremental
+    # refactor.
     try:
         await issue_magic_link(
             db,
