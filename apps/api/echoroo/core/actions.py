@@ -1441,6 +1441,30 @@ ADMIN_RECORDER_DELETE_ACTION: Action = register_action(
 )
 
 
+# =============================================================================
+# spec/011 §FR-011-201 — Admin password reset (Phase 6 / US4 / T310)
+# =============================================================================
+#
+# The system-superuser-only password reset endpoint
+# (``POST /web-api/v1/admin/users/{user_id}/reset-password``) is gated
+# both by ``gate_action(ADMIN_USER_RESET_PASSWORD_ACTION)`` (this entry)
+# and by ``require_step_up_token(SCOPE_ADMIN_RECOVERY)`` (FR-011-206
+# step-up enforcement). The action is platform-scope (no ``project_id``)
+# and ``is_superuser_only=True`` so the Step -1 API-key veto + Step 0a
+# platform branch in :func:`is_allowed` deny every non-superuser caller
+# — including project admins (FR-011-201 explicitly forbids project
+# admins from invoking the reset; only the system superuser may).
+ADMIN_USER_RESET_PASSWORD_ACTION: Action = register_action(
+    Action(
+        name="admin.user.reset_password",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+
 __all__ = [
     # Project
     "PROJECT_DELETE_ACTION",
@@ -1606,4 +1630,6 @@ __all__ = [
     "ADMIN_SETTINGS_UPDATE_ACTION",
     "ADMIN_USERS_LIST_ACTION",
     "ADMIN_USERS_UPDATE_ACTION",
+    # spec/011 §FR-011-201 — Admin password reset
+    "ADMIN_USER_RESET_PASSWORD_ACTION",
 ]

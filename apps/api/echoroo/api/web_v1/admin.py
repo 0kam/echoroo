@@ -48,10 +48,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.actions import (
+    ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
     PROJECT_ARCHIVE_ACTION,
     PROJECT_RESTORE_ACTION,
@@ -77,6 +78,8 @@ from echoroo.models.superuser import Superuser
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.user import User
 from echoroo.schemas.admin import (
+    AdminPasswordResetBody,
+    AdminPasswordResetResponse,
     ArchiveRequest,
     ArchiveResponse,
     IucnForceResyncResponse,
@@ -97,10 +100,13 @@ from echoroo.schemas.admin import (
     TaxonOverrideRejectRequest,
     TaxonOverrideResponse,
 )
-from echoroo.services import superuser_service
+from echoroo.services import admin_password_reset, superuser_service
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.outbox_service import enqueue as outbox_enqueue
-from echoroo.services.step_up_token_service import SCOPE_ADMIN_DESTRUCTIVE
+from echoroo.services.step_up_token_service import (
+    SCOPE_ADMIN_DESTRUCTIVE,
+    SCOPE_ADMIN_RECOVERY,
+)
 from echoroo.services.superuser_approval_service import (
     TaxonOverrideDecisionOutcome,
     approve_taxon_override,
@@ -1776,6 +1782,175 @@ async def update_ip_allowlist(
         )
 
     return response
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/users/{user_id}/reset-password  (spec/011 §FR-011-201, T311)
+# ---------------------------------------------------------------------------
+#
+# System-superuser-only password reset endpoint. Gated by:
+#
+#   * ``gate_action(ADMIN_USER_RESET_PASSWORD_ACTION)`` — platform-scope
+#     Action with ``is_superuser_only=True`` (Step -1 API-key veto +
+#     Step 0a platform branch in :func:`is_allowed`).
+#   * ``require_step_up_token(SCOPE_ADMIN_RECOVERY)`` — FR-011-206
+#     AND-condition (password + 2FA) step-up enforcement. The verifier
+#     additionally refuses ``admin_destructive``-scoped tokens, so the
+#     spec/006 step-up path cannot be replayed against this endpoint.
+#
+# The handler delegates the actual mutation to
+# :func:`echoroo.services.admin_password_reset.reset_password`, which
+# owns:
+#
+#   * argon2-hashing the generated temporary password into
+#     ``users.password_hash``;
+#   * setting ``users.must_change_password = True`` and
+#     ``users.temp_password_expires_at = now() + 24h``;
+#   * rotating ``users.security_stamp`` so every outstanding session
+#     token for the target user is invalidated (FR-055 + FR-011-203);
+#   * revoking every active :class:`TrustedDevice` row for the target
+#     user via :meth:`TrustedDeviceService.revoke_all_for_user`
+#     (defence in depth on top of the flush listener);
+#   * emitting a ``platform.user.password_reset_by_superuser`` audit row
+#     (or the ``_self`` variant when ``actor == target``, FR-011-210)
+#     in a *fresh* AsyncSession — the audit writer requires a clean
+#     SERIALIZABLE-compatible connection (FR-093).
+#
+# The handler is responsible for:
+#
+#   * supplying the request-envelope context (request_id / ip /
+#     user_agent) the audit row needs;
+#   * setting ``Cache-Control: no-store, no-cache, must-revalidate,
+#     private`` and ``Referrer-Policy: no-referrer`` response headers
+#     (FR-011-202) so neither browser history nor intermediate proxies
+#     can retain the click-to-reveal temp password;
+#   * committing the surrounding transaction so the User row update +
+#     trusted-device revocations land atomically alongside the audit.
+#
+# **Self-reset (FR-011-210)**: when the superuser invokes the endpoint
+# against their own ``user_id``, the service emits the ``_self`` audit
+# variant and revokes all of the superuser's other sessions + trusted
+# devices in the same way. The superuser remains authenticated on the
+# *current* session (the rotation invalidates *other* refresh-token
+# families) until they log out — but the next page load they make will
+# pass through :class:`ForcedPasswordChangeMiddleware` and 423 them to
+# ``/change-password``. The ``must_change_password = True`` write is
+# applied to *the actor's own row* in this case, which is the
+# documented behaviour.
+
+
+@router.post(
+    "/users/{user_id}/reset-password",
+    response_model=AdminPasswordResetResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Reset a target user's password (system superuser only)",
+    description=(
+        "spec/011 §FR-011-201..210. Generate a one-time temporary "
+        "password, hash it into ``users.password_hash``, set "
+        "``must_change_password=true`` + 24h TTL, invalidate the "
+        "target user's other sessions, revoke every active trusted "
+        "device, and emit a ``platform.user.password_reset_by_superuser`` "
+        "(or ``_self`` for self-reset) audit row. The plaintext temp "
+        "password is returned exactly once in the response body and is "
+        "never persisted anywhere except via its argon2 hash."
+    ),
+    operation_id="adminResetUserPassword",
+    # Step-up gate per FR-011-206: caller must have completed an
+    # AND-condition (password + 2FA) challenge within the last 5
+    # minutes. ``admin_destructive`` tokens (spec/006) are explicitly
+    # refused by the verifier — see
+    # :func:`echoroo.services.step_up_token_service.verify_step_up_token`.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_RECOVERY))],
+)
+async def reset_user_password(
+    user_id: UUID,
+    payload: AdminPasswordResetBody,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    request: Request,
+    db: DbSession,
+) -> AdminPasswordResetResponse:
+    """Issue a one-time temp password for ``user_id`` (spec/011 T311)."""
+    # 1. Auth + superuser gate. ``_require_authenticated_superuser``
+    #    re-probes the ``superusers`` table so a stale ``is_superuser``
+    #    transient stamp cannot bypass the gate.
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None  # narrowed by the helper above
+
+    # 2. Canonical permission gate. ``ADMIN_USER_RESET_PASSWORD_ACTION``
+    #    is platform-scope + superuser-only — the Step -1 API-key veto +
+    #    Step 0a branch in :func:`is_allowed` enforce that no project
+    #    admin / member / API-key principal can reach this code path
+    #    even if the route handler is ever wired into a different
+    #    Authentication transport.
+    await _gate_platform_superuser_action(
+        action=ADMIN_USER_RESET_PASSWORD_ACTION,
+        current_user=current_user,
+        request=request,
+    )
+
+    # 3. Delegate the mutation. The service owns hashing, forced-change
+    #    state, security-stamp rotation (triggering session +
+    #    trusted-device invalidation), the explicit
+    #    ``revoke_all_for_user`` defence-in-depth call, and the audit
+    #    write (in a fresh session).
+    try:
+        temp_password = await admin_password_reset.reset_password(
+            db,
+            actor_id=current_user.id,
+            target_user_id=user_id,
+            reason=payload.reason,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except LookupError as exc:
+        # Target user does not exist (or is soft-deleted). The
+        # ``users`` table is the canonical source — we surface the
+        # generic 404 without distinguishing soft-deleted from
+        # never-existed so an enumeration attempt cannot probe the
+        # account-deletion table indirectly.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "ERR_USER_NOT_FOUND",
+                "message": "User not found.",
+            },
+        ) from exc
+
+    # 4. Commit the surrounding transaction so the User row update +
+    #    trusted-device revocations are durable. The audit row already
+    #    committed in its own fresh session inside the service (see
+    #    ``admin_password_reset.reset_password`` docstring §Audit).
+    await db.commit()
+
+    # 5. FR-011-202 response-header invariant. The
+    #    :class:`AdminPasswordResetResponse` payload carries the
+    #    plaintext temp password — neither the browser nor any
+    #    intermediate proxy may cache or retain the value. The
+    #    ``Referrer-Policy`` header additionally prevents the temp
+    #    password from leaking via the ``Referer`` request header on
+    #    any subsequent click out of the reveal dialog.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+
+    # The ``temp_password_expires_at`` we report to the caller MUST
+    # match the value the service just wrote to the User row, so we
+    # re-fetch the target's expiry from the just-committed row. The
+    # service used ``datetime.now(UTC) + timedelta(hours=24)`` so a
+    # local recomputation here would drift by a few milliseconds.
+    target = await db.get(User, user_id)
+    assert target is not None  # service raised LookupError otherwise
+    expires_at = target.temp_password_expires_at
+    assert expires_at is not None  # service always sets this
+
+    return AdminPasswordResetResponse(
+        temporary_password=temp_password,
+        expires_at=expires_at,
+    )
 
 
 # ---------------------------------------------------------------------------
