@@ -1465,6 +1465,25 @@ ADMIN_USER_RESET_PASSWORD_ACTION: Action = register_action(
 )
 
 
+# =============================================================================
+# spec/011 §FR-011-101 — Member-kind invitation issue (Phase 7 / US2 / T200)
+# =============================================================================
+#
+# Gates ``POST /web-api/v1/projects/{project_id}/invitations`` for issuing a
+# Member-kind invitation (FR-011-101). Project scope, mutating, gated by
+# ``MANAGE_MEMBERS`` (Owner + Admin per the canonical matrix). The handler
+# delegates to ``services.invitation_service.create_invitation`` and surfaces
+# the resulting one-shot ``signed_token_envelope`` as ``invitation_url`` in
+# the response body (FR-011-102).
+PROJECT_MEMBER_INVITATION_ISSUE_ACTION: Action = register_action(
+    Action(
+        name="project.member.invitation.issue",
+        required_permission=Permission.MANAGE_MEMBERS,
+        is_mutating=True,
+    )
+)
+
+
 __all__ = [
     # Project
     "PROJECT_DELETE_ACTION",
@@ -1632,4 +1651,6 @@ __all__ = [
     "ADMIN_USERS_UPDATE_ACTION",
     # spec/011 §FR-011-201 — Admin password reset
     "ADMIN_USER_RESET_PASSWORD_ACTION",
+    # spec/011 §FR-011-101 — Member-kind invitation issue
+    "PROJECT_MEMBER_INVITATION_ISSUE_ACTION",
 ]

@@ -310,15 +310,56 @@ class TwoFactorService:
         )
         return TwoFactorEnrollmentArtifacts(secret=secret, provisioning_uri=provisioning_uri)
 
-    async def confirm_enrollment(self, user: User, secret: str, totp_code: str) -> list[str]:
-        """Verify first TOTP code, persist encrypted secret, and return backup codes."""
+    async def confirm_enrollment(
+        self,
+        user: User,
+        secret: str,
+        totp_code: str,
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        """Verify first TOTP code, persist encrypted secret, and return backup codes.
+
+        Args:
+            user: User whose 2FA enrollment is being confirmed. MUST already
+                exist in the session (caller has flushed/created the row).
+            secret: TOTP shared secret returned by :meth:`begin_enrollment`.
+            totp_code: First TOTP code the user types to prove the secret
+                was received.
+            commit: When ``True`` (default, preserves the existing single-
+                turn enrollment contract), the service commits ``self.db``
+                after writing the encrypted secret. When ``False``, the
+                caller owns the transaction lifecycle and is responsible
+                for ``await self.db.commit()`` (or rollback) after this
+                call returns. The audit-event side effect always runs in
+                its own ``AsyncSessionLocal`` session so the commit-flag
+                does not affect observability.
+
+                **spec/011 step 7 R1 (P0-1)**: the public invitation
+                accept handler creates the user + confirms 2FA + atomically
+                flips the invitation row inside ONE transaction. If the
+                atomic invitation UPDATE returns zero rows AFTER the 2FA
+                credential is persisted, the caller MUST be able to
+                rollback the entire transaction — including the 2FA write
+                — to avoid orphaning a 2FA-enrolled user when the
+                invitation envelope is corrupted, revoked, or already
+                accepted. Internal commits inside this method would
+                persist the user + 2FA row before the invitation check
+                ran, defeating that guarantee.
+
+        Raises:
+            TwoFactorAlreadyEnabledError: ``user.two_factor_enabled`` is
+                already ``True``.
+            TwoFactorInvalidCodeError: ``totp_code`` failed verification.
+        """
         if user.two_factor_enabled:
             raise TwoFactorAlreadyEnabledError("two-factor authentication is already enabled")
 
         await self._take_setup_lock(user.id)
 
         if not _totp(secret).verify(_normalize_totp_code(totp_code), valid_window=TOTP_VALID_WINDOW):
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
             await self._record_audit_event(
                 actor_id=user.id,
                 target_user=user,
@@ -339,7 +380,8 @@ class TwoFactorService:
         self.db.add(user)
 
         await self._clear_totp_failures(user.id)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         await self._record_audit_event(
             actor_id=user.id,
             target_user=user,

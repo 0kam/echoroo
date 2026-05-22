@@ -249,15 +249,15 @@
 
 ### Backend
 
-- [ ] T200 [US2] Add `POST /web-api/v1/projects/{project_id}/invitations` to `apps/api/echoroo/api/web_v1/projects/_members.py` (FR-011-101). Body: `{email, role}` (no `ttl_seconds` override per spec). Response: `{invitation_id, invitation_url, expires_at, bound_email_hash}` with `Cache-Control: no-store, no-cache, must-revalidate, private`. Gate via `gate_action(PROJECT_MEMBER_INVITATION_ISSUE_ACTION)`. The invitation_url is the new 4-part envelope token (T050)
-- [ ] T201 [US2] [P] Add `GET /web-api/v1/projects/{project_id}/invitations` to list invitations (already partly exists per spec/006; extend to include kind=member rows alongside trusted). FR-011-108
-- [ ] T202 [US2] Add `GET /web-api/v1/auth/invitations/{token}` resolver to `apps/api/echoroo/api/web_v1/auth.py` (FR-011-105, FR-011-107). TOKEN_AUTH_ONLY. Optional session cookie. Returns `InvitationContext` with `is_logged_in` and `authenticated_email_matches_bound` flags. 404 generic with 300ms±50ms timing pad
-- [ ] T203 [US2] Add `POST /web-api/v1/auth/invitations/{token}/accept` to `apps/api/echoroo/api/web_v1/auth.py` (FR-011-105, FR-011-106). TOKEN_AUTH_ONLY. Body shape branches on `is_logged_in` (NewUserPayload vs `{accept: true}` ExistingUserPayload). Returns `AcceptResponse` with required `kind` field
-- [ ] T204 [US2] Modify `accept_invitation` in `apps/api/echoroo/services/invitation_service.py` to support the existing-user branch (R11): branch on auth state, use existing `canonicalize_email` (NFKC + casefold) for bound-email comparison, return 409 when caller is already a member of the project at the same or higher role
-- [ ] T205 [US2] In `accept_invitation` implement the FR-011-106 SQL atomicity pattern: `UPDATE project_invitations SET status='accepted', accepted_at=now() WHERE id=:id AND status='pending' AND expires_at > now() RETURNING *` with named placeholders only; zero rows → abort + generic invalid response
-- [ ] T206 [US2] [P] Add per-IP (10/min) and global (200/min) rate-limit + constant 200-400ms timing pad to `/auth/invitations/*` per Phase 17 A-6 pattern (NFR-011-006)
+- [x] T200 [US2] Add `POST /web-api/v1/projects/{project_id}/invitations` to `apps/api/echoroo/api/web_v1/projects/_members.py` (FR-011-101). Body: `{email, role}` (no `ttl_seconds` override per spec). Response: `{invitation_id, invitation_url, expires_at, bound_email_hash}` with `Cache-Control: no-store, no-cache, must-revalidate, private`. Gate via `gate_action(PROJECT_MEMBER_INVITATION_ISSUE_ACTION)`. The invitation_url is the new 4-part envelope token (T050)
+- [x] T201 [US2] [P] Add `GET /web-api/v1/projects/{project_id}/invitations` to list invitations (already partly exists per spec/006; extend to include kind=member rows alongside trusted). FR-011-108
+- [x] T202 [US2] Add `GET /web-api/v1/auth/invitations/{token}` resolver to `apps/api/echoroo/api/web_v1/auth.py` (FR-011-105, FR-011-107). TOKEN_AUTH_ONLY. Optional session cookie. Returns `InvitationContext` with `is_logged_in` and `authenticated_email_matches_bound` flags. 404 generic with 300ms±50ms timing pad
+- [x] T203 [US2] Add `POST /web-api/v1/auth/invitations/{token}/accept` to `apps/api/echoroo/api/web_v1/auth.py` (FR-011-105, FR-011-106). TOKEN_AUTH_ONLY. Body shape branches on `is_logged_in` (NewUserPayload vs `{accept: true}` ExistingUserPayload). Returns `AcceptResponse` with required `kind` field
+- [x] T204 [US2] Modify `accept_invitation` in `apps/api/echoroo/services/invitation_service.py` to support the existing-user branch (R11): branch on auth state, use existing `canonicalize_email` (NFKC + casefold) for bound-email comparison, return 409 when caller is already a member of the project at the same or higher role
+- [x] T205 [US2] In `accept_invitation` implement the FR-011-106 SQL atomicity pattern: `UPDATE project_invitations SET status='accepted', accepted_at=now() WHERE id=:id AND status='pending' AND expires_at > now() RETURNING *` with named placeholders only; zero rows → abort + generic invalid response
+- [x] T206 [US2] [P] Add per-IP (10/min) and global (200/min) rate-limit + constant 200-400ms timing pad to `/auth/invitations/*` per Phase 17 A-6 pattern (NFR-011-006)
 - [x] T207 [US2] Modify `POST /web-api/v1/projects/{project_id}/trusted-users` response in `apps/api/echoroo/api/web_v1/trusted.py` to include `invitation_url` field; remove outbox-email enqueue (FR-011-103). This formally supersedes spec/006 FR-051
-- [ ] T208 [US2] Audit-action emission on accept (T020 constants): `project.member.invite_accepted_signup` for new-user signup, `project.member.invite_accepted` for existing-user accept, `project.trusted_user.invite_accepted` for trusted-overlay path
+- [x] T208 [US2] Audit-action emission on accept (T020 constants): `project.member.invite_accepted_signup` for new-user signup, `project.member.invite_accepted` for existing-user accept, `project.trusted_user.invite_accepted` for trusted-overlay path
 
 ### Frontend
 
@@ -268,10 +268,10 @@
 
 ### Contracts + tests
 
-- [ ] T240 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/member-invitations.yaml` against the live FastAPI app (`pytest test_openapi_diff.py`); fix YAML or app discrepancies in this PR
-- [ ] T241 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/invitation-public.yaml` against the live app
+- [x] T240 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/member-invitations.yaml` against the live FastAPI app (`pytest test_openapi_diff.py`); fix YAML or app discrepancies in this PR — single-invite + listing endpoints land in this PR; YAML's bulk + revoke routes remain part of Step 8, so the stem stays in `_SPEC_011_PENDING_STEMS` until Step 8 promotes it
+- [x] T241 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/invitation-public.yaml` against the live app — stem promoted to `_SPEC_011_LIVE_CONTRACT_STEMS`
 - [ ] T242 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/trusted-users-invitation-url.yaml` against the live app (after T207)
-- [ ] T243 [US2] [P] Add `apps/api/tests/integration/test_member_invitation_flow.py` (FR-011-101..109): issue → resolve → accept (new user) → membership row check; issue → resolve → accept (existing user) → no duplicate user; mismatched email → generic invalid
+- [x] T243 [US2] [P] Add `apps/api/tests/integration/test_member_invitation_flow.py` (FR-011-101..109): issue → resolve → accept (new user) → membership row check; issue → resolve → accept (existing user) → no duplicate user; mismatched email → generic invalid
 - [ ] T244 [US2] [P] Already added in T057 (`test_invitation_token_kid_rotation.py`); confirm it covers the FR-011-105 resolver
 - [ ] T245 [US2] [P] Add Playwright e2e `apps/web/tests/e2e/single-invitation-flow.spec.ts` (US2 AC1-6): admin issues, copy URL, second browser opens, signup, lands in project at correct role; repeat for existing-user variant; 409 for already-member
 

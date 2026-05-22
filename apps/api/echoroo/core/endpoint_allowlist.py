@@ -543,6 +543,43 @@ ALLOWLIST: list[AllowlistEntry] = [
         last_reviewed_at=_TODAY_REVIEWED,
         project_scope_allowed=True,
     ),
+    # spec/011 FR-011-105..107 — TOKEN_AUTH_ONLY public-token resolver +
+    # accept. Both endpoints authenticate by the signed token alone
+    # (TOKEN_AUTH_ONLY). The session cookie is OPTIONAL; when present
+    # the handler reads it for the existing-user accept branch (R11).
+    # These entries do NOT carry a ``{project_id}`` segment so
+    # ``project_scope_allowed`` stays at the default (False).
+    AllowlistEntry(
+        path_pattern="/web-api/v1/auth/invitations/{token}",
+        methods=frozenset({"GET"}),
+        category=AllowlistCategory.TOKEN_AUTH_ONLY,
+        reason=(
+            "spec/011 FR-011-105 resolver; the {token} segment IS the "
+            "credential. Session cookie OPTIONAL — when present the "
+            "resolver reports is_logged_in and "
+            "authenticated_email_matches_bound for the existing-user "
+            "branch."
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#invitation-public",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/auth/invitations/{token}/accept",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.TOKEN_AUTH_ONLY,
+        reason=(
+            "spec/011 FR-011-106 accept; the {token} segment IS the "
+            "credential. Body branches on caller's auth state (signup "
+            "vs existing-user). Constant 300ms timing pad denies "
+            "existence oracles (FR-011-107)."
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#invitation-public",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
 ]
 
 

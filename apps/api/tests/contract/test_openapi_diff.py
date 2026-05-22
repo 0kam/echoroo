@@ -82,6 +82,14 @@ _CONTRACTS_DIRS: tuple[Path, ...] = (
 _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
     {
         "trusted-users-invitation-url",
+        # spec/011 Step 7 (T241): the public-token resolver + accept
+        # endpoints landed and the YAML's only two paths are live.
+        # ``member-invitations.yaml`` stays in PENDING because it still
+        # describes the Step 8 bulk + revoke routes alongside the Step 7
+        # single-invite issuer; promoting it now would assert paths the
+        # app does not yet expose. Once Step 8 lands those routes the
+        # stem moves here.
+        "invitation-public",
     }
 )
 
@@ -94,8 +102,11 @@ _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
 _SPEC_011_PENDING_STEMS: frozenset[str] = frozenset(
     {
         "admin-password-reset",
-        "invitation-public",
         "me-banners-activity",
+        # Step 7 promoted ``invitation-public`` to LIVE. The
+        # ``member-invitations`` stem stays PENDING until Step 8 lands
+        # the bulk + revoke endpoints; the live-stem assertion would
+        # otherwise complain about paths missing from the app.
         "member-invitations",
         "su-bootstrap-project-create",
     }

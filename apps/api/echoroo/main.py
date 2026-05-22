@@ -193,6 +193,13 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     # respond 404 to Guests (FR-018, anti-enumeration).
     auth_router_public_prefixes: tuple[tuple[str, frozenset[str]], ...] = (
         ("/web-api/v1/projects", frozenset({"GET"})),
+        # spec/011 FR-011-105 — TOKEN_AUTH_ONLY resolver. The {token}
+        # segment is matched as a single segment after the prefix
+        # ``/web-api/v1/auth/invitations``. The structural matcher
+        # accepts only the bare ``{prefix}/{single-segment}`` shape so
+        # ``/accept`` (deeper) is intentionally handled by the nested
+        # allowlist below.
+        ("/web-api/v1/auth/invitations", frozenset({"GET"})),
     )
     # Phase 5 polish round 4 (致命 1): allow Guest GET on the project recording
     # list ``GET /web-api/v1/projects/{id}/recordings`` so signed-out visitors
@@ -207,6 +214,22 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
         tuple[str, str, frozenset[str]], ...
     ] = (
         ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
+        # spec/011 FR-011-105..107 — TOKEN_AUTH_ONLY public-token surface.
+        # ``GET /web-api/v1/auth/invitations/{token}`` (resolver) and
+        # ``POST /web-api/v1/auth/invitations/{token}/accept`` (accept).
+        # Both endpoints honour an OPTIONAL session cookie — when present
+        # the handler reads ``current_user`` to populate the existing-user
+        # branch; when absent the request passes through anonymously and
+        # the signup branch fires. The auth router needs to admit BOTH
+        # paths under the same allowlist (one via the bare-token GET, one
+        # via the ``/accept`` suffix POST). The structural matcher already
+        # allows the prefix matcher to handle the bare token; the nested
+        # entry below picks up the ``/accept`` suffix.
+        (
+            "/web-api/v1/auth/invitations",
+            "/accept",
+            frozenset({"POST"}),
+        ),
     )
     # Phase 15 T155b: programmatic prefix flipped back to ``/api/v1``.
     # ``DbApiKeyVerifier`` (wired below) resolves Bearer credentials

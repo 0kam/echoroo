@@ -81,10 +81,10 @@ import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -141,6 +141,20 @@ _RATE_LIMIT_WINDOW_SECONDS: int = 3600
 _IDEMPOTENCY_TTL_SECONDS: int = 24 * 3600
 _IDEMPOTENCY_KEY_PREFIX: str = "idem:invite:accept:"
 
+# spec/011 FR-011-106 / T208 — audit-action constants for the three accept
+# branches. The constants are deliberately service-private (per HANDOFF
+# line 79) so renames stay local to this module; the verb.noun.verb
+# 3-segment pattern matches the rest of the existing audit catalogue.
+AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP: Final[str] = (
+    "project.member.invite_accepted_signup"
+)
+AUDIT_ACTION_MEMBER_INVITE_ACCEPTED: Final[str] = (
+    "project.member.invite_accepted"
+)
+AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED: Final[str] = (
+    "project.trusted_user.invite_accepted"
+)
+
 
 # ---------------------------------------------------------------------------
 # Public errors (engine-level; the endpoint maps to HTTP)
@@ -186,6 +200,19 @@ class InvitationInfraUnavailableError(InvitationError):
     Mapped to HTTP 503 by the endpoint. We deliberately fail **closed**:
     accepting issuance under a partial Redis outage would let an attacker
     spray invitations past the documented rate cap.
+    """
+
+
+class InvitationAlreadyMemberError(InvitationError):
+    """spec/011 FR-011-106 step 3 — caller is already a member of the project.
+
+    Raised by the existing-user accept branch when the authenticated caller
+    already holds an active membership row on the target project at the
+    same OR higher role than the invitation grants. The endpoint maps this
+    to HTTP 409 with a generic ``already a member`` body. The bound-email
+    check has already succeeded by the time this error fires, so the
+    response intentionally reveals that the caller IS the right recipient —
+    it just has nothing new to grant.
     """
 
 
@@ -299,14 +326,28 @@ def hash_token(raw_token_b64u: str) -> str:
     return hashlib.sha256(raw_token_b64u.encode("ascii")).hexdigest()
 
 
-def _canonical_email(email: str) -> str:
+def canonicalize_email(email: str) -> str:
     """Return the FR-054 / FR-055 canonical form of ``email``.
 
     Centralised so the legacy Python-HMAC path
     (:func:`hash_email`) and the KMS-backed path
     (:func:`hash_email_dual`) can never disagree on canonicalisation.
+
+    spec/011 NFR-011-003 / FR-011-106 — the public name was added in
+    Step 7 (US2 existing-user accept branch) so the auth resolver and
+    the accept handlers can compare the authenticated caller's email
+    against the invitation's bound email using exactly the same byte
+    sequence that the HMAC / KMS pipelines see. The private alias
+    ``_canonical_email`` is retained for backward compatibility with
+    historical callers (workers, tests).
     """
     return unicodedata.normalize("NFKC", email).strip().casefold()
+
+
+# Backwards-compatible private alias preserved for historical callers
+# (``workers/pii_hash_backfill.py``, security tests). New code MUST use
+# :func:`canonicalize_email`.
+_canonical_email = canonicalize_email
 
 
 def hash_email(email: str, *, hmac_secret: str) -> str:
@@ -897,22 +938,32 @@ async def create_invitation(
     # 4. Insert (caller-owned TX). The (project_id, email_hash) WHERE
     # status='pending' partial unique index is the FR-049 guard; collisions
     # surface as IntegrityError, which we map to InvitationConflictError.
-    invitation = ProjectInvitation(
-        project_id=project_id,
-        kind=kind,
-        email=email,
-        email_hash=email_hash_value,
-        email_hash_v2=email_hash_v2_value,
-        pii_hash_version=pii_hash_version_value,
-        role=role if kind is ProjectInvitationKind.MEMBER else None,
-        granted_permissions=granted_perms_db,
-        trusted_duration_seconds=duration_db,
-        token_hash=token_hash,
-        invited_by_id=invited_by_id,
-        expires_at=expires_at,
-        status=ProjectInvitationStatus.PENDING,
-        ownership_transfer_on_accept=ownership_transfer_on_accept,
-    )
+    #
+    # Round trip note: the ``granted_permissions`` column is JSONB; passing
+    # Python ``None`` to a JSONB attribute would otherwise serialise as the
+    # JSON literal ``null`` (not SQL NULL), which trips
+    # ``ck_project_invitations_kind_fields`` because the CHECK uses
+    # ``IS NULL``. We therefore omit the column from the constructor when
+    # the value is None — SQLAlchemy honours the column's
+    # ``nullable=True`` default and INSERTs SQL NULL.
+    invitation_kwargs: dict[str, Any] = {
+        "project_id": project_id,
+        "kind": kind,
+        "email": email,
+        "email_hash": email_hash_value,
+        "email_hash_v2": email_hash_v2_value,
+        "pii_hash_version": pii_hash_version_value,
+        "role": role if kind is ProjectInvitationKind.MEMBER else None,
+        "trusted_duration_seconds": duration_db,
+        "token_hash": token_hash,
+        "invited_by_id": invited_by_id,
+        "expires_at": expires_at,
+        "status": ProjectInvitationStatus.PENDING,
+        "ownership_transfer_on_accept": ownership_transfer_on_accept,
+    }
+    if granted_perms_db is not None:
+        invitation_kwargs["granted_permissions"] = granted_perms_db
+    invitation = ProjectInvitation(**invitation_kwargs)
     session.add(invitation)
     try:
         await session.flush()
@@ -1332,6 +1383,431 @@ async def accept_invitation(
 
 
 # ---------------------------------------------------------------------------
+# spec/011 FR-011-105 / FR-011-106 — Public-token resolver + accept
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class InvitationResolveOutcome:
+    """Snapshot returned by :func:`resolve_invitation_for_public_token`.
+
+    Carries the safe subset of invitation metadata the public landing page
+    needs to render its signup / accept form. ``authenticated_email_matches``
+    is ``None`` when no session cookie was supplied (the resolver still
+    succeeds — the frontend renders the signup branch).
+    """
+
+    invitation: ProjectInvitation
+    project_name: str
+    is_logged_in: bool
+    authenticated_email_matches: bool | None
+
+
+@dataclass(frozen=True)
+class InvitationPublicAcceptOutcome:
+    """Snapshot returned by :func:`accept_invitation_via_public_token`.
+
+    The accepting user (newly created or pre-existing), the resulting
+    membership / trusted-overlay row, the invitation row, and the branch
+    discriminator used by the audit emitter. ``audit_action`` is one of
+    :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP`,
+    :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED`, or
+    :data:`AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED` (T208).
+    """
+
+    invitation: ProjectInvitation
+    accepting_user_id: UUID
+    member: ProjectMember | None
+    trusted_user: ProjectTrustedUser | None
+    audit_action: str
+    membership_created: bool
+    ownership_transferred: bool = False
+    request_id: str = ""
+    ip: str = ""
+    user_agent: str = ""
+
+
+async def resolve_invitation_for_public_token(
+    session: AsyncSession,
+    *,
+    signed_token: str,
+    authenticated_email: str | None,
+    now: datetime | None = None,
+) -> InvitationResolveOutcome:
+    """Resolve invitation context for the public landing page (FR-011-105).
+
+    The resolver authenticates by the signed token alone (TOKEN_AUTH_ONLY).
+    When the caller also presents a valid session cookie the handler passes
+    the authenticated user's email so the resolver can report whether the
+    bound email matches; the frontend uses the flag to gate the existing-
+    user accept branch vs. force a sign-out for a mismatched session.
+
+    Raises :class:`InvitationTokenInvalidError` for any failure cause
+    (bad signature, expired envelope, unknown token, terminal-status row,
+    deleted project). The handler maps every cause to the same generic
+    response with constant timing (FR-011-107). Project visibility /
+    role-validity guards on the row mirror the live application gate so
+    a stale invitation whose target role no longer matches the project's
+    visibility is rejected uniformly.
+    """
+    now_eff = now or datetime.now(UTC)
+
+    raw_token_b64u, _ = verify_invitation_token(
+        signed_token, now=now_eff,
+    )
+    token_hash = hash_token(raw_token_b64u)
+
+    result = await session.execute(
+        select(ProjectInvitation).where(
+            ProjectInvitation.token_hash == token_hash,
+        ),
+    )
+    invitation = result.scalar_one_or_none()
+    if invitation is None:
+        raise InvitationTokenInvalidError("invitation not found")
+
+    if invitation.status != ProjectInvitationStatus.PENDING:
+        # Any terminal status — accepted / declined / revoked / expired —
+        # collapses to the same generic-invalid surface (FR-011-107).
+        raise InvitationTokenInvalidError("invitation not pending")
+
+    invitation_expires_at = _ensure_utc(invitation.expires_at)
+    if invitation_expires_at <= now_eff:
+        raise InvitationTokenInvalidError("invitation has expired")
+
+    # Local import — avoid a heavy ``Project`` model load at module import.
+    from echoroo.models.project import Project
+
+    project_row = (
+        await session.execute(
+            select(Project.name).where(Project.id == invitation.project_id),
+        )
+    ).first()
+    if project_row is None:
+        raise InvitationTokenInvalidError("invitation target project missing")
+    project_name = str(project_row[0])
+
+    is_logged_in = authenticated_email is not None
+    authenticated_email_matches: bool | None
+    if authenticated_email is None or invitation.email is None:
+        authenticated_email_matches = None if not is_logged_in else False
+    else:
+        authenticated_email_matches = canonicalize_email(
+            authenticated_email
+        ) == canonicalize_email(invitation.email)
+
+    return InvitationResolveOutcome(
+        invitation=invitation,
+        project_name=project_name,
+        is_logged_in=is_logged_in,
+        authenticated_email_matches=authenticated_email_matches,
+    )
+
+
+async def accept_invitation_via_public_token(
+    session: AsyncSession,
+    *,
+    signed_token: str,
+    accepting_user_id: UUID,
+    accepting_user_email: str,
+    project_id_scope: UUID | None = None,
+    is_new_user_signup: bool = False,
+    now: datetime | None = None,
+    request_id: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> InvitationPublicAcceptOutcome:
+    """Accept an invitation under the spec/011 public-token surface.
+
+    Implements FR-011-106 in a single transaction:
+
+    1. HMAC-verify the signed envelope (constant-time MAC compare via
+       :func:`verify_invitation_token`).
+    2. Look up the row by ``token_hash``; mismatch / missing →
+       :class:`InvitationTokenInvalidError`.
+    3. Compare ``canonicalize_email(accepting_user_email)`` with the bound
+       email (NFKC + casefold). Mismatch →
+       :class:`InvitationEmailMismatchError` (handler maps to generic 404).
+    4. Atomic state flip via parameterised SQL (FR-011-106 step 2). Zero
+       rows returned → :class:`InvitationTokenInvalidError`.
+    5. Insert the grant row (ProjectMember / ProjectTrustedUser). When the
+       caller already holds an active membership at the same OR higher
+       role, raise :class:`InvitationAlreadyMemberError` (handler →
+       409). Otherwise insert and audit-emit per branch.
+
+    The caller's authentication state is signalled via
+    ``is_new_user_signup``: ``True`` selects
+    :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP`,
+    ``False`` selects :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED` (or
+    :data:`AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED` for trusted-overlay
+    rows). The caller is responsible for having created the user row
+    BEFORE invoking this function on the signup branch — the service
+    layer never receives the cleartext password.
+
+    Caller commits the transaction. Audit side effects fire post-commit
+    via :func:`trigger_post_commit_side_effects`.
+    """
+    now_eff = now or datetime.now(UTC)
+
+    # Step 1 — HMAC verify (NFR-011-003 constant-time compare).
+    raw_token_b64u, _ = verify_invitation_token(signed_token, now=now_eff)
+    token_hash = hash_token(raw_token_b64u)
+
+    # Step 2 — Row lookup (read-only). The conditional UPDATE in step 4
+    # is the concurrency gate; the SELECT serves only to surface the
+    # invitation context (project_id, kind, role, bound email, ownership-
+    # transfer flag) and to raise the spec/011 generic-invalid surface
+    # for terminal-status / expired / missing rows BEFORE the atomic
+    # UPDATE runs. The earlier ``SELECT ... FOR UPDATE`` was redundant
+    # (and surplus-locking): per FR-011-106 step 2 the
+    # ``UPDATE ... WHERE status='pending' AND expires_at > now()
+    # RETURNING *`` itself is the single-statement compare-and-swap. A
+    # parallel accept that loses the race finds zero rows returned from
+    # the UPDATE and surfaces the generic-invalid path (Codex R1 P0-2).
+    result = await session.execute(
+        select(ProjectInvitation).where(
+            ProjectInvitation.token_hash == token_hash,
+        ),
+    )
+    invitation = result.scalar_one_or_none()
+    if invitation is None:
+        raise InvitationTokenInvalidError("invitation not found")
+
+    if project_id_scope is not None and invitation.project_id != project_id_scope:
+        raise InvitationTokenInvalidError("invitation not found")
+
+    if invitation.status != ProjectInvitationStatus.PENDING:
+        raise InvitationTokenInvalidError("invitation not pending")
+
+    invitation_expires_at = _ensure_utc(invitation.expires_at)
+    if invitation_expires_at <= now_eff:
+        raise InvitationTokenInvalidError("invitation has expired")
+
+    # spec/011 R5 — defence in depth above the DB CHECK.
+    if (
+        invitation.ownership_transfer_on_accept
+        and invitation.kind is not ProjectInvitationKind.MEMBER
+    ):
+        raise InvitationStateError(
+            "ownership_transfer_on_accept_invalid_for_kind",
+        )
+
+    # Step 3 — bound-email match (FR-011-106 step 1 substep). The check
+    # uses :func:`canonicalize_email` on both sides so a fullwidth or
+    # combining-mark variant cannot bypass via Unicode normalisation
+    # tricks. Mismatch is :class:`InvitationEmailMismatchError`; the
+    # handler maps to the generic 404.
+    if invitation.email is None:
+        raise InvitationEmailMismatchError(
+            "invitation row missing bound email",
+        )
+    if canonicalize_email(accepting_user_email) != canonicalize_email(
+        invitation.email,
+    ):
+        raise InvitationEmailMismatchError(
+            "current user's email does not match the invitation",
+        )
+
+    # Step 4 — atomic state flip (FR-011-106 step 2). Named placeholders
+    # only; no string concatenation. The WHERE clause re-checks the
+    # status + expiry so this single statement is the compare-and-swap
+    # gate: any concurrent accept that wins the race leaves the row in
+    # ``status='accepted'`` and our UPDATE matches zero rows. Likewise
+    # an admin revoke landing between the SELECT above and this UPDATE
+    # flips the row to ``revoked`` and we surface the generic-invalid
+    # response. The lock duration is intentionally the UPDATE itself
+    # (Postgres row-level write lock) — no separate ``SELECT FOR UPDATE``
+    # is needed.
+    update_stmt = text(
+        """
+        UPDATE project_invitations
+           SET status = 'accepted',
+               accepted_at = now(),
+               updated_at = now()
+         WHERE id = :invitation_id
+           AND status = 'pending'
+           AND expires_at > now()
+        RETURNING id
+        """
+    )
+    update_result = await session.execute(
+        update_stmt,
+        {"invitation_id": invitation.id},
+    )
+    if update_result.fetchone() is None:
+        # Lost the atomicity race OR the row drifted to a terminal state
+        # (e.g. an admin revoke landed concurrently). Generic-invalid per
+        # FR-011-106. spec/011 step 7 R1 P0-1: callers performing user
+        # creation + 2FA enrollment in the same TX MUST rollback the
+        # whole transaction when this raises so no orphan account leaks.
+        raise InvitationTokenInvalidError("invitation not found")
+
+    # Re-attach the freshly-flipped row to the ORM identity map so
+    # downstream consumers (audit emitter, response shaping) see the
+    # accepted status without an additional SELECT.
+    invitation.status = ProjectInvitationStatus.ACCEPTED
+    invitation.accepted_at = now_eff
+
+    # Step 5 — apply the grant.
+    member: ProjectMember | None = None
+    trusted_user: ProjectTrustedUser | None = None
+    membership_created = False
+    audit_action: str
+
+    if invitation.kind is ProjectInvitationKind.MEMBER:
+        if invitation.role is None:  # pragma: no cover — DB CHECK guards this
+            raise InvitationValidationError(
+                "Member invitation has NULL role (data corruption)",
+            )
+        # FR-011-106 step 3: existing-user branch — refuse if caller is
+        # already a member at the same OR higher role. The role ordering
+        # is VIEWER < MEMBER < ADMIN; ``_role_rank`` encapsulates the
+        # comparison so the enum stays the single source of truth.
+        existing = (
+            await session.execute(
+                select(ProjectMember).where(
+                    ProjectMember.project_id == invitation.project_id,
+                    ProjectMember.user_id == accepting_user_id,
+                    ProjectMember.removed_at.is_(None),
+                ),
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            if _role_rank(existing.role) >= _role_rank(invitation.role):
+                raise InvitationAlreadyMemberError(
+                    "user already has an active membership at "
+                    "the same or higher role",
+                )
+            # Lower-rank existing membership → upgrade in place. The
+            # ``ux_project_members_active`` partial unique would
+            # otherwise reject the INSERT below.
+            existing.role = invitation.role
+            existing.invited_by_id = invitation.invited_by_id
+            member = existing
+            membership_created = False
+        else:
+            member = ProjectMember(
+                project_id=invitation.project_id,
+                user_id=accepting_user_id,
+                role=invitation.role,
+                joined_at=now_eff,
+                invited_by_id=invitation.invited_by_id,
+            )
+            session.add(member)
+            membership_created = True
+        audit_action = (
+            AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP
+            if is_new_user_signup
+            else AUDIT_ACTION_MEMBER_INVITE_ACCEPTED
+        )
+    else:  # ProjectInvitationKind.TRUSTED
+        if (
+            invitation.granted_permissions is None
+            or invitation.trusted_duration_seconds is None
+        ):  # pragma: no cover — DB CHECK guards this
+            raise InvitationValidationError(
+                "Trusted invitation has NULL granted_permissions/duration "
+                "(data corruption)",
+            )
+        valid_perms = coerce_granted_permissions(invitation.granted_permissions)
+        trusted_expires_at = now_eff + timedelta(
+            seconds=invitation.trusted_duration_seconds,
+        )
+        if trusted_expires_at - now_eff > timedelta(
+            seconds=TRUSTED_MAX_DURATION_SECONDS,
+        ):
+            raise InvitationValidationError(
+                "trusted_duration_seconds resolves past the FR-043 cap"
+            )
+        trusted_user = ProjectTrustedUser(
+            project_id=invitation.project_id,
+            user_id=accepting_user_id,
+            invitation_id=invitation.id,
+            granted_by_id=invitation.invited_by_id,
+            granted_at=now_eff,
+            expires_at=trusted_expires_at,
+            status=ProjectTrustedStatus.ACTIVE,
+            granted_permissions=sorted(p.value for p in valid_perms),
+            email_at_invitation=invitation.email,
+            email_at_invitation_hash=invitation.email_hash,
+        )
+        session.add(trusted_user)
+        membership_created = True
+        audit_action = AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED
+
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        # ``ux_project_trusted_users_active`` partial unique violation or
+        # similar concurrent insert → surface as 409 conflict.
+        raise InvitationConflictError(
+            "concurrent grant already exists for this user/project",
+        ) from exc
+
+    return InvitationPublicAcceptOutcome(
+        invitation=invitation,
+        accepting_user_id=accepting_user_id,
+        member=member,
+        trusted_user=trusted_user,
+        audit_action=audit_action,
+        membership_created=membership_created,
+        ownership_transferred=False,  # FR-011-123 SAVEPOINT lands in Phase 9
+        request_id=request_id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
+# spec/011 FR-011-106 step 3 — role-rank helper. ProjectMemberRole is a
+# StrEnum so direct enum comparison is unstable; the explicit table
+# below documents the ordering once.
+_ROLE_RANK: Final[dict[ProjectMemberRole, int]] = {
+    ProjectMemberRole.VIEWER: 1,
+    ProjectMemberRole.MEMBER: 2,
+    ProjectMemberRole.ADMIN: 3,
+}
+
+
+def _role_rank(role: ProjectMemberRole) -> int:
+    """Return the comparable integer rank for ``role`` (FR-011-106 step 3)."""
+    return _ROLE_RANK.get(role, 0)
+
+
+async def emit_public_invitation_accept_audit(
+    outcome: InvitationPublicAcceptOutcome,
+) -> None:
+    """Write the spec/011 T208 audit row in a fresh session.
+
+    Mirrors :func:`_write_invitation_audit` for the new public-token
+    accept path. The emitter is a best-effort post-commit hook —
+    failures are WARNING-logged so observability never undoes the
+    persisted membership / overlay row (FR-088 soft-alert pattern).
+    """
+    invitation = outcome.invitation
+    detail: dict[str, Any] = {
+        "invitation_id": str(invitation.id),
+        "kind": invitation.kind.value,
+        "membership_created": outcome.membership_created,
+        "ownership_transferred": outcome.ownership_transferred,
+    }
+    if outcome.member is not None:
+        detail["member_id"] = str(outcome.member.id)
+    if outcome.trusted_user is not None:
+        detail["trusted_user_id"] = str(outcome.trusted_user.id)
+    await _write_invitation_audit(
+        action=outcome.audit_action,
+        actor_user_id=outcome.accepting_user_id,
+        project_id=invitation.project_id,
+        request_id=outcome.request_id,
+        ip=outcome.ip,
+        user_agent=outcome.user_agent,
+        detail=detail,
+        before={"status": ProjectInvitationStatus.PENDING.value},
+        after={"status": invitation.status.value},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API: decline_invitation_by_recipient (T512 skeleton)
 # ---------------------------------------------------------------------------
 
@@ -1620,16 +2096,22 @@ async def _load_existing_grant(
 
 
 __all__ = [
+    "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED",
+    "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP",
+    "AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED",
     "INVITATION_MAX_TTL_SECONDS",
     "INVITATION_TTL_SECONDS",
     "InvitationAcceptOutcome",
+    "InvitationAlreadyMemberError",
     "InvitationConflictError",
     "InvitationCreateOutcome",
     "InvitationDeclineOutcome",
     "InvitationEmailMismatchError",
     "InvitationError",
     "InvitationInfraUnavailableError",
+    "InvitationPublicAcceptOutcome",
     "InvitationRateLimitError",
+    "InvitationResolveOutcome",
     "InvitationStateError",
     "InvitationTokenInvalidError",
     "InvitationValidationError",
@@ -1639,13 +2121,17 @@ __all__ = [
     "TRUSTED_DEFAULT_DURATION_SECONDS",
     "TRUSTED_MAX_DURATION_SECONDS",
     "accept_invitation",
+    "accept_invitation_via_public_token",
+    "canonicalize_email",
     "check_rate_limits",
     "coerce_granted_permissions",
     "create_invitation",
     "decline_invitation_by_recipient",
+    "emit_public_invitation_accept_audit",
     "hash_email",
     "hash_email_dual",
     "hash_token",
+    "resolve_invitation_for_public_token",
     "sign_invitation_token",
     "trigger_post_commit_side_effects",
     "verify_invitation_token",

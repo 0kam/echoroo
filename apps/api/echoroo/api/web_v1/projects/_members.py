@@ -55,12 +55,13 @@ from enum import Enum
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 
 from echoroo.api.web_v1.projects._audit import write_project_bff_audit_soft
 from echoroo.api.web_v1.projects._core import ProjectServiceDep
 from echoroo.core.actions import (
+    PROJECT_MEMBER_INVITATION_ISSUE_ACTION,
     PROJECT_MEMBER_INVITE_ACTION,
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
@@ -71,8 +72,18 @@ from echoroo.core.permissions import gate_action
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import OptionalCurrentUser
-from echoroo.models.enums import ProjectInvitationKind
-from echoroo.models.project import ProjectMember
+from echoroo.models.enums import (
+    ProjectInvitationKind,
+    ProjectInvitationStatus,
+    ProjectMemberRole,
+)
+from echoroo.models.project import ProjectInvitation, ProjectMember
+from echoroo.schemas.member_invitations import (
+    MemberInvitationIssueRequest,
+    MemberInvitationIssueResponse,
+    ProjectInvitationListItem,
+    ProjectInvitationListResponse,
+)
 from echoroo.schemas.project import (
     ProjectMemberAddRequest,
     ProjectMemberResponse,
@@ -84,9 +95,12 @@ from echoroo.services.invitation_service import (
     InvitationConflictError,
     InvitationEmailMismatchError,
     InvitationInfraUnavailableError,
+    InvitationRateLimitError,
     InvitationStateError,
     InvitationTokenInvalidError,
+    InvitationValidationError,
     accept_invitation,
+    create_invitation,
     decline_invitation_by_recipient,
 )
 
@@ -374,6 +388,247 @@ async def remove_project_member(
         before=before,
         after=None,
     )
+
+
+# ---------------------------------------------------------------------------
+# spec/011 T200 — POST /{project_id}/invitations  (FR-011-101..102)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/invitations",
+    response_model=MemberInvitationIssueResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Issue a Member-kind invitation (spec/011 FR-011-101)",
+    description=(
+        "Project Owner / Admin issues a one-shot Member invitation for an "
+        "out-of-band email + role. The response carries the signed URL "
+        "envelope under ``invitation_url`` — the value is never recoverable "
+        "after this turn (FR-011-102; spec/006 FR-051 formally superseded "
+        "by FR-011-103 for the trusted overlay, FR-011-102 for the member "
+        "kind). ``Cache-Control: no-store, no-cache, must-revalidate, "
+        "private`` is attached so a browser back / refresh does not replay "
+        "the URL from bfcache. The audit row records only the invitation "
+        "id and recipient ``email_hash`` — never the plain token (FR-011-102)."
+    ),
+    responses={
+        409: {"description": "Pending invitation already exists for this email"},
+        429: {"description": "Per-issuer rate limit exceeded (FR-056)"},
+        503: {"description": "Rate-limit infrastructure unavailable"},
+    },
+)
+async def issue_project_member_invitation(
+    project_id: UUID,
+    payload: MemberInvitationIssueRequest,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> MemberInvitationIssueResponse:
+    """Issue a ``kind='member'`` invitation under ``project_id``.
+
+    spec/011 FR-011-101: gated by
+    :data:`echoroo.core.actions.PROJECT_MEMBER_INVITATION_ISSUE_ACTION`
+    (project scope, ``MANAGE_MEMBERS`` permission). The service layer
+    handles the FR-052 token shape, FR-056 rate-limit accounting, and the
+    FR-011-103 plain-token confidentiality contract.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_INVITATION_ISSUE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # Map the contract's lower-case enum to the persisted ProjectMemberRole.
+    try:
+        role_enum = ProjectMemberRole(payload.role)
+    except ValueError as exc:
+        # Pydantic Literal validation would already reject this; the guard
+        # below is defence in depth so a future schema relaxation cannot
+        # silently downgrade the role assignment.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "ERR_INVALID_ROLE",
+                "message": f"unknown role: {payload.role!r}",
+            },
+        ) from exc
+
+    settings = get_settings()
+    redis = await get_redis_connection()
+
+    try:
+        outcome = await create_invitation(
+            db,
+            project_id=project_id,
+            kind=ProjectInvitationKind.MEMBER,
+            email=payload.email,
+            invited_by_id=current_user.id,
+            hmac_secret=settings.web_session_secret,
+            redis=redis,
+            role=role_enum,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except InvitationValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "ERR_INVITATION_INVALID",
+                "message": str(exc),
+            },
+        ) from exc
+    except InvitationConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVITATION_PENDING",
+                "message": str(exc),
+            },
+        ) from exc
+    except InvitationRateLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+    except InvitationInfraUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    invitation = outcome.invitation
+    expires_at_aware = invitation.expires_at
+    if expires_at_aware.tzinfo is None:  # pragma: no cover — DB guarantees tz-aware
+        expires_at_aware = expires_at_aware.replace(tzinfo=UTC)
+
+    body = MemberInvitationIssueResponse(
+        invitation_id=invitation.id,
+        invitation_url=outcome.signed_token_envelope,
+        expires_at=expires_at_aware,
+        bound_email_hash=invitation.email_hash,
+    )
+
+    # FR-011-102: anti-bfcache + private cache directives. Mirrors the
+    # Trusted endpoint precedent (FR-011-103) added by Step 6 / T207.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    await db.commit()
+    await invitation_service.trigger_post_commit_side_effects(outcome)
+    return body
+
+
+# ---------------------------------------------------------------------------
+# spec/011 T201 — GET /{project_id}/invitations  (FR-011-108)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{project_id}/invitations",
+    response_model=ProjectInvitationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List invitations for a project (spec/011 FR-011-108)",
+    description=(
+        "Unified listing of Member-kind and Trusted-overlay invitations "
+        "for the project. Owner / Admin only (MANAGE_MEMBERS). The "
+        "optional ``kind`` query filter narrows the result to a single "
+        "kind; omit it to enumerate both. ``status`` likewise narrows by "
+        "lifecycle state. The original token is **not** recoverable — "
+        "admins must revoke + reissue to send a fresh URL."
+    ),
+)
+async def list_project_invitations(
+    project_id: UUID,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    kind: ProjectInvitationKind | None = Query(default=None),
+    status_filter: ProjectInvitationStatus | None = Query(
+        default=None, alias="status",
+    ),
+) -> ProjectInvitationListResponse:
+    """Return the project's invitation rows (Owner / Admin).
+
+    spec/011 T201 / FR-011-108: the listing returns BOTH member and
+    trusted-overlay invitations so a single collaborator UI can render
+    one mixed table. The endpoint is gated by
+    :data:`PROJECT_MEMBER_LIST_ACTION` (``MANAGE_MEMBERS`` per the
+    canonical matrix) so an enumeration audit row matches the rest of
+    the membership surface.
+
+    spec/011 step 7 R1 P1-2: the response carries
+    ``Cache-Control: no-store, no-cache, must-revalidate, private`` to
+    mirror the issue endpoint (``POST /{project_id}/invitations``). The
+    listing exposes the ``bound_email_hash`` field and per-invitation
+    status — both are admin-only data that MUST NOT be cached by an
+    upstream proxy, replayed by browser bfcache, or stored in shared
+    intermediate caches.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_LIST_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # P1-2: anti-cache directives — set BEFORE the SELECT so the header
+    # is present regardless of whether the query short-circuits via an
+    # empty result set.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    stmt = (
+        select(ProjectInvitation)
+        .where(ProjectInvitation.project_id == project_id)
+        .order_by(ProjectInvitation.created_at.desc())
+    )
+    if kind is not None:
+        stmt = stmt.where(ProjectInvitation.kind == kind)
+    if status_filter is not None:
+        stmt = stmt.where(ProjectInvitation.status == status_filter)
+
+    rows = (await db.execute(stmt)).scalars().all()
+
+    items: list[ProjectInvitationListItem] = []
+    for row in rows:
+        items.append(
+            ProjectInvitationListItem(
+                id=row.id,
+                kind=row.kind,
+                role=row.role,
+                granted_permissions=row.granted_permissions,
+                status=row.status,
+                bound_email=row.email,
+                issued_by=row.invited_by_id,
+                issued_at=row.created_at,
+                expires_at=row.expires_at,
+                accepted_at=row.accepted_at,
+                revoked_at=row.revoked_at,
+                declined_at=row.declined_at,
+                ownership_transfer_on_accept=row.ownership_transfer_on_accept,
+            )
+        )
+    return ProjectInvitationListResponse(items=items)
 
 
 # ---------------------------------------------------------------------------

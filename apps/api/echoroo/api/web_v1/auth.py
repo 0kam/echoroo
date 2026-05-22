@@ -17,7 +17,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID
 
 import httpx
@@ -25,6 +25,7 @@ import jwt
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from webauthn.helpers import options_to_json_dict
@@ -37,6 +38,7 @@ from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
+from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
 from echoroo.middleware.step_up import STEP_UP_HEADER_NAME
 from echoroo.models.password_reset_token import PasswordResetToken
@@ -68,8 +70,17 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
-from echoroo.services import outbox_service
+from echoroo.services import invitation_service, outbox_service
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.invitation_service import (
+    InvitationAlreadyMemberError,
+    InvitationConflictError,
+    InvitationEmailMismatchError,
+    InvitationTokenInvalidError,
+    InvitationValidationError,
+    accept_invitation_via_public_token,
+    resolve_invitation_for_public_token,
+)
 from echoroo.services.auth_service import (
     DEFAULT_RATE_LIMIT_POLICY,
     AccountLockedError,
@@ -2017,3 +2028,632 @@ async def logout(
     _clear_session_cookies(response)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
+
+
+# ===========================================================================
+# spec/011 §FR-011-105..107 — TOKEN_AUTH_ONLY invitation resolver + accept
+# ===========================================================================
+#
+# Phase 7 / US2 / T202 + T203 + T206 + T208. Two endpoints:
+#
+# * ``GET  /web-api/v1/auth/invitations/{token}``        — resolver
+# * ``POST /web-api/v1/auth/invitations/{token}/accept`` — accept
+#
+# Both are classified ``TOKEN_AUTH_ONLY`` (no ``gate_action``). They are
+# registered in the spec/007 public-token allowlist
+# (``core/endpoint_allowlist.py``) and pattern-allowlisted in the auth
+# router + CSRF middleware (added by the same step). Optional session
+# cookie is honoured: when present the resolver exposes
+# ``is_logged_in=true`` and ``authenticated_email_matches_bound`` so
+# the frontend can route to the existing-user accept branch.
+#
+# Rate limit (NFR-011-006): per-IP 10/min, global 200/min, sliding
+# window. Constant 300ms±50ms response timing pad on every response
+# (success + invalid) so timing oracles cannot probe.
+# ---------------------------------------------------------------------------
+
+
+_INVITATION_PUBLIC_WINDOW_SECONDS: Final[int] = 60
+_INVITATION_PUBLIC_IP_LIMIT: Final[int] = 10
+_INVITATION_PUBLIC_GLOBAL_LIMIT: Final[int] = 200
+_INVITATION_PUBLIC_RESPONSE_TARGET_MS: Final[float] = 300.0
+"""Constant minimum response time (ms). FR-011-105 / FR-011-107."""
+
+
+def _invitation_public_client_ip(request: Request) -> str:
+    """Resolve the canonical caller IP for the spec/011 public endpoints.
+
+    Reuses :func:`echoroo.middleware.auth_router._resolve_client_ip` (Phase
+    17 A-3) so the trusted-proxy logic is identical to the API key IP
+    allowlist surface: ``X-Forwarded-For`` is only honoured when the
+    socket peer is in ``ECHOROO_TRUSTED_PROXY_CIDRS``; otherwise the peer
+    is used directly. This blocks the spoof bypass where an attacker
+    reaches the API directly (or via a misconfigured proxy that does not
+    strip incoming XFF headers) and submits
+    ``X-Forwarded-For: <victim_ip>`` to either consume a victim's
+    per-IP rate-limit budget or to evade their own.
+
+    Returns ``"unknown"`` only when neither XFF nor the socket peer
+    resolves to a value — the rate-limit key uses the literal string so
+    a flood of unknown-source requests still saturates the bucket
+    (defence in depth: fail-closed against an empty IP).
+    """
+    from echoroo.middleware.auth_router import _resolve_client_ip
+
+    cidrs = tuple(settings.TRUSTED_PROXY_CIDRS or ())
+    resolved = _resolve_client_ip(request, trusted_proxy_cidrs=cidrs)
+    return resolved or "unknown"
+
+
+async def _invitation_public_rate_limit_check(*, ip: str) -> bool:
+    """Return ``True`` when the caller exceeded the spec/011 rate cap.
+
+    NFR-011-006: per-IP fixed-window 10 requests / 60 s and a global
+    fixed-window 200 requests / 60 s. Both gates are evaluated and the
+    request is rejected when either limit is breached. Implementation
+    reuses the Phase 17 A-6 / FR-056 Redis-backed pattern: ``INCR`` +
+    ``EXPIRE`` (atomic on first hit) so the counter is shared across
+    every worker in the deployment.
+
+    **Fail-closed**: any Redis fault — connection refused, timeout, OOM
+    — returns ``True`` (caller treats as rate-limited and surfaces 429).
+    Failing open would allow an attacker who can knock Redis offline to
+    bypass the cap and run the timing-oracle / brute-force probe the
+    rate-limit is meant to deny.
+
+    spec/011 step 7 R1 P0-3: the previous process-local dict counter
+    only constrained a single worker; in a multi-worker production
+    deployment the effective limit was N × the documented cap. The
+    Redis-backed counter restores the documented enforcement.
+    """
+    keys: tuple[tuple[str, int], ...] = (
+        (f"invite_public:ip:{ip}", _INVITATION_PUBLIC_IP_LIMIT),
+        ("invite_public:global", _INVITATION_PUBLIC_GLOBAL_LIMIT),
+    )
+    try:
+        redis = await get_redis_connection()
+    except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+        logger.warning(
+            "spec/011 invitation-public rate limit: Redis unavailable; "
+            "failing closed (treating request as rate-limited)",
+            exc_info=True,
+        )
+        return True
+    for key, limit in keys:
+        try:
+            count = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, _INVITATION_PUBLIC_WINDOW_SECONDS)
+        except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+            logger.warning(
+                "spec/011 invitation-public rate limit: Redis incr/expire "
+                "failed for key=%s; failing closed",
+                key,
+                exc_info=True,
+            )
+            return True
+        if count > limit:
+            return True
+    return False
+
+
+async def _invitation_public_sleep_for_minimum(started_at: float) -> None:
+    """Pad response time to the FR-011-105 / FR-011-107 constant target.
+
+    The constant 300ms target keeps the success / generic-invalid /
+    rate-limited surfaces indistinguishable from the network's vantage
+    point. Tests can monkey-patch this helper to a no-op when they
+    don't care about wallclock latency.
+    """
+    elapsed_ms = (time.monotonic() - started_at) * 1000.0
+    remaining_ms = _INVITATION_PUBLIC_RESPONSE_TARGET_MS - elapsed_ms
+    if remaining_ms > 0:
+        await asyncio.sleep(remaining_ms / 1000.0)
+
+
+class _InvitationGenericInvalid(HTTPException):
+    """Single shape for every FR-011-107 generic-invalid response.
+
+    The 404 status code, ``ERR_INVITATION_INVALID`` envelope, and the
+    body length are all identical regardless of failure cause. The
+    response timing is held to the constant target by the caller's
+    pad helper. The exception subclass exists so handler-level
+    ``raise`` sites read as the spec's "generic invalid" intent
+    rather than a bare ``HTTPException(404, ...)``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "ERR_INVITATION_INVALID",
+                "message": "invitation is no longer valid",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas (mirror contracts/invitation-public.yaml)
+# ---------------------------------------------------------------------------
+
+
+class InvitationContextResponse(BaseModel):
+    """``GET /auth/invitations/{token}`` 200 body (FR-011-105)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    role: str | None = Field(
+        default=None,
+        description=(
+            "Project role (Member-kind) — Viewer / Member / Admin. NULL "
+            "for trusted-overlay rows."
+        ),
+    )
+    kind: str = Field(
+        ...,
+        description="``member`` or ``trusted``.",
+    )
+    bound_email: str | None = Field(
+        default=None,
+        description=(
+            "Bound recipient email for the signup form prefill. "
+            "**spec/011 step 7 R1 P0-4**: surfaced ONLY when the caller "
+            "is anonymous (signup branch needs the email for the "
+            "read-only form field) OR when the caller is authenticated "
+            "AND ``authenticated_email_matches_bound`` is ``true`` "
+            "(they already know their own email). When the caller is "
+            "authenticated as a DIFFERENT user, this field is "
+            "``null`` — never leak the bound recipient identity to a "
+            "wrong-account session, which would convert the resolver "
+            "into an email-of-invitee oracle for anyone holding a "
+            "leaked invitation URL. The hashed counterpart "
+            "``bound_email_hash`` is intentionally NOT surfaced by the "
+            "public resolver: it lives in the admin listing endpoint "
+            "only, where the caller has already passed the "
+            "``MANAGE_MEMBERS`` gate."
+        ),
+    )
+    expires_at: datetime
+    is_bootstrap: bool = Field(
+        default=False,
+        description=(
+            "True when ``ownership_transfer_on_accept`` is set (SU bootstrap)."
+        ),
+    )
+    is_logged_in: bool
+    authenticated_email_matches_bound: bool
+
+
+class _AcceptTotpEnrollment(BaseModel):
+    """Initial TOTP enrollment payload for the signup branch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    totp_secret_signed: str = Field(
+        ...,
+        description=(
+            "Server-issued TOTP secret returned by the public-signup TOTP "
+            "begin step. For spec/011 step 7 this is accepted as the "
+            "plain TOTP secret string; a future revision MAY wrap it in "
+            "an HMAC envelope without breaking the contract field name."
+        ),
+    )
+    totp_initial_code: str = Field(..., min_length=6, max_length=6)
+
+
+class _AcceptNewUserPayload(BaseModel):
+    """New-user signup branch (FR-011-106 step 1a)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr = Field(
+        ...,
+        description=(
+            "MUST canonicalize-equal the bound email. Mismatch → generic "
+            "404 (no leak)."
+        ),
+    )
+    password: str = Field(..., min_length=12)
+    totp_enrollment: _AcceptTotpEnrollment
+
+
+class _AcceptExistingUserPayload(BaseModel):
+    """Existing-user accept branch (FR-011-106 step 1b)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool = Field(
+        ...,
+        description=(
+            "MUST be ``true``. The single field exists only as a guard so "
+            "a misconfigured client cannot send an empty body and trip the "
+            "signup branch by accident."
+        ),
+    )
+
+
+class InvitationAcceptResponse(BaseModel):
+    """``POST /auth/invitations/{token}/accept`` 201 body (FR-011-106)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    role: str | None = None
+    kind: str
+    ownership_transferred: bool = False
+    membership_created: bool
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/invitations/{token} — resolver
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/invitations/{token}",
+    response_model=InvitationContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Resolve invitation context for the landing page (FR-011-105)",
+    description=(
+        "TOKEN_AUTH_ONLY public endpoint. Returns the project name, bound "
+        "email, role / kind, and ``is_logged_in`` / "
+        "``authenticated_email_matches_bound`` flags so the frontend can "
+        "route between the signup and existing-user accept branches. "
+        "Failure causes (expired, revoked, already-accepted, unknown "
+        "token, deleted project) collapse to the same generic 404 with "
+        "constant timing (FR-011-107)."
+    ),
+    responses={
+        404: {"description": "Generic invalid (anti-enumeration, constant timing)"},
+        429: {"description": "Rate limit exceeded (NFR-011-006)"},
+    },
+)
+async def resolve_invitation(
+    token: str,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> InvitationContextResponse:
+    """Resolve invitation context for the public landing page (TOKEN_AUTH_ONLY)."""
+    started_at = time.monotonic()
+    if await _invitation_public_rate_limit_check(
+        ip=_invitation_public_client_ip(request),
+    ):
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="invitation rate limit exceeded",
+        )
+
+    authenticated_email = current_user.email if current_user is not None else None
+    try:
+        outcome = await invitation_service.resolve_invitation_for_public_token(
+            db,
+            signed_token=token,
+            authenticated_email=authenticated_email,
+        )
+    except InvitationTokenInvalidError:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+    except Exception:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise
+
+    invitation = outcome.invitation
+    expires_at_aware = invitation.expires_at
+    if expires_at_aware.tzinfo is None:  # pragma: no cover — DB guarantees tz-aware
+        expires_at_aware = expires_at_aware.replace(tzinfo=UTC)
+
+    role_str = invitation.role.value if invitation.role is not None else None
+    matches = outcome.authenticated_email_matches
+
+    # spec/011 step 7 R1 P0-4: branch the ``bound_email`` exposure on the
+    # caller's authentication state. The bound recipient identity must
+    # NEVER be surfaced to an authenticated session whose own email does
+    # NOT match the invitation, or else the resolver becomes an oracle
+    # "this invitation belongs to <email>" for any wrong-account caller
+    # holding a leaked URL. The contract YAML's
+    # ``bound_email: string | null`` shape allows omission.
+    #
+    # Surface ``bound_email`` when:
+    # * caller is anonymous (signup branch needs the value for the
+    #   read-only prefill); OR
+    # * caller is authenticated AND their email matches (they already
+    #   know their own email; the redundant payload simplifies the
+    #   frontend's confirm screen).
+    #
+    # Omit (``None``) when:
+    # * caller is authenticated AS A DIFFERENT identity — even one
+    #   nibble of bound_email would let them confirm the invitee's
+    #   address.
+    if outcome.is_logged_in and matches is not True:
+        bound_email_safe: str | None = None
+    else:
+        bound_email_safe = invitation.email or None
+
+    body = InvitationContextResponse(
+        project_name=outcome.project_name,
+        role=role_str,
+        kind=invitation.kind.value,
+        bound_email=bound_email_safe,
+        expires_at=expires_at_aware,
+        is_bootstrap=invitation.ownership_transfer_on_accept,
+        is_logged_in=outcome.is_logged_in,
+        authenticated_email_matches_bound=bool(matches),
+    )
+
+    await _invitation_public_sleep_for_minimum(started_at)
+    return body
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/invitations/{token}/accept — accept
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/invitations/{token}/accept",
+    response_model=InvitationAcceptResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Accept an invitation (FR-011-106)",
+    description=(
+        "TOKEN_AUTH_ONLY public endpoint. Body shape branches on the "
+        "caller's auth state: an anonymous caller supplies a "
+        "``NewUserPayload`` (email + password + TOTP enrollment); a "
+        "logged-in caller supplies an ``ExistingUserPayload`` of "
+        "``{accept: true}``. The endpoint atomically flips the "
+        "invitation status (FR-011-106 step 2), inserts the membership "
+        "row, and emits the appropriate audit action (T208). Email "
+        "mismatch / expired / revoked / unknown token / deleted project "
+        "all collapse to the same generic 404 with constant timing."
+    ),
+    responses={
+        404: {"description": "Generic invalid (anti-enumeration, constant timing)"},
+        409: {"description": "Caller is already a member at same/higher role"},
+        429: {"description": "Rate limit exceeded (NFR-011-006)"},
+    },
+)
+async def accept_invitation_public(
+    token: str,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    payload: dict[str, Any],
+) -> InvitationAcceptResponse:
+    """Accept an invitation via the public-token surface.
+
+    spec/011 step 7 R1 P0-1 + P1-1 atomic-flow contract:
+
+    The new-user signup branch creates a User row, persists a 2FA
+    credential, and atomically flips the invitation row to
+    ``status='accepted'`` inside a SINGLE database transaction. If any
+    of those steps fails — including the atomic UPDATE returning zero
+    rows because the invitation drifted to a terminal status between
+    the resolver call and the accept call — the WHOLE transaction
+    rolls back so no orphan User / 2FA credential is leaked.
+
+    Order of operations:
+
+    1. Validate the request payload against the matching branch shape
+       (anonymous → :class:`_AcceptNewUserPayload`; authenticated →
+       :class:`_AcceptExistingUserPayload`).
+    2. (signup only) Enforce the password policy; reject HIBP-compromised
+       passwords with 422 before peeking at the invitation row.
+    3. (signup only) Reject if the email is already registered. The 404
+       generic-invalid surface keeps the email-existence oracle closed.
+    4. (signup only) Create the User row via ``UserRepository.create``
+       (flush only — no commit).
+    5. (signup only) Confirm TOTP enrollment with ``commit=False`` so
+       the 2FA write joins the same transaction as steps 4 and 6.
+    6. Run :func:`accept_invitation_via_public_token` which performs
+       the atomic ``UPDATE project_invitations SET status='accepted'
+       WHERE id=:id AND status='pending' AND expires_at > now()
+       RETURNING *``. Zero rows raises
+       :class:`InvitationTokenInvalidError`.
+    7. Commit the transaction (or rollback on any exception). On a
+       successful new-user signup branch, the session-cookie issuance
+       in :func:`_issue_real_session` lives AFTER the commit so a
+       failed session issue cannot un-persist the membership.
+    8. Emit the post-commit audit row in a fresh session.
+    """
+    started_at = time.monotonic()
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    if await _invitation_public_rate_limit_check(
+        ip=_invitation_public_client_ip(request),
+    ):
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="invitation rate limit exceeded",
+        )
+
+    # Branch on the caller's auth state. The body shape is union'ed
+    # so we validate against the matching branch and reject mismatched
+    # shapes uniformly as the generic invalid 404.
+    is_logged_in = current_user is not None
+    try:
+        new_user_payload: _AcceptNewUserPayload | None = None
+        existing_user_payload: _AcceptExistingUserPayload | None = None
+        if is_logged_in:
+            existing_user_payload = _AcceptExistingUserPayload.model_validate(
+                payload,
+            )
+            if not existing_user_payload.accept:
+                await _invitation_public_sleep_for_minimum(started_at)
+                raise _InvitationGenericInvalid()
+        else:
+            new_user_payload = _AcceptNewUserPayload.model_validate(payload)
+    except ValueError:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+
+    # ``new_user`` is bound only on the signup branch and is consumed
+    # post-commit to issue the BFF session (P1-1).
+    new_user: User | None = None
+
+    if is_logged_in:
+        accepting_user_id = cast("User", current_user).id
+        accepting_user_email = cast("User", current_user).email
+        is_new_user_signup = False
+    else:
+        assert new_user_payload is not None
+        # Validate password policy BEFORE peeking at the invitation so a
+        # weak password is still rejected with a 422 (consistent with the
+        # /register endpoint contract). The generic-invalid 404 surface
+        # only applies to invitation-state failures.
+        try:
+            await enforce_password_policy(
+                new_user_payload.password,
+                hibp=_hibp_checker,
+            )
+        except PasswordPolicyError as exc:
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=exc.reason,
+            ) from exc
+
+        normalized_email = _normalize_email(new_user_payload.email)
+        repo = UserRepository(db)
+        existing_user = await repo.get_by_email(normalized_email)
+        if existing_user is not None:
+            # Email already registered → the caller cannot use the
+            # signup branch. The frontend should sign them in and retry
+            # via the existing-user branch. Collapse to the generic
+            # invalid so the email-existence oracle is closed.
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise _InvitationGenericInvalid()
+
+        now = datetime.now(UTC)
+        new_user = User(
+            email=normalized_email,
+            password_hash=hash_password(new_user_payload.password),
+            display_name=normalized_email.split("@", 1)[0],
+            security_stamp=secrets.token_urlsafe(48),
+            two_factor_enabled=False,
+            last_login_at=None,
+            last_first_party_activity_at=now,
+        )
+        try:
+            await repo.create(new_user)
+        except IntegrityError:
+            # The repository's ``flush`` raises on the email-uniqueness
+            # collision (race between the ``get_by_email`` check above
+            # and the INSERT). Rollback both the new row AND any prior
+            # writes that the transaction may have accumulated; surface
+            # the generic-invalid so the oracle remains closed.
+            await db.rollback()
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise _InvitationGenericInvalid() from None
+
+        # P0-1: confirm TOTP enrollment WITHOUT committing the
+        # transaction. The 2FA credential write joins the same TX as
+        # the user INSERT above and the atomic invitation UPDATE below,
+        # so a failed-or-missed invitation (e.g. the row was revoked
+        # between the resolver call and this accept) rolls back the
+        # whole transaction — no orphan account + 2FA row leaks.
+        two_factor = TwoFactorService(db)
+        try:
+            await two_factor.confirm_enrollment(
+                new_user,
+                new_user_payload.totp_enrollment.totp_secret_signed,
+                new_user_payload.totp_enrollment.totp_initial_code,
+                commit=False,
+            )
+        except (
+            TwoFactorAlreadyEnabledError,
+            TwoFactorInvalidCodeError,
+            TwoFactorLockedError,
+            TwoFactorRateLimitedError,
+        ) as exc:
+            await db.rollback()
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_TOTP_ENROLLMENT_INVALID",
+                    "message": str(exc),
+                },
+            ) from exc
+
+        accepting_user_id = new_user.id
+        accepting_user_email = normalized_email
+        is_new_user_signup = True
+
+    try:
+        accept_outcome = await accept_invitation_via_public_token(
+            db,
+            signed_token=token,
+            accepting_user_id=accepting_user_id,
+            accepting_user_email=accepting_user_email,
+            is_new_user_signup=is_new_user_signup,
+            request_id=_request_id(request),
+            ip=_invitation_public_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except InvitationAlreadyMemberError as exc:
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_ALREADY_MEMBER",
+                "message": str(exc),
+            },
+        ) from exc
+    except (
+        InvitationTokenInvalidError,
+        InvitationEmailMismatchError,
+        InvitationValidationError,
+    ):
+        # P0-1: any failure of the atomic invitation UPDATE
+        # (corrupted envelope, zero-row return, email mismatch,
+        # validation drift) rolls back the whole TX — including the
+        # User + 2FA writes on the signup branch — so no orphan
+        # account leaks to the database.
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+    except InvitationConflictError as exc:
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVITATION_CONFLICT",
+                "message": str(exc),
+            },
+        ) from exc
+
+    await db.commit()
+    await invitation_service.emit_public_invitation_accept_audit(accept_outcome)
+
+    # P1-1: establish a session for the new user so they land in the
+    # project page already authenticated. The contract YAML's
+    # ``201 Created`` response notes "for the new-user branch, a session
+    # is established". ``_issue_real_session`` writes ``last_login_at``
+    # on the user row + commits, then sets the refresh / session / CSRF
+    # cookies. We invoke it AFTER the main commit so that a transient
+    # session-issue failure (Redis fault wiping the revoked-user
+    # marker, DB hiccup setting last_login_at) cannot un-persist the
+    # membership that was just granted.
+    if is_new_user_signup and new_user is not None:
+        await _issue_real_session(response=response, user=new_user, db=db)
+
+    invitation = accept_outcome.invitation
+    role_str = invitation.role.value if invitation.role is not None else None
+    body = InvitationAcceptResponse(
+        project_id=invitation.project_id,
+        role=role_str,
+        kind=invitation.kind.value,
+        ownership_transferred=accept_outcome.ownership_transferred,
+        membership_created=accept_outcome.membership_created,
+    )
+
+    await _invitation_public_sleep_for_minimum(started_at)
+    return body
