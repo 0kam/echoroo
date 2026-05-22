@@ -206,16 +206,15 @@ async def test_confirm_identity_returns_202_when_no_2fa_enrolled(
 async def test_confirm_identity_with_2fa_user_persists_magic_link(
     db_session: AsyncSession,
     auth_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Known user with 2FA enabled → 202 and a magic link row is persisted."""
-    from unittest.mock import AsyncMock
+    """Known user with 2FA enabled → 202 and a magic link row is persisted.
 
-    import echoroo.services.email as email_svc
-
-    mock_send = AsyncMock()
-    monkeypatch.setattr(email_svc, "send_2fa_reset_magic_link", mock_send)
-
+    spec/011 Step 4 (T403): the outbound-email branch is removed from
+    ``two_factor_reset_service.issue_magic_link``; the helper now only
+    persists the magic-link hash row. The previous "email dispatched"
+    side-effect assertion is therefore gone — the persistence
+    invariant alone is the contract a caller relies on.
+    """
     user = await _create_user(db_session, email="ci_with2fa@example.com")
 
     response = await auth_client.post(
@@ -237,11 +236,6 @@ async def test_confirm_identity_with_2fa_user_persists_magic_link(
     assert link.redeemed_at is None
     assert link.expires_at > datetime.now(UTC)
 
-    # Email should have been dispatched with the user's email
-    mock_send.assert_called_once()
-    call_args = mock_send.call_args
-    assert call_args[0][0] == user.email or call_args.args[0] == user.email
-
 
 # ---------------------------------------------------------------------------
 # POST /confirm-identity-for-2fa-reset/redeem
@@ -252,15 +246,12 @@ async def test_confirm_identity_with_2fa_user_persists_magic_link(
 async def test_redeem_valid_magic_link_returns_confirmation_token(
     db_session: AsyncSession,
     auth_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A valid magic token must return 200 with a confirmation_token and expires_at."""
-    from unittest.mock import AsyncMock
+    """A valid magic token must return 200 with a confirmation_token and expires_at.
 
-    import echoroo.services.email as email_svc
-
-    monkeypatch.setattr(email_svc, "send_2fa_reset_magic_link", AsyncMock())
-
+    spec/011 Step 4 (T403): ``issue_magic_link`` no longer touches the
+    email subsystem, so the previous email monkeypatch is removed.
+    """
     user = await _create_user(db_session, email="ci_redeem_valid@example.com")
 
     # Issue a magic link via the service
@@ -311,15 +302,12 @@ async def test_redeem_expired_magic_link_returns_400(
 async def test_redeem_already_used_magic_link_returns_400(
     db_session: AsyncSession,
     auth_client: AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A magic link that has already been redeemed must return 400."""
-    from unittest.mock import AsyncMock
+    """A magic link that has already been redeemed must return 400.
 
-    import echoroo.services.email as email_svc
-
-    monkeypatch.setattr(email_svc, "send_2fa_reset_magic_link", AsyncMock())
-
+    spec/011 Step 4 (T403): ``issue_magic_link`` no longer touches the
+    email subsystem, so the previous email monkeypatch is removed.
+    """
     user = await _create_user(db_session, email="ci_redeem_used@example.com")
 
     raw_token = await issue_magic_link(db_session, user=user)
@@ -386,7 +374,10 @@ async def test_redeem_returns_confirmation_token_valid_for_admin_endpoint(
         issue_step_up_token,
     )
 
-    monkeypatch.setattr(email_svc, "send_2fa_reset_magic_link", AsyncMock())
+    # spec/011 Step 4 (T403) removed ``send_2fa_reset_magic_link`` from
+    # ``services.email``; only ``send_2fa_reset_dispatched`` (used by
+    # the dispatcher poller) is still in-tree and worth mocking out
+    # here to keep the test transport-free.
     monkeypatch.setattr(email_svc, "send_2fa_reset_dispatched", AsyncMock())
 
     # Build a combined app with both routers
@@ -467,51 +458,11 @@ async def test_redeem_returns_confirmation_token_valid_for_admin_endpoint(
     assert body["status"] == "pending_delay"
 
 
-# ---------------------------------------------------------------------------
-# Round-2 Fix-1 — magic-link email failure surfaces as
-# ``two_factor_reset.email_notification_failed`` audit row
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_request_confirm_identity_email_failure_writes_audit(
-    auth_client: AsyncClient,
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When ``send_2fa_reset_magic_link`` raises (Resend outage), the
-    request endpoint must STILL return 202 (enumeration defence) but a
-    ``two_factor_reset.email_notification_failed`` audit row must
-    surface in ``platform_audit_log`` so on-call has signal.
-    """
-    import echoroo.services.email as email_svc
-
-    async def _boom(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("simulated Resend outage")
-
-    monkeypatch.setattr(email_svc, "send_2fa_reset_magic_link", _boom)
-
-    target = await _create_user(db_session, email="confirm_email_fail@example.com")
-
-    response = await auth_client.post(
-        "/web-api/v1/auth/confirm-identity-for-2fa-reset",
-        json={"email": target.email},
-    )
-    # Enumeration defence — must still be 202 even though email failed.
-    assert response.status_code == 202, response.text
-
-    # Audit row must be written (the request issued + email failure
-    # path co-exist; we assert the failure row is reachable).
-    audit_rows = (
-        await db_session.execute(
-            sa.text(
-                "SELECT detail FROM platform_audit_log "
-                "WHERE action = 'two_factor_reset.email_notification_failed' "
-                "ORDER BY created_at DESC LIMIT 5"
-            )
-        )
-    ).fetchall()
-    assert audit_rows, (
-        "two_factor_reset.email_notification_failed audit row must be "
-        "written when the magic-link email send raises"
-    )
+# spec/011 Step 4 (T403): the historical
+# ``test_request_confirm_identity_email_failure_writes_audit`` covered
+# the Round-2 Fix-1 contract where ``issue_magic_link`` caught a
+# ``send_2fa_reset_magic_link`` exception, wrote an
+# ``email_notification_failed`` audit row and rolled back the
+# supporting DB row. The zero-email deployment removed the email
+# transport so the failure branch is no longer reachable; the test
+# was deleted with the branch it was pinning.

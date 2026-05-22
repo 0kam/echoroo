@@ -1,48 +1,41 @@
-"""Email helper stubs — spec/011 zero-email deployment (Step 2 reduction).
+"""Email helper stubs — spec/011 zero-email deployment (Step 2 + Step 4 reduction).
 
 This module historically wrapped the Resend SDK and shipped transactional
 email for verification, password reset, login notifications, etc. As part
 of spec/011 (zero-email deployment) the outbound-email surface is being
 removed in favour of in-app banners (FR-011-008, FR-011-301..310).
 
-Step 2 of the Implementation Phasing performs a conservative reduction:
+Step 2 of the Implementation Phasing performed a conservative reduction
+that left every helper compiling under a **silent-success** contract
+(return ``None``) so callers + outbox dispatchers could continue to mark
+work complete while the upstream producers awaited deletion. Step 4
+(T403) goes one step further by deleting the
+``send_2fa_reset_magic_link`` helper outright — its single caller
+(``services.two_factor_reset_service.issue_magic_link``) no longer
+invokes any email helper. The matching ``EmailDeliverySuppressed``
+exception type is gone with it.
 
-* The Resend SDK initialiser is **deleted** outright — no helper below
-  reaches Resend any more.
+After Step 4 there is exactly **one** stub flavour:
 
-* All transactional-email helpers are reduced to **no-op stubs**. Their
-  signatures are preserved byte-for-byte so existing call-sites continue
-  to compile and execute without modification during the incremental
-  refactor. The stubs split into two flavours by caller contract:
+* **Silent success** (return ``None``). Used by callers that have no
+  rollback path tied to email delivery. The outbox dispatcher treats
+  a returning handler as "success" and marks the outbox row complete,
+  so producers like
+  :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
+  do not accumulate dead-letter rows while the producer side awaits
+  deletion in Step 10. Active members of this flavour:
+  ``send_login_notification``, ``send_email_change_notification``,
+  ``send_2fa_reset_dispatched``, ``send_api_key_revoke_email``,
+  ``send_api_key_scope_degrade_email``, ``send_verification_email``,
+  ``send_password_reset_email``.
 
-  * **Silent success** (return ``None``). Used by callers that have no
-    rollback path tied to email delivery. The outbox dispatcher treats
-    a returning handler as "success" and marks the outbox row complete,
-    so producers like
-    :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
-    do not accumulate dead-letter rows while the producer side awaits
-    deletion in Step 10. This flavour applies to: ``send_login_notification``,
-    ``send_email_change_notification``, ``send_2fa_reset_dispatched``,
-    ``send_api_key_revoke_email``, ``send_api_key_scope_degrade_email``,
-    ``send_verification_email``, ``send_password_reset_email``.
-  * **Suppressed-with-raise** (raises :class:`EmailDeliverySuppressed`).
-    Used when the caller wraps the email call in ``try/except`` with a
-    rollback path that MUST fire if the email is not delivered.
-    Returning success here would commit supporting DB rows + log a
-    "delivered" audit while the user receives nothing. This flavour
-    applies to: ``send_2fa_reset_magic_link`` (the caller in
-    :func:`services.two_factor_reset_service.issue_magic_link` rolls
-    back the magic-link row and downgrades the audit to
-    ``magic_link_dispatch_failed`` on exception — see step 4 / T403
-    for the eventual removal of that whole branch).
-
-* The small text-handling helpers ``_safe_recipient_hash``,
-  ``_sanitise_email_field``, and ``EmailHeaderInjectionError`` are
-  retained because they are imported from outside this module
-  (``workers/trusted_expiry_dispatcher.py`` reaches for
-  ``_safe_recipient_hash``; the coverage-uplift test fixture
-  ``tests/unit/services/test_email_service_coverage_uplift.py`` imports
-  all three).
+The small text-handling helpers ``_safe_recipient_hash``,
+``_sanitise_email_field``, and ``EmailHeaderInjectionError`` are
+retained because they are imported from outside this module
+(``workers/trusted_expiry_dispatcher.py`` reaches for
+``_safe_recipient_hash``; the coverage-uplift test fixture
+``tests/unit/services/test_email_service_coverage_uplift.py`` imports
+all three).
 
 Full rewrite of the silent-success stubs to the
 ``services.user_banner.enqueue_event`` surface lands in Phase 9 US7
@@ -97,29 +90,6 @@ class EmailHeaderInjectionError(ValueError):
     reduction (the no-op stubs do not perform field sanitisation), but
     the type itself is preserved so existing ``except`` clauses keep
     compiling.
-    """
-
-
-class EmailDeliverySuppressed(RuntimeError):
-    """Raised by zero-email-deployment stubs to trigger caller-side rollback.
-
-    spec/011 §FR-011-008. Stubs that **must not** silently succeed
-    (because the caller has a ``try/except`` rollback path) raise this
-    instead of returning. Callers should treat it as an end-user email
-    delivery failure: roll back the supporting DB row and downgrade
-    the audit to ``*_failed``.
-
-    Returning ``None`` from those stubs would commit the supporting
-    DB row and emit a "dispatched" audit while the user receives
-    nothing — a false positive that breaks the audit-trail invariant.
-    Raising this dedicated exception type lets the caller's existing
-    ``except Exception`` arm fire without us pretending the email was
-    sent.
-
-    Used today by :func:`send_2fa_reset_magic_link`. Other helpers
-    return ``None`` because their callers do not branch on the
-    exception (the failure mode the helper is replacing was an in-line
-    log + swallow, not a transactional rollback).
     """
 
 
@@ -273,55 +243,6 @@ async def send_password_reset_email(to: str, token: str) -> None:
         "(recipient_hash=%s, token_len=%d)",
         recipient_hash,
         len(token) if token else 0,
-    )
-
-
-async def send_2fa_reset_magic_link(to: str, raw_token: str) -> None:
-    """Stub kept for spec/011 Step 2 → Step 4 sequencing safety.
-
-    ``services.two_factor_reset_service.issue_magic_link`` still calls
-    this helper at the self-service magic-link branch (line ~319) and
-    wraps the call in a ``try/except`` whose handler rolls back the
-    magic-link DB row and downgrades the audit to ``*_failed`` on any
-    exception. **This stub MUST raise** so that rollback path fires —
-    a ``return None`` would commit a magic-link row that no user can
-    ever redeem (the token was never emailed) and flow a false-
-    positive ``magic_link_dispatched`` audit.
-
-    The dedicated :class:`EmailDeliverySuppressed` exception type lets
-    callers distinguish "we deliberately did not send" from a real
-    transport failure if they later need to (today the caller catches
-    a bare ``Exception`` so the distinction is logged but not
-    branched on).
-
-    Step 4 (T403 in ``tasks.md``) removes the entire self-service
-    magic-link path (caller + this stub) as part of the
-    ``step_up_token_service`` JWT extension PR.
-
-    Args:
-        to: Recipient email address. Hashed to a non-PII surrogate
-            for the log line; the raw value never reaches log
-            storage.
-        raw_token: Plaintext magic-link token. Length-logged only;
-            the value itself is **never** echoed (a magic-link token
-            in logs is account takeover).
-
-    Raises:
-        EmailDeliverySuppressed: Always. The caller's rollback path
-            relies on this to revert the supporting DB row and
-            downgrade the audit.
-    """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_2fa_reset_magic_link stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100 + T403. Magic-link flow is deleted in Step 4; this "
-        "stub raises EmailDeliverySuppressed so the caller's rollback path "
-        "fires (recipient_hash=%s, raw_token_len=%d)",
-        recipient_hash,
-        len(raw_token) if raw_token else 0,
-    )
-    raise EmailDeliverySuppressed(
-        "spec/011 zero-email; full removal in Step 4 T403"
     )
 
 
