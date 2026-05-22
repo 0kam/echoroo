@@ -117,15 +117,15 @@
 
 ### Invitation envelope 4-part + outcome reshape
 
-- [ ] T050 In `apps/api/echoroo/services/invitation_service.py` extend `sign_invitation_token` to produce a 4-part envelope `{raw_token_b64u}.{exp_unix_ts}.{kid}.{mac_b64u}` where `mac = _b64u_encode(HMAC-SHA-256(secret_for(kid), raw + "." + exp + "." + kid))` and `kid` = `settings.INVITATION_TOKEN_KID_NEW`
-- [ ] T051 In `apps/api/echoroo/services/invitation_service.py` extend `verify_invitation_token` (the verification side) to accept either (a) a 4-part envelope routed by `kid` to `INVITATION_TOKEN_KID_NEW` / `_OLD` secret, or (b) a 3-part legacy envelope verified under `INVITATION_TOKEN_KID_OLD` secret iff within the grace window (`now < created_at + 7d + GRACE_HOURS`). Constant-time MAC comparison via `hmac.compare_digest` (NFR-011-003)
-- [ ] T052 Remove `InvitationMailPayload` dataclass from `apps/api/echoroo/services/invitation_service.py` (FR-011-104)
-- [ ] T053 In `apps/api/echoroo/services/invitation_service.py` replace the `mail_payload` field on `InvitationCreateOutcome` with `signed_token_envelope: str`. Consumers read it once and surface it on the API response; never persisted
-- [ ] T054 In `apps/api/echoroo/services/invitation_service.py` remove the outbox-email enqueue from `trigger_post_commit_side_effects` (FR-011-010 producer side)
-- [ ] T055 In `apps/api/echoroo/services/invitation_service.create_invitation` add the application-level guard (R5): if `ownership_transfer_on_accept=True AND kind != ProjectInvitationKind.MEMBER`, raise `InvitationStateError("ownership_transfer_on_accept_invalid_for_kind")` BEFORE INSERT
-- [ ] T056 In `apps/api/echoroo/services/invitation_service.accept_invitation` add the same R5 guard (defence-in-depth)
-- [ ] T057 [P] Add `apps/api/tests/security/test_invitation_token_kid_rotation.py` (NFR-011-010): planned rotation, emergency rotation, legacy 3-part within grace, legacy 3-part after grace, kid mismatch
-- [ ] T058 [P] Add `apps/api/tests/security/test_invitation_kind_guard.py` (R5): direct INSERT rejected by CHECK, `create_invitation` raises, `accept_invitation` raises
+- [x] T050 In `apps/api/echoroo/services/invitation_service.py` extend `sign_invitation_token` to produce a 4-part envelope `{raw_token_b64u}.{exp_unix_ts}.{kid}.{mac_b64u}` where `mac = _b64u_encode(HMAC-SHA-256(secret_for(kid), raw + "." + exp + "." + kid))` and `kid` = `settings.INVITATION_TOKEN_KID_NEW`
+- [x] T051 In `apps/api/echoroo/services/invitation_service.py` extend `verify_invitation_token` (the verification side) to accept either (a) a 4-part envelope routed by `kid` to `INVITATION_TOKEN_KID_NEW` / `_OLD` secret, or (b) a 3-part legacy envelope verified under `INVITATION_TOKEN_KID_OLD` secret iff within the grace window (`now < created_at + 7d + GRACE_HOURS`). Constant-time MAC comparison via `hmac.compare_digest` (NFR-011-003)
+- [x] T052 Remove `InvitationMailPayload` dataclass from `apps/api/echoroo/services/invitation_service.py` (FR-011-104)
+- [x] T053 In `apps/api/echoroo/services/invitation_service.py` replace the `mail_payload` field on `InvitationCreateOutcome` with `signed_token_envelope: str`. Consumers read it once and surface it on the API response; never persisted
+- [x] T054 In `apps/api/echoroo/services/invitation_service.py` remove the outbox-email enqueue from `trigger_post_commit_side_effects` (FR-011-010 producer side)
+- [x] T055 In `apps/api/echoroo/services/invitation_service.create_invitation` add the application-level guard (R5): if `ownership_transfer_on_accept=True AND kind != ProjectInvitationKind.MEMBER`, raise `InvitationStateError("ownership_transfer_on_accept_invalid_for_kind")` BEFORE INSERT
+- [x] T056 In `apps/api/echoroo/services/invitation_service.accept_invitation` add the same R5 guard (defence-in-depth)
+- [x] T057 [P] Add `apps/api/tests/security/test_invitation_token_kid_rotation.py` (NFR-011-010): planned rotation, emergency rotation, legacy 3-part within grace, legacy 3-part after grace, kid mismatch
+- [x] T058 [P] Add `apps/api/tests/security/test_invitation_kind_guard.py` (R5): direct INSERT rejected by CHECK, `create_invitation` raises, `accept_invitation` raises
 
 ### Banner subsystem (write/enqueue side)
 
@@ -146,12 +146,12 @@
 
 ### OpenAPI harness extension
 
-- [ ] T080 Extend `apps/api/tests/contract/test_openapi_diff.py`:
+- [x] T080 Extend `apps/api/tests/contract/test_openapi_diff.py`:
   1. Locate the hard-coded contracts directory constant (currently a single `pathlib.Path` pointing to `specs/006-permissions-redesign/contracts/` near line 47-50). Refactor it from a single `Path` to a tuple/list `_CONTRACTS_DIRS = (..., specs/006-... contracts, specs/011-zero-email-deployment/contracts)`.
   2. Update the assertion loop to iterate every directory in `_CONTRACTS_DIRS`, loading every `*.yaml` from each, and subset-asserting against the live FastAPI app's `openapi.json`.
   3. Add a regression assertion: spec/006 contracts must still pass byte-for-byte (sanity check that the refactor introduced no false negatives).
   4. The harness has no snapshot file — it reads YAML on each run and compares to live app. Document this in a module docstring so future contributors don't add snapshot-regeneration logic.
-- [ ] T081 [P] Add a meta-test `apps/api/tests/contract/test_openapi_diff_multi_spec.py` that verifies the multi-spec extension itself (e.g. all 6 spec/011 yaml files are loaded)
+- [x] T081 [P] Add a meta-test `apps/api/tests/contract/test_openapi_diff_multi_spec.py` that verifies the multi-spec extension itself (e.g. all 6 spec/011 yaml files are loaded)
 
 ### CI guard + runbooks (skeleton)
 
@@ -256,7 +256,7 @@
 - [ ] T204 [US2] Modify `accept_invitation` in `apps/api/echoroo/services/invitation_service.py` to support the existing-user branch (R11): branch on auth state, use existing `canonicalize_email` (NFKC + casefold) for bound-email comparison, return 409 when caller is already a member of the project at the same or higher role
 - [ ] T205 [US2] In `accept_invitation` implement the FR-011-106 SQL atomicity pattern: `UPDATE project_invitations SET status='accepted', accepted_at=now() WHERE id=:id AND status='pending' AND expires_at > now() RETURNING *` with named placeholders only; zero rows → abort + generic invalid response
 - [ ] T206 [US2] [P] Add per-IP (10/min) and global (200/min) rate-limit + constant 200-400ms timing pad to `/auth/invitations/*` per Phase 17 A-6 pattern (NFR-011-006)
-- [ ] T207 [US2] Modify `POST /web-api/v1/projects/{project_id}/trusted-users` response in `apps/api/echoroo/api/web_v1/trusted.py` to include `invitation_url` field; remove outbox-email enqueue (FR-011-103). This formally supersedes spec/006 FR-051
+- [x] T207 [US2] Modify `POST /web-api/v1/projects/{project_id}/trusted-users` response in `apps/api/echoroo/api/web_v1/trusted.py` to include `invitation_url` field; remove outbox-email enqueue (FR-011-103). This formally supersedes spec/006 FR-051
 - [ ] T208 [US2] Audit-action emission on accept (T020 constants): `project.member.invite_accepted_signup` for new-user signup, `project.member.invite_accepted` for existing-user accept, `project.trusted_user.invite_accepted` for trusted-overlay path
 
 ### Frontend

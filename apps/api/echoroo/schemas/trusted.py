@@ -121,23 +121,35 @@ class TrustedUserUpdateRequest(BaseModel):
 class TrustedUserInviteResponse(BaseModel):
     """``POST /projects/{id}/trusted-users`` 202 response.
 
-    FR-051: the plain-text invitation token is delivered out-of-band via
-    email. The handler MUST NOT serialise it on this response — only
-    ``invitation_id`` leaves the API surface so a token-stealer who reads
-    the response body cannot infer the recipient or the row's expiry. The
-    Web UI fetches the contextual fields (email / project / expires_at)
-    via the GET endpoint when it needs to render them.
+    spec/011 FR-011-103 (T207): the outbound-email enqueue is removed and
+    the plain-text invitation envelope is surfaced directly on this
+    response as ``invitation_url``. This formally supersedes spec/006
+    FR-051 ("plain-text invitation tokens leave the process only through
+    the post-commit email outbox"). The Owner MUST hand the URL off
+    out-of-band — the value is one-shot, never persisted past this HTTP
+    turn, and never recoverable through any other endpoint.
 
-    Phase 10 Batch 2 Round 2 fix (Major 1): the previous shape included
-    ``project_id`` / ``email`` / ``expires_at`` which is correct in
-    spirit (the contract spec doesn't pin the shape) but errs on the
-    permissive side; trimming to ``invitation_id`` only mirrors the
-    FR-051 confidentiality intent strictly.
+    The handler MUST attach
+    ``Cache-Control: no-store, no-cache, must-revalidate, private`` so
+    a browser back / refresh does not replay the URL from the
+    bfcache (mirror of FR-011-102 on the Member endpoint).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     invitation_id: UUID
+    invitation_url: str = Field(
+        ...,
+        description=(
+            "One-shot 4-part signed envelope (spec/011 NFR-011-010). "
+            "Display once to the issuing Owner; MUST NOT appear in "
+            "access logs or telemetry."
+        ),
+    )
+    expires_at: datetime = Field(
+        ...,
+        description="Wall-clock instant after which the URL is rejected (UTC).",
+    )
 
 
 class TrustedUserResponse(BaseModel):

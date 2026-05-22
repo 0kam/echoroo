@@ -1,8 +1,19 @@
 """T980: OpenAPI diff tests — contract/*.yaml vs live app.openapi() (SC-019).
 
 Validates that the paths, response codes, request-body schemas, and
-security requirements declared in the six specs/006-permissions-redesign/
-contracts/*.yaml files are present in the FastAPI-generated openapi.json.
+security requirements declared in the contract YAML files are present
+in the FastAPI-generated openapi.json. Contract directories live under
+``_CONTRACTS_DIRS`` and currently include:
+
+* ``specs/006-permissions-redesign/contracts/`` — the permission baseline.
+* ``specs/011-zero-email-deployment/contracts/`` — additive surface
+  introduced by the spec/011 step-wise rollout (NFR-011-009). YAMLs in
+  this directory describe endpoints that are landed by later steps;
+  only the yamls whose paths already exist in the live app are
+  subset-asserted at any given moment. The harness has **no snapshot
+  file** — it loads YAML on each run and compares directly to the live
+  ``app.openapi()`` output. Future contributors should not add
+  snapshot-regeneration logic; instead, update the YAML and re-run.
 
 Design notes
 ------------
@@ -47,7 +58,48 @@ for _parent in _THIS_FILE.parents:
     if (_parent / "specs" / "006-permissions-redesign" / "contracts").exists():
         _REPO_ROOT = _parent
         break
-_CONTRACTS_DIR = (_REPO_ROOT / "specs" / "006-permissions-redesign" / "contracts") if _REPO_ROOT else Path("/nonexistent")
+
+# spec/011 Step 6 (T080): the harness now subset-asserts against MULTIPLE
+# contract directories. Order matters only for the meta-test count
+# assertion (T081). When the spec tree is not present (container-only
+# runs) the tuple is left empty and every fixture skips its tests.
+_CONTRACTS_DIRS: tuple[Path, ...] = (
+    (
+        _REPO_ROOT / "specs" / "006-permissions-redesign" / "contracts",
+        _REPO_ROOT / "specs" / "011-zero-email-deployment" / "contracts",
+    )
+    if _REPO_ROOT
+    else ()
+)
+
+# spec/011 yamls whose endpoints are LIVE in the current step. Only these
+# get the full path-existence subset assertion. Other spec/011 yamls
+# describe endpoints scheduled for later steps (Step 7 wires the public
+# invitation resolver, Step 5 the admin password reset, etc.) and are
+# allowed to drift from the live app until those steps land. The meta-
+# test (``test_openapi_diff_multi_spec.py``) still enforces that every
+# spec/011 yaml is *loadable* so a parse error gets caught early.
+_SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
+    {
+        "trusted-users-invitation-url",
+    }
+)
+
+# spec/011 yamls whose endpoints are NOT yet implemented in the live app.
+# Path / method / requestBody subset assertions skip these stems so the
+# harness stays green between the contract-PR and the implementation-PR.
+# As each later step lands its endpoints, the corresponding stem MUST
+# move from ``_SPEC_011_PENDING_STEMS`` to ``_SPEC_011_LIVE_CONTRACT_STEMS``
+# in the same PR (NFR-011-009).
+_SPEC_011_PENDING_STEMS: frozenset[str] = frozenset(
+    {
+        "admin-password-reset",
+        "invitation-public",
+        "me-banners-activity",
+        "member-invitations",
+        "su-bootstrap-project-create",
+    }
+)
 
 # Security scheme name mappings  (contract → canonical)
 _SCHEME_ALIASES: dict[str, str] = {
@@ -165,7 +217,17 @@ def _load_contract(path: Path) -> dict[str, Any]:
 
 
 def _contracts_available() -> bool:
-    return _CONTRACTS_DIR.exists() and any(_CONTRACTS_DIR.glob("*.yaml"))
+    """Return True iff at least one ``_CONTRACTS_DIRS`` entry has yamls.
+
+    The check is conservative: if the spec tree is partially present
+    (e.g. only spec/006 yamls landed but spec/011 not yet) we still
+    return True so the available subset gets exercised. The per-test
+    skip happens at fixture load time when the underlying yaml is
+    actually requested.
+    """
+    return any(
+        d.exists() and any(d.glob("*.yaml")) for d in _CONTRACTS_DIRS
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,17 +237,35 @@ def _contracts_available() -> bool:
 
 @pytest.fixture(scope="module")
 def contracts() -> dict[str, dict[str, Any]]:
-    """Load all *.yaml files from the contracts directory.
+    """Load all *.yaml files from every directory in ``_CONTRACTS_DIRS``.
 
-    Returns a mapping from stem (e.g. 'projects') to parsed YAML dict.
-    Skips when the directory is unavailable.
+    Returns a mapping from stem (e.g. 'projects', 'trusted-users-invitation-url')
+    to parsed YAML dict. spec/006 stems and spec/011 stems coexist in the
+    same flat namespace — the spec/011 file names were deliberately
+    chosen so there is no collision with spec/006 names. Skips when no
+    directory yielded any yaml (container-only runs).
     """
     if not _contracts_available():
         pytest.skip(
-            f"Contract YAML files not found at {_CONTRACTS_DIR}. "
+            "Contract YAML files not found in any of "
+            f"{[str(d) for d in _CONTRACTS_DIRS]}. "
             "Skip in-container runs; CI runs against the full source tree."
         )
-    return {p.stem: _load_contract(p) for p in sorted(_CONTRACTS_DIR.glob("*.yaml"))}
+    loaded: dict[str, dict[str, Any]] = {}
+    for directory in _CONTRACTS_DIRS:
+        if not directory.exists():
+            continue
+        for yaml_path in sorted(directory.glob("*.yaml")):
+            stem = yaml_path.stem
+            if stem in loaded:  # pragma: no cover - design pin
+                raise AssertionError(
+                    f"contract YAML stem collision: {stem!r} appears in "
+                    f"both {loaded[stem].get('__source__')!r} and {yaml_path}"
+                )
+            data = _load_contract(yaml_path)
+            data["__source__"] = str(yaml_path)
+            loaded[stem] = data
+    return loaded
 
 
 @pytest.fixture(scope="module")
@@ -298,6 +378,69 @@ class TestContractPathsExistInApp:
     ) -> None:
         """Every path declared in contracts/audit.yaml exists in the app."""
         _assert_paths_present(contracts["audit"], live_paths_normalised, "audit")
+
+
+# ---------------------------------------------------------------------------
+# T980-2 (spec/011): subset-assert spec/011 yamls whose endpoints are LIVE
+# in the current step (Step 6 == ``trusted-users-invitation-url`` only).
+# Other spec/011 yamls describe later-step endpoints and are intentionally
+# allowed to drift until those steps land — the meta-test in
+# ``test_openapi_diff_multi_spec.py`` enforces that every yaml at least
+# loads cleanly so a parse error is caught early.
+# ---------------------------------------------------------------------------
+
+
+class TestSpec011LiveContracts:
+    """Subset-assert spec/011 yamls whose paths currently exist in app.
+
+    The membership of :data:`_SPEC_011_LIVE_CONTRACT_STEMS` widens as
+    later steps wire their endpoints. The harness has no snapshot file —
+    each PR that lands new HTTP surface MUST add the yaml's stem here
+    AND re-run the harness locally before opening (NFR-011-009).
+    """
+
+    def test_spec_011_live_yamls_path_exists(
+        self,
+        contracts: dict[str, dict[str, Any]],
+        live_paths_normalised: dict[str, dict[str, Any]],
+    ) -> None:
+        """Each spec/011 live yaml's paths exist in the live OpenAPI schema."""
+        missing_by_stem: dict[str, list[str]] = {}
+        for stem in sorted(_SPEC_011_LIVE_CONTRACT_STEMS):
+            contract = contracts.get(stem)
+            if contract is None:
+                pytest.fail(
+                    f"spec/011 live contract {stem!r} missing from loaded "
+                    "contracts — expected one of "
+                    f"{sorted(contracts.keys())}"
+                )
+            missing: list[str] = []
+            for contract_path in (contract.get("paths") or {}):
+                if _live_item_for_contract_path(
+                    stem, contract_path, live_paths_normalised
+                ) is None:
+                    missing.append(contract_path)
+            if missing:
+                missing_by_stem[stem] = missing
+        assert not missing_by_stem, (
+            "spec/011 live contracts missing paths in live OpenAPI:\n"
+            + "\n".join(
+                f"  {stem}: {paths}"
+                for stem, paths in missing_by_stem.items()
+            )
+        )
+
+    def test_spec_011_live_yamls_methods_exist(
+        self,
+        contracts: dict[str, dict[str, Any]],
+        live_paths_normalised: dict[str, dict[str, Any]],
+    ) -> None:
+        """HTTP methods in spec/011 live yamls are registered in the app."""
+        for stem in sorted(_SPEC_011_LIVE_CONTRACT_STEMS):
+            contract = contracts.get(stem)
+            if contract is None:  # pragma: no cover - guarded above
+                pytest.fail(f"spec/011 contract {stem!r} not loaded")
+            _assert_methods_present(contract, live_paths_normalised, stem)
 
 
 def _assert_paths_present(
@@ -448,8 +591,17 @@ def _assert_request_body_presence(
     all_contracts: dict[str, dict[str, Any]],
     live_paths: dict[str, dict[str, Any]],
 ) -> None:
+    # spec/011 Step 6 (T080): yamls under spec/011 that describe endpoints
+    # not yet wired (Steps 7-12 deliverables) are deliberately allowed to
+    # drift on requestBody presence until their owning step lands. The
+    # spec/011 yamls promoted to the live-contract allowlist
+    # (_SPEC_011_LIVE_CONTRACT_STEMS) are subset-asserted by
+    # ``TestSpec011LiveContracts`` and naturally pick up
+    # ``_assert_request_body_presence`` once they enter that set.
     missing: list[str] = []
     for cname, contract in all_contracts.items():
+        if cname in _SPEC_011_PENDING_STEMS:
+            continue
         for contract_path, path_item in (contract.get("paths") or {}).items():
             if not isinstance(path_item, dict):
                 continue

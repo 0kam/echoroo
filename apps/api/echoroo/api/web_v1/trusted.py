@@ -42,7 +42,7 @@ import unicodedata
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 
 from echoroo.core.actions import (
@@ -292,15 +292,18 @@ async def list_project_trusted_users(
         "``TRUSTED_ALLOWED_PERMISSIONS`` (FR-012), rejects targeting an "
         "existing Viewer / Member / Admin / Owner of the project "
         "(``ERR_TRUSTED_TARGET_INVALID``) and self-invitation "
-        "(``ERR_SELF_TRUSTED_INVALID``). Plain-text URL tokens are NEVER "
-        "returned in the response body (FR-051) — the token is delivered "
-        "out-of-band through the post-commit email outbox."
+        "(``ERR_SELF_TRUSTED_INVALID``). spec/011 Step 6 (T207, "
+        "FR-011-103): the response NOW includes ``invitation_url`` — "
+        "the issuing admin is responsible for handing the one-shot URL "
+        "out-of-band. The outbound-email outbox enqueue is removed; "
+        "spec/006 FR-051 is formally superseded by FR-011-103."
     ),
 )
 async def invite_trusted_user(
     project_id: UUID,
     payload: TrustedUserInviteRequest,
     request: Request,
+    response: Response,
     current_user: OptionalCurrentUser,
     db: DbSession,
 ) -> TrustedUserInviteResponse:
@@ -409,16 +412,34 @@ async def invite_trusted_user(
         ) from exc
 
     invitation = outcome.invitation
-    # Phase 10 Batch 2 Round 2 fix (Major 1): only ``invitation_id``
-    # leaves the API surface (FR-051). Web UI hydrates the contextual
-    # fields via GET / list when needed.
-    response = TrustedUserInviteResponse(invitation_id=invitation.id)
+    # spec/011 Step 6 (T207, FR-011-103): surface the one-shot invitation
+    # URL directly on the response. Spec/006 FR-051 (token leaves the
+    # process only through the email outbox) is formally superseded —
+    # the Owner is responsible for handing the URL off out-of-band.
+    # ``invitation.expires_at`` is ``TIMESTAMPTZ`` in the DB so the
+    # value comes back tz-aware; the conditional normalisation keeps a
+    # historic naive-datetime test fixture from leaking onto the wire.
+    expires_at_aware = invitation.expires_at
+    if expires_at_aware.tzinfo is None:  # pragma: no cover — DB guarantees tz-aware
+        expires_at_aware = expires_at_aware.replace(tzinfo=UTC)
+    body = TrustedUserInviteResponse(
+        invitation_id=invitation.id,
+        invitation_url=outcome.signed_token_envelope,
+        expires_at=expires_at_aware,
+    )
+
+    # FR-011-103: anti-bfcache + private cache directives. Mirrors the
+    # Member-invitation precedent (FR-011-102) so a browser back / refresh
+    # does not replay the URL from the rendered page.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
 
     # Commit the issuance; the post-commit hook then writes the audit row
-    # in a fresh session and enqueues the outbound email.
+    # in a fresh session. The outbound-email enqueue is removed by T054.
     await db.commit()
     await invitation_service.trigger_post_commit_side_effects(outcome)
-    return response
+    return body
 
 
 # ---------------------------------------------------------------------------

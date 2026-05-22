@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -498,6 +499,28 @@ class ProjectInvitation(UUIDMixin, TimestampMixin, Base):
         default=ProjectInvitationStatus.PENDING,
         server_default=text("'pending'::invitationstatus"),
         doc="Invitation lifecycle state (FR-053).",
+    )
+    # spec/011 FR-011-122 — SU bootstrap ownership transfer flag.
+    #
+    # Added by Alembic migration 0021_zero_email_additive. When True the
+    # invitation MUST be a Member-kind row at role=ADMIN (R5 — enforced
+    # both by the DB CHECK ``ck_project_invitations_ownership_transfer_kind_member``
+    # AND by the application-level guard in
+    # ``services.invitation_service.create_invitation`` /
+    # ``accept_invitation``). On accept, the same transaction transfers
+    # project ownership from the SU placeholder to the accepting user
+    # (Step 9 wires the SAVEPOINT-nested transfer; this column lands in
+    # Step 1 + Step 6 so service-layer code can populate it).
+    ownership_transfer_on_accept: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+        doc=(
+            "spec/011 FR-011-122..125: when True, accepting this invitation "
+            "transfers project ownership to the accepter. Only valid for "
+            "kind='member' (R5, CHECK + service guard)."
+        ),
     )
 
     # Relationships

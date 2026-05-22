@@ -2,8 +2,8 @@
 
 This module owns issuance and consumption of :class:`ProjectInvitation`
 rows for both ``kind='member'`` and ``kind='trusted'`` invitations. Audit
-+ email side-effects are deliberately deferred to **after** the main
-transaction commits (mirrors :mod:`echoroo.services.license_service` and
+side-effects are deliberately deferred to **after** the main transaction
+commits (mirrors :mod:`echoroo.services.license_service` and
 :mod:`echoroo.services.restricted_config_service`):
 
 1. ``await create_invitation(...)`` / ``accept_invitation(...)`` /
@@ -11,32 +11,35 @@ transaction commits (mirrors :mod:`echoroo.services.license_service` and
    returns an outcome dataclass.
 2. The endpoint commits its main transaction.
 3. The endpoint calls ``trigger_post_commit_side_effects(outcome)`` which
-   writes the audit row in a fresh session (FR-093 SERIALIZABLE contract)
-   and enqueues the email notification through the outbox. Failures here
-   are WARNING-logged only — the persisted invitation row is the
-   security-critical bit; observability is secondary.
+   writes the audit row in a fresh session (FR-093 SERIALIZABLE contract).
+   Failures here are WARNING-logged only — the persisted invitation row is
+   the security-critical bit; observability is secondary.
 
-Token shape (FR-051 / FR-052):
+Token shape (FR-052, spec/011 NFR-011-010):
 
 * The raw 256-bit token is generated with :func:`secrets.token_bytes`,
   base64url-encoded for the URL.
 * The DB row stores the **SHA-256 hex digest** in ``token_hash`` so an
   attacker who reads the table cannot forge a redeem URL.
-* The URL token sent in email is an HMAC-SHA-256 envelope::
+* The URL token is an HMAC-SHA-256 envelope (spec/011 step 6 widened it
+  from 3-part to 4-part to carry a ``kid``)::
 
-      {raw_token_b64u}.{expires_at_unix}.{mac_b64u}
+      {raw_token_b64u}.{expires_at_unix}.{kid}.{mac_b64u}
 
-  MAC = ``HMAC-SHA-256(web_session_secret, raw_token_b64u || "." || expires)``.
+  MAC = ``HMAC-SHA-256(secret_for(kid), raw || "." || expires || "." || kid)``.
   Verification is constant-time (:func:`hmac.compare_digest`).
+* During the rotation grace window verifiers also accept (a) 4-part
+  envelopes whose ``kid`` matches ``INVITATION_TOKEN_KID_OLD`` and (b)
+  3-part legacy envelopes signed under the legacy ``HMAC_KEY_OLD`` key
+  while ``now < created_at + 7d + GRACE_HOURS``.
 
-Plain-text token confidentiality (FR-051):
+Plain-text token confidentiality (FR-011-102..104):
 
-* The raw / signed token is **only** carried inside the internal
-  :class:`InvitationMailPayload` attached to :class:`InvitationCreateOutcome`
-  and is consumed solely by :func:`trigger_post_commit_side_effects` when
-  enqueuing the outbound email. The handler / API response layer must
-  surface the **safe subset** (``invitation_id``, ``email``, ``expires_at``,
-  ``status``) — never the plain token.
+* The signed envelope is carried on :class:`InvitationCreateOutcome` as
+  ``signed_token_envelope`` and surfaced to the issuing admin as the
+  ``invitation_url`` body field on the issue endpoint (formal supersede
+  of spec/006 FR-051 by spec/011 FR-011-103). The token never persists
+  past that single HTTP turn and is never logged.
 
 Email matching (FR-054):
 
@@ -90,6 +93,7 @@ from echoroo.core.permissions import (
     TRUSTED_ALLOWED_PERMISSIONS,
     Permission,
 )
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
@@ -98,7 +102,6 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
-from echoroo.services import outbox_service
 from echoroo.services.audit_service import AuditLogService
 
 if TYPE_CHECKING:
@@ -137,9 +140,6 @@ _RATE_LIMIT_WINDOW_SECONDS: int = 3600
 #: same token -> 200 dedupe; same key, different token -> 409 conflict.
 _IDEMPOTENCY_TTL_SECONDS: int = 24 * 3600
 _IDEMPOTENCY_KEY_PREFIX: str = "idem:invite:accept:"
-
-#: Outbox event-type discriminator for invitation emails.
-_OUTBOX_EVENT_INVITATION_EMAIL: str = "project.invitation.email"
 
 
 # ---------------------------------------------------------------------------
@@ -195,49 +195,35 @@ class InvitationInfraUnavailableError(InvitationError):
 
 
 @dataclass(frozen=True)
-class InvitationMailPayload:
-    """Internal-only carrier for the plain-text invitation token (FR-051).
-
-    Constructed by :func:`create_invitation` and consumed exclusively by
-    :func:`trigger_post_commit_side_effects` when enqueuing the email.
-    The handler / API response MUST NOT surface these fields.
-    """
-
-    raw_token_b64u: str
-    signed_token: str
-    recipient_email: str
-    invitation_id: UUID
-    project_id: UUID
-    kind: ProjectInvitationKind
-    expires_at: datetime
-
-
-@dataclass(frozen=True)
 class InvitationCreateOutcome:
     """Snapshot returned by :func:`create_invitation`.
 
-    Plain-text token confidentiality (FR-051):
+    Plain-text token surface (spec/011 FR-011-102..104):
 
-    * ``mail_payload`` carries the raw / signed token but is **internal
-      only** — :func:`trigger_post_commit_side_effects` consumes it for
-      the email outbox enqueue and the field is never serialised back to
-      the API caller.
-    * The endpoint surfaces the safe subset (``invitation``,
-      ``actor_user_id``) into a Pydantic response that excludes the token
-      entirely.
+    * ``signed_token_envelope`` is the 4-part HMAC envelope returned to
+      the issuing admin once on the HTTP response (the ``invitation_url``
+      body field). It MUST NOT be logged, telemetered, or persisted past
+      that single HTTP turn — the formal supersede of spec/006 FR-051 by
+      FR-011-103 makes the issuing admin's response the only exfil path
+      for the plain-text token.
+    * The endpoint surfaces ``signed_token_envelope`` directly into the
+      ``invitation_url`` body field; ``invitation`` carries the safe
+      subset of row metadata (id, expires_at, status). The two surfaces
+      are kept apart so a refactor cannot accidentally serialise the
+      envelope into the row-shaped JSON.
 
     Other fields:
         invitation: The freshly-flushed (not committed) invitation row.
-        actor_user_id: User who issued the invitation (audit + email).
+        actor_user_id: User who issued the invitation (audit plumbing).
         request_id / ip / user_agent: Audit-row plumbing.
-        is_new: ``False`` when the row was a duplicate idempotent return
-            (no email should be sent). Currently always ``True``; reserved
-            for future deduplication of duplicate retries.
+        is_new: ``False`` when the row was a duplicate idempotent return.
+            Currently always ``True``; reserved for future deduplication
+            of duplicate retries.
     """
 
     invitation: ProjectInvitation
     actor_user_id: UUID
-    mail_payload: InvitationMailPayload
+    signed_token_envelope: str
     request_id: str = ""
     ip: str = ""
     user_agent: str = ""
@@ -429,13 +415,36 @@ def _ensure_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def _mac_invitation_token(
+def _mac_invitation_token_legacy(
     *,
     raw_token_b64u: str,
     expires_at_unix: int,
     hmac_secret: str,
 ) -> str:
+    """Return the legacy 3-part HMAC over ``{raw}.{exp}``.
+
+    Used during the spec/011 grace window to verify 3-part envelopes
+    issued before the kid extension landed (NFR-011-010 path (b)).
+    """
     payload = f"{raw_token_b64u}.{expires_at_unix}".encode("ascii")
+    mac = hmac.new(hmac_secret.encode("utf-8"), payload, hashlib.sha256).digest()
+    return _b64u_encode(mac)
+
+
+def _mac_invitation_token_v2(
+    *,
+    raw_token_b64u: str,
+    expires_at_unix: int,
+    kid: str,
+    hmac_secret: str,
+) -> str:
+    """Return the 4-part HMAC over ``{raw}.{exp}.{kid}`` (spec/011 step 6).
+
+    The MAC inputs cover the kid so an attacker cannot swap a 4-part
+    envelope's ``kid`` slot to point at a more-permissive key without
+    invalidating the signature.
+    """
+    payload = f"{raw_token_b64u}.{expires_at_unix}.{kid}".encode("ascii")
     mac = hmac.new(hmac_secret.encode("utf-8"), payload, hashlib.sha256).digest()
     return _b64u_encode(mac)
 
@@ -444,55 +453,154 @@ def sign_invitation_token(
     *,
     raw_token_b64u: str,
     expires_at: datetime,
-    hmac_secret: str,
+    hmac_secret: str | None = None,
 ) -> str:
-    """Produce the URL-safe ``{token}.{exp}.{mac}`` envelope (FR-052)."""
+    """Produce the 4-part ``{token}.{exp}.{kid}.{mac}`` envelope.
+
+    The envelope is signed under the NEW kid declared in
+    ``settings.INVITATION_TOKEN_KID_NEW`` with the matching HMAC key
+    ``INVITATION_TOKEN_HMAC_KEY`` (spec/011 NFR-011-010). The
+    ``hmac_secret`` keyword is preserved for backward compatibility with
+    historical callers (it is now ignored — Step 6 routes the signing
+    secret exclusively through the env-driven kid pair so a rotation
+    only needs env var changes, never source bumps).
+    """
+    settings = get_settings()
+    kid = settings.invitation_token_kid_new
+    key = settings.invitation_token_hmac_key
+    # ``hmac_secret`` is intentionally accepted but ignored — kept on the
+    # signature so legacy unit tests that pre-date the env-driven
+    # rotation keep parsing without a flag day.
+    del hmac_secret
     expires_at_unix = int(_ensure_utc(expires_at).timestamp())
-    mac = _mac_invitation_token(
+    mac = _mac_invitation_token_v2(
         raw_token_b64u=raw_token_b64u,
         expires_at_unix=expires_at_unix,
-        hmac_secret=hmac_secret,
+        kid=kid,
+        hmac_secret=key,
     )
-    return f"{raw_token_b64u}.{expires_at_unix}.{mac}"
+    return f"{raw_token_b64u}.{expires_at_unix}.{kid}.{mac}"
 
 
 def verify_invitation_token(
     signed_token: str,
     *,
-    hmac_secret: str,
+    hmac_secret: str | None = None,
     now: datetime | None = None,
 ) -> tuple[str, datetime]:
-    """Decode and verify a signed invitation token.
+    """Decode and verify a signed invitation token (spec/011 NFR-011-010).
+
+    Accepts either:
+
+    * A 4-part envelope ``{raw}.{exp}.{kid}.{mac}`` whose ``kid`` matches
+      ``INVITATION_TOKEN_KID_NEW`` (preferred) or ``INVITATION_TOKEN_KID_OLD``
+      (during the rotation grace window). The HMAC key is routed by the
+      kid so a stolen OLD-kid envelope cannot upgrade itself to NEW.
+    * A 3-part legacy envelope ``{raw}.{exp}.{mac}`` whose MAC verifies
+      under ``INVITATION_TOKEN_HMAC_KEY_OLD`` IFF
+      ``now < expires_at + INVITATION_TOKEN_KID_GRACE_HOURS``. Legacy
+      acceptance requires the ``_OLD`` slot to be configured — refusal
+      to start is enforced by ``Settings._validate_production_secrets``.
 
     Returns ``(raw_token_b64u, expires_at)`` on success.
+
     Raises :class:`InvitationTokenInvalidError` on any failure (missing
-    parts, malformed mac, mac mismatch, expiry past). The error class is
-    deliberately narrow so the endpoint can map every signal to the same
-    HTTP 410 response (FR-055 enumeration mitigation).
+    parts, unknown kid, MAC mismatch, expiry past, legacy envelope
+    outside grace). The error class is deliberately narrow so the
+    endpoint can map every signal to the same generic-invalid HTTP
+    response (FR-055 / FR-011-107 enumeration mitigation). All MAC
+    comparisons go through :func:`hmac.compare_digest` (NFR-011-003).
     """
+    del hmac_secret  # legacy keyword preserved for compatibility (ignored)
+    settings = get_settings()
+    now_eff = now or datetime.now(UTC)
+
     parts = signed_token.split(".")
-    if len(parts) != 3:
-        raise InvitationTokenInvalidError("malformed invitation token")
-    raw_token_b64u, expires_at_str, mac_b64u = parts
+    if len(parts) == 4:
+        raw_token_b64u, expires_at_str, kid, mac_b64u = parts
+        try:
+            expires_at_unix = int(expires_at_str)
+        except ValueError as exc:
+            raise InvitationTokenInvalidError(
+                "invalid expiry component",
+            ) from exc
 
-    try:
-        expires_at_unix = int(expires_at_str)
-    except ValueError as exc:
-        raise InvitationTokenInvalidError("invalid expiry component") from exc
+        # Route by kid. We compute the candidate MAC ONLY for the
+        # matching kid so a stolen OLD-kid envelope cannot probe the NEW
+        # key (defence in depth — the MAC inputs already cover the kid,
+        # so a swap would not verify, but routing keeps the timing
+        # signature uniform).
+        if kid == settings.invitation_token_kid_new:
+            expected_key = settings.invitation_token_hmac_key
+        elif (
+            settings.invitation_token_kid_old is not None
+            and kid == settings.invitation_token_kid_old
+        ):
+            old_key = settings.invitation_token_hmac_key_old
+            if old_key is None:  # pragma: no cover — co-presence guard
+                raise InvitationTokenInvalidError(
+                    "invitation token signed under retired kid",
+                )
+            expected_key = old_key
+        else:
+            raise InvitationTokenInvalidError(
+                "invitation token signed under unknown kid",
+            )
 
-    expected_mac = _mac_invitation_token(
-        raw_token_b64u=raw_token_b64u,
-        expires_at_unix=expires_at_unix,
-        hmac_secret=hmac_secret,
-    )
-    if not hmac.compare_digest(expected_mac, mac_b64u):
-        raise InvitationTokenInvalidError("invitation token signature mismatch")
+        expected_mac = _mac_invitation_token_v2(
+            raw_token_b64u=raw_token_b64u,
+            expires_at_unix=expires_at_unix,
+            kid=kid,
+            hmac_secret=expected_key,
+        )
+        if not hmac.compare_digest(expected_mac, mac_b64u):
+            raise InvitationTokenInvalidError(
+                "invitation token signature mismatch",
+            )
 
-    expires_at = datetime.fromtimestamp(expires_at_unix, tz=UTC)
-    if (now or datetime.now(UTC)) >= expires_at:
-        raise InvitationTokenInvalidError("invitation token has expired")
+        expires_at = datetime.fromtimestamp(expires_at_unix, tz=UTC)
+        if now_eff >= expires_at:
+            raise InvitationTokenInvalidError("invitation token has expired")
+        return raw_token_b64u, expires_at
 
-    return raw_token_b64u, expires_at
+    if len(parts) == 3:
+        # Legacy 3-part envelope (spec/011 NFR-011-010 (b)): verify under
+        # the OLD key during the grace window. ``KID_OLD`` MUST be set
+        # for this path — the settings co-presence guard ensures it.
+        old_key = settings.invitation_token_hmac_key_old
+        if old_key is None:
+            raise InvitationTokenInvalidError(
+                "legacy invitation token rejected: rotation OLD key unset",
+            )
+        raw_token_b64u, expires_at_str, mac_b64u = parts
+        try:
+            expires_at_unix = int(expires_at_str)
+        except ValueError as exc:
+            raise InvitationTokenInvalidError(
+                "invalid expiry component",
+            ) from exc
+        expected_mac = _mac_invitation_token_legacy(
+            raw_token_b64u=raw_token_b64u,
+            expires_at_unix=expires_at_unix,
+            hmac_secret=old_key,
+        )
+        if not hmac.compare_digest(expected_mac, mac_b64u):
+            raise InvitationTokenInvalidError(
+                "invitation token signature mismatch",
+            )
+        expires_at = datetime.fromtimestamp(expires_at_unix, tz=UTC)
+        # Reject past TTL + grace window. The grace window extends past
+        # the row's expires_at so a 3-part token that was 1 minute from
+        # natural expiry at deploy time remains verifiable until
+        # ``expires_at + GRACE_HOURS``.
+        grace = timedelta(hours=settings.invitation_token_kid_grace_hours)
+        if now_eff >= expires_at + grace:
+            raise InvitationTokenInvalidError(
+                "legacy invitation token outside grace window",
+            )
+        return raw_token_b64u, expires_at
+
+    raise InvitationTokenInvalidError("malformed invitation token")
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +715,7 @@ async def create_invitation(
     granted_permissions: Sequence[str | Permission] | None = None,
     trusted_duration_seconds: int | None = None,
     invitation_ttl_seconds: int | None = None,
+    ownership_transfer_on_accept: bool = False,
     request_id: str = "",
     ip: str = "",
     user_agent: str = "",
@@ -618,16 +727,15 @@ async def create_invitation(
 
     1. Validate the kind × payload combination (FR-048 mirrored at the
        application layer so we can raise structured errors before the DB
-       check kicks in).
+       check kicks in). spec/011 R5 — reject
+       ``ownership_transfer_on_accept=True`` when ``kind != MEMBER``.
     2. ``check_rate_limits`` — FR-056 (fail-closed; Redis required).
-    3. Generate the 256-bit raw token, compute ``token_hash`` (FR-051) and
-       the HMAC-signed URL token (FR-052). The plain-text envelope is
-       attached to :class:`InvitationMailPayload` and is **never** placed
-       on the response-bound part of the outcome.
+    3. Generate the 256-bit raw token, compute ``token_hash`` and
+       the 4-part HMAC-signed envelope (FR-052 / NFR-011-010).
     4. Insert the row inside the caller's transaction. Caller commits.
-       Post-commit, the handler calls
-       :func:`trigger_post_commit_side_effects` which consumes the
-       mail payload to enqueue the outbound email.
+       The signed envelope is attached to the outcome as
+       ``signed_token_envelope`` for the handler to surface as
+       ``invitation_url`` (FR-011-102..104).
 
     Args:
         session: Caller-owned async session. Caller commits.
@@ -635,8 +743,11 @@ async def create_invitation(
         kind: Invitation kind discriminator.
         email: Plain-text recipient email; ``email_hash`` is computed here.
         invited_by_id: Owner / Admin issuing the invitation.
-        hmac_secret: HMAC key for token signature + email hash. Pass
-            ``settings.web_session_secret`` from the endpoint.
+        hmac_secret: HMAC key for the ``email_hash`` column. Pass
+            ``settings.web_session_secret`` from the endpoint. The
+            invitation envelope itself is signed under the env-driven
+            ``INVITATION_TOKEN_KID_NEW`` / ``HMAC_KEY`` pair
+            (spec/011 NFR-011-010) — independent of this argument.
         redis: Async Redis client used by the FR-056 rate limiter (and the
             FR-053 idempotency cache on accept). Required — fail-closed.
         role: Required when ``kind=='member'``.
@@ -647,17 +758,25 @@ async def create_invitation(
             (7 days). Hard-capped at :data:`INVITATION_MAX_TTL_SECONDS`;
             anything larger raises :class:`InvitationValidationError` so
             an operator cannot extend the URL window beyond spec.
+        ownership_transfer_on_accept: spec/011 FR-011-121..125 flag. When
+            ``True`` MUST be paired with ``kind=ProjectInvitationKind.MEMBER``
+            (R5); other kinds raise :class:`InvitationStateError`.
         request_id / ip / user_agent: Audit plumbing (passed through to
             the outcome dataclass; the writer hashes them later).
         now: Override for ``datetime.now(UTC)`` — testing only.
 
     Returns:
-        :class:`InvitationCreateOutcome` carrying the row + the
-        internal-only :class:`InvitationMailPayload`. The handler MUST
-        return only the safe subset to the API caller.
+        :class:`InvitationCreateOutcome` carrying the row and the
+        ``signed_token_envelope`` (FR-011-102..104). The handler surfaces
+        the envelope as the ``invitation_url`` body field; it MUST NOT
+        appear in logs, telemetry, or any persisted column past this
+        single HTTP turn.
 
     Raises:
         InvitationValidationError: Bad payload combination or TTL > 7 d.
+        InvitationStateError: R5 — ``ownership_transfer_on_accept`` set
+            on a non-MEMBER kind (defence in depth above the DB CHECK
+            added by migration 0021).
         InvitationRateLimitError: Rate limit exceeded.
         InvitationInfraUnavailableError: Redis is unreachable.
         InvitationConflictError: A pending invitation already exists for
@@ -674,6 +793,19 @@ async def create_invitation(
         raise InvitationValidationError(
             "invitation_ttl_seconds must be in "
             f"[1, {INVITATION_MAX_TTL_SECONDS}] (FR-052 hard cap = 7 days)"
+        )
+
+    # 0.5. spec/011 R5 (FR-011-122..125) — ``ownership_transfer_on_accept``
+    # is only valid for Member-kind invitations. The DB
+    # ``ck_project_invitations_ownership_transfer_kind_member`` CHECK
+    # constraint (migration 0021) is the source of truth; this
+    # application-level guard surfaces a typed error BEFORE the INSERT
+    # so callers get a structured error class instead of a bare
+    # IntegrityError. Order matters: we evaluate the cheap kind check
+    # before any DB round-trip and before rate-limit consumption.
+    if ownership_transfer_on_accept and kind is not ProjectInvitationKind.MEMBER:
+        raise InvitationStateError(
+            "ownership_transfer_on_accept_invalid_for_kind",
         )
 
     # 1. kind × payload validation (FR-048)
@@ -764,6 +896,7 @@ async def create_invitation(
         invited_by_id=invited_by_id,
         expires_at=expires_at,
         status=ProjectInvitationStatus.PENDING,
+        ownership_transfer_on_accept=ownership_transfer_on_accept,
     )
     session.add(invitation)
     try:
@@ -775,20 +908,10 @@ async def create_invitation(
             "an equivalent pending invitation already exists",
         ) from exc
 
-    mail_payload = InvitationMailPayload(
-        raw_token_b64u=raw_token_b64u,
-        signed_token=signed_token,
-        recipient_email=email,
-        invitation_id=invitation.id,
-        project_id=project_id,
-        kind=kind,
-        expires_at=expires_at,
-    )
-
     return InvitationCreateOutcome(
         invitation=invitation,
         actor_user_id=invited_by_id,
-        mail_payload=mail_payload,
+        signed_token_envelope=signed_token,
         request_id=request_id,
         ip=ip,
         user_agent=user_agent,
@@ -986,6 +1109,24 @@ async def accept_invitation(
     # maps to 404 so the response shape stays uniform.
     if project_id_scope is not None and invitation.project_id != project_id_scope:
         raise InvitationTokenInvalidError("invitation not found")
+
+    # spec/011 R5 (FR-011-122..125) — defence in depth above the DB CHECK:
+    # if a row somehow exists with ``ownership_transfer_on_accept=True``
+    # but ``kind != member`` (e.g. data corruption, manual SQL backdoor),
+    # refuse to accept. The DB CHECK
+    # ``ck_project_invitations_ownership_transfer_kind_member`` already
+    # prevents the row from being INSERTed in the first place, but a
+    # data-corruption scenario or a CHECK-bypassing migration shim
+    # would otherwise allow a non-member transfer-on-accept path. The
+    # service-layer guard surfaces a typed error class so the handler
+    # never silently transfers ownership through a misclassified row.
+    if (
+        invitation.ownership_transfer_on_accept
+        and invitation.kind is not ProjectInvitationKind.MEMBER
+    ):
+        raise InvitationStateError(
+            "ownership_transfer_on_accept_invalid_for_kind",
+        )
 
     # The signed expiry is the source of truth for the URL; the row's
     # expires_at is an additional guard. Reject if either failed.
@@ -1265,7 +1406,9 @@ async def decline_invitation_by_recipient(
 
 
 # ---------------------------------------------------------------------------
-# Post-commit side effects (audit + email outbox)
+# Post-commit side effects (audit only — outbox-email enqueue removed in
+# spec/011 step 6 / T054; FR-011-103 makes the issuing admin's HTTP
+# response the sole exfil path for the plain-text invitation token)
 # ---------------------------------------------------------------------------
 
 
@@ -1274,17 +1417,17 @@ async def trigger_post_commit_side_effects(
     | InvitationAcceptOutcome
     | InvitationDeclineOutcome,
 ) -> None:
-    """Fire audit + email-outbox side effects after the main TX commits.
+    """Fire audit side effects after the main TX commits.
 
     All side-effects are best-effort. Failures are WARNING-logged so
     observability does not undo the persisted invitation row.
-    Two distinct audit actions are emitted depending on the outcome
-    type:
+    Three audit actions are emitted depending on the outcome type:
 
     * :class:`InvitationCreateOutcome` → ``project.invitation.create``
-      and an ``project.invitation.email`` outbox row carrying the
-      *internal-only* :class:`InvitationMailPayload` (FR-051: plain-text
-      token leaves the API process **only** through this enqueue path).
+      (spec/011 step 6 / T054: the outbox-email enqueue is REMOVED — the
+      plain-text envelope ``signed_token_envelope`` is surfaced to the
+      issuing admin as the HTTP response's ``invitation_url`` field;
+      it MUST NOT be persisted or telemetered past that single turn).
     * :class:`InvitationAcceptOutcome` → ``project.invitation.accept``.
     * :class:`InvitationDeclineOutcome` → ``project.invitation.decline``.
     """
@@ -1302,6 +1445,10 @@ async def trigger_post_commit_side_effects(
 
 
 async def _post_commit_create(outcome: InvitationCreateOutcome) -> None:
+    # spec/011 Step 6 (T054): outbound-email enqueue removed. The audit
+    # emit remains so existing observability tooling keeps surfacing the
+    # invitation issuance event; the plain-text envelope is intentionally
+    # NOT included in the audit detail (FR-011-102: token confidentiality).
     invitation = outcome.invitation
     detail: dict[str, Any] = {
         "invitation_id": str(invitation.id),
@@ -1320,8 +1467,6 @@ async def _post_commit_create(outcome: InvitationCreateOutcome) -> None:
         before=None,
         after={"status": invitation.status.value},
     )
-    if outcome.is_new:
-        await _enqueue_invitation_email(outcome)
 
 
 async def _post_commit_accept(outcome: InvitationAcceptOutcome) -> None:
@@ -1417,46 +1562,13 @@ async def _write_invitation_audit(
         )
 
 
-async def _enqueue_invitation_email(outcome: InvitationCreateOutcome) -> None:
-    """Enqueue the outbound invitation email through the outbox table.
-
-    The outbox row carries the internal :class:`InvitationMailPayload`;
-    the worker that materialises the email body (T514 follow-up) is the
-    *only* code-path that touches the plain-text token after this point.
-    Failures here are WARNING-logged — the invitation row is already
-    committed and the operator can re-issue if the email never arrives.
-    """
-    payload = outcome.mail_payload
-    body: dict[str, Any] = {
-        "invitation_id": str(payload.invitation_id),
-        "project_id": str(payload.project_id),
-        "kind": payload.kind.value,
-        "recipient_email": payload.recipient_email,
-        "expires_at": _ensure_utc(payload.expires_at).isoformat(),
-        "raw_token_b64u": payload.raw_token_b64u,
-        "signed_token": payload.signed_token,
-    }
-    idempotency_key = f"invitation_email:{payload.invitation_id}"
-    try:
-        async with AsyncSessionLocal() as outbox_session:
-            try:
-                await outbox_service.enqueue(
-                    outbox_session,
-                    event_type=_OUTBOX_EVENT_INVITATION_EMAIL,
-                    payload=body,
-                    idempotency_key=idempotency_key,
-                )
-                await outbox_session.commit()
-            except Exception:
-                await outbox_session.rollback()
-                raise
-    except Exception as exc:  # noqa: BLE001 — best effort; soft alert
-        logger.warning(
-            "invitation email enqueue failed (FR-088 soft alert): "
-            "invitation_id=%s error=%r",
-            payload.invitation_id,
-            exc,
-        )
+# spec/011 Step 6 (T054): ``_enqueue_invitation_email`` removed. The
+# Resend / SMTP outbox path is gone; FR-011-103 makes the issuing admin's
+# HTTP response the sole exfil channel for the plain-text invitation
+# token. Future maintainers: do NOT re-introduce an outbox-enqueue path
+# here — every helper in ``services/email.py`` is a no-op stub as of
+# Step 2 and the destructive migration ``0022`` removes the supporting
+# tables entirely.
 
 
 # ---------------------------------------------------------------------------
@@ -1502,7 +1614,6 @@ __all__ = [
     "InvitationEmailMismatchError",
     "InvitationError",
     "InvitationInfraUnavailableError",
-    "InvitationMailPayload",
     "InvitationRateLimitError",
     "InvitationStateError",
     "InvitationTokenInvalidError",
