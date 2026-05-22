@@ -35,13 +35,16 @@ Permission engine integration:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
-from typing import Annotated, cast
+from typing import Annotated, Final, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from email_validator import EmailNotValidError, validate_email
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
 
@@ -63,10 +66,17 @@ from echoroo.core.permissions import (
     is_allowed,
     load_project_or_404,
 )
+from echoroo.core.redis import get_redis_connection
 from echoroo.core.response_filter import apply_response_filter
+from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import ProjectStatus, ProjectVisibility
+from echoroo.models.enums import (
+    ProjectInvitationKind,
+    ProjectMemberRole,
+    ProjectStatus,
+    ProjectVisibility,
+)
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
@@ -75,6 +85,7 @@ from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
+    ProjectCreateResponse,
     ProjectResponse,
     ProjectSummaryListResponse,
     ProjectUpdateRequest,
@@ -83,6 +94,8 @@ from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
+from echoroo.services import invitation_service
+from echoroo.services.invitation_service import InvitationCreateOutcome
 from echoroo.services.project import (
     ProjectService,
     build_project_summaries,
@@ -160,6 +173,37 @@ def _require_authenticated(current_user: User | None) -> User:
             detail="Not authenticated",
         )
     return current_user
+
+
+# spec/011 Step 9 R1 P0-3 — constant-time padding for the project-create
+# response (FR-011-120 / FR-011-125 anti-enumeration).
+#
+# Without this pad the SU+intended_owner branch is observably slower than
+# the non-SU drop branch (Redis rate-limit + invitation INSERT + post-
+# commit audit add ~tens of ms over the vanilla create), letting an
+# attacker probe their ``is_superuser`` status by timing the response.
+# The pad mirrors the Step 7 ``_invitation_public_sleep_for_minimum``
+# pattern: every code path through ``create_project`` defers to the same
+# wall-clock floor regardless of which branch executed.
+_PROJECT_CREATE_RESPONSE_TARGET_MS: Final[float] = 150.0
+"""Constant minimum response time (ms) for ``POST /web-api/v1/projects``."""
+
+
+async def _project_create_sleep_for_minimum(started_at: float) -> None:
+    """Hold every project-create response to the constant 150ms floor.
+
+    spec/011 Step 9 R1 P0-3 — anti-enumeration timing pad. The SU bootstrap
+    branch (intended_owner_email accepted) runs Redis rate-limit checks,
+    inserts an invitation row, and post-commits an audit emit; the non-SU
+    drop branch returns immediately after the project insert. Without
+    padding to a constant floor an attacker can probe their is_superuser
+    status by measuring the response latency. Tests can monkey-patch this
+    helper to a no-op when wallclock latency is not under test.
+    """
+    elapsed_ms = (time.monotonic() - started_at) * 1000.0
+    remaining_ms = _PROJECT_CREATE_RESPONSE_TARGET_MS - elapsed_ms
+    if remaining_ms > 0:
+        await asyncio.sleep(remaining_ms / 1000.0)
 
 
 def _enum_value(value: object) -> object:
@@ -354,27 +398,165 @@ async def list_projects(
 
 @router.post(
     "/",
-    response_model=ProjectResponse,
+    response_model=ProjectCreateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create project (Web UI)",
     description=(
         "Cookie + CSRF Web UI surface mirroring the programmatic project "
         "create route. Any authenticated session may create a project; "
-        "the creator becomes the owner."
+        "the creator becomes the owner.\n\n"
+        "spec/011 FR-011-120..125 — system superuser project bootstrap. "
+        "The request body accepts an optional ``intended_owner_email`` "
+        "field. When the caller is a system superuser, the create-project "
+        "transaction additionally issues a Member-kind ADMIN-role "
+        "invitation with ``ownership_transfer_on_accept=true`` and "
+        "surfaces the 4-part signed envelope on ``invitation_url``. "
+        "Non-superuser callers silently drop the field (anti-enumeration, "
+        "FR-011-125) — the response shape is IDENTICAL to a vanilla "
+        "create, including ``Cache-Control: no-store`` on every response."
     ),
 )
 async def create_project(
     payload: ProjectCreateRequest,
     request: Request,
+    response: Response,
     current_user: OptionalCurrentUser,
     service: ProjectServiceDep,
     db: DbSession,
-) -> ProjectResponse:
+) -> ProjectCreateResponse:
     """Create a project through the first-party BFF surface."""
+    # spec/011 Step 9 R1 P0-3 — anti-enumeration timing pad. Capture the
+    # request start before any branch-dependent work so every return path
+    # (success, 422 from upstream validation, exception remap) defers to
+    # the same wall-clock floor.
+    started_at = time.monotonic()
+
     user = _require_authenticated(current_user)
 
+    # spec/011 FR-011-121 / FR-011-125 — Cache-Control no-store is set on
+    # EVERY response (not only the SU-bootstrap branch) so the header
+    # itself cannot reveal whether ``intended_owner_email`` was accepted.
+    # Mirrors the trusted-overlay + member-invitation precedents.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    # spec/011 FR-011-120 / FR-011-125 — silently drop ``intended_owner_email``
+    # for non-superuser callers. ``current_user.is_superuser`` is set by
+    # :func:`echoroo.middleware.auth._stamp_superuser_flag`; we treat the
+    # attribute defensively so a test fixture that bypasses the middleware
+    # still falls through to the non-bootstrap branch.
+    is_superuser = bool(getattr(user, "is_superuser", False))
+
+    # spec/011 Step 9 R1 P0-2 — email-format validation runs INSIDE the
+    # handler AFTER the SU check, not at the Pydantic schema layer. The
+    # schema field is typed ``str | None`` (no ``EmailStr`` validation)
+    # so a non-superuser submitting a malformed value gets the standard
+    # vanilla-create response shape — they never receive a 422 "invalid
+    # email" body that would leak the field's existence (FR-011-125).
+    # Superuser callers DO see the 422 because the field is documented
+    # to be theirs alone.
+    intended_owner_email: str | None
+    if is_superuser and payload.intended_owner_email:
+        try:
+            validated = validate_email(
+                payload.intended_owner_email,
+                allow_smtputf8=True,
+                check_deliverability=False,
+            )
+        except EmailNotValidError as exc:
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_INVALID_INTENDED_OWNER_EMAIL",
+                    "message": "invalid intended_owner_email format",
+                },
+            ) from exc
+        intended_owner_email = validated.normalized
+    else:
+        # Non-SU OR SU-without-intended-owner: drop the value entirely with
+        # NO validation and NO observable error. Pydantic has already
+        # accepted the field thanks to the ``str | None`` weakening above.
+        intended_owner_email = None
+
     project = await service.create_project(user.id, payload)
+
+    invitation_url: str | None = None
+    invitation_id: UUID | None = None
+    bootstrap_outcome: InvitationCreateOutcome | None = None
+
+    if intended_owner_email is not None:
+        # spec/011 FR-011-121 — atomic SU bootstrap branch. The invitation
+        # row is inserted in the SAME transaction as the project insert so
+        # a rollback keeps the two in lockstep. The Step 6 R5 guard inside
+        # ``create_invitation`` (kind != MEMBER + transfer=True → raise)
+        # cannot fire here because we always pass ``kind=MEMBER``.
+        settings = get_settings()
+        redis = await get_redis_connection()
+        try:
+            bootstrap_outcome = await invitation_service.create_invitation(
+                db,
+                project_id=project.id,
+                kind=ProjectInvitationKind.MEMBER,
+                email=intended_owner_email,
+                invited_by_id=user.id,
+                hmac_secret=settings.web_session_secret,
+                redis=redis,
+                role=ProjectMemberRole.ADMIN,
+                ownership_transfer_on_accept=True,
+                request_id=request.headers.get("x-request-id") or "",
+                ip=(
+                    request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+                    or (request.client.host if request.client else "unknown")
+                ),
+                user_agent=request.headers.get("user-agent") or "",
+            )
+        except invitation_service.InvitationValidationError as exc:
+            await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_INVITATION_INVALID",
+                    "message": str(exc),
+                },
+            ) from exc
+        except invitation_service.InvitationConflictError as exc:
+            await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "ERR_INVITATION_PENDING",
+                    "message": str(exc),
+                },
+            ) from exc
+        except invitation_service.InvitationRateLimitError as exc:
+            await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(exc),
+            ) from exc
+        except invitation_service.InvitationInfraUnavailableError as exc:
+            await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        invitation_url = bootstrap_outcome.signed_token_envelope
+        invitation_id = bootstrap_outcome.invitation.id
+
     await db.commit()
+
+    if bootstrap_outcome is not None:
+        await invitation_service.trigger_post_commit_side_effects(
+            bootstrap_outcome
+        )
+
     await write_project_bff_audit_soft(
         actor_user_id=user.id,
         project_id=project.id,
@@ -384,7 +566,15 @@ async def create_project(
         before=None,
         after=_project_audit_snapshot(project),
     )
-    return project
+    # spec/011 Step 9 R1 P0-3 — pad the success response to the constant
+    # floor so the SU bootstrap branch is indistinguishable from the
+    # non-SU drop branch from a wall-clock vantage point.
+    await _project_create_sleep_for_minimum(started_at)
+    return ProjectCreateResponse(
+        **project.model_dump(),
+        invitation_url=invitation_url,
+        invitation_id=invitation_id,
+    )
 
 
 # =============================================================================

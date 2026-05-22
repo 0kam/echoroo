@@ -65,39 +65,68 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [project]
-                properties:
-                  project:
-                    $ref: "#/components/schemas/ProjectSummary"
-                  invitation_url:
-                    type: string
-                    format: uri
-                    nullable: true
-                    description: |
-                      Present only when intended_owner_email was supplied by the
-                      system superuser. One-shot; not recoverable; scrub from
-                      telemetry / access logs.
-                  invitation_id:
-                    type: string
-                    format: uuid
-                    nullable: true
-        "400": { description: Validation failure }
-        "403": { description: Caller lacks project-create permission }
+                # spec/011 Step 9 R1 P1-4 — flat shape (matches the live
+                # ``ProjectCreateResponse`` Pydantic model, which extends
+                # ``ProjectResponse`` with the two bootstrap fields at the
+                # top level alongside ``id``, ``name``, ``visibility``,
+                # etc.). Both ``invitation_url`` and ``invitation_id`` are
+                # ``required: true`` + ``nullable: true`` (anti-enumeration,
+                # FR-011-125): the keys ALWAYS appear in the response so a
+                # non-superuser cannot detect via key presence whether the
+                # bootstrap branch fired. Only the values differ (null vs.
+                # populated).
+                allOf:
+                  - $ref: "#/components/schemas/ProjectResponse"
+                  - type: object
+                    required: [invitation_url, invitation_id]
+                    properties:
+                      invitation_url:
+                        type: string
+                        format: uri
+                        nullable: true
+                        description: |
+                          Present (non-null) only when intended_owner_email was
+                          supplied by the system superuser. The key is always
+                          emitted (null on the non-bootstrap branch) so
+                          response-shape inspection cannot enumerate the SU
+                          bootstrap feature (FR-011-125). One-shot; not
+                          recoverable; scrub from telemetry / access logs.
+                      invitation_id:
+                        type: string
+                        format: uuid
+                        nullable: true
+                        description: |
+                          ID of the bootstrap invitation row, paired with
+                          ``invitation_url``. Always emitted; null on the
+                          non-bootstrap branch (same anti-enumeration
+                          rationale as ``invitation_url``).
+        "422": { description: Validation failure }
       security:
         - sessionCookie: []
       x-permission: PROJECT_CREATE  # (existing)
 
 components:
   schemas:
-    ProjectSummary:
+    # spec/011 Step 9 R1 P1-4 — minimal shape stub for the live
+    # ``ProjectCreateResponse`` Pydantic model. The full surface is
+    # owned by ``specs/006-permissions-redesign/contracts/projects.yaml``
+    # (``ProjectResponse``); this stub names the most stable subset the
+    # bootstrap contract depends on. The flat top-level layout of
+    # ``invitation_url`` / ``invitation_id`` is asserted by the ``allOf``
+    # composition above; this schema's enumeration is purely
+    # documentation — the harness validates the path / method /
+    # requestBody set rather than every field name.
+    ProjectResponse:
       type: object
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+        description: { type: string, nullable: true }
         visibility: { type: string, enum: [public, restricted] }
-        owner_id: { type: string, format: uuid }
+        license: { type: string }
+        status: { type: string }
         created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
 
   securitySchemes:
     sessionCookie:

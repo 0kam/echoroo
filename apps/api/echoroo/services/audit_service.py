@@ -82,7 +82,7 @@ _GENESIS_PREV_HASH: Final[str] = "0" * 64
 #
 # This constant is the shared registry both T021 (the base 6 entries
 # for project/dataset/recording/ACL/permission/visibility deletes) and
-# T310 (this step — admin password reset, +2 entries) extend. Adding a
+# T310 (Step 5 — admin password reset, +2 entries) extend. Adding a
 # new destructive event type to ``platform_audit_log`` / ``project_audit_log``
 # means appending its action string here.
 #
@@ -90,14 +90,21 @@ _GENESIS_PREV_HASH: Final[str] = "0" * 64
 # ``frozenset`` discriminator is enforced by Python so callers cannot
 # accidentally mutate the registry at runtime (mypy + the frozen type
 # both block ``.add()`` / ``.remove()``).
-#
-# Future entries (T021 backfill, tracked in tasks.md): ``project.delete``,
-# ``dataset.delete``, ``recording.delete``, ``project.acl.update``,
-# ``project.permission.elevate``, ``project.visibility.update``.
 DESTRUCTIVE_ACTIONS: Final[frozenset[str]] = frozenset(
     {
-        # spec/011 §FR-011-201..210 — admin password reset audit actions.
-        # Mirrors the service-private constants in
+        # spec/011 §research R6 base set — destructive project / dataset /
+        # recording / ACL / permission / visibility mutations whose
+        # ``target_id`` MUST be retained in the SU bootstrap pre-transfer
+        # summary so the new owner can audit what was deleted before the
+        # handoff (T021).
+        "project.delete",
+        "dataset.delete",
+        "recording.delete",
+        "project.acl.update",
+        "project.permission.elevate",
+        "project.visibility.update",
+        # spec/011 §FR-011-201..210 — admin password reset audit actions
+        # (Step 5). Mirrors the service-private constants in
         # :mod:`echoroo.services.admin_password_reset`. The strings are
         # duplicated here on purpose — service-private constants own the
         # naming, and this allowlist re-asserts the destructive-class
@@ -469,7 +476,95 @@ class AuditLogService:
         return row_id
 
 
+async def build_pre_transfer_action_summary(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    actor_user_id: UUID,
+    since: datetime,
+    until: datetime,
+) -> dict[str, Any]:
+    """Build the ``pre_transfer_action_summary`` JSON (spec/011 T022 / R6).
+
+    Captures the prior owner's project_audit_log history on a project
+    between ``since`` and ``until`` so the SU bootstrap ownership
+    transfer (T502, FR-011-123) can hand the new owner a redacted
+    summary of what the SU did before the transfer.
+
+    Returns ``{"summary": [{"action": str, "occurred_at": iso8601_str,
+    "target_id"?: str}]}`` where ``target_id`` is preserved IFF the
+    row's ``action ∈`` :data:`DESTRUCTIVE_ACTIONS` AND the row's
+    ``detail`` JSON carries a ``target_id`` key (R6). Non-destructive
+    entries surface only ``action`` + ``occurred_at`` so the summary
+    can be projected onto the activity view (FR-011-307) without
+    leaking inert identifiers.
+
+    The query is **read-only** and **bounded** to a single project +
+    actor + time range so a SU with a long history on many projects
+    pays only for the rows on the target project. The ``ORDER BY
+    created_at`` is stable because the audit chain integrity contract
+    (FR-093) guarantees monotonic ``created_at`` per row.
+
+    Args:
+        session: Caller-owned async session (the audit_service shares
+            it with the caller; no fresh session is required because
+            this is a SELECT-only path, not a write).
+        project_id: Target project — rows scoped to a different project
+            are EXCLUDED.
+        actor_user_id: Prior owner's user id — rows performed by any
+            other actor are EXCLUDED.
+        since: Lower bound on ``created_at`` (INCLUSIVE).
+        until: Upper bound on ``created_at`` (EXCLUSIVE).
+
+    Returns:
+        ``{"summary": [...]}`` — possibly an empty list when the prior
+        owner performed no auditable mutation on the project during
+        the window.
+    """
+    rows = await session.execute(
+        sa.text(
+            """
+            SELECT action, created_at, detail
+              FROM project_audit_log
+             WHERE project_id = :project_id
+               AND actor_user_id_hash = :actor_user_id_hash
+               AND created_at >= :since
+               AND created_at < :until
+             ORDER BY created_at
+            """
+        ),
+        {
+            "project_id": str(project_id),
+            # FR-091: ``actor_user_id`` is stored as a keyed hash, not
+            # raw UUID. We re-derive the hash here so the WHERE clause
+            # matches the column. ``compute_pii_hash`` is the same
+            # routine used by ``_write`` above so v1 / v2 rotation
+            # state stays consistent.
+            "actor_user_id_hash": compute_pii_hash(str(actor_user_id)),
+            "since": since,
+            "until": until,
+        },
+    )
+    summary: list[dict[str, Any]] = []
+    for action, created_at, detail in rows.all():
+        entry: dict[str, Any] = {
+            "action": action,
+            "occurred_at": (
+                created_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+                if isinstance(created_at, datetime)
+                else str(created_at)
+            ),
+        }
+        if action in DESTRUCTIVE_ACTIONS and isinstance(detail, dict):
+            target_id = detail.get("target_id")
+            if target_id is not None:
+                entry["target_id"] = str(target_id)
+        summary.append(entry)
+    return {"summary": summary}
+
+
 __all__ = [
     "DESTRUCTIVE_ACTIONS",
     "AuditLogService",
+    "build_pre_transfer_action_summary",
 ]
