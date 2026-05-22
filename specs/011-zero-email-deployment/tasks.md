@@ -178,26 +178,26 @@
 
 ### Backend deletions
 
-- [ ] T110 [US1] [P] Delete `apps/api/echoroo/services/email_verification_service.py` (FR-011-001..004)
-- [ ] T111 [US1] [P] Delete `apps/api/echoroo/models/email_verification_token.py` (FR-011-002)
-- [ ] T112 [US1] [P] Delete `apps/api/echoroo/models/password_reset_token.py` (FR-011-003)
-- [ ] T113 [US1] [P] Delete `apps/api/echoroo/repositories/email_verification_token.py` (and `repositories/password_reset_token.py` if present)
-- [ ] T114 [US1] [P] Delete `apps/api/echoroo/middleware/email_verification_enforcement.py` (FR-011-004) — the registration was already removed in T071
-- [ ] T115 [US1] [P] Delete `apps/api/echoroo/workers/email_verification_dispatcher.py` (FR-011-010)
-- [ ] T116 [US1] [P] Update `apps/api/echoroo/workers/celery_app.py` to remove the `email_verification_dispatcher` Celery include
-- [ ] T117 [US1] In `apps/api/echoroo/models/__init__.py` remove re-exports of `EmailVerificationToken`, `PasswordResetToken`
-- [ ] T118 [US1] In `apps/api/echoroo/models/user.py` remove `email_verified_at` field (FR-011-002)
-- [ ] T119 [US1] [P] In `apps/api/echoroo/api/web_v1/auth.py` delete all `/verify-email*`, `/password-reset/*`, `/2fa-reset/magic-link*` route handlers and their rate-limit primitives (FR-011-005)
-- [ ] T120 [US1] [P] In `apps/api/echoroo/api/v1/auth.py` delete the v1 mirrors of the above
-- [ ] T121 [US1] [P] In `apps/api/echoroo/services/auth.py` delete legacy `verify_email`, `request_password_reset`, `confirm_password_reset` functions and the `EmailVerificationService` import
-- [ ] T122 [US1] [P] In `apps/api/echoroo/api/web_v1/projects/_members.py` remove the `EmailVerificationService(db).mark_verified_from_same_email_invitation()` call-sites
-- [ ] T123 [US1] [P] In `apps/api/echoroo/services/user.py` remove the `email_verified_at = None` reset on email change (only the reset; the broader change-email flow is wired in Phase 9 US7)
-- [ ] T124 [US1] [P] In `apps/api/echoroo/services/setup.py` and `apps/api/echoroo/scripts/init_superuser.py` remove every reference to `email_verified_at` (FR-011-009)
-- [ ] T125 [US1] [P] In `apps/api/echoroo/services/two_factor_reset_service.py` remove the `send_2fa_reset_magic_link` call-site (the self-service magic-link path is dead in this spec)
-- [ ] T126 [US1] [P] In `apps/api/echoroo/schemas/web_v1/auth.py` remove `email_verification_required` field
-- [ ] T127 [US1] [P] In `apps/api/echoroo/schemas/setup.py` and `apps/api/echoroo/schemas/user.py` remove `email_verified_at` field; add `must_change_password` to User schema
-- [ ] T128 [US1] [P] In `apps/api/echoroo/core/auth_paths.py` remove `/verify-email`, `/password-reset`, `/2fa-reset/magic-link` from `PUBLIC_AUTH_PATHS`. Do NOT add `/auth/change-password` to PUBLIC_AUTH_PATHS (security review M7 — it's in the middleware allowlist instead, T070)
-- [ ] T129 [US1] [P] In `apps/api/echoroo/core/endpoint_allowlist.py` remove the 3 verify/resend entries (related to FR-011-005)
+- [x] T110 [US1] [P] Delete `apps/api/echoroo/services/email_verification_service.py` (FR-011-001..004)
+- [x] T111 [US1] [P] Delete `apps/api/echoroo/models/email_verification_token.py` (FR-011-002)
+- [x] T112 [US1] [P] Delete `apps/api/echoroo/models/password_reset_token.py` (FR-011-003)
+- [x] T113 [US1] [P] Delete `apps/api/echoroo/repositories/email_verification_token.py` (and `repositories/password_reset_token.py` if present)
+- [x] T114 [US1] [P] Delete `apps/api/echoroo/middleware/email_verification_enforcement.py` (FR-011-004) — the registration was already removed in T071
+- [x] T115 [US1] [P] Delete `apps/api/echoroo/workers/email_verification_dispatcher.py` (FR-011-010)
+- [x] T116 [US1] [P] Update `apps/api/echoroo/workers/celery_app.py` to remove the `email_verification_dispatcher` Celery include
+- [x] T117 [US1] In `apps/api/echoroo/models/__init__.py` remove re-exports of `EmailVerificationToken`, `PasswordResetToken`
+- [x] T118 [US1] In `apps/api/echoroo/models/user.py` remove `email_verified_at` field (FR-011-002)
+- [x] T119 [US1] [P] In `apps/api/echoroo/api/web_v1/auth.py` delete all `/verify-email*`, `/password-reset/*`, `/2fa-reset/magic-link*` route handlers and their rate-limit primitives (FR-011-005)
+- [x] T120 [US1] [P] In `apps/api/echoroo/api/v1/auth.py` delete the v1 mirrors of the above
+- [x] T121 [US1] [P] In `apps/api/echoroo/services/auth.py` delete legacy `verify_email`, `request_password_reset`, `confirm_password_reset` functions and the `EmailVerificationService` import
+- [x] T122 [US1] [P] In `apps/api/echoroo/api/web_v1/projects/_members.py` remove the `EmailVerificationService(db).mark_verified_from_same_email_invitation()` call-sites
+- [x] T123 [US1] [P] In `apps/api/echoroo/services/user.py` remove the `email_verified_at = None` reset on email change (only the reset; the broader change-email flow is wired in Phase 9 US7)
+- [x] T124 [US1] [P] In `apps/api/echoroo/services/setup.py` and `apps/api/echoroo/scripts/init_superuser.py` remove every reference to `email_verified_at` (FR-011-009)
+- [x] T125 [US1] [P] In `apps/api/echoroo/services/two_factor_reset_service.py` remove the `send_2fa_reset_magic_link` call-site (the self-service magic-link path is dead in this spec)
+- [x] T126 [US1] [P] In `apps/api/echoroo/schemas/web_v1/auth.py` remove `email_verification_required` field
+- [x] T127 [US1] [P] In `apps/api/echoroo/schemas/setup.py` and `apps/api/echoroo/schemas/user.py` remove `email_verified_at` field; add `must_change_password` to User schema
+- [x] T128 [US1] [P] In `apps/api/echoroo/core/auth_paths.py` remove `/verify-email`, `/password-reset`, `/2fa-reset/magic-link` from `PUBLIC_AUTH_PATHS`. Do NOT add `/auth/change-password` to PUBLIC_AUTH_PATHS (security review M7 — it's in the middleware allowlist instead, T070)
+- [x] T129 [US1] [P] In `apps/api/echoroo/core/endpoint_allowlist.py` remove the 3 verify/resend entries (related to FR-011-005)
 
 ### Frontend deletions
 

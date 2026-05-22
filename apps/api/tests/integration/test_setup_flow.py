@@ -155,35 +155,12 @@ class TestSetupFlow:
         _assert_no_store_headers(response)
         assert response.json()["detail"] == "Setup not available"
 
-    async def test_initial_superuser_has_email_verified_at_set(
-        self, client: AsyncClient, db_session: AsyncSession
-    ) -> None:
-        """Initial HTTP setup superuser starts with a verified email timestamp."""
-
-        lower_bound = datetime.now(UTC) - timedelta(seconds=60)
-
-        response = await client.post(
-            "/api/v1/setup/initialize",
-            json={
-                "email": "verified-admin@example.com",
-                "password": "SuperSecurePassword123!",
-            },
-        )
-
-        upper_bound = datetime.now(UTC) + timedelta(seconds=60)
-        assert response.status_code == 201
-        _assert_no_store_headers(response)
-
-        result = await db_session.execute(
-            select(User.email_verified_at).where(
-                User.email == "verified-admin@example.com"
-            )
-        )
-        email_verified_at = result.scalar_one()
-        assert email_verified_at is not None
-        assert email_verified_at.tzinfo is not None
-        assert email_verified_at.utcoffset() is not None
-        assert lower_bound <= email_verified_at <= upper_bound
+    # spec/011 Step 10 (FR-011-002) — the
+    # ``test_initial_superuser_has_email_verified_at_set`` case was
+    # deleted alongside the dropped ``users.email_verified_at`` column.
+    # The setup wizard no longer sets a verification timestamp because
+    # Echoroo no longer treats ``users.email`` as verifiable in a
+    # zero-email deployment (FR-011-009).
 
     async def test_setup_with_existing_user(
         self, client: AsyncClient, db_session: AsyncSession

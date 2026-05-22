@@ -133,18 +133,17 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS: int = 3600
 
     # Trusted devices (spec/010).
-    # spec/011 Step 3 removed ``EMAIL_VERIFICATION_ENFORCEMENT_ENABLED``;
-    # the legacy ``EmailVerificationEnforcementMiddleware`` it gated is
-    # no longer registered (replaced by ``ForcedPasswordChangeMiddleware``
-    # — see ``main.py`` and ``middleware/forced_password_change.py``).
-    # ``EMAIL_VERIFICATION_TOKEN_TTL_SECONDS`` remains below until Step 10
-    # deletes ``services/email_verification_service.py``.
+    # spec/011 §FR-011-006 / Step 10 (carry-over #4) — the
+    # ``EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`` (Step 3),
+    # ``EMAIL_VERIFICATION_TOKEN_TTL_SECONDS``, and
+    # ``EMAIL_VERIFICATION_RESEND_ACTIVE_TOKEN_CAP`` settings were
+    # removed alongside the deleted email-verification subsystem.
+    # ``ForcedPasswordChangeMiddleware`` (registered in ``main.py``)
+    # is the replacement gate.
     TRUSTED_DEVICE_REGISTRATION_ENABLED: bool = False
     TRUSTED_DEVICE_BYPASS_ENABLED: bool = False
     TRUSTED_DEVICE_COOKIE_NAME: str = "echoroo_trusted_device"
     TRUSTED_DEVICE_COOKIE_TTL_SECONDS: int = 30 * 24 * 3600
-    EMAIL_VERIFICATION_TOKEN_TTL_SECONDS: int = 24 * 3600
-    EMAIL_VERIFICATION_RESEND_ACTIVE_TOKEN_CAP: int = 1
 
     # CAPTCHA (Cloudflare Turnstile)
     TURNSTILE_SECRET_KEY: str = Field(

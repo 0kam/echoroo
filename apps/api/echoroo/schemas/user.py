@@ -7,7 +7,14 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class UserResponse(BaseModel):
-    """User profile response schema."""
+    """User profile response schema.
+
+    spec/011 §FR-011-002 / FR-011-203 / Step 10 (T127):
+    ``email_verified_at`` was removed alongside the dropped column;
+    ``must_change_password`` was added so the BFF can surface the
+    ForcedPasswordChangeMiddleware gate state to the SPA without an
+    extra round-trip.
+    """
 
     id: UUID
     email: str
@@ -15,8 +22,8 @@ class UserResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_login_at: datetime | None
-    email_verified_at: datetime | None
     two_factor_enabled: bool
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 

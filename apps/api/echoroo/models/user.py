@@ -60,10 +60,12 @@ class User(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
-    email_verified_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
-    )
+    # NOTE: ``email_verified_at`` ORM mapping was removed in spec/011 Step 10
+    # (T118). The physical column drop happens in migration 0022 (Step 11);
+    # after T118 the application stops reading/writing the column, so the
+    # destructive migration can run on any single-host deploy without a code
+    # rollback path. See ``specs/011-zero-email-deployment/spec.md`` §
+    # FR-011-002 + NFR-011-002.
     # spec/011 §FR-011-203 / FR-011-204 — forced password change gate.
     # ``must_change_password`` is read by ``ForcedPasswordChangeMiddleware``
     # on every authenticated request; ``temp_password_expires_at`` bounds

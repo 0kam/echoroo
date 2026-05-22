@@ -103,7 +103,6 @@ from echoroo.schemas.project import (
     ProjectMemberUpdateRequest,
 )
 from echoroo.services import invitation_service
-from echoroo.services.email_verification_service import EmailVerificationService
 from echoroo.services.invitation_service import (
     InvitationConflictError,
     InvitationCreateOutcome,
@@ -1407,11 +1406,11 @@ async def accept_project_invitation(
     ):
         response_payload["trusted_user_id"] = str(outcome.trusted_user.id)
 
-    await EmailVerificationService(db).mark_verified_from_same_email_invitation(
-        user=current_user,
-        invitation_email=invitation.email,
-        accepted_at=invitation.accepted_at or datetime.now(UTC),
-    )
+    # spec/011 §FR-011-002 / Step 10 (T122) — the
+    # ``EmailVerificationService.mark_verified_from_same_email_invitation``
+    # call-site is removed. Echoroo no longer tracks an
+    # ``email_verified_at`` column on ``users`` (FR-011-002); invitation
+    # acceptance therefore no longer flips a verification flag.
     await db.commit()
     await invitation_service.trigger_post_commit_side_effects(outcome)
     return response_payload

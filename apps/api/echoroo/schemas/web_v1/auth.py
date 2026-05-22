@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import unicodedata
-from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -24,50 +23,25 @@ class RegisterRequest(BaseModel):
 
 
 class RegisterResponse(BaseModel):
-    """Registration response; first login must continue to 2FA setup."""
+    """Registration response; first login must continue to 2FA setup.
+
+    spec/011 §FR-011-002 / FR-011-005 / Step 10 (T126): the
+    ``email_verified_at`` + ``email_verification_required`` fields were
+    removed alongside the email-verification subsystem. Frontend
+    consumers branch on ``two_factor_setup_required`` only.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     user_id: UUID
     email: str
-    email_verified_at: datetime | None = None
-    email_verification_required: bool = True
     two_factor_setup_required: bool = True
 
 
-class EmailVerifyRequest(BaseModel):
-    """Request body for ``POST /web-api/v1/auth/verify-email``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    token: str
-
-
-class EmailVerifyResponse(BaseModel):
-    """Response body after an email verification token is consumed."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    user_id: UUID
-    email: str
-    email_verified_at: datetime
-    email_verification_required: bool = False
-
-
-class EmailVerificationResendRequest(BaseModel):
-    """Request body for ``POST /web-api/v1/auth/verify-email/resend``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    email: str
-
-
-class EmailVerificationResendResponse(BaseModel):
-    """Generic anti-enumeration response for email verification resend."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    accepted: bool = True
+# spec/011 Step 10 (T126) — ``EmailVerifyRequest`` / ``EmailVerifyResponse``
+# / ``EmailVerificationResendRequest`` / ``EmailVerificationResendResponse``
+# schemas were removed alongside the deleted ``/verify-email*`` endpoints
+# (FR-011-005).
 
 
 class LoginRequest(BaseModel):
@@ -270,18 +244,7 @@ class WebAuthnChallengeCompleteResponse(BaseModel):
     step_up_scope: str
 
 
-class PasswordResetRequest(BaseModel):
-    """Request body for beginning password reset."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    email: str
-
-
-class PasswordResetConfirmRequest(BaseModel):
-    """Request body for confirming password reset with a one-time token."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    token: str
-    new_password: str
+# spec/011 §FR-011-005 / Step 10 (T126) — ``PasswordResetRequest`` and
+# ``PasswordResetConfirmRequest`` were removed alongside the deleted
+# self-service ``/password-reset/{request,confirm}`` endpoints. Password
+# recovery is now admin-mediated (``services/admin_password_reset.py``).

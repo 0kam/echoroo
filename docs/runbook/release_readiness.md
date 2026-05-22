@@ -95,43 +95,28 @@ window opens.
 - Wire via `S3_BUCKET`, `S3_PUBLIC_ENDPOINT_URL` (presigned URL
   base), `S3_AUDIT_BUCKET`.
 
-### 5. Email — Resend
+### 5. Email — removed (spec/011 zero-email deployment)
 
-- Resend API key with the production domain verified.
-- `RESEND_API_KEY` in deployment env.
-- The `services/email.py` wrapper logs failures but does NOT
-  re-raise — verify a sample reset-password / 2FA-reset email
-  reaches the inbox before opening signups.
-- Email verification uses the transactional outbox event type
-  `auth.email_verification.requested`; confirm the Celery worker imports
-  `echoroo.workers.email_verification_dispatcher` before enabling
-  signup volume.
-- Confirm SPF, DKIM, and DMARC are valid for the production sender
-  domain and that provider bounce / complaint webhooks or dashboards
-  are visible to on-call.
-- Before enabling `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`, run a
-  staging registration → verification smoke test and confirm zero
-  `dead_letter` rows for `auth.email_verification.requested`.
+Echoroo no longer ships an outbound-email integration. Self-service
+account recovery is replaced by admin-mediated flows; collaborator
+onboarding uses invitation URLs handed off out-of-band by the issuing
+admin. No transactional-email infrastructure is required for
+production deployment (see `specs/011-zero-email-deployment/spec.md`).
 
-### 5a. Email verification and trusted-device rollout gates
+### 5a. Trusted-device rollout gates
 
 These flags default off and should be enabled in order:
 
 1. Deploy schema, services, workers, and UI with
-   `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED=false`,
-   `TRUSTED_DEVICE_REGISTRATION_ENABLED=false`, and
+   `TRUSTED_DEVICE_REGISTRATION_ENABLED=false` and
    `TRUSTED_DEVICE_BYPASS_ENABLED=false`.
-2. Validate token issue, resend, and delivery monitoring before turning
-   on email enforcement.
-3. Enable trusted-device registration only after cookie attributes,
+2. Enable trusted-device registration only after cookie attributes,
    hash-only storage, list/revoke, and five-device cap checks pass.
-4. Enable trusted-device bypass only after admin no-bypass, revocation,
+3. Enable trusted-device bypass only after admin no-bypass, revocation,
    and high-risk step-up checks pass.
 
 Operational references:
-[docs/runbook/email_verification.md](email_verification.md),
-[docs/runbook/trusted_devices.md](trusted_devices.md), and
-[specs/010-email-verification-trusted-devices/rollout-checklist.md](../../specs/010-email-verification-trusted-devices/rollout-checklist.md).
+[docs/runbook/trusted_devices.md](trusted_devices.md).
 
 ### 6. Turnstile (Cloudflare CAPTCHA)
 

@@ -26,7 +26,6 @@ from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection import Detection
 from echoroo.models.detection_run import DetectionRun
-from echoroo.models.email_verification_token import EmailVerificationToken
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
@@ -70,7 +69,6 @@ from echoroo.models.evaluation import (
 from echoroo.models.iucn_sync_attempt import IucnSyncAttempt
 from echoroo.models.license import License
 from echoroo.models.note import Note
-from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.project import Project, ProjectInvitation, ProjectLicenseHistory, ProjectMember
 from echoroo.models.project_taxon_override import ProjectTaxonSensitivityOverride
 from echoroo.models.project_trusted_user import ProjectTrustedUser
@@ -116,8 +114,6 @@ __all__ = [
     "ProjectMember",
     "ProjectTaxonSensitivityOverride",
     "ProjectTrustedUser",
-    "EmailVerificationToken",
-    "PasswordResetToken",
     "Recorder",
     "Recording",
     "Site",

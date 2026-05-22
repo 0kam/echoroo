@@ -152,9 +152,11 @@ class ConfirmIdentityRedeemResponse(BaseModel):
     description=(
         "Always returns 202 Accepted to prevent account enumeration. "
         "When the email matches a real account, a short-lived (30 min) "
-        "magic link is dispatched via Resend. The user clicks the link, "
-        "the redeem endpoint mints a confirmation token, and the support "
-        "agent pastes it into POST /admin/users/{userId}/reset-2fa."
+        "magic link is persisted server-side (spec/011 §FR-011-005 "
+        "removed the outbound-email dispatch). The user receives the "
+        "link out-of-band, clicks it, the redeem endpoint mints a "
+        "confirmation token, and the support agent pastes it into "
+        "POST /admin/users/{userId}/reset-2fa."
     ),
 )
 async def request_confirm_identity(

@@ -87,19 +87,9 @@ app.conf.include = [
     # at row-claim time (research.md §6, FR-104).
     "echoroo.workers.outbox_processor",
     "echoroo.workers.login_notification_dispatcher",
-    # spec/011 Step 2: ``email_verification_dispatcher`` stays
-    # registered so the outbox row that ``EmailVerificationService.
-    # issue_verification_token`` enqueues (event_type
-    # ``auth.email_verification.requested``) still resolves to a
-    # handler. The ``send_verification_email`` helper in
-    # ``services/email.py`` is now a silent no-op stub (see its
-    # docstring); the dispatcher therefore claims the row, calls the
-    # stub, returns ``None`` and the outbox row is marked complete —
-    # no retry storm, no dead-letter noise. Producer-side (the
-    # ``issue_verification_token`` enqueue + this dispatcher file) is
-    # removed in Step 10 (US1) when the email-verification flow is
-    # deleted wholesale.
-    "echoroo.workers.email_verification_dispatcher",
+    # spec/011 Step 10 (T116): the ``email_verification_dispatcher``
+    # include was removed alongside the deleted dispatcher module +
+    # producer service (FR-011-010).
     # Trusted overlay lifecycle workers (Phase 10 / FR-044, FR-045).
     # ``trusted_long_lived_invalidation`` is intentionally NOT listed here
     # — it is a coroutine started by the FastAPI lifespan, not a Celery

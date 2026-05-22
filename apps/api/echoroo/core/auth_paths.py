@@ -20,13 +20,16 @@ Decision matrix
 * ``/web-api/v1/auth/2fa/webauthn/challenge`` — pre-session hardware-key challenge.
 * ``/web-api/v1/auth/2fa/verify``      — pre-session 2FA confirmation.
 * ``/web-api/v1/auth/refresh``         — refresh-token rotation.
-* ``/web-api/v1/auth/forgot-password`` — pre-session password reset.
-* ``/web-api/v1/auth/reset-password``  — pre-session password reset.
-* ``/web-api/v1/auth/password-reset/request`` — pre-session password reset.
-* ``/web-api/v1/auth/password-reset/confirm`` — pre-session password reset.
-* ``/web-api/v1/auth/verify-email``    — pre-session email verification (token from registration email).
-* ``/web-api/v1/auth/verify-email/resend`` — pre-session email verification resend.
 * ``/web-api/v1/auth/logout``          — idempotent session termination.
+
+spec/011 Step 10 (T128) — the legacy ``/forgot-password`` /
+``/reset-password`` / ``/password-reset/{request,confirm}`` /
+``/verify-email{,resend}`` entries were removed because the underlying
+endpoints were deleted in T119 / T120 (FR-011-005). Note: the new
+``/web-api/v1/auth/change-password`` endpoint MUST NOT be added to
+``PUBLIC_AUTH_PATHS`` — it requires a live session + CSRF token
+(security review M7) and is allowlisted only inside the
+``ForcedPasswordChangeMiddleware`` request-bypass list.
 
 Logout CSRF / auth exemption
 ----------------------------
@@ -81,12 +84,6 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/2fa/webauthn/challenge",
     "/web-api/v1/auth/2fa/verify",
     "/web-api/v1/auth/refresh",
-    "/web-api/v1/auth/forgot-password",
-    "/web-api/v1/auth/reset-password",
-    "/web-api/v1/auth/password-reset/request",
-    "/web-api/v1/auth/password-reset/confirm",
-    "/web-api/v1/auth/verify-email",
-    "/web-api/v1/auth/verify-email/resend",
     "/web-api/v1/auth/confirm-identity-for-2fa-reset",
     "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
     "/web-api/v1/auth/logout",

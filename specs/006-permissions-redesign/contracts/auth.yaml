@@ -194,86 +194,14 @@ paths:
         "401":
           description: refresh token 再利用検知で family 全 revoke（FR-055 / FR-071）
 
-  /auth/password-reset/request:
-    post:
-      summary: パスワードリセットリクエスト
-      operationId: requestPasswordReset
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [email]
-              properties:
-                email:
-                  type: string
-                  format: email
-      responses:
-        "204":
-          description: メール送信済み（enumeration 対策で存在しない email でも同じレスポンス、FR-055 類似）
-
-  /auth/password-reset/confirm:
-    post:
-      summary: パスワードリセット確定
-      operationId: confirmPasswordReset
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [token, new_password]
-              properties:
-                token:
-                  type: string
-                new_password:
-                  type: string
-      responses:
-        "204":
-          description: パスワード変更、security_stamp 更新、全 refresh token 失効（FR-055）
-
-  /auth/verify-email:
-    post:
-      summary: メールアドレス検証
-      operationId: verifyEmail
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VerifyEmailRequest'
-      responses:
-        "200":
-          description: メールアドレス検証完了
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/VerifyEmailResponse'
-        "400":
-          description: token 不正、期限切れ、使用済み、superseded、または purpose/email 不一致
-
-  /auth/verify-email/resend:
-    post:
-      summary: メール検証リンク再送
-      operationId: resendVerificationEmail
-      security: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ResendVerificationEmailRequest'
-      responses:
-        "202":
-          description: 受付完了。enumeration 対策で account 存在有無を開示しない
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MessageResponse'
-        "429":
-          description: 再送レート制限
+  # spec/011 §FR-011-005 (NFR-011-009): the legacy
+  # ``/auth/password-reset/{request,confirm}`` and ``/auth/verify-email{,resend}``
+  # path-items previously declared here were removed alongside the
+  # deleted route handlers (Step 10 / T119 / T120). spec/006 is
+  # formally superseded by spec/011 for self-service password
+  # recovery + email verification; the admin-mediated reset flow
+  # lives in ``specs/011-zero-email-deployment/contracts/
+  # admin-password-reset.yaml``.
 
 components:
   securitySchemes:
@@ -494,32 +422,10 @@ components:
         trusted_device_created:
           type: boolean
 
-    VerifyEmailRequest:
-      type: object
-      required: [token]
-      additionalProperties: false
-      properties:
-        token:
-          type: string
-          pattern: "^[A-Za-z0-9_-]{43}$"
-
-    VerifyEmailResponse:
-      type: object
-      required: [email_verified_at]
-      additionalProperties: false
-      properties:
-        email_verified_at:
-          type: string
-          format: date-time
-
-    ResendVerificationEmailRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        email:
-          type: string
-          format: email
-          description: pre-session resend 用。authenticated resend は current user を使う。
+    # spec/011 §FR-011-005 (NFR-011-009): ``VerifyEmailRequest`` /
+    # ``VerifyEmailResponse`` / ``ResendVerificationEmailRequest``
+    # schemas were removed alongside the deleted ``/auth/verify-email*``
+    # path-items above.
 
     MessageResponse:
       type: object

@@ -1,48 +1,28 @@
-"""Email helper stubs — spec/011 zero-email deployment (Step 2 + Step 4 reduction).
+"""Email helper stubs — spec/011 zero-email deployment.
 
 This module historically wrapped the Resend SDK and shipped transactional
-email for verification, password reset, login notifications, etc. As part
-of spec/011 (zero-email deployment) the outbound-email surface is being
-removed in favour of in-app banners (FR-011-008, FR-011-301..310).
+email for verification, password reset, login notifications, etc. spec/011
+(zero-email deployment) removes the outbound-email surface in favour of
+in-app banners (FR-011-008, FR-011-301..310).
 
-Step 2 of the Implementation Phasing performed a conservative reduction
-that left every helper compiling under a **silent-success** contract
-(return ``None``) so callers + outbox dispatchers could continue to mark
-work complete while the upstream producers awaited deletion. Step 4
-(T403) goes one step further by deleting the
-``send_2fa_reset_magic_link`` helper outright — its single caller
-(``services.two_factor_reset_service.issue_magic_link``) no longer
-invokes any email helper. The matching ``EmailDeliverySuppressed``
-exception type is gone with it.
+After Step 10 the module is intentionally retained per FR-011-008 ("The
+module name may be retained or renamed to ``services/user_event.py``")
+because:
 
-After Step 4 there is exactly **one** stub flavour:
-
-* **Silent success** (return ``None``). Used by callers that have no
-  rollback path tied to email delivery. The outbox dispatcher treats
-  a returning handler as "success" and marks the outbox row complete,
-  so producers like
-  :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
-  do not accumulate dead-letter rows while the producer side awaits
-  deletion in Step 10. Active members of this flavour:
-  ``send_login_notification``, ``send_email_change_notification``,
+* ``workers/trusted_expiry_dispatcher.py`` imports
+  ``_safe_recipient_hash`` to keep recipient strings out of structured
+  log lines.
+* Phase 9 US7 (T610-T614) will rewrite the remaining silent-success
+  stubs (``send_login_notification``, ``send_email_change_notification``,
   ``send_2fa_reset_dispatched``, ``send_api_key_revoke_email``,
-  ``send_api_key_scope_degrade_email``, ``send_verification_email``,
-  ``send_password_reset_email``.
+  ``send_api_key_scope_degrade_email``) to enqueue audit-backed in-app
+  banner events via ``services.user_banner.enqueue_event``.
 
-The small text-handling helpers ``_safe_recipient_hash``,
-``_sanitise_email_field``, and ``EmailHeaderInjectionError`` are
-retained because they are imported from outside this module
-(``workers/trusted_expiry_dispatcher.py`` reaches for
-``_safe_recipient_hash``; the coverage-uplift test fixture
-``tests/unit/services/test_email_service_coverage_uplift.py`` imports
-all three).
-
-Full rewrite of the silent-success stubs to the
-``services.user_banner.enqueue_event`` surface lands in Phase 9 US7
-(``tasks.md`` T610-T614). Until then, those stubs are intentionally
-inert so a misconfigured deploy that still tries to dispatch a login
-notification (or similar) silently no-ops rather than 5xx-ing on a
-missing ``RESEND_API_KEY`` or a deleted helper.
+The previously-included ``send_verification_email`` /
+``send_password_reset_email`` stubs were removed in Step 10 alongside
+the wholesale deletion of the email-verification + self-service
+password-reset producers; the dispatcher / outbox event-types they
+serviced are dead code in this commit.
 """
 
 from __future__ import annotations
@@ -171,78 +151,6 @@ async def send_email_change_notification(to: str) -> None:
         "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
         "in Phase 9 US7 (recipient_hash=%s)",
         recipient_hash,
-    )
-
-
-async def send_verification_email(to: str, token: str) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The producer side
-    :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
-    still enqueues an ``auth.email_verification.requested`` outbox row,
-    which the (still-registered) outbox dispatcher
-    :mod:`workers.email_verification_dispatcher` will hand back to
-    this helper. Returning ``None`` lets the dispatcher mark the
-    outbox row complete so we do not accumulate dead-letter retries
-    while the email-verification subsystem awaits wholesale removal.
-
-    Step 10 (US1) deletes the producer + dispatcher + this helper as
-    one PR. Until then this is a silent no-op: a single warning log
-    line is emitted so operators can spot any environment that is
-    still configured to issue verification tokens (the verification
-    feature flag should be off in every spec/011-deployed env).
-
-    The raw ``token`` is **never** echoed (a verification token in
-    logs is an account-takeover vector); only its length surfaces in
-    the warning record alongside the hashed recipient surrogate.
-
-    Args:
-        to: Recipient email address (unused beyond the hashed log line).
-        token: Plaintext verification token (length-logged only).
-    """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_verification_email stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Email is silently suppressed; producer side will be "
-        "removed in Step 10 (US1). "
-        "(recipient_hash=%s, token_len=%d)",
-        recipient_hash,
-        len(token) if token else 0,
-    )
-
-
-async def send_password_reset_email(to: str, token: str) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The producer is :func:`api.web_v1.auth.request_password_reset`
-    (line ~1078) which enqueues ``event_type="password_reset_email"``
-    into the outbox. No dispatcher is registered for that event in
-    the current tree (pre-existing dead code — confirmed via
-    ``grep "password_reset_email" apps/api/echoroo``), so this helper
-    is not reached by any production path today. The stub exists
-    purely as defence-in-depth: if a future change wires a dispatcher
-    (or if the producer is invoked via a non-outbox path), the call
-    will silently no-op rather than crash with ``AttributeError`` /
-    ``NotImplementedError``.
-
-    Step 10 (US1) deletes the producer + this helper as one PR.
-
-    The raw ``token`` is **never** echoed (a password-reset token in
-    logs is an account-takeover vector); only its length surfaces in
-    the warning record alongside the hashed recipient surrogate.
-
-    Args:
-        to: Recipient email address (unused beyond the hashed log line).
-        token: Plaintext password-reset token (length-logged only).
-    """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_password_reset_email stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Email is silently suppressed; producer side will be "
-        "removed in Step 10 (US1). "
-        "(recipient_hash=%s, token_len=%d)",
-        recipient_hash,
-        len(token) if token else 0,
     )
 
 
