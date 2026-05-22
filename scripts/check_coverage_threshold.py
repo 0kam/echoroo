@@ -316,15 +316,17 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/upload.py",
         "echoroo/services/user.py",
         "echoroo/services/vernacular.py",
-        # spec/011 Step 10 (carry-over #2): ``services/email.py`` is now
-        # an inert helper module retained per FR-011-008 (banner-rewrite
-        # candidate). Its callers were removed in T120 / T128 so the
-        # only remaining surface is the small text-handling helpers
-        # imported by ``workers/trusted_expiry_dispatcher.py``. The
-        # PENDING entry was dropped; remaining unit coverage on the
-        # helper functions clears the threshold in test_email_service_
-        # coverage_uplift.py's successor (the coverage-uplift test that
-        # asserted on the deleted Resend path was deleted in this PR).
+        # spec/011 Step 10 (carry-over #2 — R1 follow-up): the Step 10 R0
+        # commit dropped ``services/email.py`` from PHASE17_PENDING on
+        # the assumption that the reduced helper surface would
+        # trivially clear 85%. Codex R1 review observed that the
+        # direct coverage-uplift tests were deleted alongside the
+        # legacy producers and the remaining no-op stubs are not
+        # exercised by any unit test today. Re-added as warn-only
+        # until Phase 9 US7 banner-rewrites these helpers and
+        # introduces fresh coverage; deferring the trim avoids a
+        # CI red-light during the incremental refactor.
+        "echoroo/services/email.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",

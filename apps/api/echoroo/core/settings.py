@@ -125,8 +125,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_LOGIN_WINDOW_SECONDS: int = 60
     RATE_LIMIT_REGISTER_ATTEMPTS: int = 3
     RATE_LIMIT_REGISTER_WINDOW_SECONDS: int = 3600
-    RATE_LIMIT_PASSWORD_RESET_ATTEMPTS: int = 3
-    RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS: int = 3600
+    # spec/011 Step 10 (T128/T129) — ``RATE_LIMIT_PASSWORD_RESET_*``
+    # settings were removed alongside the deleted self-service
+    # ``/auth/password-reset/*`` endpoints (T119) and the
+    # ``password_reset_rate_limiter`` primitive that consumed them.
     RATE_LIMIT_UPLOAD_SESSION_CREATE_ATTEMPTS: int = 10
     RATE_LIMIT_UPLOAD_SESSION_CREATE_WINDOW_SECONDS: int = 3600
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS: int = 20

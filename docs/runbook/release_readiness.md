@@ -157,10 +157,11 @@ Operational references:
   - 2FA reset queue stalled (> 24h dispatch delay = the runbook in
     `apps/api/echoroo/services/two_factor_reset_service.py` is
     designed around this SLA)
-  - verification-email outbox `dead_letter` count above zero
-  - verification-email provider bounce or delivery-failure rate above
-    the release threshold
   - trusted-device bypass rejection spike by normalized reason
+  <!-- spec/011 Step 10 (zero-email deployment): the legacy
+       verification-email outbox + provider-bounce alerts were removed
+       alongside the deleted email subsystem (FR-011-001..010). -->
+
 
 ### 10. Bootstrap
 

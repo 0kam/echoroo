@@ -15,6 +15,24 @@ deployment/spec.md`` §NFR-011-001:
   send_2fa_reset_magic_link|email_verified_at|EMAIL_VERIFICATION|
   RESEND_API_KEY|EMAIL_FROM
 
+Step 10 R1 extension — URL-path residue
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Codex R1 review found that the spec's identifier-based regex did not
+catch runtime path-string residue (``"/web-api/v1/auth/password-reset/
+confirm"``) that survived T128 cleanup inside
+``two_factor_enforcement.py``. We extend the guard with the three URL
+fragments owned by the deleted surface:
+
+* ``/verify-email``
+* ``/password-reset``
+* ``/2fa-reset/magic-link``
+
+The spec regex itself is unchanged — this extension lives in the
+guard test only and is documented as an R1 expansion. The extra
+patterns sit behind the SAME ``re.IGNORECASE`` flag and the SAME
+comment-stripping pipeline so existing exclusions (this file,
+historical migrations, etc.) continue to apply.
+
 Bare ``smtp`` (lowercase) is intentionally NOT in the pattern because
 ``email_validator``'s ``allow_smtputf8=True`` keyword (RFC 6531 charset
 support) legitimately appears in user-input normalisation paths.
@@ -36,11 +54,18 @@ from pathlib import Path
 import pytest
 
 # Grep pattern — keep byte-for-byte aligned with spec §NFR-011-001.
+#
+# Step 10 R1 (2026-05-23): the trailing alternation block beginning
+# with ``/verify-email`` is the R1 URL-path extension documented in
+# the module docstring. The literal forward slash prefix is what
+# distinguishes it from the spec regex's identifier alternatives.
 _EMAIL_REGEX = re.compile(
     r"resend|mailpit|aiosmtplib|smtplib|SMTP_HOST|SMTP_PORT|SMTP_USER|"
     r"SMTP_PASSWORD|send_verification_email|send_password_reset_email|"
     r"send_2fa_reset_magic_link|email_verified_at|EMAIL_VERIFICATION|"
-    r"RESEND_API_KEY|EMAIL_FROM",
+    r"RESEND_API_KEY|EMAIL_FROM|"
+    # R1 extension — URL path residue (see module docstring).
+    r"/verify-email|/password-reset|/2fa-reset/magic-link",
     re.IGNORECASE,
 )
 

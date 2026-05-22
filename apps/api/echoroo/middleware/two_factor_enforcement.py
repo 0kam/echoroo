@@ -114,8 +114,12 @@ already covered by the public-allowlist short-circuit. The middleware
 no longer references it directly because doing so would be dead code.
 """
 
-PASSWORD_RESET_CONFIRM_PATH: Final[str] = "/web-api/v1/auth/password-reset/confirm"
-PASSWORD_RESET_CONFIRM_CACHE_CONTROL: Final[str] = "no-store, max-age=0"
+# spec/011 Step 10 (T128/T129) — the legacy ``PASSWORD_RESET_CONFIRM_PATH``
+# constant + ``Cache-Control: no-store`` response-polish branch were
+# removed alongside the deleted self-service ``/auth/password-reset/*``
+# endpoints (T119). Cache headers for the admin-mediated replacement
+# flow live with the admin-reset router itself; this middleware no
+# longer needs to recognise the deleted path.
 
 ENFORCEMENT_AUDIT_ACTION: Final[str] = "auth.two_factor_enforcement_blocked"
 
@@ -435,10 +439,15 @@ async def _call_next_with_response_polish(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
-    response = await call_next(request)
-    if request.url.path == PASSWORD_RESET_CONFIRM_PATH:
-        response.headers["Cache-Control"] = PASSWORD_RESET_CONFIRM_CACHE_CONTROL
-    return response
+    # spec/011 Step 10 (T128/T129) — the previous response-polish branch
+    # injected ``Cache-Control: no-store`` for the deleted
+    # ``/auth/password-reset/confirm`` path; with the endpoint gone the
+    # branch was unreachable and has been removed. Pass-through is now
+    # the entire body of the helper, but the helper itself is preserved
+    # so the existing call sites in :class:`TwoFactorEnforcementMiddleware`
+    # keep their wrapping shape and future header-polish needs have a
+    # single, central insertion point.
+    return await call_next(request)
 
 
 async def _default_user_resolver(user_id: UUID) -> User | None:
@@ -496,8 +505,6 @@ __all__ = [
     "DEFAULT_ENFORCEMENT_PREFIX",
     "DEFAULT_ENFORCEMENT_PREFIXES",
     "ENFORCEMENT_AUDIT_ACTION",
-    "PASSWORD_RESET_CONFIRM_CACHE_CONTROL",
-    "PASSWORD_RESET_CONFIRM_PATH",
     "TWO_FACTOR_SETUP_PATH",
     "TwoFactorEnforcementMiddleware",
 ]

@@ -89,26 +89,12 @@ def register_rate_limiter() -> Any:
     )
 
 
-def password_reset_rate_limiter() -> Any:
-    """Rate limiter for password reset endpoint.
-
-    Returns:
-        Rate limiter dependency (3 attempts per hour)
-
-    Example:
-        ```python
-        @router.post("/auth/password-reset")
-        async def password_reset(
-            request: Request,
-            _: None = Depends(password_reset_rate_limiter())
-        ):
-            pass
-        ```
-    """
-    return RateLimiterDependency(
-        times=settings.RATE_LIMIT_PASSWORD_RESET_ATTEMPTS,
-        seconds=settings.RATE_LIMIT_PASSWORD_RESET_WINDOW_SECONDS,
-    )
+# spec/011 Step 10 (T128/T129) — ``password_reset_rate_limiter`` was
+# removed alongside the deleted self-service ``/auth/password-reset/*``
+# endpoints (T119). The admin-mediated replacement
+# (``services/admin_password_reset.py``) runs behind the admin step-up
+# gate and does not need a separate per-IP limiter; its abuse surface
+# is bounded by the operator allowlist + audit chain.
 
 
 def upload_session_create_rate_limiter() -> Any:

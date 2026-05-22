@@ -244,7 +244,11 @@ components:
 
     RegisterResponse:
       type: object
-      required: [user_id, email, email_verified_at, email_verification_required, two_factor_setup_required]
+      # spec/011 Step 10 (T126) — ``email_verified_at`` and
+      # ``email_verification_required`` were removed alongside the
+      # deleted email-verification subsystem; the live RegisterResponse
+      # carries only the surviving fields below.
+      required: [user_id, email, two_factor_setup_required]
       additionalProperties: false
       properties:
         user_id:
@@ -253,12 +257,6 @@ components:
         email:
           type: string
           format: email
-        email_verified_at:
-          type: string
-          format: date-time
-          nullable: true
-        email_verification_required:
-          type: boolean
         two_factor_setup_required:
           type: boolean
 
