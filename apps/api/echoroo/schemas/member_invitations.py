@@ -15,11 +15,12 @@ malformed payloads before they reach the service layer.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
+from echoroo.core.operator_pii_detector import reject_if_pii
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
@@ -128,7 +129,152 @@ class ProjectInvitationListResponse(BaseModel):
     items: list[ProjectInvitationListItem]
 
 
+# ---------------------------------------------------------------------------
+# spec/011 Step 8 (T260..T264) — Bulk invitation request / per-row result
+# ---------------------------------------------------------------------------
+
+
+BulkInvitationRowStatus = Literal[
+    "issued",
+    "duplicate_pending",
+    "rate_limited",
+    "internal_error",
+]
+"""Per-row outcome enum surfaced in :class:`BulkInvitationResultItem.status`.
+
+Distinct from the contract YAML's narrower
+``[issued | duplicate_pending | rate_limited | error]`` set: the live shape
+uses ``internal_error`` so an operator scanning the response can tell a
+malformed-input cause from a per-row infra fault. Both shapes are subset-
+asserted by ``tests/contract/test_openapi_diff.py`` (FR-011-113).
+"""
+
+
+class BulkInvitationRequest(BaseModel):
+    """``POST /projects/{project_id}/invitations/bulk`` body (FR-011-110).
+
+    Per FR-011-110 the operator submits a single role + up to 50 emails;
+    the per-row outcome rides on the response array. ``emails`` is enforced
+    at the Pydantic layer (``min_length=1``, ``max_length=50``) so malformed
+    sizes are rejected with HTTP 422 before any SAVEPOINT loop runs.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: ProjectMemberInvitationRole = Field(
+        ...,
+        description="Single role applied to every issued invitation (FR-011-110).",
+    )
+    emails: list[EmailStr] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        description=(
+            "Recipient list (NFKC + casefolded before storage, FR-011-111). "
+            "Maximum 50 entries (FR-011-115). All-or-nothing validation rejects "
+            "the entire request on a single malformed email OR an in-list "
+            "duplicate (FR-011-111)."
+        ),
+    )
+
+
+class BulkInvitationResultItem(BaseModel):
+    """One per-row outcome from :class:`BulkInvitationRequest` (FR-011-113).
+
+    ``invitation_url`` and ``invitation_id`` are populated ONLY for rows
+    whose ``status='issued'``. ``error_message`` is populated for the
+    ``rate_limited`` and ``internal_error`` rows so the operator can
+    surface a contextual reason without leaking row-internal stack traces.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr = Field(
+        ...,
+        description="Original submission email (NOT canonicalised — operator-readable).",
+    )
+    status: BulkInvitationRowStatus = Field(
+        ...,
+        description="Per-row outcome discriminator (FR-011-113).",
+    )
+    invitation_id: UUID | None = Field(
+        default=None,
+        description="Issued invitation id; populated only when ``status='issued'``.",
+    )
+    invitation_url: str | None = Field(
+        default=None,
+        description=(
+            "One-shot signed envelope (spec/011 NFR-011-010); populated only "
+            "when ``status='issued'``. MUST NOT appear in access logs or "
+            "telemetry (FR-011-102)."
+        ),
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="Invitation expiry; populated only when ``status='issued'``.",
+    )
+    error_message: str | None = Field(
+        default=None,
+        description=(
+            "Short human-readable reason for non-issued rows. Never carries "
+            "stack traces or invitation row internals."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# spec/011 Step 8 — Revoke endpoint body
+# ---------------------------------------------------------------------------
+
+
+class InvitationRevokeRequest(BaseModel):
+    """``POST /projects/{project_id}/invitations/{invitation_id}/revoke`` body.
+
+    ``reason`` is an OPTIONAL free-form operator note. The Phase 17 A-13
+    PII detector (:func:`reject_if_pii`) rejects any payload carrying
+    email / phone / national identifier patterns BEFORE the audit row
+    persists.
+
+    spec/011 Step 8 R1 P1-2: the 500-character cap matches the contract
+    YAML's ``maxLength: 500`` and follows the
+    :class:`schemas.admin.AdminPasswordResetBody.reason` precedent
+    (Step 5). The dedicated cap is intentionally distinct from the
+    canonical :data:`OperatorReasonText` 2000-char limit — the contract
+    YAML is the source of truth and the revoke surface is bounded
+    tighter.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=500,
+            description=(
+                "Operator-supplied free-form reason. MUST NOT contain "
+                "PII (email, phone, national identifier, credit card, "
+                "API tokens). Validated server-side (Phase 17 A-13) — "
+                "submitting PII yields HTTP 422."
+            ),
+        ),
+        AfterValidator(reject_if_pii),
+    ] | None = Field(
+        default=None,
+        description=(
+            "Optional free-form rationale recorded in the audit detail. "
+            "Persisted into the post-commit ``project.invitation.revoke`` "
+            "audit row only; the ``project_invitations`` table itself "
+            "does not currently carry a ``revoked_reason`` column."
+        ),
+    )
+
+
 __all__ = [
+    "BulkInvitationRequest",
+    "BulkInvitationResultItem",
+    "BulkInvitationRowStatus",
+    "InvitationRevokeRequest",
     "MemberInvitationIssueRequest",
     "MemberInvitationIssueResponse",
     "ProjectInvitationListItem",

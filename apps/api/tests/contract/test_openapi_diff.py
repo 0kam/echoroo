@@ -84,12 +84,13 @@ _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
         "trusted-users-invitation-url",
         # spec/011 Step 7 (T241): the public-token resolver + accept
         # endpoints landed and the YAML's only two paths are live.
-        # ``member-invitations.yaml`` stays in PENDING because it still
-        # describes the Step 8 bulk + revoke routes alongside the Step 7
-        # single-invite issuer; promoting it now would assert paths the
-        # app does not yet expose. Once Step 8 lands those routes the
-        # stem moves here.
         "invitation-public",
+        # spec/011 Step 8 (T290): bulk + revoke endpoints landed
+        # alongside the Step 7 single-invite issuer. The YAML now
+        # describes 4 live paths (POST single, GET list, POST bulk,
+        # POST revoke) and the stem is promoted to live so the harness
+        # subset-asserts every path / method / requestBody.
+        "member-invitations",
     }
 )
 
@@ -103,11 +104,6 @@ _SPEC_011_PENDING_STEMS: frozenset[str] = frozenset(
     {
         "admin-password-reset",
         "me-banners-activity",
-        # Step 7 promoted ``invitation-public`` to LIVE. The
-        # ``member-invitations`` stem stays PENDING until Step 8 lands
-        # the bulk + revoke endpoints; the live-stem assertion would
-        # otherwise complain about paths missing from the app.
-        "member-invitations",
         "su-bootstrap-project-create",
     }
 )
@@ -408,6 +404,19 @@ class TestSpec011LiveContracts:
     later steps wire their endpoints. The harness has no snapshot file —
     each PR that lands new HTTP surface MUST add the yaml's stem here
     AND re-run the harness locally before opening (NFR-011-009).
+
+    .. TODO(spec/011 Step 12 hygiene)
+       Tighten this harness to do schema field-level parity (response
+       model + requestBody object properties) for LIVE stems, not just
+       path + method + response-code + requestBody-presence existence.
+       The current harness allowed the ``revoked_reason`` drift between
+       ``contracts/member-invitations.yaml`` and the live Pydantic
+       ``InvitationListItem`` / ``InvitationRevokeResponse`` shape that
+       Codex R1 caught on PR #101 (spec/011 Step 8). A full diff would
+       walk ``schema.properties`` and assert (a) every contract-declared
+       property exists on the live shape and (b) live shapes do not
+       expose properties that the contract does not enumerate (the
+       drift direction we just patched).
     """
 
     def test_spec_011_live_yamls_path_exists(

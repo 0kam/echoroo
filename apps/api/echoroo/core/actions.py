@@ -1483,6 +1483,25 @@ PROJECT_MEMBER_INVITATION_ISSUE_ACTION: Action = register_action(
     )
 )
 
+# =============================================================================
+# spec/011 §FR-011-115 / Step 8 — Member-kind invitation revoke
+# =============================================================================
+#
+# Gates ``POST /web-api/v1/projects/{project_id}/invitations/{invitation_id}/
+# revoke`` (the bulk + revoke surface promised by the contract YAML). Project
+# scope, mutating, gated by ``MANAGE_MEMBERS`` (Owner + Admin per the canonical
+# matrix). The revoke surface is a separate Action from
+# :data:`PROJECT_MEMBER_INVITATION_ISSUE_ACTION` so audit consumers can
+# distinguish issue from revoke in ``project_audit_log.action`` filters
+# (FR-011-115).
+PROJECT_MEMBER_INVITATION_REVOKE_ACTION: Action = register_action(
+    Action(
+        name="project.member.invitation.revoke",
+        required_permission=Permission.MANAGE_MEMBERS,
+        is_mutating=True,
+    )
+)
+
 
 __all__ = [
     # Project
@@ -1653,4 +1672,6 @@ __all__ = [
     "ADMIN_USER_RESET_PASSWORD_ACTION",
     # spec/011 §FR-011-101 — Member-kind invitation issue
     "PROJECT_MEMBER_INVITATION_ISSUE_ACTION",
+    # spec/011 §FR-011-115 / Step 8 — Member-kind invitation revoke
+    "PROJECT_MEMBER_INVITATION_REVOKE_ACTION",
 ]

@@ -148,14 +148,25 @@ paths:
       responses:
         "200":
           description: Revoked. Subsequent acceptance attempts return the generic invalid response.
+          headers:
+            Cache-Control:
+              schema: { type: string, enum: ["no-store, no-cache, must-revalidate, private"] }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationRevokeResponse"
         "404":
           description: |
             Invitation not found OR project not found OR caller lacks permission (anti-enumeration →
             same response body, status, and timing for all three cases). 403 is intentionally
             collapsed into 404 to prevent invitation_id existence oracles.
+        "422":
+          description: |
+            Free-form ``reason`` field tripped the Phase 17 A-13 PII detector
+            (email / phone / national identifier / token-shaped string).
       security:
         - sessionCookie: []
-      x-permission: MANAGE_MEMBERS
+      x-permission: PROJECT_MEMBER_INVITATION_REVOKE_ACTION
 
 components:
   parameters:
@@ -203,7 +214,13 @@ components:
         expires_at: { type: string, format: date-time }
         accepted_at: { type: string, format: date-time, nullable: true }
         revoked_at: { type: string, format: date-time, nullable: true }
-        revoked_reason: { type: string, nullable: true }
+        # spec/011 Step 8 R1 P1-3: ``revoked_reason`` was previously listed
+        # here but never persisted (no DB column on ``project_invitations``).
+        # The reason lives in the post-commit ``project.invitation.revoke``
+        # audit-log row's detail JSON instead; UI consumers pull history
+        # from the audit-log surface. Re-introducing it on the row would
+        # require migration 0021+, FR-011-208 already requires the field
+        # to ride the Phase 17 A-13 PII detector wherever it is surfaced.
         ownership_transfer_on_accept:
           type: boolean
           description: True only for SU-bootstrap invitations.
@@ -212,7 +229,9 @@ components:
       type: array
       description: |
         Per-email outcome rows in submission order. FR-011-113 requires the
-        top-level response to be an array, not wrapped in an object.
+        top-level response to be an array, not wrapped in an object. The
+        ``internal_error`` status is the catch-all for unexpected per-row
+        infra faults (the SAVEPOINT rolls back only that row).
       items:
         type: object
         required: [email, status]
@@ -220,7 +239,7 @@ components:
           email: { type: string, format: email }
           status:
             type: string
-            enum: [issued, duplicate_pending, rate_limited, error]
+            enum: [issued, duplicate_pending, rate_limited, internal_error]
           invitation_url:
             type: string
             format: uri
@@ -230,9 +249,31 @@ components:
             type: string
             format: uuid
             nullable: true
+          expires_at:
+            type: string
+            format: date-time
+            nullable: true
+            description: Present only when status=issued (matches single-invite response).
           error_message:
             type: string
             nullable: true
+
+    InvitationRevokeResponse:
+      type: object
+      required: [invitation_id, status, revoked_at]
+      description: |
+        Compact response for a successful revoke. The body carries no
+        secret material; it surfaces the freshly-flipped state so the
+        admin UI can refresh the listing without an extra SELECT.
+      properties:
+        invitation_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [revoked]
+          description: Always ``revoked`` on the 200 path.
+        revoked_at:
+          type: string
+          format: date-time
 
   responses:
     InvalidPayload:

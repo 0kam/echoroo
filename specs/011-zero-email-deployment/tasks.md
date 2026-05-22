@@ -287,11 +287,11 @@
 
 ### Backend
 
-- [ ] T260 [US3] Add `POST /web-api/v1/projects/{project_id}/invitations/bulk` endpoint to `apps/api/echoroo/api/web_v1/projects/_members.py` (FR-011-110). Body: `{role, emails: [<=50]}`. Response: top-level array of `{email, status, invitation_url?, invitation_id?, error_message?}` per FR-011-113 (NOT object-wrapped)
-- [ ] T261 [US3] Bulk validation (FR-011-111): pre-INSERT pass that rejects entire request if any email is malformed OR `len(set(canonicalize_email(e) for e in emails)) != len(emails)` (in-list duplicate)
-- [ ] T262 [US3] Per-row SAVEPOINT semantics (NFR-011-008): each issuance inside its own SAVEPOINT; per-row failure (duplicate_pending / rate_limited) reported in the row without rolling back successful rows
-- [ ] T263 [US3] Add per-issuer global rate-limit at 200/hour and 1000/day across all projects (FR-011-114), sliding window via existing Phase 17 A-6 pattern
-- [ ] T264 [US3] [P] Audit-action emission: same `project.member.invite_accepted_signup` per row's eventual accept; each issuance row gets a separate `project.invitation.create` (existing) audit entry
+- [x] T260 [US3] Add `POST /web-api/v1/projects/{project_id}/invitations/bulk` endpoint to `apps/api/echoroo/api/web_v1/projects/_members.py` (FR-011-110). Body: `{role, emails: [<=50]}`. Response: top-level array of `{email, status, invitation_url?, invitation_id?, error_message?}` per FR-011-113 (NOT object-wrapped)
+- [x] T261 [US3] Bulk validation (FR-011-111): pre-INSERT pass that rejects entire request if any email is malformed OR `len(set(canonicalize_email(e) for e in emails)) != len(emails)` (in-list duplicate)
+- [x] T262 [US3] Per-row SAVEPOINT semantics (NFR-011-008): each issuance inside its own SAVEPOINT; per-row failure (duplicate_pending / rate_limited) reported in the row without rolling back successful rows
+- [x] T263 [US3] Add per-issuer global rate-limit at 200/hour and 1000/day across all projects (FR-011-114), sliding window via existing Phase 17 A-6 pattern
+- [x] T264 [US3] [P] Audit-action emission: same `project.member.invite_accepted_signup` per row's eventual accept; each issuance row gets a separate `project.invitation.create` (existing) audit entry
 
 ### Frontend
 
@@ -300,8 +300,8 @@
 
 ### Contracts + tests
 
-- [ ] T290 [US3] [P] Update `specs/011-zero-email-deployment/contracts/member-invitations.yaml` bulk path to reflect the live shape, re-run `test_openapi_diff.py`
-- [ ] T291 [US3] [P] Add `apps/api/tests/integration/test_bulk_invitation.py` (FR-011-110..115): success with 10 emails, in-list duplicate rejection, per-row duplicate_pending, malformed email rejection (atomic), rate-limit enforcement
+- [x] T290 [US3] [P] Update `specs/011-zero-email-deployment/contracts/member-invitations.yaml` bulk path to reflect the live shape, re-run `test_openapi_diff.py`
+- [x] T291 [US3] [P] Add `apps/api/tests/integration/test_bulk_invitation.py` (FR-011-110..115): success with 10 emails, in-list duplicate rejection, per-row duplicate_pending, malformed email rejection (atomic), rate-limit enforcement
 - [ ] T292 [US3] [P] Add Playwright e2e `apps/web/tests/e2e/bulk-invitation-flow.spec.ts` (US3 AC1-6): paste 5 emails, submit, verify 5 URLs in result table, each redeems independently
 
 **Checkpoint**: US3 deliverable complete.

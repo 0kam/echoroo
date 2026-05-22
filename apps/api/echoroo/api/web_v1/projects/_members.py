@@ -52,16 +52,26 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy import select
 
 from echoroo.api.web_v1.projects._audit import write_project_bff_audit_soft
 from echoroo.api.web_v1.projects._core import ProjectServiceDep
 from echoroo.core.actions import (
     PROJECT_MEMBER_INVITATION_ISSUE_ACTION,
+    PROJECT_MEMBER_INVITATION_REVOKE_ACTION,
     PROJECT_MEMBER_INVITE_ACTION,
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
@@ -79,6 +89,9 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import ProjectInvitation, ProjectMember
 from echoroo.schemas.member_invitations import (
+    BulkInvitationRequest,
+    BulkInvitationResultItem,
+    InvitationRevokeRequest,
     MemberInvitationIssueRequest,
     MemberInvitationIssueResponse,
     ProjectInvitationListItem,
@@ -93,6 +106,7 @@ from echoroo.services import invitation_service
 from echoroo.services.email_verification_service import EmailVerificationService
 from echoroo.services.invitation_service import (
     InvitationConflictError,
+    InvitationCreateOutcome,
     InvitationEmailMismatchError,
     InvitationInfraUnavailableError,
     InvitationRateLimitError,
@@ -100,9 +114,58 @@ from echoroo.services.invitation_service import (
     InvitationTokenInvalidError,
     InvitationValidationError,
     accept_invitation,
+    canonicalize_email,
     create_invitation,
     decline_invitation_by_recipient,
+    hash_email,
+    revoke_invitation,
 )
+
+# spec/011 Step 8 R1 P0-2: every ``rate_limited`` row in the bulk response
+# carries the SAME constant message. Per-issuer and per-actor caps differ
+# in mechanism (`_check_and_consume_per_issuer_rate_limit` vs FR-056 inside
+# ``create_invitation``) but BOTH cause shapes used to surface
+# ``str(exc)``-style detail that included the actor user_id / project_id
+# strings — an internal-identifier oracle. The generic message below
+# replaces every such surface; the structured cause is logged server-side
+# (operator triage only, never echoed in the response body).
+_BULK_RATE_LIMITED_MESSAGE: Final[str] = (
+    "Rate limit reached for this issuer; retry after the per-hour or "
+    "per-day window."
+)
+
+# spec/011 Step 8 R1 P0-1: unexpected per-row failures surface this single
+# constant message. Stack-trace style detail (``type(exc).__name__``,
+# ``str(exc)``) MUST NOT ride in the response body — it leaks library
+# internals (e.g. ``RuntimeError: connection refused to db:5432``). The
+# ``logger.exception`` call captures the full traceback for operator
+# triage.
+_BULK_INTERNAL_ERROR_MESSAGE: Final[str] = (
+    "Internal error; the operator log captured the cause."
+)
+
+# ---------------------------------------------------------------------------
+# spec/011 Step 8 / T263 — Per-issuer global invitation rate limit
+# ---------------------------------------------------------------------------
+#
+# FR-011-114: every issuance counts against a per-issuer (user_id) sliding-
+# window pair: 200/hour and 1000/day across all projects. Implementation
+# reuses the Phase 17 A-6 Redis-backed INCR + EXPIRE pattern (same as the
+# spec/011 invitation-public surface in :mod:`echoroo.api.web_v1.auth`).
+# Fail-closed: a Redis fault is reported as ``rate_limited`` for the row
+# under test so the issuer cannot bypass the cap by tripping the cache.
+_BULK_INVITE_HOUR_LIMIT: Final[int] = 200
+_BULK_INVITE_HOUR_WINDOW_SECONDS: Final[int] = 60 * 60
+_BULK_INVITE_DAY_LIMIT: Final[int] = 1000
+_BULK_INVITE_DAY_WINDOW_SECONDS: Final[int] = 24 * 60 * 60
+
+
+def _per_issuer_hour_key(user_id: UUID) -> str:
+    return f"invitation:per-issuer:hour:{user_id}"
+
+
+def _per_issuer_day_key(user_id: UUID) -> str:
+    return f"invitation:per-issuer:day:{user_id}"
 
 logger = logging.getLogger(__name__)
 
@@ -527,6 +590,566 @@ async def issue_project_member_invitation(
     await db.commit()
     await invitation_service.trigger_post_commit_side_effects(outcome)
     return body
+
+
+# ---------------------------------------------------------------------------
+# spec/011 Step 8 (T260-T264) — POST /{project_id}/invitations/bulk
+# ---------------------------------------------------------------------------
+
+
+async def _check_and_consume_per_issuer_rate_limit(
+    *,
+    user_id: UUID,
+) -> tuple[bool, str | None]:
+    """Increment + verify the per-issuer hour + day Redis counters.
+
+    Returns ``(allowed, error_message)``. ``allowed=False`` means EITHER
+    cap was breached OR Redis is unreachable; the caller surfaces the row
+    as ``status='rate_limited'`` (per-row failure semantics per
+    FR-011-114 — the cap applies row-by-row inside the SAVEPOINT loop so
+    a partial batch can still report some ``issued`` rows alongside
+    ``rate_limited`` rows after the cap trips).
+
+    Fail-closed on Redis fault: the helper returns ``(False, "...")`` so
+    a Redis outage cannot be used to bypass the documented cap.
+    """
+    try:
+        redis = await get_redis_connection()
+    except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+        logger.warning(
+            "spec/011 per-issuer invitation rate-limit: Redis unavailable; "
+            "failing closed (treating row as rate-limited)",
+            exc_info=True,
+        )
+        return False, "rate-limit infrastructure unavailable"
+
+    hour_key = _per_issuer_hour_key(user_id)
+    day_key = _per_issuer_day_key(user_id)
+
+    # Hour window first; if exhausted we still increment the day counter
+    # consistently (each successful issuance MUST consume one unit of
+    # both buckets, so increment them together at the same instant).
+    try:
+        hour_count = await redis.incr(hour_key)
+        if hour_count == 1:
+            await redis.expire(hour_key, _BULK_INVITE_HOUR_WINDOW_SECONDS)
+    except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+        logger.warning(
+            "spec/011 per-issuer rate-limit: hour-key INCR failed",
+            exc_info=True,
+        )
+        return False, "rate-limit infrastructure unavailable"
+    if hour_count > _BULK_INVITE_HOUR_LIMIT:
+        return False, (
+            f"per-issuer hourly cap exceeded ({_BULK_INVITE_HOUR_LIMIT}/h)"
+        )
+
+    try:
+        day_count = await redis.incr(day_key)
+        if day_count == 1:
+            await redis.expire(day_key, _BULK_INVITE_DAY_WINDOW_SECONDS)
+    except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+        logger.warning(
+            "spec/011 per-issuer rate-limit: day-key INCR failed",
+            exc_info=True,
+        )
+        return False, "rate-limit infrastructure unavailable"
+    if day_count > _BULK_INVITE_DAY_LIMIT:
+        return False, (
+            f"per-issuer daily cap exceeded ({_BULK_INVITE_DAY_LIMIT}/day)"
+        )
+
+    return True, None
+
+
+def _bulk_issued_result_item(
+    *,
+    email: str,
+    outcome: InvitationCreateOutcome,
+) -> BulkInvitationResultItem:
+    """Shape a successful row's response (FR-011-113)."""
+    expires_at = outcome.invitation.expires_at
+    if expires_at.tzinfo is None:  # pragma: no cover — DB guarantees tz-aware
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return BulkInvitationResultItem(
+        email=email,
+        status="issued",
+        invitation_id=outcome.invitation.id,
+        invitation_url=outcome.signed_token_envelope,
+        expires_at=expires_at,
+    )
+
+
+@router.post(
+    "/{project_id}/invitations/bulk",
+    response_model=list[BulkInvitationResultItem],
+    status_code=status.HTTP_207_MULTI_STATUS,
+    summary="Bulk-issue Member-kind invitations (spec/011 FR-011-110)",
+    description=(
+        "Issue up to 50 Member-kind invitations under a single role in one "
+        "atomic operator action. Each row's outcome is reported in the "
+        "response array (FR-011-113) — `status='issued'` rows carry the "
+        "one-shot signed URL under ``invitation_url`` (NOT recoverable "
+        "after this turn), `status='duplicate_pending'` rows skip without "
+        "rolling back the rest of the batch, `status='rate_limited'` rows "
+        "report the FR-011-114 per-issuer cap hit, and `status='internal_"
+        "error'` rows wrap any unexpected infra failure. Per-row SAVEPOINT "
+        "semantics (NFR-011-008) guarantee a single-row failure never "
+        "invalidates previously-issued rows in the same batch. "
+        "Pre-validation (FR-011-111) rejects the WHOLE request with HTTP "
+        "422 on a malformed email OR an in-list canonicalisation duplicate "
+        "before any SAVEPOINT runs. The response carries "
+        "``Cache-Control: no-store, no-cache, must-revalidate, private``."
+    ),
+    responses={
+        207: {"description": "Multi-status; per-row outcomes in the response array"},
+        422: {"description": "Whole-request validation failure (FR-011-111)"},
+        503: {"description": "Rate-limit infrastructure unavailable"},
+    },
+)
+async def bulk_issue_project_member_invitations(
+    project_id: UUID,
+    payload: BulkInvitationRequest,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> list[BulkInvitationResultItem]:
+    """Bulk-issue Member invitations (FR-011-110..115).
+
+    Implements the spec/011 Step 8 surface end-to-end:
+
+    1. Auth + permission gate (``PROJECT_MEMBER_INVITATION_ISSUE_ACTION``).
+    2. FR-011-111 atomic pre-validation: EmailStr already rejected
+       malformed entries at the Pydantic layer; we re-check the in-list
+       canonicalisation-duplicate guard before any DB write. A single
+       in-list duplicate rejects the WHOLE request with HTTP 422 and
+       does NOT consume per-issuer rate-limit quota.
+    3. Per-row SAVEPOINT loop (NFR-011-008): each issuance lives inside
+       its own ``session.begin_nested()`` so the unique-pending conflict
+       on row N rolls back only row N's SAVEPOINT — successful rows
+       persist when the outer ``session.commit()`` runs.
+    4. Per-issuer rate-limit (FR-011-114) is consumed PER ROW inside the
+       loop. The first row that trips the cap surfaces as
+       ``status='rate_limited'``; the remaining rows in the batch ALSO
+       fail-closed with ``status='rate_limited'`` (the cap trip is
+       sticky for the rest of the batch — no further INCRs run).
+    5. Audit emission (T264): each successful row writes one
+       ``project.invitation.create`` audit entry via the existing
+       post-commit emitter — same shape and SERIALIZABLE TX as the
+       single-issue endpoint.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    await gate_action(
+        action=PROJECT_MEMBER_INVITATION_ISSUE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # FR-011-111: in-list canonicalisation duplicate guard. The malformed-
+    # email branch is already handled by Pydantic's EmailStr validator (it
+    # surfaces as 422 before this handler runs).
+    canonicalised: list[str] = [canonicalize_email(e) for e in payload.emails]
+    if len(set(canonicalised)) != len(canonicalised):
+        # Whole-request reject (FR-011-111). No SAVEPOINT runs, no
+        # per-issuer rate-limit quota consumed.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "ERR_BULK_DUPLICATE_EMAILS",
+                "message": (
+                    "submitted email list contains duplicates after NFKC + "
+                    "casefold canonicalisation"
+                ),
+            },
+        )
+
+    # Map the contract's lower-case enum to the persisted ProjectMemberRole.
+    try:
+        role_enum = ProjectMemberRole(payload.role)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "ERR_INVALID_ROLE",
+                "message": f"unknown role: {payload.role!r}",
+            },
+        ) from exc
+
+    settings = get_settings()
+    redis = await get_redis_connection()
+
+    results: list[BulkInvitationResultItem] = []
+    issued_outcomes: list[InvitationCreateOutcome] = []
+    rate_limit_tripped = False
+
+    for original_email in payload.emails:
+        # Once the cap has tripped for this batch, every remaining row
+        # short-circuits to ``rate_limited`` without consuming an extra
+        # INCR. The first trip already incremented the counter; further
+        # increments would over-charge the issuer's quota.
+        #
+        # spec/011 Step 8 R1 P2 (acknowledged, no fix this round): the
+        # cap-trip row itself consumed +1 INCR on both the hour and day
+        # buckets BEFORE the sticky flag activates — a check-before-INCR
+        # pattern has its own race window (two concurrent batches could
+        # each pass the check, then each INCR past the cap). The current
+        # +1-on-trip design is the simplest fail-closed shape and
+        # tightens the cap by at most one unit per batch transition. The
+        # post-trip rows short-circuit here precisely so that one-off
+        # over-charge does not compound.
+        if rate_limit_tripped:
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="rate_limited",
+                    # spec/011 Step 8 R1 P0-2 — uniform generic message.
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
+                )
+            )
+            continue
+
+        # FR-011-114 per-issuer cap check. Done BEFORE the SAVEPOINT so a
+        # rate-limited row never even opens a nested TX. We still
+        # consume one unit of both hour + day counters per attempt so
+        # the cap meaning matches the spec (every attempted issuance
+        # counts).
+        allowed, rl_error = await _check_and_consume_per_issuer_rate_limit(
+            user_id=current_user.id,
+        )
+        if not allowed:
+            rate_limit_tripped = True
+            # spec/011 Step 8 R1 P0-2 — operator triage log carries the
+            # structured cause (``rl_error`` contains the cap window /
+            # the "infra unavailable" sentinel) but the response body
+            # never echoes it.
+            logger.warning(
+                "spec/011 bulk invitation row rate-limited "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                rl_error,
+            )
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="rate_limited",
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
+                )
+            )
+            continue
+
+        try:
+            async with db.begin_nested():
+                outcome = await create_invitation(
+                    db,
+                    project_id=project_id,
+                    kind=ProjectInvitationKind.MEMBER,
+                    email=original_email,
+                    invited_by_id=current_user.id,
+                    hmac_secret=settings.web_session_secret,
+                    redis=redis,
+                    role=role_enum,
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                )
+        except InvitationConflictError:
+            # SAVEPOINT exit already rolled back this row's INSERT; the
+            # outer TX retains the previously-issued rows intact.
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="duplicate_pending",
+                )
+            )
+            continue
+        except InvitationRateLimitError as exc:
+            # Per-project / per-actor FR-056 cap (NOT the same as the
+            # per-issuer FR-011-114 cap above): surface as a per-row
+            # ``rate_limited`` and keep going. NOTE: when the FR-056
+            # check inside ``create_invitation`` trips it has ALREADY
+            # incremented Redis counters that won't be undone; SAVEPOINT
+            # rollback only affects the DB row.
+            #
+            # spec/011 Step 8 R1 P0-2: the legacy ``str(exc)`` shape
+            # (``"actor <uuid> exceeded ..."`` / ``"project <uuid>
+            # exceeded ..."``) leaked internal identifiers into the
+            # response. The generic constant replaces it; the structured
+            # cause stays in the operator log.
+            rate_limit_tripped = True
+            logger.warning(
+                "spec/011 bulk invitation row rate-limited "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                exc,
+            )
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="rate_limited",
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
+                )
+            )
+            continue
+        except InvitationInfraUnavailableError as exc:
+            # Redis fault inside ``create_invitation``: fail the row
+            # closed (so the issuer cannot bypass FR-056) but keep the
+            # batch flowing — the remaining rows will see the same
+            # fault and report it consistently.
+            #
+            # spec/011 Step 8 R1 P0-2: collapse to the same generic
+            # message used by the other rate-limit branches so the
+            # response shape is uniform across the rate_limited tier.
+            logger.warning(
+                "spec/011 bulk invitation row infra unavailable "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                exc,
+            )
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="rate_limited",
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
+                )
+            )
+            continue
+        except InvitationValidationError as exc:
+            # Per-row validation fault (e.g. role / payload contract
+            # mismatch). Surface as ``internal_error`` so the operator
+            # can fix the request shape — the whole-batch validation
+            # already passed by virtue of Pydantic + in-list dedupe.
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="internal_error",
+                    error_message=str(exc),
+                )
+            )
+            continue
+        except InvitationStateError as exc:
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="internal_error",
+                    error_message=str(exc),
+                )
+            )
+            continue
+        except Exception:  # noqa: BLE001 — last-ditch row guard
+            # The SAVEPOINT already rolled back this row's writes. Log
+            # the unexpected exception for operator triage; surface as
+            # ``internal_error`` so the rest of the batch can complete.
+            #
+            # spec/011 Step 8 R1 P0-1: the legacy
+            # ``f"{type(exc).__name__}: {exc}"`` shape leaked exception
+            # class names + free-form messages (e.g. ``"RuntimeError:
+            # connection refused to db:5432"``) into the operator-
+            # visible response. Replace it with the constant generic
+            # message; the full traceback rides ``logger.exception`` so
+            # triage still has the cause. The log key uses
+            # :func:`hash_email` (HMAC-SHA-256 keyed by the
+            # ``web_session_secret``) instead of the plaintext email so
+            # the operator log line cannot be casefold-greppped back to
+            # the recipient. Plain ``project_id`` / ``actor_user_id``
+            # are operator-internal identifiers, not subject PII, and
+            # are safe to log.
+            logger.exception(
+                "spec/011 bulk invitation: unexpected per-row failure "
+                "(actor=%s project=%s email_hash=%s)",
+                current_user.id,
+                project_id,
+                hash_email(
+                    original_email,
+                    hmac_secret=settings.web_session_secret,
+                ),
+            )
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="internal_error",
+                    error_message=_BULK_INTERNAL_ERROR_MESSAGE,
+                )
+            )
+            continue
+
+        results.append(
+            _bulk_issued_result_item(email=original_email, outcome=outcome),
+        )
+        issued_outcomes.append(outcome)
+
+    # Commit the outer TX. Successful SAVEPOINT rows persist; failed rows
+    # are already rolled back inside their nested context exit.
+    await db.commit()
+
+    # T264 — emit ``project.invitation.create`` per issued row.
+    for issued_outcome in issued_outcomes:
+        await invitation_service.trigger_post_commit_side_effects(
+            issued_outcome,
+        )
+
+    # FR-011-110 / FR-011-113: anti-bfcache + private cache directives.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# spec/011 Step 8 — POST /{project_id}/invitations/{invitation_id}/revoke
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/invitations/{invitation_id}/revoke",
+    status_code=status.HTTP_200_OK,
+    summary="Revoke a pending invitation (spec/011 Step 8)",
+    description=(
+        "Owner / Admin revoke of a pending Member-kind or Trusted-overlay "
+        "invitation. Atomic UPDATE re-checks ``project_id`` AND "
+        "``status='pending'``; any deviation (cross-project lookup, "
+        "already-accepted, already-revoked, missing row) collapses to "
+        "HTTP 404 with the same response shape so an attacker cannot "
+        "enumerate invitation ids. The optional ``reason`` body field is "
+        "free-form and runs through the Phase 17 A-13 PII detector — a "
+        "submitted email / phone / national identifier yields HTTP 422 "
+        "BEFORE the revoke commits. The post-commit emitter writes a "
+        "``project.invitation.revoke`` audit row capturing the reason "
+        "(but never the plain-text envelope)."
+    ),
+    responses={
+        404: {
+            "description": (
+                "Invitation not found / wrong project / non-pending "
+                "(uniform anti-enumeration shape)"
+            )
+        },
+        422: {"description": "PII detected in reason field (Phase 17 A-13)"},
+    },
+)
+async def revoke_project_invitation(
+    project_id: UUID,
+    invitation_id: UUID,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    payload: InvitationRevokeRequest | None = Body(default=None),
+) -> dict[str, str]:
+    """Owner / Admin revoke a pending invitation (spec/011 Step 8).
+
+    Args:
+        project_id: URL-bound project; the row's stored ``project_id``
+            MUST match or the response collapses to 404.
+        invitation_id: Target invitation row.
+        payload: Optional body carrying a free-form ``reason``. The
+            PII detector at the schema layer rejects PII patterns with
+            HTTP 422 before this handler runs.
+
+    Returns:
+        ``{"invitation_id": ..., "status": "revoked", "revoked_at": ISO}``
+        so the BFF can refresh the listing without an extra SELECT.
+
+    Raises:
+        404: Generic anti-enumeration response for missing / wrong-
+            project / non-pending invitations.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+
+    # spec/011 Step 8 R1 P1-1: the contract YAML
+    # (``specs/011-zero-email-deployment/contracts/member-invitations.yaml``)
+    # explicitly collapses 403 (caller lacks permission) into 404 on the
+    # revoke surface so an attacker who possesses a leaked invitation_id
+    # cannot enumerate which ids exist by probing across projects. The
+    # other 404 producers (missing row / wrong project / non-pending) live
+    # below in the ``InvitationStateError`` branch; funnelling the
+    # permission-deny into the same shape keeps every failure path
+    # response-identical (same body, same status, same Cache-Control).
+    try:
+        await gate_action(
+            action=PROJECT_MEMBER_INVITATION_REVOKE_ACTION,
+            project_id=project_id,
+            current_user=current_user,
+            request=request,
+            db=db,
+        )
+    except HTTPException as exc:
+        if exc.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+            status.HTTP_404_NOT_FOUND,
+        ):
+            # Operator triage stays in the log; the response collapses
+            # to the generic 404.
+            logger.info(
+                "spec/011 invitation revoke gate denied "
+                "(actor=%s project=%s invitation=%s gate_status=%s)",
+                current_user.id,
+                project_id,
+                invitation_id,
+                exc.status_code,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="invitation not found",
+            ) from exc
+        raise
+
+    reason: str | None = payload.reason if payload is not None else None
+
+    try:
+        outcome = await revoke_invitation(
+            db,
+            project_id=project_id,
+            invitation_id=invitation_id,
+            actor_user_id=current_user.id,
+            reason=reason,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except InvitationStateError as exc:
+        # FR-011-115 anti-enumeration: collapse every cause (missing row,
+        # wrong project, already terminal) to the SAME 404 response.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="invitation not found",
+        ) from exc
+
+    await db.commit()
+    await invitation_service.trigger_post_commit_side_effects(outcome)
+
+    # FR-011-115: revoke response carries no-store like the issue and
+    # listing surfaces so a back / refresh does not replay the revoke
+    # body (the body itself carries no secret, but the policy stays
+    # uniform across the invitation surface).
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    revoked_at = outcome.invitation.revoked_at
+    revoked_at_str = (
+        revoked_at.isoformat() if revoked_at is not None else ""
+    )
+    return {
+        "invitation_id": str(outcome.invitation.id),
+        "status": outcome.invitation.status.value,
+        "revoked_at": revoked_at_str,
+    }
 
 
 # ---------------------------------------------------------------------------

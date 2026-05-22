@@ -155,6 +155,12 @@ AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED: Final[str] = (
     "project.trusted_user.invite_accepted"
 )
 
+# spec/011 Step 8 — Owner / Admin revoke of a pending invitation. The constant
+# stays service-private (HANDOFF line 79) and uses the verb.noun.verb 3-segment
+# convention. The post-commit emitter writes it into ``project_audit_log``
+# alongside the existing ``project.invitation.create`` / ``.accept`` rows.
+AUDIT_ACTION_INVITATION_REVOKE: Final[str] = "project.invitation.revoke"
+
 
 # ---------------------------------------------------------------------------
 # Public errors (engine-level; the endpoint maps to HTTP)
@@ -290,6 +296,26 @@ class InvitationDeclineOutcome:
     invitation: ProjectInvitation
     actor_user_id: UUID
     is_replay: bool = False
+    request_id: str = ""
+    ip: str = ""
+    user_agent: str = ""
+
+
+@dataclass(frozen=True)
+class InvitationRevokeOutcome:
+    """Snapshot returned by :func:`revoke_invitation` (spec/011 Step 8).
+
+    Carries the freshly-flipped row plus the actor + audit-row plumbing so
+    the post-commit emitter writes a single ``project.invitation.revoke``
+    audit row inside its own SERIALIZABLE TX. ``reason`` is the operator-
+    supplied free-form note (already PII-gated at the schema layer) and is
+    embedded into the audit detail JSON; it is NOT persisted to a column
+    on the row.
+    """
+
+    invitation: ProjectInvitation
+    actor_user_id: UUID
+    reason: str | None = None
     request_id: str = ""
     ip: str = ""
     user_agent: str = ""
@@ -1897,6 +1923,114 @@ async def decline_invitation_by_recipient(
 
 
 # ---------------------------------------------------------------------------
+# Public API: revoke_invitation (spec/011 Step 8)
+# ---------------------------------------------------------------------------
+
+
+async def revoke_invitation(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    invitation_id: UUID,
+    actor_user_id: UUID,
+    reason: str | None = None,
+    now: datetime | None = None,
+    request_id: str = "",
+    ip: str = "",
+    user_agent: str = "",
+) -> InvitationRevokeOutcome:
+    """Atomically transition a pending invitation to ``revoked``.
+
+    spec/011 FR-011-115 + contract YAML
+    ``member-invitations.yaml`` POST
+    ``/projects/{project_id}/invitations/{invitation_id}/revoke``.
+
+    The UPDATE re-checks ``status='pending'`` AND ``project_id`` so a
+    racing accept / decline / revoke / cross-project lookup collapses to
+    the same generic ``InvitationStateError`` raise — the endpoint maps
+    every cause to HTTP 404 (anti-enumeration: a leaked invitation_id
+    must not let the caller distinguish "wrong project" from "already
+    accepted" from "already revoked" from "does not exist").
+
+    Args:
+        session: Caller-owned async session. Caller commits.
+        project_id: URL-bound project scope; the row's stored
+            ``project_id`` MUST match or the function raises
+            :class:`InvitationStateError`.
+        invitation_id: Target row id.
+        actor_user_id: Owner / Admin performing the revoke (audit).
+        reason: Optional free-form note (already PII-gated at the schema
+            layer). Embedded into the outcome for the audit emitter only;
+            no DB column is touched for the reason (the row does not
+            currently carry a ``revoked_reason`` column).
+
+    Returns:
+        :class:`InvitationRevokeOutcome` carrying the freshly-flipped
+        row (status='revoked', revoked_at=now). The outcome is consumed
+        by :func:`trigger_post_commit_side_effects` which emits a
+        ``project.invitation.revoke`` audit row after the caller commits.
+
+    Raises:
+        InvitationStateError: row not found OR project_id mismatch OR
+            row is no longer pending. The endpoint MUST map every
+            instance of this raise to HTTP 404 with a uniform body so
+            an attacker cannot enumerate invitation_ids.
+    """
+    now_eff = now or datetime.now(UTC)
+
+    # Atomic compare-and-swap. The WHERE clause re-checks status='pending'
+    # AND project_id so a concurrent revoke / accept / decline races us to
+    # zero rows returned. RETURNING * fetches the freshly-updated row
+    # without a follow-up SELECT.
+    update_stmt = text(
+        """
+        UPDATE project_invitations
+           SET status = 'revoked',
+               revoked_at = :now,
+               updated_at = :now
+         WHERE id = :invitation_id
+           AND project_id = :project_id
+           AND status = 'pending'
+        RETURNING id
+        """
+    )
+    update_result = await session.execute(
+        update_stmt,
+        {
+            "now": now_eff,
+            "invitation_id": invitation_id,
+            "project_id": project_id,
+        },
+    )
+    if update_result.fetchone() is None:
+        # Anti-enumeration uniform-failure (spec/011 FR-011-115 / contract
+        # YAML revoke 404 collapse): row does not exist OR belongs to a
+        # different project OR is already terminal. All three cases
+        # surface the SAME generic-invalid raise.
+        raise InvitationStateError("invitation not revocable")
+
+    # Re-attach the freshly-updated row to the ORM identity map. We need
+    # the full row for the audit emitter (kind / email_hash / role).
+    result = await session.execute(
+        select(ProjectInvitation).where(
+            ProjectInvitation.id == invitation_id,
+        ),
+    )
+    invitation = result.scalar_one()
+    invitation.status = ProjectInvitationStatus.REVOKED
+    invitation.revoked_at = now_eff
+
+    return InvitationRevokeOutcome(
+        invitation=invitation,
+        actor_user_id=actor_user_id,
+        reason=reason,
+        request_id=request_id,
+        ip=ip,
+        user_agent=user_agent,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Post-commit side effects (audit only — outbox-email enqueue removed in
 # spec/011 step 6 / T054; FR-011-103 makes the issuing admin's HTTP
 # response the sole exfil path for the plain-text invitation token)
@@ -1906,7 +2040,8 @@ async def decline_invitation_by_recipient(
 async def trigger_post_commit_side_effects(
     outcome: InvitationCreateOutcome
     | InvitationAcceptOutcome
-    | InvitationDeclineOutcome,
+    | InvitationDeclineOutcome
+    | InvitationRevokeOutcome,
 ) -> None:
     """Fire audit side effects after the main TX commits.
 
@@ -1928,6 +2063,8 @@ async def trigger_post_commit_side_effects(
         await _post_commit_accept(outcome)
     elif isinstance(outcome, InvitationDeclineOutcome):
         await _post_commit_decline(outcome)
+    elif isinstance(outcome, InvitationRevokeOutcome):
+        await _post_commit_revoke(outcome)
     else:  # pragma: no cover — exhaustive
         logger.warning(
             "trigger_post_commit_side_effects: unknown outcome type %r",
@@ -1993,6 +2130,37 @@ async def _post_commit_decline(outcome: InvitationDeclineOutcome) -> None:
     }
     await _write_invitation_audit(
         action="project.invitation.decline",
+        actor_user_id=outcome.actor_user_id,
+        project_id=invitation.project_id,
+        request_id=outcome.request_id,
+        ip=outcome.ip,
+        user_agent=outcome.user_agent,
+        detail=detail,
+        before={"status": ProjectInvitationStatus.PENDING.value},
+        after={"status": invitation.status.value},
+    )
+
+
+async def _post_commit_revoke(outcome: InvitationRevokeOutcome) -> None:
+    """Emit the ``project.invitation.revoke`` audit row (spec/011 Step 8).
+
+    The detail dict carries the operator-supplied ``reason`` (PII-gated at
+    the schema layer) so an operator scanning the audit log can correlate
+    revocations to support tickets without needing to join the audit row
+    against a separate notes table. The plain-text envelope is NEVER
+    surfaced here (FR-011-102: token confidentiality is preserved
+    end-to-end).
+    """
+    invitation = outcome.invitation
+    detail: dict[str, Any] = {
+        "invitation_id": str(invitation.id),
+        "kind": invitation.kind.value,
+        "bound_email_hash": invitation.email_hash,
+    }
+    if outcome.reason is not None:
+        detail["reason"] = outcome.reason
+    await _write_invitation_audit(
+        action=AUDIT_ACTION_INVITATION_REVOKE,
         actor_user_id=outcome.actor_user_id,
         project_id=invitation.project_id,
         request_id=outcome.request_id,
@@ -2096,6 +2264,7 @@ async def _load_existing_grant(
 
 
 __all__ = [
+    "AUDIT_ACTION_INVITATION_REVOKE",
     "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED",
     "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP",
     "AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED",
@@ -2112,6 +2281,7 @@ __all__ = [
     "InvitationPublicAcceptOutcome",
     "InvitationRateLimitError",
     "InvitationResolveOutcome",
+    "InvitationRevokeOutcome",
     "InvitationStateError",
     "InvitationTokenInvalidError",
     "InvitationValidationError",
@@ -2132,6 +2302,7 @@ __all__ = [
     "hash_email_dual",
     "hash_token",
     "resolve_invitation_for_public_token",
+    "revoke_invitation",
     "sign_invitation_token",
     "trigger_post_commit_side_effects",
     "verify_invitation_token",
