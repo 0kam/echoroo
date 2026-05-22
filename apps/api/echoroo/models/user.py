@@ -64,6 +64,32 @@ class User(UUIDMixin, TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=True,
     )
+    # spec/011 §FR-011-203 / FR-011-204 — forced password change gate.
+    # ``must_change_password`` is read by ``ForcedPasswordChangeMiddleware``
+    # on every authenticated request; ``temp_password_expires_at`` bounds
+    # the validity of the temporary password issued by the admin-reset
+    # flow (FR-011-203, 24h TTL). Both columns were added in migration
+    # 0021_zero_email_additive (Step 1).
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    temp_password_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # spec/011 §FR-011-305 — 24h cool-off enforced after a successful
+    # ``change_email``. The column was added in migration 0021 alongside
+    # ``must_change_password`` / ``temp_password_expires_at``; the ORM
+    # field is required so the change-email service (FR-011-305) and the
+    # email-change banner surface (FR-011-301 / FR-011-302) can read and
+    # write the cool-off wall-clock from Python without dropping into raw
+    # SQL.
+    email_change_cooldown_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     registered_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),

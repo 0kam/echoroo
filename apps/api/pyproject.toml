@@ -150,6 +150,19 @@ ignore_missing_imports = true
 module = ["tests.*"]
 ignore_errors = true
 
+# spec/011 Step 3 atomic swap (R8 / NFR-011-007): the legacy
+# ``EmailVerificationEnforcementMiddleware`` module stays on disk until
+# Step 10 deletes ``services/email_verification_service.py`` (spec/011
+# tasks.md says the file lives until Phase 3 US1). The middleware
+# references ``Settings.EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`` which
+# Step 3 removes; the module is no longer registered in any code path,
+# but mypy still type-checks the source. Suppress the dead-code
+# attribute error here rather than touching the legacy source itself
+# — Step 10 will delete both the override and the file together.
+[[tool.mypy.overrides]]
+module = ["echoroo.middleware.email_verification_enforcement"]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers --cov=echoroo --cov-report=term-missing"
