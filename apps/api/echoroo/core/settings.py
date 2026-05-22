@@ -132,8 +132,13 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS: int = 20
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS: int = 3600
 
-    # Email verification and trusted devices
-    EMAIL_VERIFICATION_ENFORCEMENT_ENABLED: bool = False
+    # Trusted devices (spec/010).
+    # spec/011 Step 3 removed ``EMAIL_VERIFICATION_ENFORCEMENT_ENABLED``;
+    # the legacy ``EmailVerificationEnforcementMiddleware`` it gated is
+    # no longer registered (replaced by ``ForcedPasswordChangeMiddleware``
+    # — see ``main.py`` and ``middleware/forced_password_change.py``).
+    # ``EMAIL_VERIFICATION_TOKEN_TTL_SECONDS`` remains below until Step 10
+    # deletes ``services/email_verification_service.py``.
     TRUSTED_DEVICE_REGISTRATION_ENABLED: bool = False
     TRUSTED_DEVICE_BYPASS_ENABLED: bool = False
     TRUSTED_DEVICE_COOKIE_NAME: str = "echoroo_trusted_device"

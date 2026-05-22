@@ -63,7 +63,7 @@
   - `INVITATION_TOKEN_HMAC_KEY: str` (required at every boot)
   - `INVITATION_TOKEN_HMAC_KEY_OLD: str | None`
   - `model_validator(mode='after')` raises `ValueError` when `INVITATION_TOKEN_KID_OLD` is set without `INVITATION_TOKEN_HMAC_KEY_OLD` (and vice versa) — mirror the A-12 pattern at `core/settings.py:516-528`
-- [ ] T013 [P] **SPLIT ACROSS Step 2 / 3 / 10** — Remove the legacy email settings in the same PR as the consumer cleanup so settings + readers stay in sync: `RESEND_API_KEY`/`EMAIL_FROM` move to Step 2 (with `services/email.py` rewrite), `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED` to Step 3 (middleware atomic swap), `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` to Step 10 (`services/email_verification_service.py` deletion). Avoids `AttributeError` between PRs.
+- [ ] T013 [P] **SPLIT ACROSS Step 2 / 3 / 10** — Remove the legacy email settings in the same PR as the consumer cleanup so settings + readers stay in sync: `RESEND_API_KEY`/`EMAIL_FROM` move to Step 2 (with `services/email.py` rewrite), `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED` **deleted in Step 3 (this PR)** alongside the middleware atomic swap, `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` remains until Step 10 (`services/email_verification_service.py` deletion). Avoids `AttributeError` between PRs.
 - [x] T014 [P] Add `apps/api/tests/unit/core/test_invitation_token_kid_settings.py`: assert presence, defaults, refuse-to-start co-presence validator
 
 ### Audit substrate
@@ -138,11 +138,11 @@
 
 ### Forced-change middleware swap (atomic, FR-011-204 / NFR-011-007 / R8)
 
-- [ ] T070 Create `apps/api/echoroo/middleware/forced_password_change.py`:
+- [x] T070 Create `apps/api/echoroo/middleware/forced_password_change.py`:
   - `ForcedPasswordChangeMiddleware(BaseHTTPMiddleware)` returning 423 Locked + `Location: /change-password` for every path EXCEPT the allowlist (`POST /web-api/v1/auth/change-password`, `POST /api/v1/auth/change-password`, `POST /web-api/v1/auth/logout`, `POST /api/v1/auth/logout`, `GET /health`, `GET /metrics`, `GET /favicon.ico`, OPTIONS method on any path, static `/static/` prefix)
   - WebSocket scope close 1011 (future-proofing)
-- [ ] T071 In `apps/api/echoroo/main.py`, in a SINGLE commit (R8): register `ForcedPasswordChangeMiddleware` at the topological position previously occupied by `EmailVerificationEnforcementMiddleware` AND remove the registration of `EmailVerificationEnforcementMiddleware`. The old middleware source file remains on disk until Phase 3 (US1) deletion
-- [ ] T072 [P] Add `apps/api/tests/integration/test_must_change_password_middleware.py`: allowlist matrix (every path × method × scope), 423 vs pass-through, WebSocket 1011, v1 mirror coverage
+- [x] T071 In `apps/api/echoroo/main.py`, in a SINGLE commit (R8): register `ForcedPasswordChangeMiddleware` at the topological position previously occupied by `EmailVerificationEnforcementMiddleware` AND remove the registration of `EmailVerificationEnforcementMiddleware`. The old middleware source file remains on disk until Phase 3 (US1) deletion
+- [x] T072 [P] Add `apps/api/tests/integration/test_must_change_password_middleware.py`: allowlist matrix (every path × method × scope), 423 vs pass-through, WebSocket 1011, v1 mirror coverage
 
 ### OpenAPI harness extension
 

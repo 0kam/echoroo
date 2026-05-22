@@ -1,4 +1,16 @@
-"""US2 security tests for protected-action email verification enforcement."""
+"""US2 security tests for protected-action email verification enforcement.
+
+spec/011 Step 3 (forced-password-change middleware swap) removed the
+``EmailVerificationEnforcementMiddleware`` registration from the
+application's middleware stack and dropped the
+``EMAIL_VERIFICATION_ENFORCEMENT_ENABLED`` setting. The 403
+``ERR_EMAIL_VERIFICATION_REQUIRED`` contract this suite asserts no
+longer applies — the equivalent contract under the new gate is the
+423 ``ERR_PASSWORD_CHANGE_REQUIRED`` response covered by
+``apps/api/tests/integration/test_must_change_password_middleware.py``.
+The entire module is skipped at import time; Step 10 will delete the
+file alongside the rest of the email-verification surface.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +18,24 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-import sqlalchemy as sa
-from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.auth import issue_access_token
-from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
-from echoroo.core.security import hash_password
-from echoroo.core.settings import get_settings
-from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
-from echoroo.models.user import User
+pytest.skip(
+    "spec/011 Step 3: EmailVerificationEnforcementMiddleware no longer "
+    "registered; replaced by ForcedPasswordChangeMiddleware. New contract "
+    "covered by tests/integration/test_must_change_password_middleware.py.",
+    allow_module_level=True,
+)
+
+import sqlalchemy as sa  # noqa: E402
+from httpx import AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+
+from echoroo.core.auth import issue_access_token  # noqa: E402
+from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS  # noqa: E402
+from echoroo.core.security import hash_password  # noqa: E402
+from echoroo.core.settings import get_settings  # noqa: E402
+from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token  # noqa: E402
+from echoroo.models.user import User  # noqa: E402
 
 _PUBLIC_EMAIL_VERIFICATION_PATHS = {
     "/web-api/v1/auth/login",

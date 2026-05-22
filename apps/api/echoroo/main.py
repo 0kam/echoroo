@@ -25,8 +25,8 @@ from echoroo.core.settings import get_settings
 from echoroo.middleware.api_key_ip_enforcement import DbIpEnforcer
 from echoroo.middleware.auth_router import AuthRouterConfig, AuthRouterMiddleware
 from echoroo.middleware.csrf import CsrfConfig, CsrfMiddleware
-from echoroo.middleware.email_verification_enforcement import (
-    EmailVerificationEnforcementMiddleware,
+from echoroo.middleware.forced_password_change import (
+    ForcedPasswordChangeMiddleware,
 )
 from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.no_store_setup import NoStoreSetupMiddleware
@@ -148,12 +148,17 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
         enforcement_prefixes=("/web-api/v1/", "/api/v1/"),
     )
 
-    # Email verification must run after AuthRouter has attached a
-    # principal but before 2FA enforcement can return its own protected
-    # action block. Starlette middleware is LIFO, so this call sits
-    # between TwoFactorEnforcement and AuthRouter.
+    # spec/011 §FR-011-204 / §NFR-011-007 / §R8 — atomic swap.
+    # ``ForcedPasswordChangeMiddleware`` replaces the now-removed
+    # ``EmailVerificationEnforcementMiddleware`` at the SAME topological
+    # position so the existing LIFO ordering invariants are preserved:
+    # this hop runs after :class:`AuthRouterMiddleware` (so
+    # ``request.state.principal`` is populated) and before
+    # :class:`TwoFactorEnforcementMiddleware`. The two middlewares MUST
+    # NOT both be live gates simultaneously — this commit registers the
+    # new one and removes the old registration in a single atomic step.
     app.add_middleware(
-        EmailVerificationEnforcementMiddleware,
+        ForcedPasswordChangeMiddleware,
         session_factory=middleware_session_factory,
     )
 
