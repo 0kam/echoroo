@@ -1,46 +1,76 @@
-"""Email service using Resend for transactional emails.
+"""Email helper stubs — spec/011 zero-email deployment (Step 2 reduction).
 
-This module is the single outbound-email integration point for the
-backend (FR-104, FR-101, FR-105). Every transactional email — account
-verification, password reset, new-device login notification — funnels
-through one of the helpers below so that:
+This module historically wrapped the Resend SDK and shipped transactional
+email for verification, password reset, login notifications, etc. As part
+of spec/011 (zero-email deployment) the outbound-email surface is being
+removed in favour of in-app banners (FR-011-008, FR-011-301..310).
 
-* The Resend SDK is imported in exactly one place.
-* Header-injection defence (NFKC normalise + ASCII control char
-  rejection) lives next to the email-rendering code.
-* Long-term PII does not leak into outbound bodies. Login-notification
-  emails carry only the **hashed** (``ip_hash``, ``ua_hash``) values —
-  the user already knows which device they were using; the raw IP and
-  User-Agent are not required to deliver the security signal.
+Step 2 of the Implementation Phasing performs a conservative reduction:
+
+* The Resend SDK initialiser is **deleted** outright — no helper below
+  reaches Resend any more.
+
+* All transactional-email helpers are reduced to **no-op stubs**. Their
+  signatures are preserved byte-for-byte so existing call-sites continue
+  to compile and execute without modification during the incremental
+  refactor. The stubs split into two flavours by caller contract:
+
+  * **Silent success** (return ``None``). Used by callers that have no
+    rollback path tied to email delivery. The outbox dispatcher treats
+    a returning handler as "success" and marks the outbox row complete,
+    so producers like
+    :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
+    do not accumulate dead-letter rows while the producer side awaits
+    deletion in Step 10. This flavour applies to: ``send_login_notification``,
+    ``send_email_change_notification``, ``send_2fa_reset_dispatched``,
+    ``send_api_key_revoke_email``, ``send_api_key_scope_degrade_email``,
+    ``send_verification_email``, ``send_password_reset_email``.
+  * **Suppressed-with-raise** (raises :class:`EmailDeliverySuppressed`).
+    Used when the caller wraps the email call in ``try/except`` with a
+    rollback path that MUST fire if the email is not delivered.
+    Returning success here would commit supporting DB rows + log a
+    "delivered" audit while the user receives nothing. This flavour
+    applies to: ``send_2fa_reset_magic_link`` (the caller in
+    :func:`services.two_factor_reset_service.issue_magic_link` rolls
+    back the magic-link row and downgrades the audit to
+    ``magic_link_dispatch_failed`` on exception — see step 4 / T403
+    for the eventual removal of that whole branch).
+
+* The small text-handling helpers ``_safe_recipient_hash``,
+  ``_sanitise_email_field``, and ``EmailHeaderInjectionError`` are
+  retained because they are imported from outside this module
+  (``workers/trusted_expiry_dispatcher.py`` reaches for
+  ``_safe_recipient_hash``; the coverage-uplift test fixture
+  ``tests/unit/services/test_email_service_coverage_uplift.py`` imports
+  all three).
+
+Full rewrite of the silent-success stubs to the
+``services.user_banner.enqueue_event`` surface lands in Phase 9 US7
+(``tasks.md`` T610-T614). Until then, those stubs are intentionally
+inert so a misconfigured deploy that still tries to dispatch a login
+notification (or similar) silently no-ops rather than 5xx-ing on a
+missing ``RESEND_API_KEY`` or a deleted helper.
 """
 
 from __future__ import annotations
 
-import html
 import logging
 import unicodedata
 from typing import Final
 
-import resend
-
 from echoroo.core.kms import compute_pii_hash
-from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
 
-settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
 def _safe_recipient_hash(value: str | None) -> str:
     """Return a non-PII surrogate for ``value`` suitable for log output.
 
-    All log statements in this module funnel through this helper so we
-    never spill the raw recipient address into durable log storage
-    (Datadog, syslog, etc.) — FR-105 treats email addresses as PII just
-    like raw IP / UA strings. We deliberately keep the call infallible:
-    if KMS is briefly unreachable we fall back to a static placeholder
-    rather than re-raise (which would mask the *real* error the caller
-    is already trying to report).
+    Retained because ``workers/trusted_expiry_dispatcher.py`` imports it
+    directly to avoid spilling raw recipient addresses into log
+    storage. The hashing path matches the pre-spec/011 implementation
+    so any historical log line stays correlatable.
     """
     if not value:
         return "<missing>"
@@ -52,30 +82,53 @@ def _safe_recipient_hash(value: str | None) -> str:
         # parseable while still being PII-free.
         return "<hash-unavailable>"
 
-# Configure Resend API key
-resend.api_key = settings.RESEND_API_KEY
 
-
-#: Hard cap for any user-controlled string that flows into the email
-#: body or headers. Real-world User-Agent strings rarely exceed a few
-#: hundred characters; longer values are almost certainly noise (or an
-#: attacker probing for header-injection bugs). Mirrors the cap in
-#: :mod:`echoroo.workers.login_notification_dispatcher`.
+#: Hard cap for any user-controlled string that historically flowed
+#: into email headers or bodies. Retained alongside
+#: :func:`_sanitise_email_field` so dependent tests still load.
 _EMAIL_FIELD_MAX_LEN: Final[int] = 500
 
 
 class EmailHeaderInjectionError(ValueError):
     """Raised when an email field carries ASCII control characters.
 
-    A stray ``\\n`` in an attacker-controlled User-Agent (or any other
-    header-bound field) lets them craft Bcc / Subject headers (FR-101).
-    The transactional senders reject such inputs before constructing
-    the SMTP envelope.
+    Retained for backwards compatibility with code that catches this
+    error type. No production caller raises it after the Step 2
+    reduction (the no-op stubs do not perform field sanitisation), but
+    the type itself is preserved so existing ``except`` clauses keep
+    compiling.
+    """
+
+
+class EmailDeliverySuppressed(RuntimeError):
+    """Raised by zero-email-deployment stubs to trigger caller-side rollback.
+
+    spec/011 §FR-011-008. Stubs that **must not** silently succeed
+    (because the caller has a ``try/except`` rollback path) raise this
+    instead of returning. Callers should treat it as an end-user email
+    delivery failure: roll back the supporting DB row and downgrade
+    the audit to ``*_failed``.
+
+    Returning ``None`` from those stubs would commit the supporting
+    DB row and emit a "dispatched" audit while the user receives
+    nothing — a false positive that breaks the audit-trail invariant.
+    Raising this dedicated exception type lets the caller's existing
+    ``except Exception`` arm fire without us pretending the email was
+    sent.
+
+    Used today by :func:`send_2fa_reset_magic_link`. Other helpers
+    return ``None`` because their callers do not branch on the
+    exception (the failure mode the helper is replacing was an in-line
+    log + swallow, not a transactional rollback).
     """
 
 
 def _sanitise_email_field(value: object, *, field_name: str) -> str:
-    """NFKC-normalise, reject control chars, and truncate to a hard cap."""
+    """NFKC-normalise, reject control chars, and truncate to a hard cap.
+
+    Retained for the coverage-uplift unit tests that still exercise it.
+    No production call path uses it after the Step 2 reduction.
+    """
     if value is None:
         return ""
     raw = str(value)
@@ -89,213 +142,187 @@ def _sanitise_email_field(value: object, *, field_name: str) -> str:
     return normalised
 
 
-async def send_verification_email(to: str, token: str) -> None:
-    """Send email verification email.
+# ---------------------------------------------------------------------------
+# No-op stubs (signatures preserved for in-tree call-sites)
+#
+# Every helper below is a Phase 9 US7 (``tasks.md`` T610-T614) target;
+# it will be rewritten to enqueue an in-app banner audit event via
+# ``services.user_banner``. Until then the stubs intentionally do
+# nothing besides log a single deprecation-grade warning so operators
+# can detect any caller that is still wired into the old email path.
+# ---------------------------------------------------------------------------
+
+
+async def send_login_notification(
+    *,
+    to: str,
+    ip_hash: str,
+    ua_hash: str,
+    timestamp: str,
+) -> None:
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
+
+    The full rewrite to ``services.user_banner.enqueue_event`` lands in
+    Phase 9 US7 (``tasks.md`` T610-T614). For now this is a no-op that
+    logs a deprecation warning so call-sites can be left in place
+    during the incremental refactor.
 
     Args:
-        to: Recipient email address
-        token: Verification token
-
-    Example:
-        ```python
-        await send_verification_email(user.email, verification_token)
-        ```
+        to: Recipient email address (unused; preserved for signature parity).
+        ip_hash: HMAC-SHA256 hex of the client IP.
+        ua_hash: HMAC-SHA256 hex of the User-Agent header.
+        timestamp: ISO-8601 timestamp of the sign-in.
     """
     recipient_hash = _safe_recipient_hash(to)
-
-    # If Resend is not configured, skip sending (development mode).
-    # NOTE: the verification token is intentionally not logged — even in
-    # dev, leaking a verification token to log storage would let anyone
-    # with log access claim the account (FR-105 + FR-101).
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "verification email skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s)",
-            recipient_hash,
-        )
-        return
-
-    verification_url = f"{settings.APP_URL}/verify-email?token={token}"
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Verify your Echoroo account",
-                "html": f"""
-                    <h2>Welcome to Echoroo!</h2>
-                    <p>Please verify your email address by clicking the link below:</p>
-                    <p><a href="{verification_url}">Verify Email</a></p>
-                    <p>This link will expire in 24 hours.</p>
-                    <p>If you didn't create an account, you can safely ignore this email.</p>
-                """,
-            }
-        )
-        logger.info("verification email sent (recipient_hash=%s)", recipient_hash)
-    except Exception:
-        logger.exception(
-            "verification email delivery failed (recipient_hash=%s)",
-            recipient_hash,
-        )
-        # Don't raise exception - email failure shouldn't block registration
-
-
-async def send_email_change_notification(to: str) -> None:
-    """Notify a previous mailbox that the account email address changed."""
-    recipient_hash = _safe_recipient_hash(to)
-
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "email change notification skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s)",
-            recipient_hash,
-        )
-        return
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Your Echoroo email address was changed",
-                "html": """
-                    <h2>Email address changed</h2>
-                    <p>The email address on your Echoroo account was changed.</p>
-                    <p>If you did not make this change, reset your password and
-                    contact support immediately.</p>
-                """,
-            }
-        )
-        logger.info("email change notification sent (recipient_hash=%s)", recipient_hash)
-    except Exception:
-        logger.exception(
-            "email change notification delivery failed (recipient_hash=%s)",
-            recipient_hash,
-        )
-
-
-async def send_password_reset_email(to: str, token: str) -> None:
-    """Send password reset email.
-
-    Args:
-        to: Recipient email address
-        token: Password reset token
-
-    Example:
-        ```python
-        await send_password_reset_email(user.email, reset_token)
-        ```
-    """
-    recipient_hash = _safe_recipient_hash(to)
-
-    # If Resend is not configured, skip sending (development mode).
-    # NOTE: the reset token is intentionally not logged — leaking it to
-    # log storage would let anyone with log access take over the
-    # account (FR-105 + FR-101).
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "password reset email skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s)",
-            recipient_hash,
-        )
-        return
-
-    reset_url = f"{settings.APP_URL}/reset-password?token={token}"
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Reset your Echoroo password",
-                "html": f"""
-                    <h2>Password Reset Request</h2>
-                    <p>You requested to reset your password. Click the link below:</p>
-                    <p><a href="{reset_url}">Reset Password</a></p>
-                    <p>This link will expire in 1 hour.</p>
-                    <p>If you didn't request this, you can safely ignore this email.</p>
-                """,
-            }
-        )
-        logger.info("password reset email sent (recipient_hash=%s)", recipient_hash)
-    except Exception:
-        logger.exception(
-            "password reset email delivery failed (recipient_hash=%s)",
-            recipient_hash,
-        )
-        # Don't raise exception - always return success for security
-
-
-def _two_factor_reset_magic_link_url(token: str) -> str:
-    return (
-        f"{settings.web_app_base_url.rstrip('/')}"
-        f"/two-factor-reset/confirm?token={token}"
+    logger.warning(
+        "send_login_notification stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
+        "in Phase 9 US7 (recipient_hash=%s, ip_hash=%s, ua_hash=%s, "
+        "timestamp=%s)",
+        recipient_hash,
+        ip_hash,
+        ua_hash,
+        timestamp,
     )
 
 
-async def send_2fa_reset_magic_link(to: str, token: str) -> None:
-    """Send the support-initiated 2FA reset magic-link email (FR-072 / A-11).
+async def send_email_change_notification(to: str) -> None:
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
 
-    Phase 17 backlog A-11: a support agent invokes
-    ``POST /web-api/v1/auth/confirm-identity-for-2fa-reset`` to start
-    the workflow. The endpoint returns 202 unconditionally (enumeration
-    defence, mirrors A-6) and — for known accounts — drops a magic
-    link into the user's inbox. Clicking the link redeems the token
-    and yields a short-lived confirmation token the support agent then
-    pastes into the admin reset form.
+    The full rewrite to ``services.user_banner.enqueue_event`` lands in
+    Phase 9 US7 (``tasks.md`` T610-T614).
 
-    The token itself is never logged. Failure to deliver does NOT
-    raise — the audit row written by the caller carries the failure
-    signal (FR-101 + FR-105 alignment with the password-reset path).
+    Args:
+        to: Previous recipient email address (unused; preserved for signature parity).
     """
     recipient_hash = _safe_recipient_hash(to)
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "2fa reset magic link skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s)",
-            recipient_hash,
-        )
-        return
+    logger.warning(
+        "send_email_change_notification stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
+        "in Phase 9 US7 (recipient_hash=%s)",
+        recipient_hash,
+    )
 
-    magic_url = _two_factor_reset_magic_link_url(token)
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Confirm your identity for an Echoroo 2FA reset",
-                "html": f"""
-                    <h2>2FA reset request</h2>
-                    <p>An Echoroo support agent has started a request to reset
-                    the two-factor authentication on your account.</p>
-                    <p>If you asked support for help, click the link below to
-                    confirm your identity. The link expires in 30 minutes and
-                    can only be used once.</p>
-                    <p><a href="{magic_url}">Confirm identity for 2FA reset</a></p>
-                    <p>If you did <strong>not</strong> contact support, you can
-                    safely ignore this email — no change will be made unless
-                    the link is clicked.</p>
-                """,
-            }
-        )
-        logger.info(
-            "2fa reset magic link sent (recipient_hash=%s)",
-            recipient_hash,
-        )
-    except Exception:
-        # Round-2 Fix-1: re-raise so the caller can write the
-        # ``two_factor_reset.email_notification_failed`` audit row.
-        # Previously this ``except`` swallowed the exception, leaving
-        # the audit path unreachable. The HTTP handler still translates
-        # the failure into 202 Accepted (enumeration defence) AFTER the
-        # audit row is committed, so the user-facing posture does not
-        # change.
-        logger.exception(
-            "2fa reset magic link delivery failed (recipient_hash=%s)",
-            recipient_hash,
-        )
-        raise
+
+async def send_verification_email(to: str, token: str) -> None:
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
+
+    The producer side
+    :meth:`services.email_verification_service.EmailVerificationService.issue_verification_token`
+    still enqueues an ``auth.email_verification.requested`` outbox row,
+    which the (still-registered) outbox dispatcher
+    :mod:`workers.email_verification_dispatcher` will hand back to
+    this helper. Returning ``None`` lets the dispatcher mark the
+    outbox row complete so we do not accumulate dead-letter retries
+    while the email-verification subsystem awaits wholesale removal.
+
+    Step 10 (US1) deletes the producer + dispatcher + this helper as
+    one PR. Until then this is a silent no-op: a single warning log
+    line is emitted so operators can spot any environment that is
+    still configured to issue verification tokens (the verification
+    feature flag should be off in every spec/011-deployed env).
+
+    The raw ``token`` is **never** echoed (a verification token in
+    logs is an account-takeover vector); only its length surfaces in
+    the warning record alongside the hashed recipient surrogate.
+
+    Args:
+        to: Recipient email address (unused beyond the hashed log line).
+        token: Plaintext verification token (length-logged only).
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    logger.warning(
+        "send_verification_email stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Email is silently suppressed; producer side will be "
+        "removed in Step 10 (US1). "
+        "(recipient_hash=%s, token_len=%d)",
+        recipient_hash,
+        len(token) if token else 0,
+    )
+
+
+async def send_password_reset_email(to: str, token: str) -> None:
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
+
+    The producer is :func:`api.web_v1.auth.request_password_reset`
+    (line ~1078) which enqueues ``event_type="password_reset_email"``
+    into the outbox. No dispatcher is registered for that event in
+    the current tree (pre-existing dead code — confirmed via
+    ``grep "password_reset_email" apps/api/echoroo``), so this helper
+    is not reached by any production path today. The stub exists
+    purely as defence-in-depth: if a future change wires a dispatcher
+    (or if the producer is invoked via a non-outbox path), the call
+    will silently no-op rather than crash with ``AttributeError`` /
+    ``NotImplementedError``.
+
+    Step 10 (US1) deletes the producer + this helper as one PR.
+
+    The raw ``token`` is **never** echoed (a password-reset token in
+    logs is an account-takeover vector); only its length surfaces in
+    the warning record alongside the hashed recipient surrogate.
+
+    Args:
+        to: Recipient email address (unused beyond the hashed log line).
+        token: Plaintext password-reset token (length-logged only).
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    logger.warning(
+        "send_password_reset_email stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Email is silently suppressed; producer side will be "
+        "removed in Step 10 (US1). "
+        "(recipient_hash=%s, token_len=%d)",
+        recipient_hash,
+        len(token) if token else 0,
+    )
+
+
+async def send_2fa_reset_magic_link(to: str, raw_token: str) -> None:
+    """Stub kept for spec/011 Step 2 → Step 4 sequencing safety.
+
+    ``services.two_factor_reset_service.issue_magic_link`` still calls
+    this helper at the self-service magic-link branch (line ~319) and
+    wraps the call in a ``try/except`` whose handler rolls back the
+    magic-link DB row and downgrades the audit to ``*_failed`` on any
+    exception. **This stub MUST raise** so that rollback path fires —
+    a ``return None`` would commit a magic-link row that no user can
+    ever redeem (the token was never emailed) and flow a false-
+    positive ``magic_link_dispatched`` audit.
+
+    The dedicated :class:`EmailDeliverySuppressed` exception type lets
+    callers distinguish "we deliberately did not send" from a real
+    transport failure if they later need to (today the caller catches
+    a bare ``Exception`` so the distinction is logged but not
+    branched on).
+
+    Step 4 (T403 in ``tasks.md``) removes the entire self-service
+    magic-link path (caller + this stub) as part of the
+    ``step_up_token_service`` JWT extension PR.
+
+    Args:
+        to: Recipient email address. Hashed to a non-PII surrogate
+            for the log line; the raw value never reaches log
+            storage.
+        raw_token: Plaintext magic-link token. Length-logged only;
+            the value itself is **never** echoed (a magic-link token
+            in logs is account takeover).
+
+    Raises:
+        EmailDeliverySuppressed: Always. The caller's rollback path
+            relies on this to revert the supporting DB row and
+            downgrade the audit.
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    logger.warning(
+        "send_2fa_reset_magic_link stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100 + T403. Magic-link flow is deleted in Step 4; this "
+        "stub raises EmailDeliverySuppressed so the caller's rollback path "
+        "fires (recipient_hash=%s, raw_token_len=%d)",
+        recipient_hash,
+        len(raw_token) if raw_token else 0,
+    )
+    raise EmailDeliverySuppressed(
+        "spec/011 zero-email; full removal in Step 4 T403"
+    )
 
 
 async def send_2fa_reset_dispatched(
@@ -303,51 +330,54 @@ async def send_2fa_reset_dispatched(
     *,
     dispatched_at_iso: str,
 ) -> None:
-    """Notify the user that their 2FA reset has been applied (FR-072 / A-11)."""
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
+
+    The full rewrite to ``services.user_banner.enqueue_event`` lands in
+    Phase 9 US7 (``tasks.md`` T610-T614).
+
+    Args:
+        to: Recipient email address (unused; preserved for signature parity).
+        dispatched_at_iso: ISO-8601 timestamp the reset was applied.
+    """
     recipient_hash = _safe_recipient_hash(to)
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "2fa reset applied notification skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s)",
-            recipient_hash,
-        )
-        return
-    safe_when = _sanitise_email_field(dispatched_at_iso, field_name="dispatched_at_iso")
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Your Echoroo 2FA has been reset",
-                "html": f"""
-                    <h2>Two-factor authentication reset</h2>
-                    <p>The two-factor authentication on your Echoroo account
-                    was cleared at <strong>{html.escape(safe_when)}</strong>.</p>
-                    <p>The next time you sign in, Echoroo will guide you
-                    through enrolling a new authenticator. For 72 hours your
-                    password cannot be reset — this is a security cool-down
-                    that protects against follow-up attacks.</p>
-                    <p>If you did not request this, please contact support
-                    immediately and rotate your password from a trusted
-                    device.</p>
-                """,
-            }
-        )
-        logger.info(
-            "2fa reset applied notification sent (recipient_hash=%s)",
-            recipient_hash,
-        )
-    except Exception:
-        # Round-2 Fix-1: re-raise so the dispatch poller can write the
-        # ``two_factor_reset.email_notification_failed`` audit row with
-        # ``stage="applied_notification"``. The poller already wraps
-        # this call in a defensive try/except so the request row stays
-        # in ``applied`` even when the notification mail fails.
-        logger.exception(
-            "2fa reset applied notification delivery failed (recipient_hash=%s)",
-            recipient_hash,
-        )
-        raise
+    logger.warning(
+        "send_2fa_reset_dispatched stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
+        "in Phase 9 US7 (recipient_hash=%s, dispatched_at_iso=%s)",
+        recipient_hash,
+        dispatched_at_iso,
+    )
+
+
+async def send_api_key_revoke_email(
+    *,
+    to: str,
+    api_key_prefix: str,
+    created_at_iso: str,
+    revoked_at_iso: str,
+) -> None:
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
+
+    The full rewrite to ``services.user_banner.enqueue_event`` lands in
+    Phase 9 US7 (``tasks.md`` T610-T614).
+
+    Args:
+        to: Recipient email address (unused; preserved for signature parity).
+        api_key_prefix: First-4 of the revoked key.
+        created_at_iso: ISO-8601 timestamp the key was created.
+        revoked_at_iso: ISO-8601 timestamp the key was revoked.
+    """
+    recipient_hash = _safe_recipient_hash(to)
+    logger.warning(
+        "send_api_key_revoke_email stub invoked — see spec/011 §FR-011-008 / "
+        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
+        "in Phase 9 US7 (recipient_hash=%s, prefix=%s, created_at_iso=%s, "
+        "revoked_at_iso=%s)",
+        recipient_hash,
+        api_key_prefix,
+        created_at_iso,
+        revoked_at_iso,
+    )
 
 
 async def send_api_key_scope_degrade_email(
@@ -358,237 +388,28 @@ async def send_api_key_scope_degrade_email(
     degraded_at_iso: str,
     grace_days_until_revoke: int,
 ) -> None:
-    """Notify a user that their API key has lost write scope (FR-083 / A-4).
+    """Stub for spec/011 zero-email deployment (Step 2 T100).
 
-    The 180-day mark strips every write permission from the key. The
-    user keeps read access for the remainder of the grace window
-    (default 90 days). Failure to deliver re-raises so the caller's
-    audit path runs — same convention as the 2FA reset emails.
-    """
-    recipient_hash = _safe_recipient_hash(to)
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "api_key scope_degrade email skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            api_key_prefix,
-        )
-        return
-
-    safe_prefix = _sanitise_email_field(api_key_prefix, field_name="api_key_prefix")
-    safe_created = _sanitise_email_field(created_at_iso, field_name="created_at_iso")
-    safe_degraded = _sanitise_email_field(degraded_at_iso, field_name="degraded_at_iso")
-    safe_grace = _sanitise_email_field(
-        str(int(grace_days_until_revoke)), field_name="grace_days_until_revoke"
-    )
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Your Echoroo API key now read-only (180-day rotation)",
-                "html": f"""
-                    <h2>API key write access removed</h2>
-                    <p>The Echoroo API key with prefix
-                    <code>{html.escape(safe_prefix)}</code> (created
-                    <strong>{html.escape(safe_created)}</strong>) reached
-                    180 days of age on
-                    <strong>{html.escape(safe_degraded)}</strong>.</p>
-                    <p>To protect your account against credential stuffing
-                    on long-lived secrets, write-shaped permissions
-                    (upload, vote, manage, etc.) have been removed. Read
-                    permissions are still active.</p>
-                    <p>The key will be fully revoked in
-                    <strong>{html.escape(safe_grace)} days</strong>.
-                    Please rotate it from
-                    <a href="https://echoroo.app/settings/api-keys">your
-                    settings page</a> at your earliest convenience.</p>
-                """,
-            }
-        )
-        logger.info(
-            "api_key scope_degrade email sent (recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            safe_prefix,
-        )
-    except Exception:
-        logger.exception(
-            "api_key scope_degrade email delivery failed "
-            "(recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            safe_prefix,
-        )
-        raise
-
-
-async def send_api_key_revoke_email(
-    *,
-    to: str,
-    api_key_prefix: str,
-    created_at_iso: str,
-    revoked_at_iso: str,
-) -> None:
-    """Notify a user that their API key has been auto-revoked (FR-083 / A-4).
-
-    Sent at the 270-day mark. The key is now unusable — any subsequent
-    request returns 401. Failure to deliver re-raises so the caller's
-    audit path runs.
-    """
-    recipient_hash = _safe_recipient_hash(to)
-    if not settings.RESEND_API_KEY:
-        logger.warning(
-            "api_key revoke email skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            api_key_prefix,
-        )
-        return
-
-    safe_prefix = _sanitise_email_field(api_key_prefix, field_name="api_key_prefix")
-    safe_created = _sanitise_email_field(created_at_iso, field_name="created_at_iso")
-    safe_revoked = _sanitise_email_field(revoked_at_iso, field_name="revoked_at_iso")
-
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": to,
-                "subject": "Your Echoroo API key has been revoked (270-day cap)",
-                "html": f"""
-                    <h2>API key revoked</h2>
-                    <p>The Echoroo API key with prefix
-                    <code>{html.escape(safe_prefix)}</code> (created
-                    <strong>{html.escape(safe_created)}</strong>) was
-                    automatically revoked at
-                    <strong>{html.escape(safe_revoked)}</strong> after
-                    reaching the 270-day age cap (FR-083).</p>
-                    <p>The key can no longer authenticate against the
-                    Echoroo API. Please mint a new key from
-                    <a href="https://echoroo.app/settings/api-keys">your
-                    settings page</a> and migrate any integrations.</p>
-                """,
-            }
-        )
-        logger.info(
-            "api_key revoke email sent (recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            safe_prefix,
-        )
-    except Exception:
-        logger.exception(
-            "api_key revoke email delivery failed "
-            "(recipient_hash=%s, prefix=%s)",
-            recipient_hash,
-            safe_prefix,
-        )
-        raise
-
-
-async def send_login_notification(
-    *,
-    to: str,
-    ip_hash: str,
-    ua_hash: str,
-    timestamp: str,
-) -> None:
-    """Send a "new sign-in" notification email (FR-104, FR-105).
-
-    Only **hashed** IP and User-Agent values cross the email boundary.
-    The user already knows which device / network they were on; the raw
-    values would only add long-term PII exposure (the email is durable
-    on the recipient's mail server) without improving the security
-    signal. The hashes line up with the
-    :class:`echoroo.services.login_notification_service.LoginNotificationService`
-    seen-table so the user can ask support for a correlated lookup if
-    they need to investigate.
+    The full rewrite to ``services.user_banner.enqueue_event`` lands in
+    Phase 9 US7 (``tasks.md`` T610-T614).
 
     Args:
-        to: Recipient email address.
-        ip_hash: HMAC-SHA256 hex of the client IP (FR-091, FR-091b).
-        ua_hash: HMAC-SHA256 hex of the User-Agent header.
-        timestamp: ISO-8601 timestamp of the sign-in (used in the body).
-
-    Raises:
-        EmailHeaderInjectionError: If any field carries ASCII control
-            characters — these are textbook header-injection candidates
-            and the dispatcher must NOT swallow them silently (FR-101).
-        Exception: Any Resend SDK error propagates so the outbox
-            processor can retry / dead-letter the row.
+        to: Recipient email address (unused; preserved for signature parity).
+        api_key_prefix: First-4 of the affected key.
+        created_at_iso: ISO-8601 timestamp the key was created.
+        degraded_at_iso: ISO-8601 timestamp write-scope was stripped.
+        grace_days_until_revoke: Days remaining before full revocation.
     """
-    recipient = _sanitise_email_field(to, field_name="to")
-    safe_ip_hash = _sanitise_email_field(ip_hash, field_name="ip_hash")
-    safe_ua_hash = _sanitise_email_field(ua_hash, field_name="ua_hash")
-    safe_timestamp = _sanitise_email_field(timestamp, field_name="timestamp")
-
-    if not recipient:
-        # Caller bug — surface as an exception so the outbox row
-        # eventually moves to ``dead_letter`` after the retry budget.
-        raise EmailHeaderInjectionError("send_login_notification requires a recipient")
-
-    # FR-105: never let the raw recipient address cross into log
-    # storage. Every log statement below uses ``recipient_hash`` (a
-    # KMS-keyed HMAC of the address) instead. The hashed IP / UA values
-    # are already non-PII surrogates and can be logged as-is.
-    recipient_hash = _safe_recipient_hash(recipient)
-
-    if not settings.RESEND_API_KEY:
-        # Dev / test mode: log only the hashed values. We deliberately
-        # do NOT log the raw IP / UA / email — logs are durable PII
-        # storage and FR-105 forbids that path. The recipient_hash is a
-        # stable surrogate that lets operators correlate this skip with
-        # the seen-table row without ever exposing the address.
-        logger.warning(
-            "login_notification email skipped — RESEND_API_KEY not configured "
-            "(recipient_hash=%s, ip_hash=%s, ua_hash=%s)",
-            recipient_hash,
-            safe_ip_hash,
-            safe_ua_hash,
-        )
-        return
-
-    subject = "New sign-in to your Echoroo account"
-    if has_control_chars(subject):  # pragma: no cover — constant string
-        raise EmailHeaderInjectionError(
-            "subject contains control characters (compile-time invariant)"
-        )
-
-    body_html = (
-        "<h2>New sign-in to your Echoroo account</h2>"
-        f"<p>We detected a sign-in to your account at "
-        f"<strong>{html.escape(safe_timestamp)}</strong>.</p>"
-        "<p>For your privacy we do not include the raw IP address or "
-        "browser identifier in this email. The hashed device fingerprints "
-        "below match what we store internally, so support can correlate "
-        "this sign-in with your account record if you need to investigate.</p>"
-        "<ul>"
-        f"<li>Device fingerprint (IP): <code>{html.escape(safe_ip_hash)}</code></li>"
-        f"<li>Device fingerprint (browser): <code>{html.escape(safe_ua_hash)}</code></li>"
-        "</ul>"
-        "<p>If this was you, no action is needed. If you do not recognise "
-        "this sign-in, please reset your password immediately and contact "
-        "support.</p>"
+    recipient_hash = _safe_recipient_hash(to)
+    logger.warning(
+        "send_api_key_scope_degrade_email stub invoked — see spec/011 "
+        "§FR-011-008 / tasks.md T100. Caller will be rewritten to "
+        "user_banner.enqueue_event in Phase 9 US7 "
+        "(recipient_hash=%s, prefix=%s, created_at_iso=%s, degraded_at_iso=%s, "
+        "grace_days_until_revoke=%s)",
+        recipient_hash,
+        api_key_prefix,
+        created_at_iso,
+        degraded_at_iso,
+        grace_days_until_revoke,
     )
-
-    resend.api_key = settings.RESEND_API_KEY
-    try:
-        resend.Emails.send(
-            {
-                "from": settings.EMAIL_FROM,
-                "to": recipient,
-                "subject": subject,
-                "html": body_html,
-            }
-        )
-    except Exception:
-        # Re-raise so the outbox dispatcher can retry / dead-letter
-        # the row. The diagnostic log line carries only non-PII
-        # surrogates (recipient_hash + ip_hash) — never the raw email,
-        # IP, or UA. FR-105 forbids the raw forms in any durable log.
-        logger.exception(
-            "login_notification email delivery failed "
-            "(recipient_hash=%s, ip_hash=%s)",
-            recipient_hash,
-            safe_ip_hash,
-        )
-        raise

@@ -132,13 +132,6 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS: int = 20
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS: int = 3600
 
-    # Email (Resend)
-    RESEND_API_KEY: str = Field(
-        default="",
-        description="Resend API key for transactional emails",
-    )
-    EMAIL_FROM: str = "noreply@echoroo.app"
-
     # Email verification and trusted devices
     EMAIL_VERIFICATION_ENFORCEMENT_ENABLED: bool = False
     TRUSTED_DEVICE_REGISTRATION_ENABLED: bool = False

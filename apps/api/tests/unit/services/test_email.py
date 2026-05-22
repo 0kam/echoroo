@@ -28,14 +28,29 @@ consistency.
 
 from __future__ import annotations
 
-import logging
-from typing import Any
-from unittest.mock import MagicMock
-
 import pytest
 
-from echoroo.services import email as email_module
-from echoroo.services.email import (
+# spec/011 Step 2 (T100) reduced ``services.email`` to no-op stubs and
+# removed the ``settings.RESEND_API_KEY`` / ``settings.EMAIL_FROM`` surface
+# along with the Resend SDK call path. The tests below assert on the
+# pre-reduction behaviour (warn-and-continue around ``resend.Emails.send``
+# / PII-safe logging of the Resend error payload) and so cannot succeed
+# under the new contract. The whole email subsystem — including this
+# test module — is removed in Step 10 (US1, see ``tasks.md`` T110-T129).
+# Until then, skip the file at collection time so backend-tests CI stays
+# green while the helpers exist only as silent stubs.
+pytest.skip(
+    "spec/011 Step 2: services.email reduced to no-op stubs; this file "
+    "is removed wholesale in Step 10 (US1). See tasks.md T100 + T110.",
+    allow_module_level=True,
+)
+
+import logging  # noqa: E402  pragma: no cover
+from typing import Any  # noqa: E402  pragma: no cover
+from unittest.mock import MagicMock  # noqa: E402  pragma: no cover
+
+from echoroo.services import email as email_module  # noqa: E402  pragma: no cover
+from echoroo.services.email import (  # noqa: E402  pragma: no cover
     send_login_notification,
     send_password_reset_email,
     send_verification_email,

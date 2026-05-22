@@ -97,6 +97,7 @@ from echoroo.models.two_factor_reset_request import (
 )
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.models.user import User
+from echoroo.models.user_banner_dismissal import UserBannerDismissal
 from echoroo.models.user_login_notification_seen import UserLoginNotificationSeen
 
 __all__ = [
@@ -128,6 +129,7 @@ __all__ = [
     "TwoFactorResetRequest",
     "TrustedDevice",
     "User",
+    "UserBannerDismissal",
     "UserLoginNotificationSeen",
     # Annotation models (existing)
     "AnnotationProject",

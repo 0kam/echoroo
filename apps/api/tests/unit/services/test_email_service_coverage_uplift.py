@@ -9,12 +9,27 @@ Resend API calls are patched so no real HTTP calls are made.
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 import pytest
 
-import echoroo.services.email as mod
-from echoroo.services.email import (
+# spec/011 Step 2 (T100) reduced ``services.email`` to no-op stubs and
+# removed every Resend-call code path. The coverage uplift below targets
+# pre-reduction branches (warn-when-RESEND-not-set, resend.Emails.send
+# exception swallowing, etc.) that no longer exist. The remaining
+# retained helpers (``_safe_recipient_hash``, ``_sanitise_email_field``,
+# ``EmailHeaderInjectionError``) are exercised indirectly by other test
+# modules, and the whole file is removed in Step 10 (US1) when the
+# email subsystem is deleted wholesale (see ``tasks.md`` T100 + T110).
+# Skip the file at collection time so backend-tests CI stays green.
+pytest.skip(
+    "spec/011 Step 2: services.email reduced to no-op stubs; this file "
+    "is removed wholesale in Step 10 (US1). See tasks.md T100 + T110.",
+    allow_module_level=True,
+)
+
+from unittest.mock import patch  # noqa: E402  pragma: no cover
+
+import echoroo.services.email as mod  # noqa: E402  pragma: no cover
+from echoroo.services.email import (  # noqa: E402  pragma: no cover
     EmailHeaderInjectionError,
     _safe_recipient_hash,
     _sanitise_email_field,
