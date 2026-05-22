@@ -87,8 +87,8 @@
     - `AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER = "platform.user.two_factor_reset_by_superuser"`
   - `services/trusted_device_service.py` adds:
     - `AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL = "auth.trusted_device.revoke_all"`
-- [ ] T021 In `apps/api/echoroo/services/audit_service.py` add `DESTRUCTIVE_ACTIONS: Final[frozenset[str]]` per research.md R6 (6 entries: `project.delete`, `dataset.delete`, `recording.delete`, `project.acl.update`, `project.permission.elevate`, `project.visibility.update`)
-- [ ] T022 In `apps/api/echoroo/services/audit_service.py` add `build_pre_transfer_action_summary(session, project_id, actor_user_id, since, until) -> dict` helper that queries `project_audit_log` rows for `actor_user_id == :actor AND project_id == :project AND created_at BETWEEN :since AND :until`, returning `{summary: [{action, timestamp, target_id?}]}` with `target_id` preserved iff `action ∈ DESTRUCTIVE_ACTIONS`
+- [x] T021 In `apps/api/echoroo/services/audit_service.py` add `DESTRUCTIVE_ACTIONS: Final[frozenset[str]]` per research.md R6 (6 entries: `project.delete`, `dataset.delete`, `recording.delete`, `project.acl.update`, `project.permission.elevate`, `project.visibility.update`)
+- [x] T022 In `apps/api/echoroo/services/audit_service.py` add `build_pre_transfer_action_summary(session, project_id, actor_user_id, since, until) -> dict` helper that queries `project_audit_log` rows for `actor_user_id == :actor AND project_id == :project AND created_at BETWEEN :since AND :until`, returning `{summary: [{action, timestamp, target_id?}]}` with `target_id` preserved iff `action ∈ DESTRUCTIVE_ACTIONS`
 - [ ] T023 [P] Register each of the 11 new audit-action strings and `DESTRUCTIVE_ACTIONS` with the Phase 17 A-13 operator free-form PII detector (NFR-011-005) — extend the existing detector registration test
 - [ ] T024 [P] Add `apps/api/tests/security/test_audit_action_constants_registered.py`: asserts every new constant is unique vs existing audit-action strings + appears in the PII detector allowlist
 
@@ -373,15 +373,15 @@
 
 ### Backend
 
-- [ ] T500 [US6] Extend the project creation endpoint in `apps/api/echoroo/api/web_v1/projects/_lifecycle.py` (or the actual handler) to accept optional `intended_owner_email`. Silently drop server-side unless caller has `users.is_superuser=true` — FR-011-120 / FR-011-125. Same response shape SU and non-SU (anti-enumeration)
-- [ ] T501 [US6] When SU supplies `intended_owner_email`, atomically (single TX): create project with `owner_id=superuser.id`, issue `kind=member, role=ADMIN` invitation with `ownership_transfer_on_accept=true`, return both in response with `invitation_url`. Always set `Cache-Control: no-store` on create-project response
-- [ ] T502 [US6] In `apps/api/echoroo/services/invitation_service.accept_invitation` add the FR-011-123 nested SAVEPOINT branch for `ownership_transfer_on_accept=true`:
+- [x] T500 [US6] Extend the project creation endpoint in `apps/api/echoroo/api/web_v1/projects/_core.py` to accept optional `intended_owner_email`. Silently drop server-side unless caller has `users.is_superuser=true` — FR-011-120 / FR-011-125. Same response shape SU and non-SU (anti-enumeration)
+- [x] T501 [US6] When SU supplies `intended_owner_email`, atomically (single TX): create project with `owner_id=superuser.id`, issue `kind=member, role=ADMIN` invitation with `ownership_transfer_on_accept=true`, return both in response with `invitation_url`. Always set `Cache-Control: no-store` on create-project response
+- [x] T502 [US6] In `apps/api/echoroo/services/invitation_service.accept_invitation_via_public_token` add the FR-011-123 nested SAVEPOINT branch for `ownership_transfer_on_accept=true`:
   1. Inside SAVEPOINT: capture `pre_transfer_action_summary` via T022 helper (`build_pre_transfer_action_summary`)
   2. Update `Project.owner_id = accepting_user.id`
   3. Upsert prior-owner `ProjectMember` row at `role=ADMIN`
   4. Emit composite `project.ownership.bootstrap_transfer` audit with `{prior_owner, new_owner, pre_transfer_action_summary, at}`
   - On SAVEPOINT failure: rollback the SAVEPOINT and the parent transaction
-- [ ] T503 [US6] [P] On invitation revoke / expire / decline, do NOT auto-transfer (FR-011-124); project remains SU-owned
+- [x] T503 [US6] [P] On invitation revoke / expire / decline, do NOT auto-transfer (FR-011-124); project remains SU-owned
 
 ### Frontend
 
@@ -389,10 +389,10 @@
 
 ### Contracts + tests
 
-- [ ] T540 [US6] [P] Validate `specs/011-zero-email-deployment/contracts/su-bootstrap-project-create.yaml` against the live app
-- [ ] T541 [US6] [P] Add `apps/api/tests/integration/test_superuser_bootstrap_invitation.py` (FR-011-120..125): SU + intended_owner_email → project + invitation; non-SU same payload → field silently dropped + same response shape; accept by intended owner → ownership transferred + audit composite with pre_transfer_action_summary; declined → no transfer
-- [ ] T542 [US6] [P] Already covered in T058 (`test_invitation_kind_guard.py`); reverify against ownership_transfer_on_accept=true + kind=trusted attempts
-- [ ] T543 [US6] [P] Add `apps/api/tests/security/test_pre_transfer_action_summary_destructive_allowlist.py` (R6): destructive event types preserve `target_id`; all other entries do not; A-13 detector test covers all spec/011 event types
+- [x] T540 [US6] [P] Validate `specs/011-zero-email-deployment/contracts/su-bootstrap-project-create.yaml` against the live app
+- [x] T541 [US6] [P] Add `apps/api/tests/integration/test_superuser_bootstrap_invitation.py` (FR-011-120..125): SU + intended_owner_email → project + invitation; non-SU same payload → field silently dropped + same response shape; accept by intended owner → ownership transferred + audit composite with pre_transfer_action_summary; declined → no transfer
+- [x] T542 [US6] [P] Already covered in T058 (`test_invitation_kind_guard.py`); reverify against ownership_transfer_on_accept=true + kind=trusted attempts
+- [x] T543 [US6] [P] Add `apps/api/tests/security/test_pre_transfer_action_summary_destructive_allowlist.py` (R6): destructive event types preserve `target_id`; all other entries do not; A-13 detector test covers all spec/011 event types
 - [ ] T544 [US6] [P] Add Playwright e2e `apps/web/tests/e2e/su-bootstrap.spec.ts` (US6 AC1-6): SU creates project for Alice, copies URL, Alice accepts in second browser, ownership transferred and visible in activity view with pre_transfer_action_summary
 
 **Checkpoint**: US6 deliverable complete.

@@ -82,8 +82,7 @@ paths:
                     type: string
                     format: uuid
                     nullable: true
-        "400": { description: Validation failure }
-        "403": { description: Caller lacks project-create permission }
+        "422": { description: Validation failure }
       security:
         - sessionCookie: []
       x-permission: PROJECT_CREATE  # (existing)

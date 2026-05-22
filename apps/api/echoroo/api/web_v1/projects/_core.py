@@ -41,7 +41,7 @@ from types import SimpleNamespace
 from typing import Annotated, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
 
@@ -63,10 +63,17 @@ from echoroo.core.permissions import (
     is_allowed,
     load_project_or_404,
 )
+from echoroo.core.redis import get_redis_connection
 from echoroo.core.response_filter import apply_response_filter
+from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import ProjectStatus, ProjectVisibility
+from echoroo.models.enums import (
+    ProjectInvitationKind,
+    ProjectMemberRole,
+    ProjectStatus,
+    ProjectVisibility,
+)
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
@@ -75,6 +82,7 @@ from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
+    ProjectCreateResponse,
     ProjectResponse,
     ProjectSummaryListResponse,
     ProjectUpdateRequest,
@@ -83,6 +91,8 @@ from echoroo.schemas.recording import (
     PublicRecordingItem,
     PublicRecordingListResponse,
 )
+from echoroo.services import invitation_service
+from echoroo.services.invitation_service import InvitationCreateOutcome
 from echoroo.services.project import (
     ProjectService,
     build_project_summaries,
@@ -354,27 +364,128 @@ async def list_projects(
 
 @router.post(
     "/",
-    response_model=ProjectResponse,
+    response_model=ProjectCreateResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create project (Web UI)",
     description=(
         "Cookie + CSRF Web UI surface mirroring the programmatic project "
         "create route. Any authenticated session may create a project; "
-        "the creator becomes the owner."
+        "the creator becomes the owner.\n\n"
+        "spec/011 FR-011-120..125 — system superuser project bootstrap. "
+        "The request body accepts an optional ``intended_owner_email`` "
+        "field. When the caller is a system superuser, the create-project "
+        "transaction additionally issues a Member-kind ADMIN-role "
+        "invitation with ``ownership_transfer_on_accept=true`` and "
+        "surfaces the 4-part signed envelope on ``invitation_url``. "
+        "Non-superuser callers silently drop the field (anti-enumeration, "
+        "FR-011-125) — the response shape is IDENTICAL to a vanilla "
+        "create, including ``Cache-Control: no-store`` on every response."
     ),
 )
 async def create_project(
     payload: ProjectCreateRequest,
     request: Request,
+    response: Response,
     current_user: OptionalCurrentUser,
     service: ProjectServiceDep,
     db: DbSession,
-) -> ProjectResponse:
+) -> ProjectCreateResponse:
     """Create a project through the first-party BFF surface."""
     user = _require_authenticated(current_user)
 
+    # spec/011 FR-011-121 / FR-011-125 — Cache-Control no-store is set on
+    # EVERY response (not only the SU-bootstrap branch) so the header
+    # itself cannot reveal whether ``intended_owner_email`` was accepted.
+    # Mirrors the trusted-overlay + member-invitation precedents.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    # spec/011 FR-011-120 / FR-011-125 — silently drop ``intended_owner_email``
+    # for non-superuser callers. ``current_user.is_superuser`` is set by
+    # :func:`echoroo.middleware.auth._stamp_superuser_flag`; we treat the
+    # attribute defensively so a test fixture that bypasses the middleware
+    # still falls through to the non-bootstrap branch.
+    is_superuser = bool(getattr(user, "is_superuser", False))
+    intended_owner_email = (
+        payload.intended_owner_email
+        if is_superuser and payload.intended_owner_email
+        else None
+    )
+
     project = await service.create_project(user.id, payload)
+
+    invitation_url: str | None = None
+    invitation_id: UUID | None = None
+    bootstrap_outcome: InvitationCreateOutcome | None = None
+
+    if intended_owner_email is not None:
+        # spec/011 FR-011-121 — atomic SU bootstrap branch. The invitation
+        # row is inserted in the SAME transaction as the project insert so
+        # a rollback keeps the two in lockstep. The Step 6 R5 guard inside
+        # ``create_invitation`` (kind != MEMBER + transfer=True → raise)
+        # cannot fire here because we always pass ``kind=MEMBER``.
+        settings = get_settings()
+        redis = await get_redis_connection()
+        try:
+            bootstrap_outcome = await invitation_service.create_invitation(
+                db,
+                project_id=project.id,
+                kind=ProjectInvitationKind.MEMBER,
+                email=intended_owner_email,
+                invited_by_id=user.id,
+                hmac_secret=settings.web_session_secret,
+                redis=redis,
+                role=ProjectMemberRole.ADMIN,
+                ownership_transfer_on_accept=True,
+                request_id=request.headers.get("x-request-id") or "",
+                ip=(
+                    request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+                    or (request.client.host if request.client else "unknown")
+                ),
+                user_agent=request.headers.get("user-agent") or "",
+            )
+        except invitation_service.InvitationValidationError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_INVITATION_INVALID",
+                    "message": str(exc),
+                },
+            ) from exc
+        except invitation_service.InvitationConflictError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "ERR_INVITATION_PENDING",
+                    "message": str(exc),
+                },
+            ) from exc
+        except invitation_service.InvitationRateLimitError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(exc),
+            ) from exc
+        except invitation_service.InvitationInfraUnavailableError as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+        invitation_url = bootstrap_outcome.signed_token_envelope
+        invitation_id = bootstrap_outcome.invitation.id
+
     await db.commit()
+
+    if bootstrap_outcome is not None:
+        await invitation_service.trigger_post_commit_side_effects(
+            bootstrap_outcome
+        )
+
     await write_project_bff_audit_soft(
         actor_user_id=user.id,
         project_id=project.id,
@@ -384,7 +495,11 @@ async def create_project(
         before=None,
         after=_project_audit_snapshot(project),
     )
-    return project
+    return ProjectCreateResponse(
+        **project.model_dump(),
+        invitation_url=invitation_url,
+        invitation_id=invitation_id,
+    )
 
 
 # =============================================================================

@@ -84,7 +84,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,9 +100,12 @@ from echoroo.models.enums import (
     ProjectMemberRole,
     ProjectTrustedStatus,
 )
-from echoroo.models.project import ProjectInvitation, ProjectMember
+from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
-from echoroo.services.audit_service import AuditLogService
+from echoroo.services.audit_service import (
+    AuditLogService,
+    build_pre_transfer_action_summary,
+)
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -160,6 +163,17 @@ AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED: Final[str] = (
 # convention. The post-commit emitter writes it into ``project_audit_log``
 # alongside the existing ``project.invitation.create`` / ``.accept`` rows.
 AUDIT_ACTION_INVITATION_REVOKE: Final[str] = "project.invitation.revoke"
+
+# spec/011 Step 9 (FR-011-123) — SU bootstrap composite ownership-transfer
+# audit. Emitted once per successful ``accept_invitation_via_public_token``
+# call on a row that carries ``ownership_transfer_on_accept=True``. The
+# composite ``detail`` JSON includes the prior + new owner ids plus the
+# :func:`build_pre_transfer_action_summary` blob so the new owner has a
+# redacted summary of what the SU did before the handoff. Service-private
+# per HANDOFF line 79.
+AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER: Final[str] = (
+    "project.ownership.bootstrap_transfer"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1439,6 +1453,13 @@ class InvitationPublicAcceptOutcome:
     :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP`,
     :data:`AUDIT_ACTION_MEMBER_INVITE_ACCEPTED`, or
     :data:`AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED` (T208).
+
+    spec/011 Step 9 (FR-011-123): when the SAVEPOINT-nested ownership
+    transfer fires, ``ownership_transferred`` flips to ``True`` and
+    ``ownership_transfer_detail`` carries the composite ``detail`` JSON
+    that :func:`emit_public_invitation_accept_audit` post-commits as a
+    second :data:`AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER`
+    row alongside the regular invite-accept audit.
     """
 
     invitation: ProjectInvitation
@@ -1448,6 +1469,8 @@ class InvitationPublicAcceptOutcome:
     audit_action: str
     membership_created: bool
     ownership_transferred: bool = False
+    ownership_transfer_detail: dict[str, Any] | None = None
+    prior_owner_id: UUID | None = None
     request_id: str = ""
     ip: str = ""
     user_agent: str = ""
@@ -1770,6 +1793,128 @@ async def accept_invitation_via_public_token(
             "concurrent grant already exists for this user/project",
         ) from exc
 
+    # ---------------------------------------------------------------------
+    # spec/011 Step 9 (FR-011-123) — SAVEPOINT-nested ownership transfer.
+    # Fires ONLY on a successful accept for a row that carries
+    # ``ownership_transfer_on_accept=True``. The Step 6 R5 guard above
+    # and the DB CHECK constraint together guarantee ``kind == MEMBER``
+    # at this point. Decline / revoke / expire paths never reach here so
+    # the transfer cannot accidentally fire on the wrong terminal
+    # transition (FR-011-124).
+    #
+    # Order of operations inside the SAVEPOINT:
+    #   1. Capture the prior owner + project_created_at snapshot.
+    #   2. Build ``pre_transfer_action_summary`` (read-only SELECT).
+    #   3. Update ``Project.owner_id`` to the accepting user.
+    #   4. Upsert prior-owner ``ProjectMember`` row at role=ADMIN
+    #      (insert if absent, update-in-place if a removed row exists
+    #      under the partial unique index ``ux_project_members_active``).
+    #   5. Build the composite audit ``detail`` dict and stash it on
+    #      the outcome so :func:`emit_public_invitation_accept_audit`
+    #      can post-commit-emit the
+    #      :data:`AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER`
+    #      row in a fresh session (FR-093 SERIALIZABLE contract).
+    #
+    # Failure mode: any exception inside ``begin_nested()`` rolls back
+    # the SAVEPOINT, then propagates so the outer caller (handler) sees
+    # the error and rolls back the parent transaction (FR-011-123 step
+    # 5). The SAVEPOINT itself never silently swallows errors.
+    ownership_transferred = False
+    ownership_transfer_detail: dict[str, Any] | None = None
+    prior_owner_id: UUID | None = None
+    if invitation.ownership_transfer_on_accept:
+        async with session.begin_nested():
+            # Step 1 — snapshot the prior owner + project ``created_at``
+            # under the SAVEPOINT row lock. The ``with_for_update`` is
+            # ESSENTIAL: two concurrent accepts that lose the atomic
+            # invitation UPDATE above can't both reach here, but a
+            # parallel project-update mutation could re-write ``owner_id``
+            # mid-transfer; the FOR UPDATE lock makes the read of the
+            # old owner deterministic.
+            project_row_result = await session.execute(
+                select(Project.owner_id, Project.created_at)
+                .where(Project.id == invitation.project_id)
+                .with_for_update(),
+            )
+            project_row = project_row_result.first()
+            if project_row is None:
+                # Project missing — should be unreachable because the row
+                # lookup above (Step 2 of accept_invitation_via_public_token)
+                # already verified the invitation references a live project.
+                # Treat as a corruption: raise so the parent TX rolls back.
+                raise InvitationStateError(
+                    "ownership_transfer_target_project_missing",
+                )
+            prior_owner_id = project_row[0]
+            project_created_at = project_row[1]
+
+            # Step 2 — build the pre-transfer summary (R6). The query
+            # is read-only against ``project_audit_log`` and scoped to
+            # (project_id, actor=prior_owner, since=project_created_at,
+            # until=now_eff).
+            ownership_transfer_summary = await build_pre_transfer_action_summary(
+                session,
+                project_id=invitation.project_id,
+                actor_user_id=prior_owner_id,
+                since=project_created_at,
+                until=now_eff,
+            )
+
+            # Step 3 — flip the project owner. The UPDATE uses the same
+            # row lock the FOR UPDATE above took out.
+            await session.execute(
+                update(Project)
+                .where(Project.id == invitation.project_id)
+                .values(owner_id=accepting_user_id, updated_at=now_eff),
+            )
+
+            # Step 4 — upsert the prior-owner ``ProjectMember`` row at
+            # role=ADMIN. ``ux_project_members_active`` is a partial
+            # unique index on (project_id, user_id) WHERE removed_at IS
+            # NULL — direct INSERT against an existing active row would
+            # IntegrityError. We branch explicitly so the path is
+            # transparent at code-review time.
+            existing_prior_owner_member = (
+                await session.execute(
+                    select(ProjectMember).where(
+                        ProjectMember.project_id == invitation.project_id,
+                        ProjectMember.user_id == prior_owner_id,
+                        ProjectMember.removed_at.is_(None),
+                    ),
+                )
+            ).scalar_one_or_none()
+            if existing_prior_owner_member is None:
+                session.add(
+                    ProjectMember(
+                        project_id=invitation.project_id,
+                        user_id=prior_owner_id,
+                        role=ProjectMemberRole.ADMIN,
+                        joined_at=now_eff,
+                        invited_by_id=accepting_user_id,
+                    )
+                )
+            else:
+                existing_prior_owner_member.role = ProjectMemberRole.ADMIN
+
+            await session.flush()
+
+            # Step 5 — stage the composite audit detail. The actual
+            # ``project_audit_log`` row write happens post-commit (see
+            # ``emit_public_invitation_accept_audit``) because the
+            # audit writer requires a fresh session for the
+            # SERIALIZABLE upgrade (FR-093). Storing the dict on the
+            # outcome lets the emitter pick it up after the parent
+            # TX commits.
+            ownership_transfer_detail = {
+                "invitation_id": str(invitation.id),
+                "project_id": str(invitation.project_id),
+                "prior_owner": str(prior_owner_id),
+                "new_owner": str(accepting_user_id),
+                "pre_transfer_action_summary": ownership_transfer_summary,
+                "at": now_eff.isoformat(),
+            }
+            ownership_transferred = True
+
     return InvitationPublicAcceptOutcome(
         invitation=invitation,
         accepting_user_id=accepting_user_id,
@@ -1777,7 +1922,9 @@ async def accept_invitation_via_public_token(
         trusted_user=trusted_user,
         audit_action=audit_action,
         membership_created=membership_created,
-        ownership_transferred=False,  # FR-011-123 SAVEPOINT lands in Phase 9
+        ownership_transferred=ownership_transferred,
+        ownership_transfer_detail=ownership_transfer_detail,
+        prior_owner_id=prior_owner_id,
         request_id=request_id,
         ip=ip,
         user_agent=user_agent,
@@ -1808,6 +1955,13 @@ async def emit_public_invitation_accept_audit(
     accept path. The emitter is a best-effort post-commit hook —
     failures are WARNING-logged so observability never undoes the
     persisted membership / overlay row (FR-088 soft-alert pattern).
+
+    spec/011 Step 9 (FR-011-123): when ``ownership_transferred`` is
+    True the emitter also writes a second
+    :data:`AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER` row
+    carrying the composite ``detail`` dict captured by the
+    SAVEPOINT branch. The two rows are emitted independently so a
+    write failure on one cannot mask the other.
     """
     invitation = outcome.invitation
     detail: dict[str, Any] = {
@@ -1831,6 +1985,22 @@ async def emit_public_invitation_accept_audit(
         before={"status": ProjectInvitationStatus.PENDING.value},
         after={"status": invitation.status.value},
     )
+    if outcome.ownership_transferred and outcome.ownership_transfer_detail is not None:
+        await _write_invitation_audit(
+            action=AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER,
+            actor_user_id=outcome.accepting_user_id,
+            project_id=invitation.project_id,
+            request_id=outcome.request_id,
+            ip=outcome.ip,
+            user_agent=outcome.user_agent,
+            detail=outcome.ownership_transfer_detail,
+            before=(
+                {"owner_id": str(outcome.prior_owner_id)}
+                if outcome.prior_owner_id is not None
+                else None
+            ),
+            after={"owner_id": str(outcome.accepting_user_id)},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2267,6 +2437,7 @@ __all__ = [
     "AUDIT_ACTION_INVITATION_REVOKE",
     "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED",
     "AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP",
+    "AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER",
     "AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED",
     "INVITATION_MAX_TTL_SECONDS",
     "INVITATION_TTL_SECONDS",
