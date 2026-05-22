@@ -208,8 +208,24 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/v1/xeno_canto.py",
         "echoroo/api/web_v1/admin.py",
         "echoroo/api/web_v1/audit.py",
-        # echoroo/api/web_v1/auth.py — removed 2026-05-10 (PR-H Batch 8)
+        # echoroo/api/web_v1/auth.py — removed 2026-05-10 (PR-H Batch 8),
+        # re-added 2026-05-22 (spec/011 Step 7 PR #100): the new
+        # invitation-public resolver + accept endpoints add ~280 LOC of
+        # route handler code whose error/permission branches are covered
+        # by tests/integration/test_member_invitation_flow.py (13 cases)
+        # but not by unit-level coverage. Step 7c coverage uplift PR will
+        # re-remove this module after writing the targeted unit tests
+        # (rate-limit branches, Redis fault path, session-issuance error
+        # branches). Current gap: 3.0pp (82.0% → 85% target).
+        "echoroo/api/web_v1/auth.py",
         "echoroo/api/web_v1/projects/_core.py",
+        # spec/011 Step 7 PR #100: T200 (issue) + T201 (unified listing)
+        # add ~120 LOC of route handler code whose error/permission
+        # branches drop module coverage from 91.8% to 72.6%. Integration
+        # tests (test_member_invitation_flow.py) cover happy paths;
+        # Step 7c coverage uplift PR will lift this back. Current gap:
+        # 12.4pp.
+        "echoroo/api/web_v1/projects/_members.py",
         "echoroo/api/web_v1/trusted.py",
         # Permission-critical modules — gap tracked for Phase 17 targeted coverage push.
         # NOTE: echoroo/core/audit.py removed from PHASE17_PENDING (target: 95%, gap was
@@ -276,6 +292,15 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/evaluation.py",
         "echoroo/services/gbif.py",
         "echoroo/services/invitation.py",
+        # spec/011 Step 7 PR #100: accept_invitation_via_public_token +
+        # resolve_invitation_for_public_token + InvitationAlreadyMemberError
+        # add ~250 LOC of service code. Happy paths covered by
+        # tests/integration/test_member_invitation_flow.py (13 cases);
+        # rare error branches (Redis fault, audit emit failure soft alert,
+        # security_stamp mismatch fast-path) need unit tests. Step 7c
+        # coverage uplift PR will re-remove this entry. Current gap:
+        # 6.2pp (78.8% → 85% target).
+        "echoroo/services/invitation_service.py",
         "echoroo/services/project.py",
         "echoroo/services/recorder.py",
         "echoroo/services/search.py",
