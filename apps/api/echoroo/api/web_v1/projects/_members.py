@@ -117,7 +117,31 @@ from echoroo.services.invitation_service import (
     canonicalize_email,
     create_invitation,
     decline_invitation_by_recipient,
+    hash_email,
     revoke_invitation,
+)
+
+# spec/011 Step 8 R1 P0-2: every ``rate_limited`` row in the bulk response
+# carries the SAME constant message. Per-issuer and per-actor caps differ
+# in mechanism (`_check_and_consume_per_issuer_rate_limit` vs FR-056 inside
+# ``create_invitation``) but BOTH cause shapes used to surface
+# ``str(exc)``-style detail that included the actor user_id / project_id
+# strings — an internal-identifier oracle. The generic message below
+# replaces every such surface; the structured cause is logged server-side
+# (operator triage only, never echoed in the response body).
+_BULK_RATE_LIMITED_MESSAGE: Final[str] = (
+    "Rate limit reached for this issuer; retry after the per-hour or "
+    "per-day window."
+)
+
+# spec/011 Step 8 R1 P0-1: unexpected per-row failures surface this single
+# constant message. Stack-trace style detail (``type(exc).__name__``,
+# ``str(exc)``) MUST NOT ride in the response body — it leaks library
+# internals (e.g. ``RuntimeError: connection refused to db:5432``). The
+# ``logger.exception`` call captures the full traceback for operator
+# triage.
+_BULK_INTERNAL_ERROR_MESSAGE: Final[str] = (
+    "Internal error; the operator log captured the cause."
 )
 
 # ---------------------------------------------------------------------------
@@ -771,15 +795,23 @@ async def bulk_issue_project_member_invitations(
         # short-circuits to ``rate_limited`` without consuming an extra
         # INCR. The first trip already incremented the counter; further
         # increments would over-charge the issuer's quota.
+        #
+        # spec/011 Step 8 R1 P2 (acknowledged, no fix this round): the
+        # cap-trip row itself consumed +1 INCR on both the hour and day
+        # buckets BEFORE the sticky flag activates — a check-before-INCR
+        # pattern has its own race window (two concurrent batches could
+        # each pass the check, then each INCR past the cap). The current
+        # +1-on-trip design is the simplest fail-closed shape and
+        # tightens the cap by at most one unit per batch transition. The
+        # post-trip rows short-circuit here precisely so that one-off
+        # over-charge does not compound.
         if rate_limit_tripped:
             results.append(
                 BulkInvitationResultItem(
                     email=original_email,
                     status="rate_limited",
-                    error_message=(
-                        "per-issuer rate-limit cap reached earlier in "
-                        "this batch"
-                    ),
+                    # spec/011 Step 8 R1 P0-2 — uniform generic message.
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
                 )
             )
             continue
@@ -794,11 +826,22 @@ async def bulk_issue_project_member_invitations(
         )
         if not allowed:
             rate_limit_tripped = True
+            # spec/011 Step 8 R1 P0-2 — operator triage log carries the
+            # structured cause (``rl_error`` contains the cap window /
+            # the "infra unavailable" sentinel) but the response body
+            # never echoes it.
+            logger.warning(
+                "spec/011 bulk invitation row rate-limited "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                rl_error,
+            )
             results.append(
                 BulkInvitationResultItem(
                     email=original_email,
                     status="rate_limited",
-                    error_message=rl_error,
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
                 )
             )
             continue
@@ -835,12 +878,25 @@ async def bulk_issue_project_member_invitations(
             # check inside ``create_invitation`` trips it has ALREADY
             # incremented Redis counters that won't be undone; SAVEPOINT
             # rollback only affects the DB row.
+            #
+            # spec/011 Step 8 R1 P0-2: the legacy ``str(exc)`` shape
+            # (``"actor <uuid> exceeded ..."`` / ``"project <uuid>
+            # exceeded ..."``) leaked internal identifiers into the
+            # response. The generic constant replaces it; the structured
+            # cause stays in the operator log.
             rate_limit_tripped = True
+            logger.warning(
+                "spec/011 bulk invitation row rate-limited "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                exc,
+            )
             results.append(
                 BulkInvitationResultItem(
                     email=original_email,
                     status="rate_limited",
-                    error_message=str(exc),
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
                 )
             )
             continue
@@ -849,11 +905,22 @@ async def bulk_issue_project_member_invitations(
             # closed (so the issuer cannot bypass FR-056) but keep the
             # batch flowing — the remaining rows will see the same
             # fault and report it consistently.
+            #
+            # spec/011 Step 8 R1 P0-2: collapse to the same generic
+            # message used by the other rate-limit branches so the
+            # response shape is uniform across the rate_limited tier.
+            logger.warning(
+                "spec/011 bulk invitation row infra unavailable "
+                "(actor=%s project=%s cause=%s)",
+                current_user.id,
+                project_id,
+                exc,
+            )
             results.append(
                 BulkInvitationResultItem(
                     email=original_email,
                     status="rate_limited",
-                    error_message=str(exc),
+                    error_message=_BULK_RATE_LIMITED_MESSAGE,
                 )
             )
             continue
@@ -879,19 +946,39 @@ async def bulk_issue_project_member_invitations(
                 )
             )
             continue
-        except Exception as exc:  # noqa: BLE001 — last-ditch row guard
+        except Exception:  # noqa: BLE001 — last-ditch row guard
             # The SAVEPOINT already rolled back this row's writes. Log
             # the unexpected exception for operator triage; surface as
             # ``internal_error`` so the rest of the batch can complete.
+            #
+            # spec/011 Step 8 R1 P0-1: the legacy
+            # ``f"{type(exc).__name__}: {exc}"`` shape leaked exception
+            # class names + free-form messages (e.g. ``"RuntimeError:
+            # connection refused to db:5432"``) into the operator-
+            # visible response. Replace it with the constant generic
+            # message; the full traceback rides ``logger.exception`` so
+            # triage still has the cause. The log key uses
+            # :func:`hash_email` (HMAC-SHA-256 keyed by the
+            # ``web_session_secret``) instead of the plaintext email so
+            # the operator log line cannot be casefold-greppped back to
+            # the recipient. Plain ``project_id`` / ``actor_user_id``
+            # are operator-internal identifiers, not subject PII, and
+            # are safe to log.
             logger.exception(
-                "spec/011 bulk invitation: unexpected per-row failure",
-                extra={"project_id": str(project_id), "email": original_email},
+                "spec/011 bulk invitation: unexpected per-row failure "
+                "(actor=%s project=%s email_hash=%s)",
+                current_user.id,
+                project_id,
+                hash_email(
+                    original_email,
+                    hmac_secret=settings.web_session_secret,
+                ),
             )
             results.append(
                 BulkInvitationResultItem(
                     email=original_email,
                     status="internal_error",
-                    error_message=f"{type(exc).__name__}: {exc}",
+                    error_message=_BULK_INTERNAL_ERROR_MESSAGE,
                 )
             )
             continue
@@ -983,13 +1070,44 @@ async def revoke_project_invitation(
             detail="Not authenticated",
         )
 
-    await gate_action(
-        action=PROJECT_MEMBER_INVITATION_REVOKE_ACTION,
-        project_id=project_id,
-        current_user=current_user,
-        request=request,
-        db=db,
-    )
+    # spec/011 Step 8 R1 P1-1: the contract YAML
+    # (``specs/011-zero-email-deployment/contracts/member-invitations.yaml``)
+    # explicitly collapses 403 (caller lacks permission) into 404 on the
+    # revoke surface so an attacker who possesses a leaked invitation_id
+    # cannot enumerate which ids exist by probing across projects. The
+    # other 404 producers (missing row / wrong project / non-pending) live
+    # below in the ``InvitationStateError`` branch; funnelling the
+    # permission-deny into the same shape keeps every failure path
+    # response-identical (same body, same status, same Cache-Control).
+    try:
+        await gate_action(
+            action=PROJECT_MEMBER_INVITATION_REVOKE_ACTION,
+            project_id=project_id,
+            current_user=current_user,
+            request=request,
+            db=db,
+        )
+    except HTTPException as exc:
+        if exc.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+            status.HTTP_404_NOT_FOUND,
+        ):
+            # Operator triage stays in the log; the response collapses
+            # to the generic 404.
+            logger.info(
+                "spec/011 invitation revoke gate denied "
+                "(actor=%s project=%s invitation=%s gate_status=%s)",
+                current_user.id,
+                project_id,
+                invitation_id,
+                exc.status_code,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="invitation not found",
+            ) from exc
+        raise
 
     reason: str | None = payload.reason if payload is not None else None
 

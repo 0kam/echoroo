@@ -214,7 +214,13 @@ components:
         expires_at: { type: string, format: date-time }
         accepted_at: { type: string, format: date-time, nullable: true }
         revoked_at: { type: string, format: date-time, nullable: true }
-        revoked_reason: { type: string, nullable: true }
+        # spec/011 Step 8 R1 P1-3: ``revoked_reason`` was previously listed
+        # here but never persisted (no DB column on ``project_invitations``).
+        # The reason lives in the post-commit ``project.invitation.revoke``
+        # audit-log row's detail JSON instead; UI consumers pull history
+        # from the audit-log surface. Re-introducing it on the row would
+        # require migration 0021+, FR-011-208 already requires the field
+        # to ride the Phase 17 A-13 PII detector wherever it is surfaced.
         ownership_transfer_on_accept:
           type: boolean
           description: True only for SU-bootstrap invitations.

@@ -15,12 +15,12 @@ malformed payloads before they reach the service layer.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field
 
-from echoroo.core.operator_pii_detector import OperatorReasonText
+from echoroo.core.operator_pii_detector import reject_if_pii
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
@@ -230,20 +230,41 @@ class BulkInvitationResultItem(BaseModel):
 class InvitationRevokeRequest(BaseModel):
     """``POST /projects/{project_id}/invitations/{invitation_id}/revoke`` body.
 
-    ``reason`` is an OPTIONAL free-form operator note. It is routed through
-    :data:`OperatorReasonText` so the Phase 17 A-13 PII detector rejects
-    any payload carrying email / phone / national identifier patterns
-    BEFORE the audit row persists.
+    ``reason`` is an OPTIONAL free-form operator note. The Phase 17 A-13
+    PII detector (:func:`reject_if_pii`) rejects any payload carrying
+    email / phone / national identifier patterns BEFORE the audit row
+    persists.
+
+    spec/011 Step 8 R1 P1-2: the 500-character cap matches the contract
+    YAML's ``maxLength: 500`` and follows the
+    :class:`schemas.admin.AdminPasswordResetBody.reason` precedent
+    (Step 5). The dedicated cap is intentionally distinct from the
+    canonical :data:`OperatorReasonText` 2000-char limit — the contract
+    YAML is the source of truth and the revoke surface is bounded
+    tighter.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    reason: OperatorReasonText | None = Field(
+    reason: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=500,
+            description=(
+                "Operator-supplied free-form reason. MUST NOT contain "
+                "PII (email, phone, national identifier, credit card, "
+                "API tokens). Validated server-side (Phase 17 A-13) — "
+                "submitting PII yields HTTP 422."
+            ),
+        ),
+        AfterValidator(reject_if_pii),
+    ] | None = Field(
         default=None,
         description=(
-            "Optional operator-supplied free-form reason (Phase 17 A-13 "
-            "PII detector applies). Persisted into the post-commit audit "
-            "detail JSON only; the ``project_invitations`` table itself "
+            "Optional free-form rationale recorded in the audit detail. "
+            "Persisted into the post-commit ``project.invitation.revoke`` "
+            "audit row only; the ``project_invitations`` table itself "
             "does not currently carry a ``revoked_reason`` column."
         ),
     )

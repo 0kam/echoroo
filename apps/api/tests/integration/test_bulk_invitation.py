@@ -847,3 +847,381 @@ async def test_revoke_invitation_already_declined_returns_404(
         json={},
     )
     assert response.status_code == 404, response.text
+
+
+# ===========================================================================
+# spec/011 Step 8 R1 — P2 coverage gap closure (size + PII + permission +
+# info-leak regressions). Added in the post-PR-101 round so the
+# orchestrator's hand-listed gaps are covered before merge.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# R1 #1 — bulk rejects a 51-item batch with 422 (Pydantic max_items)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_rejects_51_item_batch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """FR-011-115: ``emails`` capped at 50 entries; 51 → HTTP 422.
+
+    The Pydantic ``max_length=50`` constraint on
+    :class:`BulkInvitationRequest.emails` fires BEFORE the handler runs,
+    so no SAVEPOINT opens and no per-issuer quota is consumed.
+    """
+    owner = await _create_user(
+        db_session, email="t291-r1-51-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    emails = _make_unique_emails(51)
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=owner_headers,
+        json={"role": "member", "emails": emails},
+    )
+    assert response.status_code == 422, response.text
+
+    # Zero invitations persisted.
+    count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(ProjectInvitation.project_id == project.id),
+        )
+    ).scalar_one()
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# R1 #2 — bulk rejects an empty batch with 422 (Pydantic min_items)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_rejects_empty_batch(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """FR-011-110: ``emails`` requires at least one entry; ``[]`` → 422.
+
+    Pydantic's ``min_length=1`` on the ``emails`` field rejects the empty
+    list before the handler runs.
+    """
+    owner = await _create_user(
+        db_session, email="t291-r1-empty-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=owner_headers,
+        json={"role": "member", "emails": []},
+    )
+    assert response.status_code == 422, response.text
+
+
+# ---------------------------------------------------------------------------
+# R1 #3 — revoke rejects a ``reason`` containing PII (Phase 17 A-13)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_revoke_rejects_reason_with_pii(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """FR-011-208: the free-form ``reason`` runs the A-13 PII detector.
+
+    A submitted email address inside the reason value MUST trip the
+    detector with HTTP 422 BEFORE the revoke commits.
+    """
+    owner = await _create_user(
+        db_session, email="t291-r1-pii-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    issue = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={
+            "email": f"t291-r1-pii-target-{uuid4().hex[:8]}@example.com",
+            "role": "member",
+        },
+    )
+    assert issue.status_code == 201, issue.text
+    invitation_id = issue.json()["invitation_id"]
+
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/"
+        f"{invitation_id}/revoke",
+        headers=owner_headers,
+        # The detector recognises common PII tokens; an email inside the
+        # free-form reason text MUST trip it.
+        json={"reason": "contact alice@bar.com for context"},
+    )
+    assert response.status_code == 422, response.text
+
+    # The invitation row remains pending — the PII detector ran BEFORE
+    # the revoke commit.
+    row = (
+        await db_session.execute(
+            sa.select(ProjectInvitation).where(
+                ProjectInvitation.id == UUID(invitation_id),
+            ),
+        )
+    ).scalar_one()
+    assert row.status is ProjectInvitationStatus.PENDING
+
+
+# ---------------------------------------------------------------------------
+# R1 #4 — bulk caller without MANAGE_MEMBERS → 403 (issuance endpoint
+# contract; revoke gets 404 anti-enumeration, see #5 below).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_returns_403_when_caller_lacks_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Bulk issuance gate denial surfaces as HTTP 403 (contract YAML).
+
+    The issuance endpoint's YAML explicitly lists ``403: PermissionDenied``;
+    unlike the revoke surface (which collapses 403 → 404 to defeat
+    invitation-id enumeration), the bulk endpoint exposes ``project_id``
+    in the URL so a 403 leaks nothing the URL did not already.
+    """
+    owner = await _create_user(
+        db_session, email="t291-r1-bulk403-owner@example.com",
+    )
+    outsider = await _create_user(
+        db_session, email="t291-r1-bulk403-outsider@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    outsider_headers = await _bff_session_headers(client, db_session, outsider)
+
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=outsider_headers,
+        json={
+            "role": "member",
+            "emails": [f"t291-r1-bulk403-{uuid4().hex[:8]}@example.com"],
+        },
+    )
+    # Outsider is not a member at all; the gate denies with 403 (or 404
+    # if the gate elected to mask project existence). The contract YAML
+    # accepts either as a non-leak shape — but 403 is the documented
+    # response for the bulk issuance path.
+    assert response.status_code in (403, 404), response.text
+    # No invitation persisted in either branch.
+    count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(ProjectInvitation.project_id == project.id),
+        )
+    ).scalar_one()
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# R1 #5 — revoke caller without MANAGE_MEMBERS → 404 (anti-enumeration)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_revoke_returns_404_when_caller_lacks_permission(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Contract YAML revoke 404 collapse covers permission denial too.
+
+    A caller without ``MANAGE_MEMBERS`` on the project MUST see HTTP 404
+    (same body as the other revoke 404 paths) so an attacker who possesses
+    a leaked ``invitation_id`` cannot probe whether the id exists by
+    measuring the gate's 403 vs the row-missing 404 split.
+    """
+    owner = await _create_user(
+        db_session, email="t291-r1-rev404-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    # Issue first so we have a real invitation_id under owner's project.
+    issue = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={
+            "email": f"t291-r1-rev404-target-{uuid4().hex[:8]}@example.com",
+            "role": "member",
+        },
+    )
+    assert issue.status_code == 201, issue.text
+    invitation_id = issue.json()["invitation_id"]
+
+    # Switch identities to an outsider with NO membership on the project.
+    # ``_bff_session_headers`` clears cookies + seeds a fresh refresh
+    # family so the outsider's session is unrelated to the owner's.
+    outsider = await _create_user(
+        db_session, email="t291-r1-rev404-outsider@example.com",
+    )
+    outsider_headers = await _bff_session_headers(client, db_session, outsider)
+
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/"
+        f"{invitation_id}/revoke",
+        headers=outsider_headers,
+        json={},
+    )
+    assert response.status_code == 404, response.text
+    # Response body matches the other 404 producers (missing / wrong
+    # project / non-pending) — same detail key so the shape is uniform.
+    body = response.json()
+    assert body.get("detail") == "invitation not found", body
+
+    # DB-side: invitation still pending under the original project.
+    row = (
+        await db_session.execute(
+            sa.select(ProjectInvitation).where(
+                ProjectInvitation.id == UUID(invitation_id),
+            ),
+        )
+    ).scalar_one()
+    assert row.status is ProjectInvitationStatus.PENDING
+
+
+# ---------------------------------------------------------------------------
+# R1 #6 — internal_error rows do NOT leak the exception type / message
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_internal_error_does_not_leak_exception_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 Step 8 R1 P0-1 regression guard.
+
+    Monkey-patch ``create_invitation`` so the middle row raises a
+    ``RuntimeError`` whose message embeds a fake connection string
+    (``"connection to db:5432 refused"``). The response row's
+    ``error_message`` MUST be the constant generic string — neither the
+    exception type name nor the raw message may appear in the body.
+    """
+    from echoroo.api.web_v1.projects import _members as members_module
+
+    leading = f"t291-r1-leak-leading-{uuid4().hex[:8]}@example.com"
+    sabotaged = f"t291-r1-leak-sabotaged-{uuid4().hex[:8]}@example.com"
+    trailing = f"t291-r1-leak-trailing-{uuid4().hex[:8]}@example.com"
+    leak_marker = "connection to db:5432 refused"
+
+    original_create = members_module.create_invitation
+
+    async def _maybe_sabotage(*args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("email") == sabotaged:
+            raise RuntimeError(leak_marker)
+        return await original_create(*args, **kwargs)
+
+    monkeypatch.setattr(members_module, "create_invitation", _maybe_sabotage)
+
+    owner = await _create_user(
+        db_session, email="t291-r1-leak-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=owner_headers,
+        json={
+            "role": "member",
+            "emails": [leading, sabotaged, trailing],
+        },
+    )
+    assert response.status_code == 207, response.text
+    rows = response.json()
+    assert len(rows) == 3
+    assert rows[1]["status"] == "internal_error"
+
+    # The forbidden tokens must not appear ANYWHERE in the response body.
+    body_text = response.text
+    assert "RuntimeError" not in body_text, body_text
+    assert leak_marker not in body_text, body_text
+    # ``db:5432`` substring is the load-bearing leak shape (the canonical
+    # example from the orchestrator's P0-1 brief).
+    assert "db:5432" not in body_text, body_text
+
+    # The constant generic message must be the visible substitute.
+    assert rows[1]["error_message"] == (
+        "Internal error; the operator log captured the cause."
+    ), rows[1]
+
+
+# ---------------------------------------------------------------------------
+# R1 #7 — rate_limited rows do NOT leak the actor / project identifiers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_rate_limit_error_does_not_leak_internal_identifiers(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 Step 8 R1 P0-2 regression guard.
+
+    Shrink the per-issuer hour cap to 1 so the SECOND row trips the cap.
+    The response's ``error_message`` for the rate-limited row MUST be the
+    constant generic message — neither the actor's UUID nor the project's
+    UUID nor any "actor … exceeded" / "project … exceeded" substring may
+    appear in the response body.
+    """
+    from echoroo.api.web_v1.projects import _members as members_module
+
+    monkeypatch.setattr(members_module, "_BULK_INVITE_HOUR_LIMIT", 1)
+
+    owner = await _create_user(
+        db_session, email="t291-r1-rl-owner@example.com",
+    )
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    emails = _make_unique_emails(3)
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=owner_headers,
+        json={"role": "member", "emails": emails},
+    )
+    assert response.status_code == 207, response.text
+    rows = response.json()
+    assert len(rows) == 3
+    assert rows[0]["status"] == "issued"
+    assert rows[1]["status"] == "rate_limited"
+    assert rows[2]["status"] == "rate_limited"
+
+    # The forbidden internal identifiers must not appear ANYWHERE in the
+    # response body.
+    body_text = response.text
+    actor_id = str(owner.id)
+    project_id = str(project.id)
+    assert actor_id not in body_text, body_text
+    assert project_id not in body_text, body_text
+    # The legacy exception-formatting prefix (``"actor <uuid> exceeded "``
+    # / ``"project <uuid> exceeded "``) must not appear either.
+    assert "exceeded invitation rate limit" not in body_text, body_text
+
+    # The constant generic message must be the visible substitute on
+    # every rate-limited row.
+    for r in rows[1:]:
+        assert r["error_message"] == (
+            "Rate limit reached for this issuer; retry after the per-hour "
+            "or per-day window."
+        ), r

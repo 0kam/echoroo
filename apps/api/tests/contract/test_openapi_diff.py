@@ -404,6 +404,19 @@ class TestSpec011LiveContracts:
     later steps wire their endpoints. The harness has no snapshot file —
     each PR that lands new HTTP surface MUST add the yaml's stem here
     AND re-run the harness locally before opening (NFR-011-009).
+
+    .. TODO(spec/011 Step 12 hygiene)
+       Tighten this harness to do schema field-level parity (response
+       model + requestBody object properties) for LIVE stems, not just
+       path + method + response-code + requestBody-presence existence.
+       The current harness allowed the ``revoked_reason`` drift between
+       ``contracts/member-invitations.yaml`` and the live Pydantic
+       ``InvitationListItem`` / ``InvitationRevokeResponse`` shape that
+       Codex R1 caught on PR #101 (spec/011 Step 8). A full diff would
+       walk ``schema.properties`` and assert (a) every contract-declared
+       property exists on the live shape and (b) live shapes do not
+       expose properties that the contract does not enumerate (the
+       drift direction we just patched).
     """
 
     def test_spec_011_live_yamls_path_exists(
