@@ -1234,23 +1234,6 @@ async def accept_invitation(
             "ownership_transfer_on_accept_invalid_for_kind",
         )
 
-    # spec/011 Step 9 R1 P0-1 — refuse SU-bootstrap invitations on the
-    # legacy authenticated-only accept path. FR-011-123's SAVEPOINT-nested
-    # ownership transfer is wired into ``accept_invitation_via_public_token``
-    # only; the spec (FR-011-121..125) never references the legacy path
-    # for bootstrap invitations. Without this guard the legacy endpoint
-    # would silently flip ``invitation.status`` to ``accepted`` without
-    # transferring ownership, leaving the project SU-owned and the
-    # intended owner as a plain ADMIN member — a silent ownership leak.
-    # The endpoint maps ``InvitationStateError`` to HTTP 410 which is the
-    # closest "this resource cannot be consumed here" semantics; the
-    # legitimate consumer (the intended owner) is steered to the public
-    # path by the invitation URL the SU hand-delivers.
-    if invitation.ownership_transfer_on_accept:
-        raise InvitationStateError(
-            "ownership_transfer_must_use_public_path",
-        )
-
     # The signed expiry is the source of truth for the URL; the row's
     # expires_at is an additional guard. Reject if either failed.
     invitation_expires_at = _ensure_utc(invitation.expires_at)
@@ -1306,6 +1289,29 @@ async def accept_invitation(
     if signed_expires_at < invitation_expires_at - timedelta(seconds=1):
         # Allow a small clock skew margin (1 s) but reject anything larger.
         raise InvitationTokenInvalidError("invitation token expiry mismatch")
+
+    # spec/011 Step 9 R1 P0-1 — refuse SU-bootstrap invitations on the
+    # legacy authenticated-only accept path. FR-011-123's SAVEPOINT-nested
+    # ownership transfer is wired into ``accept_invitation_via_public_token``
+    # only; the spec (FR-011-121..125) never references the legacy path
+    # for bootstrap invitations. Without this guard the legacy endpoint
+    # would silently flip ``invitation.status`` to ``accepted`` without
+    # transferring ownership, leaving the project SU-owned and the
+    # intended owner as a plain ADMIN member — a silent ownership leak.
+    # The endpoint maps ``InvitationStateError`` to HTTP 410 which is the
+    # closest "this resource cannot be consumed here" semantics; the
+    # legitimate consumer (the intended owner) is steered to the public
+    # path by the invitation URL the SU hand-delivers.
+    #
+    # Codex R2 P1: this refusal lives AFTER the email-match + status
+    # checks so the existing error ordering (wrong-recipient → expired
+    # → terminal-state) is preserved for non-bootstrap invitations; an
+    # attacker holding a stolen bootstrap token gets the same generic
+    # enumeration-defended path until they reach this terminal refuse.
+    if invitation.ownership_transfer_on_accept:
+        raise InvitationStateError(
+            "ownership_transfer_must_use_public_path",
+        )
 
     # 6. Apply the grant in the same TX.
     member: ProjectMember | None = None
@@ -1947,21 +1953,28 @@ async def accept_invitation_via_public_token(
             else:
                 existing_prior_owner_member.role = ProjectMemberRole.ADMIN
 
-            # spec/011 Step 9 R1 P1-2 — synchronous seam intentionally
-            # left as a no-op so the rollback-after-owner-UPDATE-
-            # succeeded integration test (in
+            # Flush BEFORE the finalize hook so the ProjectMember
+            # upsert + owner UPDATE are materialised in the DB-side
+            # SAVEPOINT scratch space. The hook is then the test-
+            # patch seam that exercises the rollback-after-flush
+            # invariant.
+            await session.flush()
+
+            # spec/011 Step 9 R1 P1-2 (Codex R2 P1 follow-up) —
+            # synchronous seam intentionally left as a no-op so the
+            # rollback-after-owner-UPDATE-succeeded integration test
+            # (in
             # ``tests/integration/test_superuser_bootstrap_invitation.py``)
-            # can monkey-patch this single name to raise from inside the
-            # SAVEPOINT *after* the owner UPDATE + ProjectMember upsert
-            # have already happened. Without a seam the test would have
-            # to patch a coarse external dependency
+            # can monkey-patch this single name to raise from inside
+            # the SAVEPOINT *after* the owner UPDATE + ProjectMember
+            # upsert have already been flushed to the DB-side
+            # SAVEPOINT scratch space. Without a seam the test would
+            # have to patch a coarse external dependency
             # (``build_pre_transfer_action_summary`` is the FIRST step;
             # patching it never exercises the rollback-after-success
-            # invariant). The production-path return value is unused so
-            # the hook's signature is intentionally minimal.
+            # invariant). The production-path return value is unused
+            # so the hook's signature is intentionally minimal.
             await _ownership_transfer_savepoint_finalize_hook()
-
-            await session.flush()
 
             # Step 5 — stage the composite audit detail. The actual
             # ``project_audit_log`` row write happens post-commit (see
