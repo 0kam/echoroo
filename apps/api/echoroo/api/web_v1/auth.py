@@ -2053,38 +2053,87 @@ async def logout(
 # ---------------------------------------------------------------------------
 
 
-_INVITATION_PUBLIC_WINDOW_SECONDS: Final[float] = 60.0
+_INVITATION_PUBLIC_WINDOW_SECONDS: Final[int] = 60
 _INVITATION_PUBLIC_IP_LIMIT: Final[int] = 10
 _INVITATION_PUBLIC_GLOBAL_LIMIT: Final[int] = 200
-_invitation_public_windows: dict[str, list[float]] = {}
 _INVITATION_PUBLIC_RESPONSE_TARGET_MS: Final[float] = 300.0
 """Constant minimum response time (ms). FR-011-105 / FR-011-107."""
 
 
-def _invitation_public_rate_limit_check(*, ip: str) -> bool:
-    """Return True when the caller exceeded the spec/011 rate cap.
+def _invitation_public_client_ip(request: Request) -> str:
+    """Resolve the canonical caller IP for the spec/011 public endpoints.
 
-    NFR-011-006: per-IP sliding window 10 requests / 60 s and a global
-    sliding window of 200 requests / 60 s. Both gates are evaluated and
-    the request is rejected when either limit is breached. The store is
-    process-local (matches the existing A-6 / A-11 helper pattern) —
-    multi-worker production deployments rely on the per-IP rate-limit
-    being approximate; the rate-limit is defence in depth on top of the
-    constant timing pad below.
+    Reuses :func:`echoroo.middleware.auth_router._resolve_client_ip` (Phase
+    17 A-3) so the trusted-proxy logic is identical to the API key IP
+    allowlist surface: ``X-Forwarded-For`` is only honoured when the
+    socket peer is in ``ECHOROO_TRUSTED_PROXY_CIDRS``; otherwise the peer
+    is used directly. This blocks the spoof bypass where an attacker
+    reaches the API directly (or via a misconfigured proxy that does not
+    strip incoming XFF headers) and submits
+    ``X-Forwarded-For: <victim_ip>`` to either consume a victim's
+    per-IP rate-limit budget or to evade their own.
+
+    Returns ``"unknown"`` only when neither XFF nor the socket peer
+    resolves to a value — the rate-limit key uses the literal string so
+    a flood of unknown-source requests still saturates the bucket
+    (defence in depth: fail-closed against an empty IP).
     """
-    now = time.monotonic()
-    cutoff = now - _INVITATION_PUBLIC_WINDOW_SECONDS
-    scopes = (
+    from echoroo.middleware.auth_router import _resolve_client_ip
+
+    cidrs = tuple(settings.TRUSTED_PROXY_CIDRS or ())
+    resolved = _resolve_client_ip(request, trusted_proxy_cidrs=cidrs)
+    return resolved or "unknown"
+
+
+async def _invitation_public_rate_limit_check(*, ip: str) -> bool:
+    """Return ``True`` when the caller exceeded the spec/011 rate cap.
+
+    NFR-011-006: per-IP fixed-window 10 requests / 60 s and a global
+    fixed-window 200 requests / 60 s. Both gates are evaluated and the
+    request is rejected when either limit is breached. Implementation
+    reuses the Phase 17 A-6 / FR-056 Redis-backed pattern: ``INCR`` +
+    ``EXPIRE`` (atomic on first hit) so the counter is shared across
+    every worker in the deployment.
+
+    **Fail-closed**: any Redis fault — connection refused, timeout, OOM
+    — returns ``True`` (caller treats as rate-limited and surfaces 429).
+    Failing open would allow an attacker who can knock Redis offline to
+    bypass the cap and run the timing-oracle / brute-force probe the
+    rate-limit is meant to deny.
+
+    spec/011 step 7 R1 P0-3: the previous process-local dict counter
+    only constrained a single worker; in a multi-worker production
+    deployment the effective limit was N × the documented cap. The
+    Redis-backed counter restores the documented enforcement.
+    """
+    keys: tuple[tuple[str, int], ...] = (
         (f"invite_public:ip:{ip}", _INVITATION_PUBLIC_IP_LIMIT),
         ("invite_public:global", _INVITATION_PUBLIC_GLOBAL_LIMIT),
     )
-    for key, limit in scopes:
-        window = [t for t in _invitation_public_windows.get(key, []) if t >= cutoff]
-        if len(window) >= limit:
-            _invitation_public_windows[key] = window
+    try:
+        redis = await get_redis_connection()
+    except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+        logger.warning(
+            "spec/011 invitation-public rate limit: Redis unavailable; "
+            "failing closed (treating request as rate-limited)",
+            exc_info=True,
+        )
+        return True
+    for key, limit in keys:
+        try:
+            count = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, _INVITATION_PUBLIC_WINDOW_SECONDS)
+        except Exception:  # noqa: BLE001 — fail-closed on any Redis fault
+            logger.warning(
+                "spec/011 invitation-public rate limit: Redis incr/expire "
+                "failed for key=%s; failing closed",
+                key,
+                exc_info=True,
+            )
             return True
-        window.append(now)
-        _invitation_public_windows[key] = window
+        if count > limit:
+            return True
     return False
 
 
@@ -2145,11 +2194,24 @@ class InvitationContextResponse(BaseModel):
         ...,
         description="``member`` or ``trusted``.",
     )
-    bound_email: str = Field(
-        ...,
+    bound_email: str | None = Field(
+        default=None,
         description=(
-            "Read-only on the signup form. Display only — never trust the "
-            "frontend to canonicalise; the service layer re-checks."
+            "Bound recipient email for the signup form prefill. "
+            "**spec/011 step 7 R1 P0-4**: surfaced ONLY when the caller "
+            "is anonymous (signup branch needs the email for the "
+            "read-only form field) OR when the caller is authenticated "
+            "AND ``authenticated_email_matches_bound`` is ``true`` "
+            "(they already know their own email). When the caller is "
+            "authenticated as a DIFFERENT user, this field is "
+            "``null`` — never leak the bound recipient identity to a "
+            "wrong-account session, which would convert the resolver "
+            "into an email-of-invitee oracle for anyone holding a "
+            "leaked invitation URL. The hashed counterpart "
+            "``bound_email_hash`` is intentionally NOT surfaced by the "
+            "public resolver: it lives in the admin listing endpoint "
+            "only, where the caller has already passed the "
+            "``MANAGE_MEMBERS`` gate."
         ),
     )
     expires_at: datetime
@@ -2255,7 +2317,9 @@ async def resolve_invitation(
 ) -> InvitationContextResponse:
     """Resolve invitation context for the public landing page (TOKEN_AUTH_ONLY)."""
     started_at = time.monotonic()
-    if _invitation_public_rate_limit_check(ip=_client_ip(request)):
+    if await _invitation_public_rate_limit_check(
+        ip=_invitation_public_client_ip(request),
+    ):
         await _invitation_public_sleep_for_minimum(started_at)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -2283,11 +2347,36 @@ async def resolve_invitation(
 
     role_str = invitation.role.value if invitation.role is not None else None
     matches = outcome.authenticated_email_matches
+
+    # spec/011 step 7 R1 P0-4: branch the ``bound_email`` exposure on the
+    # caller's authentication state. The bound recipient identity must
+    # NEVER be surfaced to an authenticated session whose own email does
+    # NOT match the invitation, or else the resolver becomes an oracle
+    # "this invitation belongs to <email>" for any wrong-account caller
+    # holding a leaked URL. The contract YAML's
+    # ``bound_email: string | null`` shape allows omission.
+    #
+    # Surface ``bound_email`` when:
+    # * caller is anonymous (signup branch needs the value for the
+    #   read-only prefill); OR
+    # * caller is authenticated AND their email matches (they already
+    #   know their own email; the redundant payload simplifies the
+    #   frontend's confirm screen).
+    #
+    # Omit (``None``) when:
+    # * caller is authenticated AS A DIFFERENT identity — even one
+    #   nibble of bound_email would let them confirm the invitee's
+    #   address.
+    if outcome.is_logged_in and matches is not True:
+        bound_email_safe: str | None = None
+    else:
+        bound_email_safe = invitation.email or None
+
     body = InvitationContextResponse(
         project_name=outcome.project_name,
         role=role_str,
         kind=invitation.kind.value,
-        bound_email=invitation.email or "",
+        bound_email=bound_email_safe,
         expires_at=expires_at_aware,
         is_bootstrap=invitation.ownership_transfer_on_accept,
         is_logged_in=outcome.is_logged_in,
@@ -2333,13 +2422,50 @@ async def accept_invitation_public(
     db: DbSession,
     payload: dict[str, Any],
 ) -> InvitationAcceptResponse:
-    """Accept an invitation via the public-token surface."""
+    """Accept an invitation via the public-token surface.
+
+    spec/011 step 7 R1 P0-1 + P1-1 atomic-flow contract:
+
+    The new-user signup branch creates a User row, persists a 2FA
+    credential, and atomically flips the invitation row to
+    ``status='accepted'`` inside a SINGLE database transaction. If any
+    of those steps fails — including the atomic UPDATE returning zero
+    rows because the invitation drifted to a terminal status between
+    the resolver call and the accept call — the WHOLE transaction
+    rolls back so no orphan User / 2FA credential is leaked.
+
+    Order of operations:
+
+    1. Validate the request payload against the matching branch shape
+       (anonymous → :class:`_AcceptNewUserPayload`; authenticated →
+       :class:`_AcceptExistingUserPayload`).
+    2. (signup only) Enforce the password policy; reject HIBP-compromised
+       passwords with 422 before peeking at the invitation row.
+    3. (signup only) Reject if the email is already registered. The 404
+       generic-invalid surface keeps the email-existence oracle closed.
+    4. (signup only) Create the User row via ``UserRepository.create``
+       (flush only — no commit).
+    5. (signup only) Confirm TOTP enrollment with ``commit=False`` so
+       the 2FA write joins the same transaction as steps 4 and 6.
+    6. Run :func:`accept_invitation_via_public_token` which performs
+       the atomic ``UPDATE project_invitations SET status='accepted'
+       WHERE id=:id AND status='pending' AND expires_at > now()
+       RETURNING *``. Zero rows raises
+       :class:`InvitationTokenInvalidError`.
+    7. Commit the transaction (or rollback on any exception). On a
+       successful new-user signup branch, the session-cookie issuance
+       in :func:`_issue_real_session` lives AFTER the commit so a
+       failed session issue cannot un-persist the membership.
+    8. Emit the post-commit audit row in a fresh session.
+    """
     started_at = time.monotonic()
     response.headers["Cache-Control"] = (
         "no-store, no-cache, must-revalidate, private"
     )
 
-    if _invitation_public_rate_limit_check(ip=_client_ip(request)):
+    if await _invitation_public_rate_limit_check(
+        ip=_invitation_public_client_ip(request),
+    ):
         await _invitation_public_sleep_for_minimum(started_at)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -2365,6 +2491,10 @@ async def accept_invitation_public(
     except ValueError:
         await _invitation_public_sleep_for_minimum(started_at)
         raise _InvitationGenericInvalid() from None
+
+    # ``new_user`` is bound only on the signup branch and is consumed
+    # post-commit to issue the BFF session (P1-1).
+    new_user: User | None = None
 
     if is_logged_in:
         accepting_user_id = cast("User", current_user).id
@@ -2412,21 +2542,28 @@ async def accept_invitation_public(
         try:
             await repo.create(new_user)
         except IntegrityError:
+            # The repository's ``flush`` raises on the email-uniqueness
+            # collision (race between the ``get_by_email`` check above
+            # and the INSERT). Rollback both the new row AND any prior
+            # writes that the transaction may have accumulated; surface
+            # the generic-invalid so the oracle remains closed.
             await db.rollback()
             await _invitation_public_sleep_for_minimum(started_at)
             raise _InvitationGenericInvalid() from None
 
-        # Confirm TOTP enrollment using the existing TwoFactorService
-        # helper. The contract field ``totp_secret_signed`` is accepted
-        # as the plain TOTP secret string for spec/011 step 7 — a
-        # future revision MAY wrap it in an HMAC envelope without
-        # changing the field name.
+        # P0-1: confirm TOTP enrollment WITHOUT committing the
+        # transaction. The 2FA credential write joins the same TX as
+        # the user INSERT above and the atomic invitation UPDATE below,
+        # so a failed-or-missed invitation (e.g. the row was revoked
+        # between the resolver call and this accept) rolls back the
+        # whole transaction — no orphan account + 2FA row leaks.
         two_factor = TwoFactorService(db)
         try:
             await two_factor.confirm_enrollment(
                 new_user,
                 new_user_payload.totp_enrollment.totp_secret_signed,
                 new_user_payload.totp_enrollment.totp_initial_code,
+                commit=False,
             )
         except (
             TwoFactorAlreadyEnabledError,
@@ -2456,7 +2593,7 @@ async def accept_invitation_public(
             accepting_user_email=accepting_user_email,
             is_new_user_signup=is_new_user_signup,
             request_id=_request_id(request),
-            ip=_client_ip(request),
+            ip=_invitation_public_client_ip(request),
             user_agent=_user_agent(request),
         )
     except InvitationAlreadyMemberError as exc:
@@ -2474,6 +2611,11 @@ async def accept_invitation_public(
         InvitationEmailMismatchError,
         InvitationValidationError,
     ):
+        # P0-1: any failure of the atomic invitation UPDATE
+        # (corrupted envelope, zero-row return, email mismatch,
+        # validation drift) rolls back the whole TX — including the
+        # User + 2FA writes on the signup branch — so no orphan
+        # account leaks to the database.
         await db.rollback()
         await _invitation_public_sleep_for_minimum(started_at)
         raise _InvitationGenericInvalid() from None
@@ -2490,6 +2632,18 @@ async def accept_invitation_public(
 
     await db.commit()
     await invitation_service.emit_public_invitation_accept_audit(accept_outcome)
+
+    # P1-1: establish a session for the new user so they land in the
+    # project page already authenticated. The contract YAML's
+    # ``201 Created`` response notes "for the new-user branch, a session
+    # is established". ``_issue_real_session`` writes ``last_login_at``
+    # on the user row + commits, then sets the refresh / session / CSRF
+    # cookies. We invoke it AFTER the main commit so that a transient
+    # session-issue failure (Redis fault wiping the revoked-user
+    # marker, DB hiccup setting last_login_at) cannot un-persist the
+    # membership that was just granted.
+    if is_new_user_signup and new_user is not None:
+        await _issue_real_session(response=response, user=new_user, db=db)
 
     invitation = accept_outcome.invitation
     role_str = invitation.role.value if invitation.role is not None else None

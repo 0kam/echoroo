@@ -1553,14 +1553,21 @@ async def accept_invitation_via_public_token(
     raw_token_b64u, _ = verify_invitation_token(signed_token, now=now_eff)
     token_hash = hash_token(raw_token_b64u)
 
-    # Step 2 — Row lookup with FOR UPDATE so concurrent accepts on the
-    # same row serialise. We still gate every failure (no row, wrong
-    # project, terminal status) on the generic-invalid path so the
-    # handler can map them all to the same anti-enumeration response.
+    # Step 2 — Row lookup (read-only). The conditional UPDATE in step 4
+    # is the concurrency gate; the SELECT serves only to surface the
+    # invitation context (project_id, kind, role, bound email, ownership-
+    # transfer flag) and to raise the spec/011 generic-invalid surface
+    # for terminal-status / expired / missing rows BEFORE the atomic
+    # UPDATE runs. The earlier ``SELECT ... FOR UPDATE`` was redundant
+    # (and surplus-locking): per FR-011-106 step 2 the
+    # ``UPDATE ... WHERE status='pending' AND expires_at > now()
+    # RETURNING *`` itself is the single-statement compare-and-swap. A
+    # parallel accept that loses the race finds zero rows returned from
+    # the UPDATE and surfaces the generic-invalid path (Codex R1 P0-2).
     result = await session.execute(
-        select(ProjectInvitation)
-        .where(ProjectInvitation.token_hash == token_hash)
-        .with_for_update(),
+        select(ProjectInvitation).where(
+            ProjectInvitation.token_hash == token_hash,
+        ),
     )
     invitation = result.scalar_one_or_none()
     if invitation is None:
@@ -1603,9 +1610,14 @@ async def accept_invitation_via_public_token(
 
     # Step 4 — atomic state flip (FR-011-106 step 2). Named placeholders
     # only; no string concatenation. The WHERE clause re-checks the
-    # status + expiry so a parallel accept that won the SELECT FOR
-    # UPDATE race still finds zero rows here and surfaces the generic
-    # invalid response.
+    # status + expiry so this single statement is the compare-and-swap
+    # gate: any concurrent accept that wins the race leaves the row in
+    # ``status='accepted'`` and our UPDATE matches zero rows. Likewise
+    # an admin revoke landing between the SELECT above and this UPDATE
+    # flips the row to ``revoked`` and we surface the generic-invalid
+    # response. The lock duration is intentionally the UPDATE itself
+    # (Postgres row-level write lock) — no separate ``SELECT FOR UPDATE``
+    # is needed.
     update_stmt = text(
         """
         UPDATE project_invitations
@@ -1624,8 +1636,10 @@ async def accept_invitation_via_public_token(
     )
     if update_result.fetchone() is None:
         # Lost the atomicity race OR the row drifted to a terminal state
-        # between the SELECT FOR UPDATE and the UPDATE (e.g. an admin
-        # revoke landed concurrently). Generic-invalid per FR-011-106.
+        # (e.g. an admin revoke landed concurrently). Generic-invalid per
+        # FR-011-106. spec/011 step 7 R1 P0-1: callers performing user
+        # creation + 2FA enrollment in the same TX MUST rollback the
+        # whole transaction when this raises so no orphan account leaks.
         raise InvitationTokenInvalidError("invitation not found")
 
     # Re-attach the freshly-flipped row to the ORM identity map so

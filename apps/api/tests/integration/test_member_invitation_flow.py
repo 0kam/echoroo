@@ -97,6 +97,30 @@ def _patch_response_timing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _disable_invitation_public_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disable the spec/011 invitation rate-limit for the integration suite.
+
+    spec/011 step 7 R1 P0-3 swapped the rate-limit helper to a Redis-
+    backed fixed-window INCR + EXPIRE; the bucket lives in the shared
+    integration Redis and persists across tests within the same 60s
+    window. The per-IP cap (10/min) is comfortably exceeded by the
+    dozen-plus tests in this module, so the suite would flap 429s.
+    The rate-limit's correctness is covered by a dedicated unit test;
+    here we just want the request to pass through.
+    """
+    from echoroo.api.web_v1 import auth as auth_module
+
+    async def _always_allowed(*, ip: str) -> bool:  # noqa: ARG001
+        return False
+
+    monkeypatch.setattr(
+        auth_module,
+        "_invitation_public_rate_limit_check",
+        _always_allowed,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _fake_redis_for_invitation_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> fakeredis.aioredis.FakeRedis:
@@ -381,8 +405,22 @@ async def test_new_user_signup_accept_writes_signup_audit(
     """
     from echoroo.services.two_factor_service import TwoFactorService
 
-    async def _fake_confirm(self: TwoFactorService, user: User, _secret: str, _code: str) -> list[str]:
+    async def _fake_confirm(
+        self: TwoFactorService,
+        user: User,
+        _secret: str,
+        _code: str,
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        # spec/011 step 7 R1 P0-1: the public accept handler invokes
+        # ``confirm_enrollment(commit=False)`` so the 2FA write joins
+        # the same TX as the user INSERT + invitation UPDATE. The stub
+        # mirrors the contract — do not commit when the caller asked
+        # us not to.
         user.two_factor_enabled = True
+        if commit:  # pragma: no cover — endpoint always passes False
+            await self.db.commit()
         return ["backup-1", "backup-2"]
 
     monkeypatch.setattr(TwoFactorService, "confirm_enrollment", _fake_confirm)
@@ -666,3 +704,385 @@ async def test_garbage_token_returns_generic_invalid(
     # We just need the marker string somewhere in the body so that an
     # operator scrubbing the logs sees the generic-invalid envelope.
     assert "ERR_INVITATION_INVALID" in response.text
+
+
+# ===========================================================================
+# spec/011 step 7 R1 — Codex R1 regression tests
+# ===========================================================================
+#
+# These tests assert the four P0 + two P1 fixes Codex R1 flagged on PR #100.
+# They MUST stay green to prevent regressions.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# P0-1: signup branch never leaks an orphan user + 2FA credential
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_signup_branch_rolls_back_user_and_2fa_when_invitation_invalidated(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 step 7 R1 P0-1: atomic accept TX leaves no orphan account.
+
+    Setup: issue a Member invitation, then **revoke** the row out of band
+    (status flipped to ``revoked``) AFTER the signup payload has already
+    been computed by the caller. The signup attempt then arrives at the
+    accept handler — the atomic UPDATE returns zero rows because the
+    row is no longer ``status='pending'``, so the whole transaction
+    must roll back. The post-condition is:
+
+    * NO user row with the signup email exists.
+    * NO 2FA credential row exists for any new user.
+
+    Before the P0-1 fix, ``confirm_enrollment`` committed mid-flow and
+    the User + 2FA persisted past the invitation-state guard, leaving
+    an orphan account in the DB that the affected email could no
+    longer re-use.
+    """
+    from echoroo.services.two_factor_service import TwoFactorService
+
+    async def _fake_confirm(
+        self: TwoFactorService,
+        user: User,
+        _secret: str,
+        _code: str,
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        # Honour the commit-flag contract: the public accept handler
+        # passes ``commit=False`` so a downstream invitation rollback
+        # also rolls back this 2FA write. The stub mirrors that:
+        # mutate the user but do NOT commit on its own.
+        user.two_factor_enabled = True
+        if commit:  # pragma: no cover — endpoint always passes False
+            await self.db.commit()
+        return ["backup-1", "backup-2"]
+
+    monkeypatch.setattr(TwoFactorService, "confirm_enrollment", _fake_confirm)
+
+    owner = await _create_user(db_session, email="t243-r1p0-1-owner@example.com")
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    target_email = f"t243-r1p0-1-{uuid4().hex[:8]}@example.com"
+    body = await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=target_email,
+        role="member",
+    )
+    token = body["invitation_url"]
+    invitation_id = UUID(body["invitation_id"])
+
+    # Out-of-band revoke. Mirrors the race where an admin revokes the
+    # invitation between the resolver call and the signup submission.
+    await db_session.execute(
+        sa.text(
+            "UPDATE project_invitations "
+            "SET status = 'revoked', revoked_at = now() "
+            "WHERE id = :id"
+        ),
+        {"id": invitation_id},
+    )
+    await db_session.commit()
+
+    # Anonymous accept attempt — the atomic UPDATE will match zero rows
+    # because the row is no longer ``status='pending'``.
+    client.cookies.clear()
+    accept = await client.post(
+        f"/web-api/v1/auth/invitations/{token}/accept",
+        json={
+            "email": target_email,
+            "password": "StrongPassword!1234",
+            "totp_enrollment": {
+                "totp_secret_signed": "JBSWY3DPEHPK3PXP",
+                "totp_initial_code": "123456",
+            },
+        },
+    )
+    assert accept.status_code == 404
+    assert "ERR_INVITATION_INVALID" in accept.text
+
+    # P0-1: the User row must NOT exist (rollback succeeded).
+    canonical = canonicalize_email(target_email)
+    user_row = (
+        await db_session.execute(
+            sa.text("SELECT id, two_factor_enabled FROM users WHERE email = :email"),
+            {"email": canonical},
+        )
+    ).first()
+    assert user_row is None, (
+        "spec/011 step 7 R1 P0-1 regression: invitation rollback "
+        "left an orphan user row in the database; "
+        "expected the create+2FA+accept transaction to roll back "
+        "atomically when the atomic UPDATE returned zero rows."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0-4: resolver omits bound_email for wrong-account caller
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolver_omits_bound_email_for_wrong_account_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 step 7 R1 P0-4: ``bound_email`` is null for mismatched session.
+
+    When a user is logged in as identity X but opens an invitation
+    URL bound to identity Y, the resolver MUST NOT surface Y's email
+    address — that would let any holder of a leaked invitation URL
+    confirm the recipient identity by signing in as themselves.
+    """
+    owner = await _create_user(db_session, email="t243-r1p0-4-owner@example.com")
+    other = await _create_user(db_session, email="t243-r1p0-4-other@example.com")
+    project = await _create_project(db_session, owner)
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+    bound_email = f"t243-r1p0-4-bound-{uuid4().hex[:8]}@example.com"
+    body = await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=bound_email,
+        role="member",
+    )
+    token = body["invitation_url"]
+
+    other_headers = await _bff_session_headers(client, db_session, other)
+    resolve = await client.get(
+        f"/web-api/v1/auth/invitations/{token}",
+        headers=_without_csrf(other_headers),
+    )
+    assert resolve.status_code == 200, resolve.text
+    ctx = resolve.json()
+    assert ctx["is_logged_in"] is True
+    assert ctx["authenticated_email_matches_bound"] is False
+    # P0-4: the field MUST be absent or null — never the actual email.
+    bound_email_value = ctx.get("bound_email")
+    assert bound_email_value in (None, ""), (
+        "spec/011 step 7 R1 P0-4 regression: resolver leaked "
+        f"bound_email={bound_email_value!r} to a wrong-account session; "
+        "expected null/omitted."
+    )
+    assert bound_email_value != bound_email
+    assert bound_email_value != bound_email.lower()
+
+
+@pytest.mark.asyncio
+async def test_resolver_surfaces_bound_email_for_anonymous_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Anonymous resolve MUST still surface the bound email (signup prefill).
+
+    Complementary to ``test_resolver_omits_bound_email_for_wrong_account_caller``:
+    the P0-4 fix only suppresses the field for AUTHENTICATED wrong-account
+    callers; anonymous callers (the signup branch) still need the email
+    rendered as the read-only form value.
+    """
+    owner = await _create_user(db_session, email="t243-r1p0-4b-owner@example.com")
+    project = await _create_project(db_session, owner)
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+    bound_email = f"t243-r1p0-4b-bound-{uuid4().hex[:8]}@example.com"
+    body = await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=bound_email,
+        role="member",
+    )
+    token = body["invitation_url"]
+
+    client.cookies.clear()
+    resolve = await client.get(f"/web-api/v1/auth/invitations/{token}")
+    assert resolve.status_code == 200, resolve.text
+    ctx = resolve.json()
+    assert ctx["is_logged_in"] is False
+    # Anonymous signup branch — the field MUST be present (the
+    # canonicalised form).
+    assert ctx.get("bound_email") == canonicalize_email(bound_email)
+
+
+@pytest.mark.asyncio
+async def test_resolver_surfaces_bound_email_for_matching_authenticated_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Matching authenticated caller MUST see their own bound email.
+
+    P0-4 only suppresses the field when ``is_logged_in`` is true AND
+    the email doesn't match; the matching case is the existing-user
+    accept happy path and still surfaces the field so the confirm
+    screen can show "you are about to accept this invitation".
+    """
+    owner = await _create_user(db_session, email="t243-r1p0-4c-owner@example.com")
+    other = await _create_user(db_session, email="t243-r1p0-4c-other@example.com")
+    project = await _create_project(db_session, owner)
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+    body = await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=other.email,
+        role="member",
+    )
+    token = body["invitation_url"]
+
+    other_headers = await _bff_session_headers(client, db_session, other)
+    resolve = await client.get(
+        f"/web-api/v1/auth/invitations/{token}",
+        headers=_without_csrf(other_headers),
+    )
+    assert resolve.status_code == 200, resolve.text
+    ctx = resolve.json()
+    assert ctx["is_logged_in"] is True
+    assert ctx["authenticated_email_matches_bound"] is True
+    assert ctx.get("bound_email") == canonicalize_email(other.email)
+
+
+# ---------------------------------------------------------------------------
+# P1-1: new-user signup branch establishes a session
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_new_user_signup_branch_establishes_session(
+    monkeypatch: pytest.MonkeyPatch,
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 step 7 R1 P1-1: signup branch sets the session cookies.
+
+    Contract YAML ``invitation-public.yaml`` § 201 response: "For the
+    new-user branch, a session is established." The handler invokes
+    ``_issue_real_session`` after the accept commits; the
+    ``Set-Cookie`` header MUST carry the refresh-token + family +
+    CSRF + logged-in marker.
+    """
+    from echoroo.services.two_factor_service import TwoFactorService
+
+    async def _fake_confirm(
+        self: TwoFactorService,
+        user: User,
+        _secret: str,
+        _code: str,
+        *,
+        commit: bool = True,
+    ) -> list[str]:
+        user.two_factor_enabled = True
+        if commit:  # pragma: no cover — endpoint always passes False
+            await self.db.commit()
+        return ["backup-1", "backup-2"]
+
+    monkeypatch.setattr(TwoFactorService, "confirm_enrollment", _fake_confirm)
+
+    owner = await _create_user(db_session, email="t243-r1p1-1-owner@example.com")
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    target_email = f"t243-r1p1-1-{uuid4().hex[:8]}@example.com"
+    body = await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=target_email,
+        role="member",
+    )
+    token = body["invitation_url"]
+
+    client.cookies.clear()
+    accept = await client.post(
+        f"/web-api/v1/auth/invitations/{token}/accept",
+        json={
+            "email": target_email,
+            "password": "StrongPassword!1234",
+            "totp_enrollment": {
+                "totp_secret_signed": "JBSWY3DPEHPK3PXP",
+                "totp_initial_code": "123456",
+            },
+        },
+    )
+    assert accept.status_code == 201, accept.text
+
+    # P1-1: the response MUST carry session cookies.
+    settings_ = get_settings()
+    cookie_jar = client.cookies
+    # httpx populates ``client.cookies`` from response ``Set-Cookie``
+    # headers across the AsyncClient transport.
+    assert cookie_jar.get(settings_.web_refresh_cookie_name) is not None, (
+        "spec/011 step 7 R1 P1-1 regression: signup accept did not set "
+        "the refresh-token cookie."
+    )
+    assert cookie_jar.get(settings_.web_session_cookie_name) is not None, (
+        "spec/011 step 7 R1 P1-1 regression: signup accept did not set "
+        "the family-id session cookie."
+    )
+    assert cookie_jar.get(settings_.web_csrf_cookie_name) is not None, (
+        "spec/011 step 7 R1 P1-1 regression: signup accept did not set "
+        "the CSRF cookie."
+    )
+
+    # And the CSRF header is echoed for the SPA's double-submit pickup.
+    csrf_header = accept.headers.get("x-csrf-token") or accept.headers.get(
+        "X-CSRF-Token",
+    )
+    assert csrf_header, (
+        "spec/011 step 7 R1 P1-1 regression: signup accept did not emit "
+        "the X-CSRF-Token response header."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P1-2: listing endpoint sets Cache-Control: no-store
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listing_endpoint_emits_no_store_cache_control(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """spec/011 step 7 R1 P1-2: invitation listing carries no-store.
+
+    The listing surfaces ``bound_email_hash`` + per-invitation status
+    for admin consumption; both are admin-only data that MUST NOT be
+    cached by an upstream proxy or browser bfcache. The header is
+    set unconditionally — even when the result set is empty.
+    """
+    owner = await _create_user(db_session, email="t243-r1p1-2-owner@example.com")
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    # Issue at least one invitation so the listing is non-empty
+    # (covering both the empty- and non-empty-result codepaths is
+    # nice but the no-store directive lives BEFORE the SELECT so a
+    # single test is sufficient).
+    await _issue_member_invitation(
+        client,
+        project_id=project.id,
+        owner_headers=owner_headers,
+        email=f"t243-r1p1-2-list-{uuid4().hex[:8]}@example.com",
+        role="member",
+    )
+
+    response = await client.get(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=_without_csrf(owner_headers),
+    )
+    assert response.status_code == 200, response.text
+
+    cache_control = response.headers.get("cache-control")
+    assert cache_control == "no-store, no-cache, must-revalidate, private", (
+        "spec/011 step 7 R1 P1-2 regression: listing endpoint did "
+        f"not emit no-store; got {cache_control!r}."
+    )

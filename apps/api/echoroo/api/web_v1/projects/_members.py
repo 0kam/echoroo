@@ -551,6 +551,7 @@ async def issue_project_member_invitation(
 async def list_project_invitations(
     project_id: UUID,
     request: Request,
+    response: Response,
     current_user: OptionalCurrentUser,
     db: DbSession,
     kind: ProjectInvitationKind | None = Query(default=None),
@@ -566,6 +567,14 @@ async def list_project_invitations(
     :data:`PROJECT_MEMBER_LIST_ACTION` (``MANAGE_MEMBERS`` per the
     canonical matrix) so an enumeration audit row matches the rest of
     the membership surface.
+
+    spec/011 step 7 R1 P1-2: the response carries
+    ``Cache-Control: no-store, no-cache, must-revalidate, private`` to
+    mirror the issue endpoint (``POST /{project_id}/invitations``). The
+    listing exposes the ``bound_email_hash`` field and per-invitation
+    status — both are admin-only data that MUST NOT be cached by an
+    upstream proxy, replayed by browser bfcache, or stored in shared
+    intermediate caches.
     """
     if current_user is None:
         raise HTTPException(
@@ -579,6 +588,13 @@ async def list_project_invitations(
         current_user=current_user,
         request=request,
         db=db,
+    )
+
+    # P1-2: anti-cache directives — set BEFORE the SELECT so the header
+    # is present regardless of whether the query short-circuits via an
+    # empty result set.
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
     )
 
     stmt = (
