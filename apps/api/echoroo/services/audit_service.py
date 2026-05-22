@@ -70,6 +70,45 @@ logger = logging.getLogger(__name__)
 # data-model.md §3.17``).
 _GENESIS_PREV_HASH: Final[str] = "0" * 64
 
+
+# spec/011 §research R6 — DESTRUCTIVE_ACTIONS allowlist (cross-cutting).
+#
+# Audit-event strings classified as "destructive" by spec/011 research
+# R6. The list is consulted by the SU-bootstrap composite audit
+# (``build_pre_transfer_action_summary``, T022) to decide whether the
+# per-event ``target_id`` of a recent ``actor_user_id`` action MUST be
+# preserved in the bootstrap-transfer summary row (only destructive
+# actions retain ``target_id``; non-destructive entries drop it).
+#
+# This constant is the shared registry both T021 (the base 6 entries
+# for project/dataset/recording/ACL/permission/visibility deletes) and
+# T310 (this step — admin password reset, +2 entries) extend. Adding a
+# new destructive event type to ``platform_audit_log`` / ``project_audit_log``
+# means appending its action string here.
+#
+# The order of entries is irrelevant — this is a set lookup. The
+# ``frozenset`` discriminator is enforced by Python so callers cannot
+# accidentally mutate the registry at runtime (mypy + the frozen type
+# both block ``.add()`` / ``.remove()``).
+#
+# Future entries (T021 backfill, tracked in tasks.md): ``project.delete``,
+# ``dataset.delete``, ``recording.delete``, ``project.acl.update``,
+# ``project.permission.elevate``, ``project.visibility.update``.
+DESTRUCTIVE_ACTIONS: Final[frozenset[str]] = frozenset(
+    {
+        # spec/011 §FR-011-201..210 — admin password reset audit actions.
+        # Mirrors the service-private constants in
+        # :mod:`echoroo.services.admin_password_reset`. The strings are
+        # duplicated here on purpose — service-private constants own the
+        # naming, and this allowlist re-asserts the destructive-class
+        # classification cross-cuttingly without depending on the
+        # service module (which would create an import cycle the other
+        # direction).
+        "platform.user.password_reset_by_superuser",
+        "platform.user.password_reset_self",
+    }
+)
+
 # Canonical PostgreSQL advisory-lock key (bigint) for the audit chain.
 # ``pg_advisory_xact_lock(bigint)`` takes a 64-bit signed integer so we
 # fold a stable SHA-256 prefix into a 63-bit range (MSB cleared to keep
@@ -431,5 +470,6 @@ class AuditLogService:
 
 
 __all__ = [
+    "DESTRUCTIVE_ACTIONS",
     "AuditLogService",
 ]

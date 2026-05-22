@@ -2,14 +2,15 @@
 
 from datetime import datetime
 from ipaddress import AddressValueError, NetmaskValueError, ip_network
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 from echoroo.core.operator_pii_detector import (
     OperatorReasonText,
     OperatorSupportTicketId,
+    reject_if_pii,
 )
 from echoroo.models.enums import ProjectMemberRole
 from echoroo.schemas.auth import UserResponse
@@ -631,6 +632,91 @@ class ResetTwoFactorRequest(BaseModel):
             "after the user redeems the emailed magic link. Bound to "
             "the target ``user_id`` and consumed exactly once. "
             "Mismatched / expired / replayed tokens yield HTTP 409."
+        ),
+    )
+
+
+class AdminPasswordResetBody(BaseModel):
+    """Body for ``POST /web-api/v1/admin/users/{user_id}/reset-password``.
+
+    spec/011 §FR-011-201..210 / contracts/admin-password-reset.yaml.
+
+    The body is optional — operators may invoke the reset without a
+    reason (the audit row still captures actor + target + timestamp).
+    When supplied, the reason is bounded to 500 characters per the
+    OpenAPI contract and passes through the Phase 17 A-13 free-form PII
+    detector (FR-011-208) so an operator cannot accidentally leak the
+    target's email / phone / national identifier into the audit log or
+    business-table reason column.
+
+    The dedicated 500-char limit (distinct from
+    :data:`OperatorReasonText`'s 2000-char canonical limit) tracks the
+    contract verbatim — ``test_openapi_diff.py`` enforces the cap on
+    every CI run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=500,
+            description=(
+                "Operator-supplied free-form reason. MUST NOT contain "
+                "PII (email, phone, national identifier, credit card, "
+                "API tokens). Reference the target user by ``user_id`` "
+                "or an external ticket reference instead. Validated "
+                "server-side (Phase 17 A-13) — submitting PII yields "
+                "HTTP 422."
+            ),
+        ),
+        AfterValidator(reject_if_pii),
+    ] | None = Field(
+        default=None,
+        description=(
+            "Optional free-form rationale recorded in the audit detail. "
+            "Omit to record an empty-reason reset (still audited)."
+        ),
+    )
+
+
+class AdminPasswordResetResponse(BaseModel):
+    """Response body for ``POST /web-api/v1/admin/users/{user_id}/reset-password``.
+
+    spec/011 §FR-011-202 / contracts/admin-password-reset.yaml.
+
+    The response carries the one-time temporary password value the
+    target user MUST use for the next login. The value is delivered
+    verbatim to the issuing superuser exactly once — the API does not
+    persist it (only its argon2 hash lands in ``users.password_hash``)
+    and the frontend renders it behind a click-to-reveal dialog with
+    a 60-second auto-clear copy-to-clipboard button.
+
+    The endpoint sets ``Cache-Control: no-store, no-cache,
+    must-revalidate, private`` and ``Referrer-Policy: no-referrer``
+    response headers (FR-011-202) so neither browser history nor
+    intermediate proxies can retain the value. Telemetry / access logs
+    MUST scrub the ``temporary_password`` field
+    (:mod:`echoroo.observability.sentry` redaction registry).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    temporary_password: str = Field(
+        ...,
+        description=(
+            "One-shot value. MUST be scrubbed from telemetry / access "
+            "logs. Frontend renders behind click-to-reveal; copies to "
+            "clipboard with 60s auto-clear."
+        ),
+    )
+    expires_at: datetime = Field(
+        ...,
+        description=(
+            "UTC instant after which the temporary password no longer "
+            "authenticates (FR-011-203 / FR-011-209). Mirrors "
+            "``users.temp_password_expires_at``."
         ),
     )
 
