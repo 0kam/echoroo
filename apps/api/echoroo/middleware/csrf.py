@@ -60,6 +60,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+import re
+
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS, is_public_auth_path
 
 # ---------------------------------------------------------------------------
@@ -85,6 +87,19 @@ Synced with ``echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`` so the CSRF
 exemption and the auth router's public allowlist cannot drift apart.
 Match is exact (no prefix wildcarding).
 """
+
+# spec/011 FR-011-105..106 — TOKEN_AUTH_ONLY paths whose ``{token}``
+# segment IS the credential. The endpoint accepts an OPTIONAL session
+# cookie; when none is present the caller has no CSRF token to issue,
+# so the standard double-submit pattern cannot apply. The signed token
+# (HMAC-SHA-256, constant-time compare) substitutes for CSRF here: an
+# attacker forging a cross-site request would also need to know the
+# single-shot token, which is delivered out-of-band and never leaks via
+# referer (FR-011-102 cache directives). Pattern-based match because
+# the variable ``{token}`` segment defeats exact-path enumeration.
+_PATTERN_EXEMPT_PATHS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"^/web-api/v1/auth/invitations/[^/]+/accept/?$"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +282,14 @@ class CsrfMiddleware(BaseHTTPMiddleware):
         # issued yet. Bypass the check for those exact paths.
         if is_public_auth_path(request.url.path):
             return await call_next(request)
+
+        # spec/011 FR-011-105..106: token-authenticated public paths
+        # whose ``{token}`` segment IS the credential. The signed
+        # envelope substitutes for the CSRF token here; pattern-based
+        # match because the variable token defeats exact enumeration.
+        for pattern in _PATTERN_EXEMPT_PATHS:
+            if pattern.fullmatch(request.url.path):
+                return await call_next(request)
 
         session_id = request.cookies.get(self.config.cookie_name)
         token = request.headers.get(self.config.header_name)

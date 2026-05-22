@@ -17,7 +17,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID
 
 import httpx
@@ -25,6 +25,7 @@ import jwt
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from webauthn.helpers import options_to_json_dict
@@ -37,6 +38,7 @@ from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
+from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
 from echoroo.middleware.step_up import STEP_UP_HEADER_NAME
 from echoroo.models.password_reset_token import PasswordResetToken
@@ -68,8 +70,17 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
-from echoroo.services import outbox_service
+from echoroo.services import invitation_service, outbox_service
 from echoroo.services.audit_service import AuditLogService
+from echoroo.services.invitation_service import (
+    InvitationAlreadyMemberError,
+    InvitationConflictError,
+    InvitationEmailMismatchError,
+    InvitationTokenInvalidError,
+    InvitationValidationError,
+    accept_invitation_via_public_token,
+    resolve_invitation_for_public_token,
+)
 from echoroo.services.auth_service import (
     DEFAULT_RATE_LIMIT_POLICY,
     AccountLockedError,
@@ -2017,3 +2028,478 @@ async def logout(
     _clear_session_cookies(response)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
+
+
+# ===========================================================================
+# spec/011 §FR-011-105..107 — TOKEN_AUTH_ONLY invitation resolver + accept
+# ===========================================================================
+#
+# Phase 7 / US2 / T202 + T203 + T206 + T208. Two endpoints:
+#
+# * ``GET  /web-api/v1/auth/invitations/{token}``        — resolver
+# * ``POST /web-api/v1/auth/invitations/{token}/accept`` — accept
+#
+# Both are classified ``TOKEN_AUTH_ONLY`` (no ``gate_action``). They are
+# registered in the spec/007 public-token allowlist
+# (``core/endpoint_allowlist.py``) and pattern-allowlisted in the auth
+# router + CSRF middleware (added by the same step). Optional session
+# cookie is honoured: when present the resolver exposes
+# ``is_logged_in=true`` and ``authenticated_email_matches_bound`` so
+# the frontend can route to the existing-user accept branch.
+#
+# Rate limit (NFR-011-006): per-IP 10/min, global 200/min, sliding
+# window. Constant 300ms±50ms response timing pad on every response
+# (success + invalid) so timing oracles cannot probe.
+# ---------------------------------------------------------------------------
+
+
+_INVITATION_PUBLIC_WINDOW_SECONDS: Final[float] = 60.0
+_INVITATION_PUBLIC_IP_LIMIT: Final[int] = 10
+_INVITATION_PUBLIC_GLOBAL_LIMIT: Final[int] = 200
+_invitation_public_windows: dict[str, list[float]] = {}
+_INVITATION_PUBLIC_RESPONSE_TARGET_MS: Final[float] = 300.0
+"""Constant minimum response time (ms). FR-011-105 / FR-011-107."""
+
+
+def _invitation_public_rate_limit_check(*, ip: str) -> bool:
+    """Return True when the caller exceeded the spec/011 rate cap.
+
+    NFR-011-006: per-IP sliding window 10 requests / 60 s and a global
+    sliding window of 200 requests / 60 s. Both gates are evaluated and
+    the request is rejected when either limit is breached. The store is
+    process-local (matches the existing A-6 / A-11 helper pattern) —
+    multi-worker production deployments rely on the per-IP rate-limit
+    being approximate; the rate-limit is defence in depth on top of the
+    constant timing pad below.
+    """
+    now = time.monotonic()
+    cutoff = now - _INVITATION_PUBLIC_WINDOW_SECONDS
+    scopes = (
+        (f"invite_public:ip:{ip}", _INVITATION_PUBLIC_IP_LIMIT),
+        ("invite_public:global", _INVITATION_PUBLIC_GLOBAL_LIMIT),
+    )
+    for key, limit in scopes:
+        window = [t for t in _invitation_public_windows.get(key, []) if t >= cutoff]
+        if len(window) >= limit:
+            _invitation_public_windows[key] = window
+            return True
+        window.append(now)
+        _invitation_public_windows[key] = window
+    return False
+
+
+async def _invitation_public_sleep_for_minimum(started_at: float) -> None:
+    """Pad response time to the FR-011-105 / FR-011-107 constant target.
+
+    The constant 300ms target keeps the success / generic-invalid /
+    rate-limited surfaces indistinguishable from the network's vantage
+    point. Tests can monkey-patch this helper to a no-op when they
+    don't care about wallclock latency.
+    """
+    elapsed_ms = (time.monotonic() - started_at) * 1000.0
+    remaining_ms = _INVITATION_PUBLIC_RESPONSE_TARGET_MS - elapsed_ms
+    if remaining_ms > 0:
+        await asyncio.sleep(remaining_ms / 1000.0)
+
+
+class _InvitationGenericInvalid(HTTPException):
+    """Single shape for every FR-011-107 generic-invalid response.
+
+    The 404 status code, ``ERR_INVITATION_INVALID`` envelope, and the
+    body length are all identical regardless of failure cause. The
+    response timing is held to the constant target by the caller's
+    pad helper. The exception subclass exists so handler-level
+    ``raise`` sites read as the spec's "generic invalid" intent
+    rather than a bare ``HTTPException(404, ...)``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "ERR_INVITATION_INVALID",
+                "message": "invitation is no longer valid",
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pydantic schemas (mirror contracts/invitation-public.yaml)
+# ---------------------------------------------------------------------------
+
+
+class InvitationContextResponse(BaseModel):
+    """``GET /auth/invitations/{token}`` 200 body (FR-011-105)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_name: str
+    role: str | None = Field(
+        default=None,
+        description=(
+            "Project role (Member-kind) — Viewer / Member / Admin. NULL "
+            "for trusted-overlay rows."
+        ),
+    )
+    kind: str = Field(
+        ...,
+        description="``member`` or ``trusted``.",
+    )
+    bound_email: str = Field(
+        ...,
+        description=(
+            "Read-only on the signup form. Display only — never trust the "
+            "frontend to canonicalise; the service layer re-checks."
+        ),
+    )
+    expires_at: datetime
+    is_bootstrap: bool = Field(
+        default=False,
+        description=(
+            "True when ``ownership_transfer_on_accept`` is set (SU bootstrap)."
+        ),
+    )
+    is_logged_in: bool
+    authenticated_email_matches_bound: bool
+
+
+class _AcceptTotpEnrollment(BaseModel):
+    """Initial TOTP enrollment payload for the signup branch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    totp_secret_signed: str = Field(
+        ...,
+        description=(
+            "Server-issued TOTP secret returned by the public-signup TOTP "
+            "begin step. For spec/011 step 7 this is accepted as the "
+            "plain TOTP secret string; a future revision MAY wrap it in "
+            "an HMAC envelope without breaking the contract field name."
+        ),
+    )
+    totp_initial_code: str = Field(..., min_length=6, max_length=6)
+
+
+class _AcceptNewUserPayload(BaseModel):
+    """New-user signup branch (FR-011-106 step 1a)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: EmailStr = Field(
+        ...,
+        description=(
+            "MUST canonicalize-equal the bound email. Mismatch → generic "
+            "404 (no leak)."
+        ),
+    )
+    password: str = Field(..., min_length=12)
+    totp_enrollment: _AcceptTotpEnrollment
+
+
+class _AcceptExistingUserPayload(BaseModel):
+    """Existing-user accept branch (FR-011-106 step 1b)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool = Field(
+        ...,
+        description=(
+            "MUST be ``true``. The single field exists only as a guard so "
+            "a misconfigured client cannot send an empty body and trip the "
+            "signup branch by accident."
+        ),
+    )
+
+
+class InvitationAcceptResponse(BaseModel):
+    """``POST /auth/invitations/{token}/accept`` 201 body (FR-011-106)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: UUID
+    role: str | None = None
+    kind: str
+    ownership_transferred: bool = False
+    membership_created: bool
+
+
+# ---------------------------------------------------------------------------
+# GET /auth/invitations/{token} — resolver
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/invitations/{token}",
+    response_model=InvitationContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Resolve invitation context for the landing page (FR-011-105)",
+    description=(
+        "TOKEN_AUTH_ONLY public endpoint. Returns the project name, bound "
+        "email, role / kind, and ``is_logged_in`` / "
+        "``authenticated_email_matches_bound`` flags so the frontend can "
+        "route between the signup and existing-user accept branches. "
+        "Failure causes (expired, revoked, already-accepted, unknown "
+        "token, deleted project) collapse to the same generic 404 with "
+        "constant timing (FR-011-107)."
+    ),
+    responses={
+        404: {"description": "Generic invalid (anti-enumeration, constant timing)"},
+        429: {"description": "Rate limit exceeded (NFR-011-006)"},
+    },
+)
+async def resolve_invitation(
+    token: str,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> InvitationContextResponse:
+    """Resolve invitation context for the public landing page (TOKEN_AUTH_ONLY)."""
+    started_at = time.monotonic()
+    if _invitation_public_rate_limit_check(ip=_client_ip(request)):
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="invitation rate limit exceeded",
+        )
+
+    authenticated_email = current_user.email if current_user is not None else None
+    try:
+        outcome = await invitation_service.resolve_invitation_for_public_token(
+            db,
+            signed_token=token,
+            authenticated_email=authenticated_email,
+        )
+    except InvitationTokenInvalidError:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+    except Exception:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise
+
+    invitation = outcome.invitation
+    expires_at_aware = invitation.expires_at
+    if expires_at_aware.tzinfo is None:  # pragma: no cover — DB guarantees tz-aware
+        expires_at_aware = expires_at_aware.replace(tzinfo=UTC)
+
+    role_str = invitation.role.value if invitation.role is not None else None
+    matches = outcome.authenticated_email_matches
+    body = InvitationContextResponse(
+        project_name=outcome.project_name,
+        role=role_str,
+        kind=invitation.kind.value,
+        bound_email=invitation.email or "",
+        expires_at=expires_at_aware,
+        is_bootstrap=invitation.ownership_transfer_on_accept,
+        is_logged_in=outcome.is_logged_in,
+        authenticated_email_matches_bound=bool(matches),
+    )
+
+    await _invitation_public_sleep_for_minimum(started_at)
+    return body
+
+
+# ---------------------------------------------------------------------------
+# POST /auth/invitations/{token}/accept — accept
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/invitations/{token}/accept",
+    response_model=InvitationAcceptResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Accept an invitation (FR-011-106)",
+    description=(
+        "TOKEN_AUTH_ONLY public endpoint. Body shape branches on the "
+        "caller's auth state: an anonymous caller supplies a "
+        "``NewUserPayload`` (email + password + TOTP enrollment); a "
+        "logged-in caller supplies an ``ExistingUserPayload`` of "
+        "``{accept: true}``. The endpoint atomically flips the "
+        "invitation status (FR-011-106 step 2), inserts the membership "
+        "row, and emits the appropriate audit action (T208). Email "
+        "mismatch / expired / revoked / unknown token / deleted project "
+        "all collapse to the same generic 404 with constant timing."
+    ),
+    responses={
+        404: {"description": "Generic invalid (anti-enumeration, constant timing)"},
+        409: {"description": "Caller is already a member at same/higher role"},
+        429: {"description": "Rate limit exceeded (NFR-011-006)"},
+    },
+)
+async def accept_invitation_public(
+    token: str,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    payload: dict[str, Any],
+) -> InvitationAcceptResponse:
+    """Accept an invitation via the public-token surface."""
+    started_at = time.monotonic()
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+
+    if _invitation_public_rate_limit_check(ip=_client_ip(request)):
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="invitation rate limit exceeded",
+        )
+
+    # Branch on the caller's auth state. The body shape is union'ed
+    # so we validate against the matching branch and reject mismatched
+    # shapes uniformly as the generic invalid 404.
+    is_logged_in = current_user is not None
+    try:
+        new_user_payload: _AcceptNewUserPayload | None = None
+        existing_user_payload: _AcceptExistingUserPayload | None = None
+        if is_logged_in:
+            existing_user_payload = _AcceptExistingUserPayload.model_validate(
+                payload,
+            )
+            if not existing_user_payload.accept:
+                await _invitation_public_sleep_for_minimum(started_at)
+                raise _InvitationGenericInvalid()
+        else:
+            new_user_payload = _AcceptNewUserPayload.model_validate(payload)
+    except ValueError:
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+
+    if is_logged_in:
+        accepting_user_id = cast("User", current_user).id
+        accepting_user_email = cast("User", current_user).email
+        is_new_user_signup = False
+    else:
+        assert new_user_payload is not None
+        # Validate password policy BEFORE peeking at the invitation so a
+        # weak password is still rejected with a 422 (consistent with the
+        # /register endpoint contract). The generic-invalid 404 surface
+        # only applies to invitation-state failures.
+        try:
+            await enforce_password_policy(
+                new_user_payload.password,
+                hibp=_hibp_checker,
+            )
+        except PasswordPolicyError as exc:
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=exc.reason,
+            ) from exc
+
+        normalized_email = _normalize_email(new_user_payload.email)
+        repo = UserRepository(db)
+        existing_user = await repo.get_by_email(normalized_email)
+        if existing_user is not None:
+            # Email already registered → the caller cannot use the
+            # signup branch. The frontend should sign them in and retry
+            # via the existing-user branch. Collapse to the generic
+            # invalid so the email-existence oracle is closed.
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise _InvitationGenericInvalid()
+
+        now = datetime.now(UTC)
+        new_user = User(
+            email=normalized_email,
+            password_hash=hash_password(new_user_payload.password),
+            display_name=normalized_email.split("@", 1)[0],
+            security_stamp=secrets.token_urlsafe(48),
+            two_factor_enabled=False,
+            last_login_at=None,
+            last_first_party_activity_at=now,
+        )
+        try:
+            await repo.create(new_user)
+        except IntegrityError:
+            await db.rollback()
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise _InvitationGenericInvalid() from None
+
+        # Confirm TOTP enrollment using the existing TwoFactorService
+        # helper. The contract field ``totp_secret_signed`` is accepted
+        # as the plain TOTP secret string for spec/011 step 7 — a
+        # future revision MAY wrap it in an HMAC envelope without
+        # changing the field name.
+        two_factor = TwoFactorService(db)
+        try:
+            await two_factor.confirm_enrollment(
+                new_user,
+                new_user_payload.totp_enrollment.totp_secret_signed,
+                new_user_payload.totp_enrollment.totp_initial_code,
+            )
+        except (
+            TwoFactorAlreadyEnabledError,
+            TwoFactorInvalidCodeError,
+            TwoFactorLockedError,
+            TwoFactorRateLimitedError,
+        ) as exc:
+            await db.rollback()
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_TOTP_ENROLLMENT_INVALID",
+                    "message": str(exc),
+                },
+            ) from exc
+
+        accepting_user_id = new_user.id
+        accepting_user_email = normalized_email
+        is_new_user_signup = True
+
+    try:
+        accept_outcome = await accept_invitation_via_public_token(
+            db,
+            signed_token=token,
+            accepting_user_id=accepting_user_id,
+            accepting_user_email=accepting_user_email,
+            is_new_user_signup=is_new_user_signup,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except InvitationAlreadyMemberError as exc:
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_ALREADY_MEMBER",
+                "message": str(exc),
+            },
+        ) from exc
+    except (
+        InvitationTokenInvalidError,
+        InvitationEmailMismatchError,
+        InvitationValidationError,
+    ):
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise _InvitationGenericInvalid() from None
+    except InvitationConflictError as exc:
+        await db.rollback()
+        await _invitation_public_sleep_for_minimum(started_at)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_INVITATION_CONFLICT",
+                "message": str(exc),
+            },
+        ) from exc
+
+    await db.commit()
+    await invitation_service.emit_public_invitation_accept_audit(accept_outcome)
+
+    invitation = accept_outcome.invitation
+    role_str = invitation.role.value if invitation.role is not None else None
+    body = InvitationAcceptResponse(
+        project_id=invitation.project_id,
+        role=role_str,
+        kind=invitation.kind.value,
+        ownership_transferred=accept_outcome.ownership_transferred,
+        membership_created=accept_outcome.membership_created,
+    )
+
+    await _invitation_public_sleep_for_minimum(started_at)
+    return body
