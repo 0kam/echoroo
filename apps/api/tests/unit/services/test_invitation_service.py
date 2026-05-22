@@ -33,7 +33,6 @@ from echoroo.services.invitation_service import (
     InvitationConflictError,
     InvitationCreateOutcome,
     InvitationInfraUnavailableError,
-    InvitationMailPayload,
     InvitationRateLimitError,
     InvitationValidationError,
     accept_invitation,
@@ -205,16 +204,19 @@ async def test_create_invitation_outcome_does_not_expose_plain_token_at_top_leve
     )
 
     assert isinstance(outcome, InvitationCreateOutcome)
-    # The plain-text envelope must live exclusively on mail_payload —
-    # never on the outcome's top-level surface.
+    # spec/011 Step 6 (T053): the plain-text envelope lives on a single
+    # ``signed_token_envelope`` slot — the legacy split between the
+    # outcome surface and an internal ``mail_payload`` carrier is gone.
+    # Confidentiality is now enforced at the API layer (FR-011-102..104)
+    # rather than by hiding the value inside a nested dataclass.
     field_names = set(outcome.__dataclass_fields__)
     assert "raw_token_b64u" not in field_names
     assert "signed_token" not in field_names
+    assert "mail_payload" not in field_names
 
-    assert isinstance(outcome.mail_payload, InvitationMailPayload)
-    assert outcome.mail_payload.raw_token_b64u
-    assert outcome.mail_payload.signed_token
-    assert outcome.mail_payload.recipient_email == "alice@example.com"
+    assert isinstance(outcome.signed_token_envelope, str)
+    # 4-part envelope: {raw}.{exp}.{kid}.{mac}
+    assert outcome.signed_token_envelope.count(".") == 3
 
 
 # ---------------------------------------------------------------------------

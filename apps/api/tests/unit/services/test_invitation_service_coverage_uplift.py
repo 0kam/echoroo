@@ -50,7 +50,6 @@ from echoroo.services.invitation_service import (
     InvitationCreateOutcome,
     InvitationDeclineOutcome,
     InvitationInfraUnavailableError,
-    InvitationMailPayload,
     InvitationRateLimitError,
     InvitationStateError,
     InvitationTokenInvalidError,
@@ -58,7 +57,6 @@ from echoroo.services.invitation_service import (
     _b64u_decode,
     _b64u_encode,
     _email_matches_invitation,
-    _enqueue_invitation_email,
     _get_idempotent_outcome,
     _write_invitation_audit,
     accept_invitation,
@@ -170,10 +168,13 @@ def test_verify_invitation_token_rejects_wrong_part_count() -> None:
 
 
 def test_verify_invitation_token_rejects_non_integer_expiry() -> None:
+    # spec/011 Step 6 (T050/T051): the verifier now treats 3-part inputs
+    # as legacy envelopes (NFR-011-010 path (b)). To exercise the
+    # ``invalid expiry`` branch we use the 4-part shape with a bad
+    # expiry token; the kid slot is irrelevant since the integer parse
+    # happens before the kid lookup.
     with pytest.raises(InvitationTokenInvalidError, match="invalid expiry"):
-        verify_invitation_token(
-            "rawtoken.notanint.macblob", hmac_secret=HMAC_SECRET
-        )
+        verify_invitation_token("rawtoken.notanint.kid.macblob")
 
 
 def test_verify_invitation_token_rejects_bad_signature() -> None:
@@ -181,12 +182,13 @@ def test_verify_invitation_token_rejects_bad_signature() -> None:
     raw = _b64u_encode(b"\x42" * 32)
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     valid = sign_invitation_token(
-        raw_token_b64u=raw, expires_at=expires_at, hmac_secret=HMAC_SECRET
+        raw_token_b64u=raw, expires_at=expires_at,
     )
     parts = valid.split(".")
-    forged = ".".join([parts[0], parts[1], "AAAAAAAA"])
+    # spec/011 step 6: 4-part envelope — swap the last (MAC) component.
+    forged = ".".join([parts[0], parts[1], parts[2], "AAAAAAAA"])
     with pytest.raises(InvitationTokenInvalidError, match="signature"):
-        verify_invitation_token(forged, hmac_secret=HMAC_SECRET)
+        verify_invitation_token(forged)
 
 
 def test_verify_invitation_token_round_trip_succeeds() -> None:
@@ -687,46 +689,13 @@ async def test_write_invitation_audit_swallows_inner_failure_via_rollback() -> N
     assert rollbacks == [None]
 
 
-@pytest.mark.asyncio
-async def test_enqueue_invitation_email_swallows_outbox_failure(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Outbox enqueue raise must NOT bubble — the invitation row already committed."""
-    invitation_id_local = uuid4()
-    project_id_local = uuid4()
-    payload = InvitationMailPayload(
-        raw_token_b64u="rawtoken",
-        signed_token="signed.token.mac",
-        recipient_email="alice@example.com",
-        invitation_id=invitation_id_local,
-        project_id=project_id_local,
-        kind=ProjectInvitationKind.MEMBER,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
-
-    class _StubInvitation:
-        id = invitation_id_local
-        kind = ProjectInvitationKind.MEMBER
-        expires_at = payload.expires_at
-        status = ProjectInvitationStatus.PENDING
-        project_id = project_id_local
-
-    outcome = InvitationCreateOutcome(
-        invitation=_StubInvitation(),  # type: ignore[arg-type]
-        actor_user_id=uuid4(),
-        mail_payload=payload,
-        is_new=True,
-    )
-
-    failing_factory = _FailingSessionFactory(RuntimeError("outbox DB unreachable"))
-
-    with patch.object(svc, "AsyncSessionLocal", failing_factory), caplog.at_level("WARNING"):
-        await _enqueue_invitation_email(outcome)
-
-    assert any(
-        "invitation email enqueue failed" in record.getMessage()
-        for record in caplog.records
-    )
+# spec/011 Step 6 (T054): the legacy
+# ``test_enqueue_invitation_email_swallows_outbox_failure`` case is gone
+# along with ``_enqueue_invitation_email``. The outbox path is removed;
+# the plain-text envelope is now surfaced once on the issue endpoint's
+# HTTP response (FR-011-103) and never persisted past that turn. The
+# audit-write soft-alert behaviour is still covered by the two
+# ``test_write_invitation_audit_swallows_*`` cases above.
 
 
 # ---------------------------------------------------------------------------
@@ -802,50 +771,41 @@ async def test_trigger_post_commit_dispatches_to_accept_branch_with_member(
 
 
 @pytest.mark.asyncio
-async def test_trigger_post_commit_dispatches_to_create_branch_without_email(
+async def test_trigger_post_commit_dispatches_to_create_branch_audit_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Replay create (``is_new=False``) skips the email outbox enqueue."""
+    """spec/011 Step 6 (T054): create branch emits audit only.
+
+    The outbox-email enqueue is removed (``_enqueue_invitation_email``
+    no longer exists). Both ``is_new=True`` and ``is_new=False`` paths
+    now perform the same audit write — the legacy ``is_new`` gate that
+    suppressed the email side effect on replay is irrelevant since
+    there is no email side effect to suppress.
+    """
     captured: list[str] = []
 
     async def _fake_audit(*, action: str, **_kwargs: Any) -> None:
         captured.append(action)
 
-    enqueue_called: list[None] = []
-
-    async def _fake_enqueue(_outcome: InvitationCreateOutcome) -> None:
-        enqueue_called.append(None)
-
     monkeypatch.setattr(svc, "_write_invitation_audit", _fake_audit)
-    monkeypatch.setattr(svc, "_enqueue_invitation_email", _fake_enqueue)
 
     inv_id_local = uuid4()
     proj_id_local = uuid4()
-    payload = InvitationMailPayload(
-        raw_token_b64u="raw",
-        signed_token="signed.token.mac",
-        recipient_email="alice@example.com",
-        invitation_id=inv_id_local,
-        project_id=proj_id_local,
-        kind=ProjectInvitationKind.MEMBER,
-        expires_at=datetime.now(UTC) + timedelta(hours=1),
-    )
 
     class _StubInvitation:
         id = inv_id_local
         kind = ProjectInvitationKind.MEMBER
-        expires_at = payload.expires_at
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
         status = ProjectInvitationStatus.PENDING
         project_id = proj_id_local
 
     outcome = InvitationCreateOutcome(
         invitation=_StubInvitation(),  # type: ignore[arg-type]
         actor_user_id=uuid4(),
-        mail_payload=payload,
-        is_new=False,  # replay path — must NOT enqueue email
+        signed_token_envelope="raw.1700000000.kid1.sig",
+        is_new=False,
     )
 
     await trigger_post_commit_side_effects(outcome)
 
     assert captured == ["project.invitation.create"]
-    assert enqueue_called == []

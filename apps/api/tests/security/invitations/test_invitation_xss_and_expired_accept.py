@@ -6,9 +6,11 @@ A. XSS prevention:
    - ``display_name`` / ``email`` payloads with ``<script>`` / SVG / HTML
      tags in request schemas are either rejected (Pydantic ValidationError)
      or stored as plain text (no HTML interpretation at the JSON-API level).
-   - The service-layer ``InvitationMailPayload`` carries the email verbatim
-     in a dataclass field; no HTML injection surface exists at the
-     Python dataclass boundary.
+   - spec/011 Step 6 (T052/T053): the legacy ``InvitationMailPayload``
+     dataclass is removed. The plain-text envelope now lives on
+     ``InvitationCreateOutcome.signed_token_envelope`` as a flat ``str``
+     and is surfaced once on the issue endpoint's HTTP response
+     (FR-011-103). The envelope is inert at the dataclass boundary.
 
 B. Expired / already-consumed token acceptance:
    - Expired HMAC-signed token (``expires_at`` in the past) → raises
@@ -283,30 +285,27 @@ def test_trusted_invite_request_no_display_name_field() -> None:
     )
 
 
-def test_invitation_mail_payload_stores_email_without_html_interpretation() -> None:
-    """``InvitationMailPayload.recipient_email`` is stored as plain text.
+def test_invitation_outcome_envelope_is_inert_string() -> None:
+    """spec/011 Step 6 (T052/T053): the legacy ``InvitationMailPayload``
+    carrier is removed. Plain-text token confidentiality is now enforced
+    at the API layer (FR-011-102..104) — the value lives on
+    ``InvitationCreateOutcome.signed_token_envelope`` as a plain ``str``,
+    surfaced once on the issue endpoint's HTTP response and never
+    persisted.
 
-    The dataclass does not interpret or render the email as HTML. An XSS
-    payload in ``recipient_email`` would only be dangerous if the worker
-    renders it as HTML — this test documents that the payload layer is
-    inert; HTML safety is the worker's responsibility.
+    This test documents the new shape and asserts the envelope is just
+    a string (no Markup / SafeStr / nested dataclass that could subtly
+    re-render).
     """
-    from echoroo.models.enums import ProjectInvitationKind
-    from echoroo.services.invitation_service import InvitationMailPayload
+    from echoroo.services.invitation_service import InvitationCreateOutcome
 
-    payload = InvitationMailPayload(
-        raw_token_b64u="abc=",
-        signed_token="abc=.12345.sig=",
-        recipient_email="<script>alert(1)</script>",
-        invitation_id=uuid4(),
-        project_id=uuid4(),
-        kind=ProjectInvitationKind.MEMBER,
-        expires_at=datetime.now(UTC) + timedelta(days=1),
+    outcome = InvitationCreateOutcome(
+        invitation=None,  # type: ignore[arg-type]
+        actor_user_id=uuid4(),
+        signed_token_envelope="rawb64.1700000000.kid_test.sigb64",
     )
-    # The dataclass stores the value verbatim; no rendering occurs here.
-    assert payload.recipient_email == "<script>alert(1)</script>"
-    # Verify the field is a plain str (not a Markup or SafeStr type).
-    assert type(payload.recipient_email) is str
+    assert type(outcome.signed_token_envelope) is str
+    assert "<script>" not in outcome.signed_token_envelope
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +467,7 @@ __all__ = [
     "test_already_accepted_token_without_key_raises_state_error",
     "test_declined_token_raises_state_error",
     "test_expired_token_raises_token_invalid_error",
-    "test_invitation_mail_payload_stores_email_without_html_interpretation",
+    "test_invitation_outcome_envelope_is_inert_string",
     "test_revoked_token_raises_state_error",
     "test_trusted_invite_request_no_display_name_field",
     "test_trusted_invite_request_rejects_xss_in_email",

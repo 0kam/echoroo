@@ -8,32 +8,25 @@ Verifies that the invitation flow cannot be exploited via header injection
    ``pydantic.EmailStr`` which delegates to ``email-validator`` and rejects
    control characters including CRLF.
 2. CRLF-containing reason / display_name fields (where they exist) are either
-   rejected or stored with the CRLF stripped / encoded, never reflected
-   verbatim in outgoing SMTP headers.
-3. Service-layer ``_enqueue_invitation_email`` stores the recipient email in a
-   JSON payload (outbox row) — the JSON serialiser encodes newlines as ``\\n``
-   so no literal CRLF can appear in the SMTP header when the outbox worker
-   formats the message.
-4. The ``InvitationMailPayload.recipient_email`` field carries only the
-   caller-supplied email (already validated by Pydantic at the endpoint) — a
-   direct service call with a CRLF email stores the CRLF-escaped JSON value,
-   not a raw header continuation.
+   rejected or stored with the CRLF stripped / encoded.
+3. spec/011 Step 6 (T054): the outbound-email outbox is removed. The legacy
+   ``_enqueue_invitation_email`` JSON-encoding test and the
+   ``InvitationMailPayload`` payload tests are gone with it — the plain-text
+   envelope now leaves the process only through the issue endpoint's HTTP
+   response (FR-011-103) which is JSON-serialised by FastAPI (CRLF survives
+   as ``\\n`` in JSON anyway). The Pydantic EmailStr gate (test 1) remains
+   the operational defence; reinforced by ``hash_email`` canonicalisation
+   (test 4) and the schema-shape pin (test 5).
 
 These tests work entirely at the service / schema layer without an HTTP
-server — no DB is required for the Pydantic-validation tests; the
-``InvitationMailPayload`` and JSON-encoding tests use only in-memory objects.
+server.
 """
 
 from __future__ import annotations
 
-import json
 import re
-from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
-
-from echoroo.models.enums import ProjectInvitationKind
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,59 +103,13 @@ def test_pydantic_emailstr_accepts_clean_email() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. InvitationMailPayload JSON serialisation encodes CRLF — no raw header
-#    continuation in the outbox JSON body.
+# 3. spec/011 Step 6 (T054) — outbound-email outbox removed. The legacy
+#    ``test_invitation_mail_payload_json_encodes_crlf_in_email`` case
+#    exercised ``_enqueue_invitation_email``'s JSON serialisation; the
+#    function no longer exists. FastAPI's JSON serialiser still escapes
+#    CRLF for any response field (defence in depth above the EmailStr gate
+#    in test 1), so the operational guarantee is unchanged.
 # ---------------------------------------------------------------------------
-
-
-def test_invitation_mail_payload_json_encodes_crlf_in_email() -> None:
-    """Outbox JSON body MUST NOT contain literal CRLF in any field.
-
-    Even if a CRLF-containing email somehow bypasses Pydantic validation
-    (e.g. a direct service call in an integration scenario), the JSON
-    serialiser used by ``_enqueue_invitation_email`` encodes ``\\n`` as
-    ``\\\\n`` — the outbox worker receives an escaped string, not a header
-    continuation.
-
-    This test constructs the payload dict directly (mirroring the internals
-    of ``_enqueue_invitation_email``) and verifies the JSON output.
-    """
-    from echoroo.services.invitation_service import InvitationMailPayload
-
-    payload = InvitationMailPayload(
-        raw_token_b64u="dGVzdA==",
-        signed_token="dGVzdA==.9999999999.sig==",
-        recipient_email="victim@example.com\nBcc: attacker@evil.com",
-        invitation_id=uuid4(),
-        project_id=uuid4(),
-        kind=ProjectInvitationKind.TRUSTED,
-        expires_at=datetime.now(UTC) + timedelta(days=7),
-    )
-
-    body: dict[str, object] = {
-        "invitation_id": str(payload.invitation_id),
-        "project_id": str(payload.project_id),
-        "kind": payload.kind.value,
-        "recipient_email": payload.recipient_email,
-        "expires_at": payload.expires_at.isoformat(),
-        "raw_token_b64u": payload.raw_token_b64u,
-        "signed_token": payload.signed_token,
-    }
-    json_str = json.dumps(body)
-
-    # The JSON output must NOT contain a bare LF or CR that could escape
-    # the serialised string boundary and inject an SMTP header.
-    assert "\n" not in json_str, (
-        "Literal LF found in JSON outbox body — CRLF injection risk"
-    )
-    assert "\r" not in json_str, (
-        "Literal CR found in JSON outbox body — CRLF injection risk"
-    )
-
-    # The CRLF must have been JSON-escaped to \\n.
-    assert "\\n" in json_str or "Bcc" not in json_str, (
-        "Expected CRLF to be JSON-escaped in outbox body"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -245,41 +192,15 @@ def test_member_invite_schema_rejects_crlf_email(bad_email: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. recipient_email in InvitationMailPayload is a plain str — no SMTP send
-#    happens in the test context but we can verify the field stores only what
-#    was passed (no silent sanitisation that would mask an injection at the
-#    DB-persist layer).
+# 7. spec/011 Step 6 (T052) — ``InvitationMailPayload`` removed. The
+#    historic "payload stores email verbatim" guarantee is moot: there is
+#    no payload class any more, and the plain-text envelope lives on
+#    ``InvitationCreateOutcome.signed_token_envelope`` (FR-011-102..104).
 # ---------------------------------------------------------------------------
-
-
-def test_invitation_mail_payload_stores_email_verbatim_for_worker_to_handle() -> None:
-    """``InvitationMailPayload.recipient_email`` stores the value verbatim.
-
-    The SMTP-injection defence is at the Pydantic-validation gate (test 1)
-    and at the JSON-encoding gate (test 3). The payload dataclass is not
-    the sanitisation point — it is the worker's responsibility to use
-    the email safely. This test documents the contract: the field is not
-    silently truncated or modified.
-    """
-    from echoroo.services.invitation_service import InvitationMailPayload
-
-    clean_email = "clean@example.com"
-    payload = InvitationMailPayload(
-        raw_token_b64u="abc=",
-        signed_token="abc=.1234.sig=",
-        recipient_email=clean_email,
-        invitation_id=uuid4(),
-        project_id=uuid4(),
-        kind=ProjectInvitationKind.MEMBER,
-        expires_at=datetime.now(UTC) + timedelta(days=1),
-    )
-    assert payload.recipient_email == clean_email
 
 
 __all__ = [
     "test_hash_email_crlf_does_not_match_clean_email",
-    "test_invitation_mail_payload_json_encodes_crlf_in_email",
-    "test_invitation_mail_payload_stores_email_verbatim_for_worker_to_handle",
     "test_member_invite_schema_rejects_crlf_email",
     "test_pydantic_emailstr_accepts_clean_email",
     "test_pydantic_emailstr_rejects_crlf_in_email",
