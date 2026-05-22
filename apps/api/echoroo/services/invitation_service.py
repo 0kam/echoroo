@@ -590,9 +590,24 @@ def verify_invitation_token(
             )
         expires_at = datetime.fromtimestamp(expires_at_unix, tz=UTC)
         # Reject past TTL + grace window. The grace window extends past
-        # the row's expires_at so a 3-part token that was 1 minute from
-        # natural expiry at deploy time remains verifiable until
-        # ``expires_at + GRACE_HOURS``.
+        # the envelope's ``expires_at`` so a 3-part token that was 1
+        # minute from natural expiry at deploy time remains verifiable
+        # until ``expires_at + GRACE_HOURS``.
+        #
+        # Equivalence with NFR-011-010(b)'s wording ("now < created_at +
+        # 7d + GRACE_HOURS"): for any legitimately-issued legacy token
+        # the envelope's ``expires_at`` equals ``created_at + 7d`` (the
+        # canonical invitation TTL set at issuance), so the two
+        # formulas yield the same admit/reject boundary. They diverge
+        # only if an attacker controls the OLD HMAC key and re-signs an
+        # envelope with a forged ``expires_at``; in that scenario the
+        # system is already fully compromised (any unexpired raw token
+        # plus the key lets the attacker accept) and the DB-row-time
+        # formula buys no additional defence. We keep the envelope
+        # formula because (a) the DB row is not yet fetched at this
+        # validation layer (token-hash lookup happens in
+        # ``redeem_invitation_token``) and (b) every existing caller
+        # expects ``expires_at``-based behaviour.
         grace = timedelta(hours=settings.invitation_token_kid_grace_hours)
         if now_eff >= expires_at + grace:
             raise InvitationTokenInvalidError(

@@ -503,14 +503,18 @@ class ProjectInvitation(UUIDMixin, TimestampMixin, Base):
     # spec/011 FR-011-122 — SU bootstrap ownership transfer flag.
     #
     # Added by Alembic migration 0021_zero_email_additive. When True the
-    # invitation MUST be a Member-kind row at role=ADMIN (R5 — enforced
-    # both by the DB CHECK ``ck_project_invitations_ownership_transfer_kind_member``
-    # AND by the application-level guard in
+    # invitation MUST be a Member-kind row (R5 — enforced both by the DB
+    # CHECK ``ck_project_invitations_ownership_transfer_kind_member`` AND
+    # by the application-level guard in
     # ``services.invitation_service.create_invitation`` /
-    # ``accept_invitation``). On accept, the same transaction transfers
-    # project ownership from the SU placeholder to the accepting user
-    # (Step 9 wires the SAVEPOINT-nested transfer; this column lands in
-    # Step 1 + Step 6 so service-layer code can populate it).
+    # ``accept_invitation``). The role=ADMIN requirement of FR-011-121 is
+    # enforced upstream at the SU bootstrap create-project endpoint
+    # (Step 9 T501), not by R5 itself — the CHECK only constrains kind,
+    # which matches both the migration and the service guard. On accept,
+    # the same transaction transfers project ownership from the SU
+    # placeholder to the accepting user (Step 9 wires the
+    # SAVEPOINT-nested transfer; this column lands in Step 1 + Step 6 so
+    # service-layer code can populate it).
     ownership_transfer_on_accept: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -519,7 +523,9 @@ class ProjectInvitation(UUIDMixin, TimestampMixin, Base):
         doc=(
             "spec/011 FR-011-122..125: when True, accepting this invitation "
             "transfers project ownership to the accepter. Only valid for "
-            "kind='member' (R5, CHECK + service guard)."
+            "kind='member' (R5, CHECK + service guard). The role=ADMIN "
+            "requirement of FR-011-121 is enforced upstream at the SU "
+            "bootstrap create-project endpoint, not by this CHECK."
         ),
     )
 
@@ -553,6 +559,15 @@ class ProjectInvitation(UUIDMixin, TimestampMixin, Base):
             "OR (status = 'expired' AND accepted_at IS NULL "
             "  AND declined_at IS NULL)",
             name="ck_project_invitations_status_timestamps",
+        ),
+        # spec/011 R5 — mirrors the DB CHECK in migration
+        # ``0021_zero_email_additive``:
+        # ``ownership_transfer_on_accept = false OR kind = 'member'``.
+        # Without this mirror the next Alembic autogenerate would emit
+        # a spurious "remove constraint" diff against the migration.
+        CheckConstraint(
+            "ownership_transfer_on_accept = false OR kind = 'member'",
+            name="ck_project_invitations_ownership_transfer_kind_member",
         ),
         # FR-049 — at most one pending invitation per (project, email_hash);
         # kind is intentionally NOT in the key so a pending Member and pending
