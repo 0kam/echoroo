@@ -35,12 +35,15 @@ Permission engine integration:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime
 from enum import Enum
 from types import SimpleNamespace
-from typing import Annotated, cast
+from typing import Annotated, Final, cast
 from uuid import UUID
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.orm import selectinload
@@ -170,6 +173,37 @@ def _require_authenticated(current_user: User | None) -> User:
             detail="Not authenticated",
         )
     return current_user
+
+
+# spec/011 Step 9 R1 P0-3 — constant-time padding for the project-create
+# response (FR-011-120 / FR-011-125 anti-enumeration).
+#
+# Without this pad the SU+intended_owner branch is observably slower than
+# the non-SU drop branch (Redis rate-limit + invitation INSERT + post-
+# commit audit add ~tens of ms over the vanilla create), letting an
+# attacker probe their ``is_superuser`` status by timing the response.
+# The pad mirrors the Step 7 ``_invitation_public_sleep_for_minimum``
+# pattern: every code path through ``create_project`` defers to the same
+# wall-clock floor regardless of which branch executed.
+_PROJECT_CREATE_RESPONSE_TARGET_MS: Final[float] = 150.0
+"""Constant minimum response time (ms) for ``POST /web-api/v1/projects``."""
+
+
+async def _project_create_sleep_for_minimum(started_at: float) -> None:
+    """Hold every project-create response to the constant 150ms floor.
+
+    spec/011 Step 9 R1 P0-3 — anti-enumeration timing pad. The SU bootstrap
+    branch (intended_owner_email accepted) runs Redis rate-limit checks,
+    inserts an invitation row, and post-commits an audit emit; the non-SU
+    drop branch returns immediately after the project insert. Without
+    padding to a constant floor an attacker can probe their is_superuser
+    status by measuring the response latency. Tests can monkey-patch this
+    helper to a no-op when wallclock latency is not under test.
+    """
+    elapsed_ms = (time.monotonic() - started_at) * 1000.0
+    remaining_ms = _PROJECT_CREATE_RESPONSE_TARGET_MS - elapsed_ms
+    if remaining_ms > 0:
+        await asyncio.sleep(remaining_ms / 1000.0)
 
 
 def _enum_value(value: object) -> object:
@@ -391,6 +425,12 @@ async def create_project(
     db: DbSession,
 ) -> ProjectCreateResponse:
     """Create a project through the first-party BFF surface."""
+    # spec/011 Step 9 R1 P0-3 — anti-enumeration timing pad. Capture the
+    # request start before any branch-dependent work so every return path
+    # (success, 422 from upstream validation, exception remap) defers to
+    # the same wall-clock floor.
+    started_at = time.monotonic()
+
     user = _require_authenticated(current_user)
 
     # spec/011 FR-011-121 / FR-011-125 — Cache-Control no-store is set on
@@ -407,11 +447,38 @@ async def create_project(
     # attribute defensively so a test fixture that bypasses the middleware
     # still falls through to the non-bootstrap branch.
     is_superuser = bool(getattr(user, "is_superuser", False))
-    intended_owner_email = (
-        payload.intended_owner_email
-        if is_superuser and payload.intended_owner_email
-        else None
-    )
+
+    # spec/011 Step 9 R1 P0-2 — email-format validation runs INSIDE the
+    # handler AFTER the SU check, not at the Pydantic schema layer. The
+    # schema field is typed ``str | None`` (no ``EmailStr`` validation)
+    # so a non-superuser submitting a malformed value gets the standard
+    # vanilla-create response shape — they never receive a 422 "invalid
+    # email" body that would leak the field's existence (FR-011-125).
+    # Superuser callers DO see the 422 because the field is documented
+    # to be theirs alone.
+    intended_owner_email: str | None
+    if is_superuser and payload.intended_owner_email:
+        try:
+            validated = validate_email(
+                payload.intended_owner_email,
+                allow_smtputf8=True,
+                check_deliverability=False,
+            )
+        except EmailNotValidError as exc:
+            await _project_create_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "ERR_INVALID_INTENDED_OWNER_EMAIL",
+                    "message": "invalid intended_owner_email format",
+                },
+            ) from exc
+        intended_owner_email = validated.normalized
+    else:
+        # Non-SU OR SU-without-intended-owner: drop the value entirely with
+        # NO validation and NO observable error. Pydantic has already
+        # accepted the field thanks to the ``str | None`` weakening above.
+        intended_owner_email = None
 
     project = await service.create_project(user.id, payload)
 
@@ -447,6 +514,7 @@ async def create_project(
             )
         except invitation_service.InvitationValidationError as exc:
             await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
@@ -456,6 +524,7 @@ async def create_project(
             ) from exc
         except invitation_service.InvitationConflictError as exc:
             await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
@@ -465,12 +534,14 @@ async def create_project(
             ) from exc
         except invitation_service.InvitationRateLimitError as exc:
             await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=str(exc),
             ) from exc
         except invitation_service.InvitationInfraUnavailableError as exc:
             await db.rollback()
+            await _project_create_sleep_for_minimum(started_at)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
@@ -495,6 +566,10 @@ async def create_project(
         before=None,
         after=_project_audit_snapshot(project),
     )
+    # spec/011 Step 9 R1 P0-3 — pad the success response to the constant
+    # floor so the SU bootstrap branch is indistinguishable from the
+    # non-SU drop branch from a wall-clock vantage point.
+    await _project_create_sleep_for_minimum(started_at)
     return ProjectCreateResponse(
         **project.model_dump(),
         invitation_url=invitation_url,

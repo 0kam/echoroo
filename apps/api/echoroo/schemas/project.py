@@ -170,15 +170,17 @@ class ProjectCreateRequest(BaseModel):
     )
     # spec/011 FR-011-120..125 — system superuser project bootstrap.
     # The field is OPTIONAL at the schema layer for every caller (so
-    # ``extra="forbid"`` does not 422 a non-superuser submission), but
-    # the handler silently drops the value unless ``current_user.is_superuser``
-    # is true (anti-enumeration, FR-011-125: a non-superuser MUST NOT
-    # be able to detect the field's existence via the response shape).
-    # When the system superuser supplies it, the create-project
-    # transaction additionally issues an Admin-role Member-kind invitation
-    # carrying ``ownership_transfer_on_accept=True``; the response's
-    # ``invitation_url`` / ``invitation_id`` fields are populated.
-    intended_owner_email: EmailStr | None = Field(
+    # ``extra="forbid"`` does not 422 a non-superuser submission).
+    #
+    # spec/011 Step 9 R1 P0-2 (anti-enumeration): the field is typed as
+    # ``str | None`` instead of ``EmailStr | None`` so Pydantic does NOT
+    # run email-format validation at schema-decode time. Without this
+    # weakening a non-superuser submitting ``intended_owner_email="x"``
+    # would receive a 422 "value is not a valid email address" response,
+    # leaking that the server recognises the field. Format validation is
+    # moved into the handler AFTER the SU check so non-SU callers' values
+    # are silently dropped without ANY validation feedback (FR-011-125).
+    intended_owner_email: str | None = Field(
         default=None,
         description=(
             "Optional system-superuser-only field. When supplied by a "
@@ -186,7 +188,10 @@ class ProjectCreateRequest(BaseModel):
             "the placeholder owner and an Admin-role invitation is "
             "issued for the supplied email with ownership_transfer_on_"
             "accept=true. Silently ignored for non-superuser callers "
-            "(FR-011-125)."
+            "(FR-011-125). Format validation runs inside the handler "
+            "AFTER the superuser check so non-superuser submissions "
+            "of malformed values are silently dropped without leaking "
+            "the field's existence via a 422 email-format error."
         ),
     )
 

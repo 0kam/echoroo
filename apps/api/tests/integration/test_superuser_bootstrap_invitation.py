@@ -59,6 +59,7 @@ from echoroo.services.invitation_service import (
     AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP,
     AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER,
     InvitationStateError,
+    accept_invitation,
     canonicalize_email,
     create_invitation,
 )
@@ -70,8 +71,16 @@ from echoroo.services.invitation_service import (
 
 @pytest.fixture(autouse=True)
 def _patch_response_timing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disable the 300ms constant-timing pad so tests stay fast."""
+    """Disable every constant-timing pad so tests stay fast.
+
+    spec/011 Step 9 R1 P0-3 added a 150ms floor on
+    ``POST /web-api/v1/projects`` so the SU bootstrap branch is
+    timing-indistinguishable from the non-SU drop branch. Tests
+    monkey-patch that helper alongside the Step 7 invitation public
+    pad so the integration suite runs at full speed.
+    """
     from echoroo.api.web_v1 import auth as auth_module
+    from echoroo.api.web_v1.projects import _core as projects_core_module
 
     async def _noop(_: float) -> None:
         return None
@@ -79,6 +88,11 @@ def _patch_response_timing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         auth_module,
         "_invitation_public_sleep_for_minimum",
+        _noop,
+    )
+    monkeypatch.setattr(
+        projects_core_module,
+        "_project_create_sleep_for_minimum",
         _noop,
     )
 
@@ -339,6 +353,70 @@ async def test_non_superuser_intended_owner_email_silently_dropped(
 
 
 # ---------------------------------------------------------------------------
+# 2b. spec/011 Step 9 R1 P0-2 — malformed ``intended_owner_email`` from a
+#     non-superuser is silently dropped (NO 422 email-format error).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_non_superuser_malformed_intended_owner_email_silently_dropped(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Non-SU + malformed value: vanilla 201, no field-existence leak.
+
+    spec/011 Step 9 R1 P0-2: when ``intended_owner_email`` was an
+    ``EmailStr`` at the schema layer, Pydantic ran email-format validation
+    BEFORE the handler's SU drop branch could fire — a non-SU submitting
+    ``intended_owner_email="not-an-email"`` got a 422 ``value is not a
+    valid email address`` response, which leaked that the server
+    recognises the field (a single failed format probe lets an attacker
+    enumerate the SU bootstrap feature). The fix weakens the schema type
+    to ``str | None`` and moves the format validation INSIDE the handler
+    AFTER the SU check, so non-SU callers' submissions are silently
+    dropped without ANY validation feedback regardless of format.
+    """
+    plain_user = await _create_user(db_session)
+    headers = await _bff_session_headers(client, db_session, plain_user)
+
+    payload = _vanilla_create_payload("non-su-malformed")
+    payload["intended_owner_email"] = "not-an-email"
+
+    response = await client.post(
+        "/web-api/v1/projects/",
+        headers=headers,
+        json=payload,
+    )
+    # MUST be 201, NOT 422 — the malformed value is silently dropped.
+    assert response.status_code == 201, response.text
+    assert (
+        response.headers.get("cache-control")
+        == "no-store, no-cache, must-revalidate, private"
+    )
+    body = response.json()
+    # Same shape as the no-bootstrap branch: both fields are null.
+    assert body["invitation_url"] is None
+    assert body["invitation_id"] is None
+    # Caller still owns the freshly-created project.
+    project_id = UUID(body["id"])
+    project_row = (
+        await db_session.execute(
+            sa.select(Project).where(Project.id == project_id),
+        )
+    ).scalar_one()
+    assert project_row.owner_id == plain_user.id
+    # No invitation row.
+    invitation_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(ProjectInvitation.project_id == project_id),
+        )
+    ).scalar_one()
+    assert invitation_count == 0
+
+
+# ---------------------------------------------------------------------------
 # 3. SU bootstrap accept by intended owner (existing user) — ownership
 #    transferred + SU demoted to ADMIN ProjectMember + composite audit
 # ---------------------------------------------------------------------------
@@ -434,7 +512,14 @@ async def test_decline_does_not_transfer(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Decline leaves the project SU-owned (FR-011-124)."""
+    """Decline leaves the project SU-owned (FR-011-124).
+
+    spec/011 Step 9 R1 P1-3 — the decline transition is exercised via
+    the real :func:`invitation_service.decline_invitation_by_recipient`
+    service entry point, not raw SQL. Calling the service guarantees
+    the same recipient-decline state machine the public endpoint goes
+    through actually rejects the SAVEPOINT branch from ever firing.
+    """
     superuser = await _create_user(db_session)
     await _promote_to_superuser(db_session, superuser)
     intended_email = f"t541-decline-{uuid4().hex[:8]}@example.com"
@@ -452,20 +537,27 @@ async def test_decline_does_not_transfer(
     create_body = create_response.json()
     project_id = UUID(create_body["id"])
     invitation_id = UUID(create_body["invitation_id"])
+    token = create_body["invitation_url"]
 
-    # Flip the invitation row directly to DECLINED (mirrors the public
-    # decline endpoint; the endpoint surface lives in the existing
-    # ``_members.py`` recipient decline handler and is exercised by
-    # ``test_member_invitation_flow``).
-    await db_session.execute(
-        sa.text(
-            "UPDATE project_invitations "
-            "SET status='declined', declined_at=now() "
-            "WHERE id=:id"
-        ),
-        {"id": invitation_id},
+    # Drive the actual recipient-decline service (real state machine —
+    # mirrors what ``DELETE /web-api/v1/projects/{pid}/invitations/{tok}``
+    # would invoke for an authenticated recipient). The service rejects
+    # the bootstrap SAVEPOINT branch by transitioning ``status`` to
+    # DECLINED before ``accept_invitation_via_public_token`` is reachable.
+    decline_outcome = await invitation_service.decline_invitation_by_recipient(
+        db_session,
+        signed_token=token,
+        current_user_id=intended_user.id,
+        current_user_email=intended_user.email,
+        hmac_secret=get_settings().web_session_secret,
+        project_id_scope=project_id,
     )
     await db_session.commit()
+    assert not decline_outcome.is_replay
+    assert (
+        decline_outcome.invitation.status is ProjectInvitationStatus.DECLINED
+    )
+    assert decline_outcome.invitation.id == invitation_id
 
     # Project owner stays the SU.
     project_row = (
@@ -474,7 +566,8 @@ async def test_decline_does_not_transfer(
         )
     ).scalar_one()
     assert project_row.owner_id == superuser.id
-    # The intended owner is NOT a member.
+    # The intended owner is NOT a member (decline NEVER transfers — the
+    # SAVEPOINT branch only runs on accept).
     intended_member = (
         await db_session.execute(
             sa.select(ProjectMember).where(
@@ -820,3 +913,339 @@ async def test_r5_defence_in_depth(
             ownership_transfer_on_accept=True,
         )
     assert "ownership_transfer_on_accept_invalid_for_kind" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# 9. spec/011 Step 9 R1 P0-1 — legacy authenticated-only accept path
+#    refuses ``ownership_transfer_on_accept=True`` rows.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_legacy_accept_path_refuses_bootstrap_invitation(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The legacy ``accept_invitation`` rejects SU-bootstrap invitations.
+
+    The Step 9 SAVEPOINT-nested ownership transfer is wired into
+    ``accept_invitation_via_public_token`` only. Without an explicit
+    refusal on the legacy path the same invitation token can be POSTed
+    to ``/web-api/v1/projects/{project_id}/invitations/{token}/accept``
+    (the legacy endpoint that maps to :func:`accept_invitation`); the
+    row would flip to ``accepted`` and the SAVEPOINT branch would NOT
+    run, leaving the project SU-owned and the intended owner as a
+    plain ADMIN member — a silent ownership-transfer leak.
+
+    spec/011 Step 9 R1 P0-1: the legacy service raises
+    :class:`InvitationStateError` (``ownership_transfer_must_use_public_path``)
+    so the endpoint maps to 410. We assert at the service layer
+    because the legacy path's endpoint is parameterised through
+    ``project_id`` + a 4-part signed token; the service-layer guard
+    is the authoritative defence.
+    """
+    # Issue a Step 9 SU bootstrap invitation through the real endpoint.
+    superuser = await _create_user(db_session)
+    await _promote_to_superuser(db_session, superuser)
+    intended_email = f"t541-legacy-reject-{uuid4().hex[:8]}@example.com"
+    intended_user = await _create_user(db_session, email=intended_email)
+
+    su_headers = await _bff_session_headers(client, db_session, superuser)
+    payload = _vanilla_create_payload("legacy-reject")
+    payload["intended_owner_email"] = intended_email
+    create_response = await client.post(
+        "/web-api/v1/projects/",
+        headers=su_headers,
+        json=payload,
+    )
+    assert create_response.status_code == 201, create_response.text
+    create_body = create_response.json()
+    token = create_body["invitation_url"]
+    project_id = UUID(create_body["id"])
+    invitation_id = UUID(create_body["invitation_id"])
+
+    # Drive the legacy ``accept_invitation`` service directly. The guard
+    # we just added MUST surface as :class:`InvitationStateError` carrying
+    # ``ownership_transfer_must_use_public_path`` so the endpoint maps to
+    # 410. Use a lightweight fake Redis so the idempotency short-circuit
+    # is exercised without needing a live broker.
+
+    class _FakeRedis:
+        async def incr(self, name: str) -> int:  # noqa: ARG002
+            return 1
+
+        async def expire(self, name: str, time: int) -> bool:  # noqa: ARG002
+            return True
+
+        async def get(self, name: str) -> Any:  # noqa: ARG002
+            return None
+
+        async def set(  # noqa: D401, ARG002
+            self,
+            name: str,
+            value: Any,
+            *,
+            ex: int | None = None,
+            nx: bool = False,
+        ) -> bool | None:
+            return True
+
+    with pytest.raises(InvitationStateError) as exc_info:
+        await accept_invitation(
+            db_session,
+            signed_token=token,
+            current_user_id=intended_user.id,
+            current_user_email=intended_user.email,
+            hmac_secret=get_settings().web_session_secret,
+            redis=_FakeRedis(),  # type: ignore[arg-type]
+            project_id_scope=project_id,
+        )
+    assert "ownership_transfer_must_use_public_path" in str(exc_info.value)
+
+    # Belt-and-braces: the invitation row is still PENDING (the guard
+    # raised before the atomic UPDATE could fire) and the project owner
+    # is still the SU placeholder.
+    await db_session.rollback()
+    invitation_row = (
+        await db_session.execute(
+            sa.select(ProjectInvitation).where(
+                ProjectInvitation.id == invitation_id,
+            ),
+        )
+    ).scalar_one()
+    assert invitation_row.status is ProjectInvitationStatus.PENDING
+
+    project_row = (
+        await db_session.execute(
+            sa.select(Project).where(Project.id == project_id),
+        )
+    ).scalar_one()
+    assert project_row.owner_id == superuser.id
+
+
+# ---------------------------------------------------------------------------
+# 10. spec/011 Step 9 R1 P1-1 — ``Project.updated_at`` is preserved across
+#     the bootstrap ownership flip (no ``onupdate`` bump).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ownership_transfer_preserves_project_updated_at(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The SAVEPOINT-nested owner UPDATE does NOT bump ``updated_at``.
+
+    spec/011 Step 9 R1 P1-1: the bootstrap transfer is a system-internal
+    lifecycle event (placeholder SU yields to the intended owner) and
+    MUST NOT pollute the project's mtime-driven sort orders / cache
+    keys. The :class:`TimestampMixin` declares ``onupdate=lambda: now()``
+    which SQLAlchemy auto-applies to every Core ``update()`` whose
+    ``.values()`` clause does NOT mention the column. The service-layer
+    fix pins ``updated_at`` to its current value via the literal
+    ``Project.__table__.c.updated_at`` (a no-op self-assignment) so
+    ``onupdate`` is suppressed. The composite audit row records the
+    transfer's ``at`` timestamp separately for observability.
+    """
+    superuser = await _create_user(db_session)
+    await _promote_to_superuser(db_session, superuser)
+    intended_email = f"t541-updated-at-{uuid4().hex[:8]}@example.com"
+    intended_user = await _create_user(db_session, email=intended_email)
+
+    su_headers = await _bff_session_headers(client, db_session, superuser)
+    payload = _vanilla_create_payload("updated-at")
+    payload["intended_owner_email"] = intended_email
+    create_response = await client.post(
+        "/web-api/v1/projects/",
+        headers=su_headers,
+        json=payload,
+    )
+    assert create_response.status_code == 201, create_response.text
+    create_body = create_response.json()
+    token = create_body["invitation_url"]
+    project_id = UUID(create_body["id"])
+
+    # Snapshot ``updated_at`` BEFORE the accept fires the SAVEPOINT
+    # branch. Read via raw SQL so the value is a Python-side capture
+    # that survives the ORM identity-map cache below (a subsequent
+    # ``select(Project)`` would hand back the same cached row and
+    # the in-Python ``updated_at`` would not refresh from DB).
+    updated_at_before_row = (
+        await db_session.execute(
+            sa.text("SELECT updated_at FROM projects WHERE id = :pid"),
+            {"pid": str(project_id)},
+        )
+    ).first()
+    assert updated_at_before_row is not None
+    updated_at_before = updated_at_before_row[0]
+
+    # Accept as the intended owner — the SAVEPOINT branch flips
+    # ``Project.owner_id``. The fix MUST hold ``updated_at`` constant.
+    intended_headers = await _bff_session_headers(
+        client, db_session, intended_user,
+    )
+    accept_response = await client.post(
+        f"/web-api/v1/auth/invitations/{token}/accept",
+        headers=intended_headers,
+        json={"accept": True},
+    )
+    assert accept_response.status_code == 201, accept_response.text
+
+    # The accept endpoint runs on its own DB session (the FastAPI
+    # request dependency yields a fresh ``AsyncSession``); the
+    # ``db_session`` fixture's connection still holds an open
+    # transaction view of the row from before the accept. Issue a
+    # rollback to drop the snapshot view, then read via raw SQL so
+    # the result reflects the accept's committed state and bypasses
+    # the ORM identity map entirely.
+    await db_session.rollback()
+    after_row_raw = (
+        await db_session.execute(
+            sa.text(
+                "SELECT owner_id, updated_at FROM projects WHERE id = :pid"
+            ),
+            {"pid": str(project_id)},
+        )
+    ).first()
+    assert after_row_raw is not None
+    owner_id_after, updated_at_after = after_row_raw
+    assert UUID(str(owner_id_after)) == intended_user.id, (
+        "ownership transfer should have flipped owner_id "
+        f"(got {owner_id_after!r}, expected {intended_user.id!r})"
+    )
+    assert updated_at_after == updated_at_before, (
+        "Project.updated_at must NOT be bumped by the bootstrap transfer "
+        f"(before={updated_at_before!r}, after={updated_at_after!r})"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 11. spec/011 Step 9 R1 P1-2 — SAVEPOINT rollback AFTER the owner UPDATE
+#     succeeded. Patches the post-upsert hook so the failure surfaces
+#     after the critical DB writes — asserts the entire parent TX
+#     rolls back (owner_id reverts to SU, invitation row reverts to
+#     PENDING, no ProjectMember row for the prior owner).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_savepoint_rollback_after_owner_update_succeeded(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure AFTER the owner UPDATE + ProjectMember upsert rolls back.
+
+    spec/011 Step 9 R1 P1-2: complements
+    :func:`test_savepoint_failure_rolls_back_parent_transaction` (which
+    patches the FIRST SAVEPOINT step — ``build_pre_transfer_action_summary``).
+    This variant patches the LAST SAVEPOINT step
+    (:func:`_ownership_transfer_savepoint_finalize_hook`, which fires
+    after Steps 3 + 4 have already committed dirty state into the
+    SAVEPOINT) so the rollback-after-success invariant is exercised
+    end-to-end: even when the owner UPDATE has effectively run inside
+    the nested TX, exception propagation MUST undo it.
+    """
+    superuser = await _create_user(db_session)
+    await _promote_to_superuser(db_session, superuser)
+    intended_email = f"t541-rollback-post-update-{uuid4().hex[:8]}@example.com"
+    intended_user = await _create_user(db_session, email=intended_email)
+
+    su_headers = await _bff_session_headers(client, db_session, superuser)
+    payload = _vanilla_create_payload("rollback-post-update")
+    payload["intended_owner_email"] = intended_email
+    create_response = await client.post(
+        "/web-api/v1/projects/",
+        headers=su_headers,
+        json=payload,
+    )
+    assert create_response.status_code == 201, create_response.text
+    create_body = create_response.json()
+    token = create_body["invitation_url"]
+    invitation_id = UUID(create_body["invitation_id"])
+    project_id = UUID(create_body["id"])
+
+    # Patch the LAST step of the SAVEPOINT block to raise. The hook is
+    # placed AFTER the owner UPDATE + ProjectMember upsert; an exception
+    # here must unwind every dirty change inside the SAVEPOINT + the
+    # parent transaction.
+    async def _explode_post_owner_update() -> None:
+        raise RuntimeError("synthetic post-owner-update failure")
+
+    monkeypatch.setattr(
+        invitation_service,
+        "_ownership_transfer_savepoint_finalize_hook",
+        _explode_post_owner_update,
+    )
+
+    intended_headers = await _bff_session_headers(
+        client, db_session, intended_user,
+    )
+    with pytest.raises(RuntimeError, match="synthetic post-owner-update failure"):
+        await client.post(
+            f"/web-api/v1/auth/invitations/{token}/accept",
+            headers=intended_headers,
+            json={"accept": True},
+        )
+
+    # Drop any in-flight state so SELECTs below see the post-rollback DB.
+    await db_session.rollback()
+
+    # The invitation row reverts to PENDING (the parent TX rolled back).
+    invitation_row = (
+        await db_session.execute(
+            sa.select(ProjectInvitation).where(
+                ProjectInvitation.id == invitation_id,
+            ),
+        )
+    ).scalar_one()
+    assert invitation_row.status is ProjectInvitationStatus.PENDING
+
+    # The owner UPDATE that *appeared* to succeed inside the SAVEPOINT
+    # was unwound — ``owner_id`` is back to the SU placeholder.
+    project_row = (
+        await db_session.execute(
+            sa.select(Project).where(Project.id == project_id),
+        )
+    ).scalar_one()
+    assert project_row.owner_id == superuser.id
+
+    # The ProjectMember upsert (Step 4 inside the SAVEPOINT) is undone:
+    # no membership row exists for the SU (the prior owner — would have
+    # been demoted to ADMIN) nor for the intended owner.
+    prior_owner_member = (
+        await db_session.execute(
+            sa.select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == superuser.id,
+                ProjectMember.removed_at.is_(None),
+            ),
+        )
+    ).scalar_one_or_none()
+    assert prior_owner_member is None
+
+    intended_owner_member = (
+        await db_session.execute(
+            sa.select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == intended_user.id,
+                ProjectMember.removed_at.is_(None),
+            ),
+        )
+    ).scalar_one_or_none()
+    assert intended_owner_member is None
+
+    # No composite audit row was written.
+    composite_count = (
+        await db_session.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM project_audit_log "
+                "WHERE project_id=:pid AND action=:action"
+            ),
+            {
+                "pid": str(project_id),
+                "action": AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER,
+            },
+        )
+    ).scalar_one()
+    assert composite_count == 0

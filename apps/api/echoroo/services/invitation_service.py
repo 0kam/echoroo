@@ -1234,6 +1234,23 @@ async def accept_invitation(
             "ownership_transfer_on_accept_invalid_for_kind",
         )
 
+    # spec/011 Step 9 R1 P0-1 — refuse SU-bootstrap invitations on the
+    # legacy authenticated-only accept path. FR-011-123's SAVEPOINT-nested
+    # ownership transfer is wired into ``accept_invitation_via_public_token``
+    # only; the spec (FR-011-121..125) never references the legacy path
+    # for bootstrap invitations. Without this guard the legacy endpoint
+    # would silently flip ``invitation.status`` to ``accepted`` without
+    # transferring ownership, leaving the project SU-owned and the
+    # intended owner as a plain ADMIN member — a silent ownership leak.
+    # The endpoint maps ``InvitationStateError`` to HTTP 410 which is the
+    # closest "this resource cannot be consumed here" semantics; the
+    # legitimate consumer (the intended owner) is steered to the public
+    # path by the invitation URL the SU hand-delivers.
+    if invitation.ownership_transfer_on_accept:
+        raise InvitationStateError(
+            "ownership_transfer_must_use_public_path",
+        )
+
     # The signed expiry is the source of truth for the URL; the row's
     # expires_at is an additional guard. Reject if either failed.
     invitation_expires_at = _ensure_utc(invitation.expires_at)
@@ -1553,6 +1570,21 @@ async def resolve_invitation_for_public_token(
     )
 
 
+# spec/011 Step 9 R1 P1-2 — synchronous test seam for the SAVEPOINT
+# rollback-after-success integration test. The default body is a no-op
+# so the production code path is unchanged; the integration test
+# monkey-patches the module-level name to a raising stub so the test
+# can assert that an exception emerging AFTER the owner UPDATE +
+# ProjectMember upsert have already taken effect inside the SAVEPOINT
+# still triggers a complete rollback of the parent transaction (the
+# invitation row reverts to PENDING, Project.owner_id reverts to the
+# placeholder SU, and no ProjectMember row for the prior owner is
+# persisted).
+async def _ownership_transfer_savepoint_finalize_hook() -> None:
+    """Production no-op; test seam for the post-owner-UPDATE failure path."""
+    return None
+
+
 async def accept_invitation_via_public_token(
     session: AsyncSession,
     *,
@@ -1862,10 +1894,29 @@ async def accept_invitation_via_public_token(
 
             # Step 3 — flip the project owner. The UPDATE uses the same
             # row lock the FOR UPDATE above took out.
+            #
+            # spec/011 Step 9 R1 P1-1 — preserve ``Project.updated_at``
+            # across the bootstrap ownership flip. The
+            # :class:`TimestampMixin` declares ``onupdate=lambda: now()``
+            # which SQLAlchemy auto-applies to every Core ``update()``
+            # whose ``.values()`` clause does NOT mention the column.
+            # Pinning ``updated_at`` to its current value via the literal
+            # ``Project.__table__.c.updated_at`` (a no-op self-assignment)
+            # takes precedence over ``onupdate`` so the column is NOT
+            # bumped by the bootstrap transfer. The intent: the
+            # bootstrap transfer is a system-internal lifecycle event
+            # (the placeholder SU yields to the intended owner) and
+            # MUST NOT pollute the project's mtime-driven sort orders
+            # / cache keys that callers may rely on. The composite
+            # audit row (Step 5) records the transfer's ``at`` timestamp
+            # separately for observability.
             await session.execute(
                 update(Project)
                 .where(Project.id == invitation.project_id)
-                .values(owner_id=accepting_user_id, updated_at=now_eff),
+                .values(
+                    owner_id=accepting_user_id,
+                    updated_at=Project.__table__.c.updated_at,
+                ),
             )
 
             # Step 4 — upsert the prior-owner ``ProjectMember`` row at
@@ -1896,6 +1947,20 @@ async def accept_invitation_via_public_token(
             else:
                 existing_prior_owner_member.role = ProjectMemberRole.ADMIN
 
+            # spec/011 Step 9 R1 P1-2 — synchronous seam intentionally
+            # left as a no-op so the rollback-after-owner-UPDATE-
+            # succeeded integration test (in
+            # ``tests/integration/test_superuser_bootstrap_invitation.py``)
+            # can monkey-patch this single name to raise from inside the
+            # SAVEPOINT *after* the owner UPDATE + ProjectMember upsert
+            # have already happened. Without a seam the test would have
+            # to patch a coarse external dependency
+            # (``build_pre_transfer_action_summary`` is the FIRST step;
+            # patching it never exercises the rollback-after-success
+            # invariant). The production-path return value is unused so
+            # the hook's signature is intentionally minimal.
+            await _ownership_transfer_savepoint_finalize_hook()
+
             await session.flush()
 
             # Step 5 — stage the composite audit detail. The actual
@@ -1911,7 +1976,21 @@ async def accept_invitation_via_public_token(
                 "prior_owner": str(prior_owner_id),
                 "new_owner": str(accepting_user_id),
                 "pre_transfer_action_summary": ownership_transfer_summary,
-                "at": now_eff.isoformat(),
+                # spec/011 Step 9 R1 P2 — match the ``Z`` suffix the
+                # ``build_pre_transfer_action_summary`` helper emits on
+                # ``occurred_at`` (see
+                # ``services/audit_service.py:553``). Without the
+                # normalisation the nested summary entries carry ``Z``
+                # while the wrapping composite ``at`` carries
+                # ``+00:00`` — purely cosmetic but a long-term contract
+                # nuisance for downstream JSON consumers (the activity
+                # view projection diff'd the two formats when
+                # eyeballing logs in dev). UTC astimezone is a no-op
+                # because ``now_eff`` was constructed in UTC, but the
+                # explicit conversion documents the intent.
+                "at": (
+                    now_eff.astimezone(UTC).isoformat().replace("+00:00", "Z")
+                ),
             }
             ownership_transferred = True
 
