@@ -17,7 +17,6 @@ dependencies = [
     "fastapi-limiter>=0.1.6",
     "redis>=5.2.0",
     "httpx>=0.28.0",
-    "resend>=2.5.0",
     "alembic>=1.14.0",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.10",
@@ -115,7 +114,6 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = [
     "fastapi_limiter.*",
-    "resend.*",
     "soundfile.*",
     "mutagen.*",
     "scipy.*",

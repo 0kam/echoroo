@@ -32,7 +32,7 @@
 **Purpose**: Configuration scaffolding that blocks Phase 2.
 
 - [x] T001 Verify feature branch `011-zero-email-deployment` is the active worktree branch and clean (`git status`)
-- [ ] T002 [P] **MOVED TO Step 2** — Remove `resend` from `apps/api/pyproject.toml` `[project.dependencies]` AND regenerate `apps/api/uv.lock`. Cannot land in Step 0 because `apps/api/echoroo/services/email.py` (and several workers/tests) still `import resend` at module top until Step 2 rewrites them to the banner-enqueue helpers. Dropping the dep before the imports are gone breaks (a) `uv sync --locked` (supply-chain hybrid gate), and (b) any test loading `services.email` or a router that transitively imports it. Step 2 will land the pyproject change + lock regen in the same PR as the helper rewrite.
+- [x] T002 [P] Remove `resend` from `apps/api/pyproject.toml` `[project.dependencies]` AND regenerate `apps/api/uv.lock`. (Landed in Step 2 PR together with T100 services/email.py reduction; deferred from Step 0 because services/email.py needed the helper stubs first.)
 - [x] T003 [P] Remove `RESEND_API_KEY=${RESEND_API_KEY:-}` line from `compose.dev.yaml`
 - [x] T004 [P] Remove `RESEND_API_KEY=` line and any `EMAIL_FROM` entry from `.env.example`; add example placeholders for `INVITATION_TOKEN_KID_NEW`, `INVITATION_TOKEN_KID_OLD`, `INVITATION_TOKEN_HMAC_KEY`, `INVITATION_TOKEN_HMAC_KEY_OLD`, `INVITATION_TOKEN_KID_GRACE_HOURS` with explanatory comments
 
@@ -129,12 +129,12 @@
 
 ### Banner subsystem (write/enqueue side)
 
-- [ ] T060 Create `apps/api/echoroo/services/user_banner.py` with:
+- [x] T060 Create `apps/api/echoroo/services/user_banner.py` with:
   - `dismiss(session, user_id, audit_table, audit_log_id) -> None` — validates row exists in named table AND (row.actor_user_id == user_id OR row.detail.target_user_id == user_id); 404-on-mismatch (FR-011-302, security review M-2)
   - `list_banners(session, user_id, max_age_days=30) -> list[BannerItem]` — joins `project_audit_log` + `platform_audit_log` against `user_banner_dismissals`
   - `list_activity(session, user_id, cursor, limit) -> ActivityPage` — full history view (FR-011-307)
   - `enqueue_event(session, user_id, audit_table, audit_log_id) -> None` — no-op shim (the audit write itself surfaces; this exists for callers that need to make the surface explicit)
-- [ ] T061 [P] Add `apps/api/tests/unit/services/test_user_banner.py`: list / dismiss / activity / age filtering / cross-user 404
+- [x] T061 [P] Add `apps/api/tests/unit/services/test_user_banner.py`: list / dismiss / activity / age filtering / cross-user 404
 
 ### Forced-change middleware swap (atomic, FR-011-204 / NFR-011-007 / R8)
 
@@ -161,7 +161,7 @@
 
 ### Email helper reduction (skeleton — full rewrite in Phase 9 US7)
 
-- [ ] T100 In `apps/api/echoroo/services/email.py`:
+- [x] T100 In `apps/api/echoroo/services/email.py`:
   - Delete the Resend SDK initialiser (`resend.api_key = settings.RESEND_API_KEY`)
   - Delete `send_verification_email`, `send_password_reset_email`, `send_2fa_reset_magic_link`
   - Leave the remaining 5 helpers as **no-op stubs** that log a warning (`send_login_notification`, `send_email_change_notification`, `send_2fa_reset_dispatched`, `send_api_key_scope_degrade_email`, `send_api_key_revoke_email`). Full rewrite-to-banner-enqueue lands in Phase 9 US7

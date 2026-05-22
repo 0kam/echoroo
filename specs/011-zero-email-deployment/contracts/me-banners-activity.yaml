@@ -113,18 +113,21 @@ components:
         action:
           type: string
           description: |
-            Banner-eligible audit-action strings (a strict subset of all audit actions):
-            auth.login.new_device,
-            platform.api_key.revoke,
-            platform.user.email_changed,
-            platform.user.two_factor_reset_by_superuser,
-            auth.trusted_device.revoke_all.
+            Banner-eligible audit-action strings (a strict subset of all audit actions).
+            Mirrors `services.user_banner.BANNER_ELIGIBLE_ACTIONS` (11 entries) and the
+            audit-action constants enumerated in `tasks.md` T020.
           enum:
             - auth.login.new_device
             - platform.api_key.revoke
             - platform.user.email_changed
             - platform.user.two_factor_reset_by_superuser
+            - platform.user.password_reset_by_superuser
+            - platform.user.password_reset_self
             - auth.trusted_device.revoke_all
+            - project.member.invite_accepted_signup
+            - project.member.invite_accepted
+            - project.trusted_user.invite_accepted
+            - project.ownership.bootstrap_transfer
         occurred_at: { type: string, format: date-time }
         summary:
           type: string

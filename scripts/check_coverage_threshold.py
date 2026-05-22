@@ -291,6 +291,16 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/upload.py",
         "echoroo/services/user.py",
         "echoroo/services/vernacular.py",
+        # spec/011 Step 2 (T100) reduced ``services/email.py`` to no-op
+        # stubs; the coverage-uplift test that used to push the module
+        # to ~85% is module-level-skipped because it asserts on the
+        # pre-reduction Resend code path. The whole module + its tests
+        # are deleted wholesale in spec/011 Step 10 (US1, tasks.md
+        # T100 + T110-T129). Until then, keep the module in
+        # PHASE17_PENDING as warn-only so backend-tests CI stays green
+        # — measuring stub coverage to 85% is wasted effort given the
+        # planned deletion.
+        "echoroo/services/email.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",
