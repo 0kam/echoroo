@@ -464,6 +464,62 @@ async def test_admin_password_reset_with_totp_second_factor_returns_200(
     body = response.json()
     assert "temporary_password" in body and body["temporary_password"], body
     assert "expires_at" in body and body["expires_at"], body
+    # FR-011-202 response-header invariant — repeated here so a future
+    # refactor that accidentally drops the header on the TOTP branch is
+    # caught (Codex R1 P1 #2: headers must be asserted on every happy
+    # path, not just one).
+    assert "no-store" in (response.headers.get("cache-control") or ""), response.headers
+    assert response.headers.get("referrer-policy") == "no-referrer", response.headers
+
+
+# ---------------------------------------------------------------------------
+# 6. A-13 PII detector on ``reason`` body field → 422
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_password_reset_rejects_reason_with_pii(
+    admin_app: FastAPI,
+    db_session: AsyncSession,
+    superuser_user: User,
+    target_user: User,
+) -> None:
+    """``reason`` body must reject free-form PII (A-13 + FR-011-202).
+
+    The endpoint wires the canonical ``reject_if_pii`` AfterValidator on
+    ``AdminPasswordResetBody.reason`` (see ``schemas/admin.py``). This
+    test guards the wire-up: a reason containing an email address must
+    yield a 422 *before* any reset state mutation, even when the caller
+    presents a fully valid ``admin_recovery`` step-up token.
+
+    Codex R1 P1 #1 — without this case a future refactor that drops the
+    ``AfterValidator`` annotation would silently land an operator-PII
+    leakage regression (the value would be persisted in the audit row
+    detail JSON downstream).
+    """
+    _override_user(admin_app, db_session, superuser_user)
+    token, _ = issue_admin_recovery_step_up_token(
+        user_id=superuser_user.id,
+        security_stamp=superuser_user.security_stamp,
+        assertion_id="t312-pii-reject",
+        password_verified=True,
+        second_factor="totp",
+    )
+    url = _reset_password_url(target_user.id)
+    transport = ASGITransport(app=admin_app)
+    async with AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            url,
+            json={"reason": "compromise from foo@example.com last week"},
+            headers={"X-Step-Up-Token": token},
+        )
+    # FastAPI / pydantic returns 422 for AfterValidator failures.
+    assert response.status_code == 422, response.text
+    # Sanity: the response error mentions the PII rejection so an
+    # operator can self-correct without ambiguity.
+    assert "pii" in response.text.lower() or "personally" in response.text.lower(), response.text
 
 
 # ---------------------------------------------------------------------------
