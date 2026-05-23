@@ -27,21 +27,24 @@ completed a step-up challenge in the last 5 minutes (FR-011-206).
 
 ### Step 1 — Create the project + intended owner invitation
 
-```bash
-# Initiate step-up if not already in the 5-minute window.
-curl -X POST "https://<host>/web-api/v1/auth/step-up/initiate" \
-  -H "Content-Type: application/json" \
-  -H "Cookie: echoroo_session=${SU_SESSION_COOKIE}" \
-  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-  -d '{
-    "scope": "admin_recovery",
-    "current_password": "<your-current-password>",
-    "second_factor": {"type": "totp", "code": "123456"}
-  }'
-# → response carries X-Step-Up-Token
+> **Step-up token surface — spec/011 status (Step 12 R1 P1-1).** The
+> dedicated `POST /web-api/v1/auth/step-up/*` begin/complete
+> endpoints (T300 / T301) are not yet implemented. Today the only way
+> to obtain a step-up token is the existing WebAuthn challenge path
+> (`POST /web-api/v1/auth/2fa/webauthn/challenge`). See
+> `docs/operations/admin-recovery-flows.md` §1 "Procedure — API" for
+> the full status note and operator workaround.
 
-# Create the project, naming the intended owner.
-curl -X POST "https://<host>/web-api/v1/admin/projects" \
+```bash
+# Step 1a: complete a step-up challenge (existing /2fa/webauthn/challenge
+# path today) to obtain X-Step-Up-Token.
+
+# Step 1b: create the project, naming the intended owner. Note the path
+# is /web-api/v1/projects/ (no admin/ prefix) — the bootstrap branch is
+# triggered by the optional intended_owner_email field, which the route
+# silently drops for non-superuser callers (FR-011-125
+# anti-enumeration).
+curl -X POST "https://<host>/web-api/v1/projects/" \
   -H "Content-Type: application/json" \
   -H "Cookie: echoroo_session=${SU_SESSION_COOKIE}" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
@@ -54,25 +57,35 @@ curl -X POST "https://<host>/web-api/v1/admin/projects" \
   }'
 ```
 
-Response (HTTP 201):
+Response (HTTP 201) — `ProjectCreateResponse` (`apps/api/echoroo/
+schemas/project.py`) which extends `ProjectResponse` with **flat**
+`invitation_url` + `invitation_id` fields at the top level. There is
+no nested `project` / `invitation` envelope; the bootstrap fields ride
+alongside the project fields on every create response (both `null`
+for the non-bootstrap branch — same shape, FR-011-125):
 
 ```json
 {
-  "project": {
-    "id": "<project-uuid>",
-    "name": "Mt. Tsukuba 2026 Spring Survey",
-    "visibility": "restricted",
-    "owner_id": "<your-superuser-uuid>",
-    "created_at": "2026-05-23T10:00:00Z"
+  "id": "<project-uuid>",
+  "name": "Mt. Tsukuba 2026 Spring Survey",
+  "description": "Acoustic monitoring of Aves on Mt. Tsukuba.",
+  "target_taxa": null,
+  "visibility": "restricted",
+  "license": "CC-BY-NC-SA-4.0",
+  "restricted_config": { "...": "policy snapshot" },
+  "restricted_config_version": 1,
+  "status": "active",
+  "dormant_since": null,
+  "archived_since": null,
+  "owner": {
+    "id": "<your-superuser-uuid>",
+    "display_name": "Lab PI"
   },
-  "invitation": {
-    "id": "<invitation-uuid>",
-    "email_hash": "<sha256>",
-    "role": "ADMIN",
-    "ownership_transfer_on_accept": true,
-    "expires_at": "2026-05-30T10:00:00Z",
-    "invitation_url": "https://<host>/invite/<envelope>"
-  }
+  "created_at": "2026-05-23T10:00:00Z",
+  "updated_at": "2026-05-23T10:00:00Z",
+  "current_user_role": "owner",
+  "invitation_url": "https://<host>/invite/<4-part-signed-envelope>",
+  "invitation_id": "<invitation-uuid>"
 }
 ```
 

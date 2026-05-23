@@ -45,10 +45,35 @@ SENSITIVE_FIELDS: Final[tuple[str, ...]] = (
     "signed_token_envelope",
 )
 
-#: Canonical list of sensitive request headers that MUST be scrubbed.
-#: ``X-Step-Up-Token`` is the wire counterpart of the ``step_up_token``
-#: response/body field (FR-011-206).
-SENSITIVE_HEADERS: Final[tuple[str, ...]] = ("x-step-up-token",)
+#: Canonical list of sensitive request / response headers that MUST be
+#: scrubbed.
+#:
+#: * ``x-step-up-token`` — wire counterpart of the ``step_up_token``
+#:   response/body field (FR-011-206).
+#: * ``authorization`` — bearer tokens / session JWTs presented by API
+#:   key holders. Step 12 R1 P0-2: the spec/011 cutover removed the
+#:   email subsystem but did NOT narrow the set of credential-bearing
+#:   headers; ``Authorization`` was always in scope but the original
+#:   T710 hook only enumerated ``x-step-up-token``. Adding it here
+#:   ensures both request- and response-side scrubbing branches walk
+#:   it case-insensitively.
+#: * ``cookie`` / ``set-cookie`` — session cookies + their refresh
+#:   counterparts on response. Sentry stores ``request.cookies``
+#:   separately (handled by a blanket replace inside
+#:   :func:`echoroo.observability.sentry._before_send`); listing the
+#:   header form here covers the path where a client / proxy serialises
+#:   cookies into the ``Cookie`` *header* rather than the dedicated
+#:   cookies blob, AND the response-side ``Set-Cookie`` payload.
+#: * ``x-csrf-token`` — paired with the session cookie. Stripped on
+#:   both request and response so an event that carries the header on
+#:   either edge never lands in telemetry.
+SENSITIVE_HEADERS: Final[tuple[str, ...]] = (
+    "x-step-up-token",
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-csrf-token",
+)
 
 __all__ = [
     "SENSITIVE_FIELDS",

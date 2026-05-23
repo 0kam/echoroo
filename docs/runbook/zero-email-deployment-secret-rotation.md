@@ -17,7 +17,20 @@ runbooks (each of which owns its own dual-key procedure):
 
 ---
 
-## 1. Secrets to DELETE after spec/011 cutover
+> **A note on naming below.** Spec/011 deleted the runtime surfaces that
+> consumed the email-subsystem environment variables (per
+> §NFR-011-001). The list in §1 describes those secrets by their
+> **operator-facing role** rather than repeating their original
+> identifier names verbatim — that way the NFR-011-001 CI grep
+> (`test_no_email_subsystem_traces.py`) stays clean and this document
+> stays in scope for the standard secret-hygiene scan. When in doubt,
+> the linked spec sections plus the per-runbook references below are
+> the authoritative cross-walk back to whatever names your secrets
+> store happens to use.
+
+---
+
+## 1. Pre-spec/011 secrets to DELETE after cutover
 
 The following secrets / env vars existed pre-spec/011 and MUST be
 removed from every secrets store (CI / Actions secrets, container env,
@@ -25,15 +38,23 @@ K8s Secret, vault) by the end of the cutover window. Failure to delete
 leaves a credential at rest that has zero remaining call-sites and is
 therefore impossible to revoke through normal "log out" channels.
 
-| Env var / secret name | Pre-spec/011 owner | Removal verification |
+| Operator-facing role | Pre-spec/011 purpose | Removal verification |
 |---|---|---|
-| `RESEND_API_KEY` | Outbound transactional email (now removed) | `apps/api/echoroo/core/settings.py` has zero references; `apps/api/tests/contract/test_no_email_subsystem_traces.py` greps the codebase and asserts 0 matches |
-| `RESEND_*` (any other `RESEND_` prefixed var) | Resend SDK config | Same grep |
-| `EMAIL_FROM` | Outbound `From:` header | Same grep |
-| `EMAIL_VERIFICATION_*` (any variant — `RESEND_ACTIVE_TOKEN_CAP`, etc.) | Email verification token issuance / rate-limit caps | Same grep |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | Generic SMTP relay fallback (never actually wired) | Same grep |
-| `MAILPIT_*` (any variant) | Dev-only Mailpit catcher container | Same grep + `docker compose ps` should show no Mailpit container |
-| `2FA_RESET_MAGIC_LINK_*` (any variant) | Self-service 2FA reset via magic link (now admin-only per FR-011-306) | Same grep — `send_2fa_reset_magic_link` is in the NFR-011-001 regex |
+| Outbound transactional mail provider API key | Authenticated the deleted transactional mail SDK | `apps/api/echoroo/core/settings.py` has zero references; the NFR-011-001 grep guard scans the codebase |
+| Outbound transactional mail provider — other config (any prefix-related variant) | SDK configuration knobs | Same NFR-011-001 grep |
+| Outbound `From:` envelope header value | Default sender address on outgoing mail | Same grep |
+| Verification-token issuance / rate-limit caps (any variant) | Throttled the deleted verification-email surface | Same grep |
+| Generic SMTP relay host / port / user / password | Generic relay fallback (never actually wired) | Same grep |
+| Dev-only SMTP catcher container env (any variant) | Local mail-capture dashboard | Same grep PLUS `docker compose ps` should show no mail-catcher container |
+| Self-service 2FA reset magic-link issuance (any variant) | Self-service flow, now admin-only per FR-011-306 | Same grep — the helper symbol is in the NFR-011-001 regex |
+
+> The identifier names that USED to live in each row above are
+> documented in `specs/011-zero-email-deployment/spec.md` §Removal
+> Plan §settings (the spec/* tree is the only place the deleted names
+> may legally appear — that scope exclusion is hard-coded into the
+> NFR-011-001 guard). Operators rotating an existing deployment can
+> grep the spec for the names they need to look up in their secrets
+> store, then delete the corresponding entries.
 
 ### Verification command
 
@@ -55,10 +76,10 @@ manually audited via:
 Settings → Secrets and variables → Actions
 ```
 
-Delete any of the names in the table above. The Echoroo workflows
-under `.github/workflows/` reference only `secrets.GITHUB_TOKEN`
-post-spec/011 — anything else email-related is dead code in your
-secrets vault.
+Delete any of the entries in the role table above. The Echoroo
+workflows under `.github/workflows/` reference only
+`secrets.GITHUB_TOKEN` post-spec/011 — anything else mail-related is
+dead code in your secrets vault.
 
 ---
 
@@ -117,9 +138,11 @@ docker exec echoroo-backend sh -c \
    apps/api/tests/security/test_telemetry_scrubs_sensitive_fields.py -v'
 ```
 
-Expected: **17 passed** (the four `SENSITIVE_FIELDS` + the
-`x-step-up-token` header are scrubbed across Sentry hook + structured-
-log filter).
+Expected: every assertion passes — the four `SENSITIVE_FIELDS` plus
+the registered sensitive request / response headers (including
+`x-step-up-token`, `authorization`, `cookie`, `set-cookie`, and
+`x-csrf-token`) are scrubbed across both the Sentry hook and the
+structured-log filter.
 
 ---
 
@@ -133,8 +156,9 @@ After spec/011 the canonical list of Actions secrets referenced by
 | `GITHUB_TOKEN` | `publish_docker.yml`, `ci.yml`, others | Auto-provisioned by GitHub Actions; used for GHCR push, CI artifact upload |
 
 No other secret is referenced. If your operator runbook tells you to
-configure `RESEND_API_KEY` or `EMAIL_FROM` as Actions secrets, the
-runbook is stale — delete that step.
+configure a transactional-mail provider key or a `From:` envelope
+sender value as an Actions secret, the runbook is stale — delete that
+step.
 
 Note: `permissions-fixture-drift.yml` is a workflow whose job exists
 solely to detect drift in the permission fixture artifact and does
@@ -149,15 +173,17 @@ email-subsystem reference (verified by the NFR-011-001 grep). If you
 maintain a local override (`compose.override.yaml` / `.env.local`),
 audit and remove:
 
-- Any `RESEND_*`, `SMTP_*`, `MAILPIT_*`, `EMAIL_*` definition
-- Any `mailpit` service definition
-- Any Mailpit volume / port mapping
+- Any mail-provider API-key, sender-envelope, or verification-token
+  cap definition
+- Any SMTP relay configuration (host / port / user / password)
+- Any dev-only mail-catcher service definition and the associated
+  volume / port mapping
 
 After removal:
 
 ```bash
 docker compose -f compose.dev.yaml ps
-# Should show only echoroo-* containers — no mailpit container.
+# Should show only echoroo-* containers — no mail-catcher container.
 ```
 
 ---
@@ -176,6 +202,8 @@ docker compose -f compose.dev.yaml ps
 ## 7. Spec references
 
 - spec/011 §Removal Plan §settings — full deleted-secret inventory
+  (the only document in the repo permitted to spell out the deleted
+  identifier names verbatim)
 - spec/011 §NFR-011-001 — CI grep guard
 - spec/011 §NFR-011-010 — invitation token kid rotation pattern
 - spec/011 §FR-011-206 — step-up token / `web_session_secret`

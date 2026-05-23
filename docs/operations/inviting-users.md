@@ -60,17 +60,22 @@ curl -X POST "https://<host>/web-api/v1/projects/${PROJECT_ID}/invitations" \
   }'
 ```
 
-Response (HTTP 201):
+Response (HTTP 201) — `MemberInvitationIssueResponse` per
+`apps/api/echoroo/schemas/member_invitations.py`:
 
 ```json
 {
-  "id": "<invitation_id>",
-  "email_hash": "<sha256-hash-of-canonical-email>",
-  "role": "MEMBER",
+  "invitation_id": "<invitation_id>",
+  "invitation_url": "https://<host>/invite/<4-part-signed-envelope>",
   "expires_at": "2026-05-30T10:00:00Z",
-  "invitation_url": "https://<host>/invite/<signed-token-envelope>"
+  "bound_email_hash": "<sha256-hash-of-canonical-email>"
 }
 ```
+
+(`role` is the role you submitted in the request body; it is not
+echoed in this response — the issuing admin already knows it. The
+audit row `project.member.invitation_issued` records it for
+forensics.)
 
 Headers:
 
@@ -134,28 +139,55 @@ curl -X POST "https://<host>/web-api/v1/projects/${PROJECT_ID}/invitations/bulk"
   }'
 ```
 
-Response (HTTP 207 Multi-Status):
+Response (HTTP 201) — `list[BulkInvitationResultItem]` per
+`apps/api/echoroo/schemas/member_invitations.py`. The body is a
+**top-level array** (no `{"results": [...]}` envelope); each entry
+carries a `status` discriminator from the enum
+`issued | duplicate_pending | rate_limited | internal_error`:
 
 ```json
-{
-  "results": [
-    {
-      "email": "alice@example.org",
-      "status": "issued",
-      "invitation_url": "https://<host>/invite/<envelope-1>"
-    },
-    {
-      "email": "bob@example.org",
-      "status": "already_pending"
-    },
-    {
-      "email": "carol@example.org",
-      "status": "issued",
-      "invitation_url": "https://<host>/invite/<envelope-3>"
-    }
-  ]
-}
+[
+  {
+    "email": "alice@example.org",
+    "status": "issued",
+    "invitation_id": "<uuid-1>",
+    "invitation_url": "https://<host>/invite/<4-part-envelope-1>",
+    "expires_at": "2026-05-30T10:00:00Z",
+    "error_message": null
+  },
+  {
+    "email": "bob@example.org",
+    "status": "duplicate_pending",
+    "invitation_id": null,
+    "invitation_url": null,
+    "expires_at": null,
+    "error_message": "An unexpired invitation already exists for this email on this project."
+  },
+  {
+    "email": "carol@example.org",
+    "status": "issued",
+    "invitation_id": "<uuid-3>",
+    "invitation_url": "https://<host>/invite/<4-part-envelope-3>",
+    "expires_at": "2026-05-30T10:00:00Z",
+    "error_message": null
+  }
+]
 ```
+
+Status discriminator values:
+
+| Value | Meaning |
+|---|---|
+| `issued` | Invitation created; `invitation_id`, `invitation_url`, and `expires_at` are populated |
+| `duplicate_pending` | An unexpired invitation already exists for this email + project; revoke and re-issue if you need to override |
+| `rate_limited` | Per-issuer hourly cap reached for this row (other rows in the same batch may still have been issued before the cap tripped); `error_message` carries the human-readable reason |
+| `internal_error` | Per-row infra fault (Redis unavailable, transient DB error); `error_message` carries a short human-readable reason — never a stack trace |
+
+Note: malformed input (e.g. an `emails` list above the 50-entry cap
+or any single invalid email) is rejected with HTTP 422 for the whole
+batch BEFORE any per-row processing — the per-row `internal_error`
+status covers transient infrastructure failures, not validation
+failures.
 
 Headers:
 
@@ -208,7 +240,7 @@ This is enforced by the spec/011 telemetry redaction registry
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `403 step_up_required` | Step-up token expired (5 min TTL) or 2FA not completed | Re-authenticate via `POST /web-api/v1/auth/step-up/initiate` then retry with the fresh `X-Step-Up-Token` header |
+| `403 step_up_required` | Step-up token expired (5 min TTL) or 2FA not completed | Re-complete a step-up challenge via the existing WebAuthn challenge path (`POST /web-api/v1/auth/2fa/webauthn/challenge`) — see `docs/operations/admin-recovery-flows.md` §1 for the spec/011 step-up endpoint status — then retry with the fresh `X-Step-Up-Token` header |
 | `409 already_pending` | Unexpired invitation exists for this email + project | Revoke the existing invitation first, or wait for it to expire |
 | `409 already_member` | The email is already a project member | No invitation needed; share project URL directly |
 | `429 too_many_requests` | Per-issuer hourly cap (200 invitations / hour) hit | Wait for the rate-limit window to elapse — see `Retry-After` header |

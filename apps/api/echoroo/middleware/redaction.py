@@ -39,7 +39,9 @@ Spec references:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Final
 
@@ -51,6 +53,70 @@ from echoroo.observability import SENSITIVE_FIELDS, SENSITIVE_HEADERS
 from echoroo.observability.sentry import REDACTED_MARKER, _scrub_mapping
 
 logger = logging.getLogger(__name__)
+
+
+# Step 12 R1 P0-3: string ``extra`` values that carry a JSON blob with
+# the sensitive field embedded as a key/value pair MUST be scrubbed in
+# place. Real loggers commonly emit ``extra={"data": json.dumps(...)}``
+# or pass raw f-string-formatted JSON snippets; the original Step 12
+# walker only descended structured (dict / list / tuple) values and
+# therefore let those strings leak verbatim. The regex below targets
+# the canonical ``"<field>": "<value>"`` JSON shape so we redact
+# without having to fully parse + re-serialise every string. The
+# parse-then-re-emit branch in :func:`_scrub_extra_value` handles the
+# pure-JSON case where a re-parse round-trip is cheaper than relying
+# on the regex.
+_JSON_KEY_VALUE_REDACT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r'("(?:'
+    + "|".join(re.escape(key) for key in SENSITIVE_FIELDS)
+    + r')"\s*:\s*)"[^"\\]*(?:\\.[^"\\]*)*"',
+    re.IGNORECASE,
+)
+
+
+def _scrub_extra_value(value: Any) -> Any:
+    """Recursively scrub a structured ``extra`` value.
+
+    Strings get a two-pass treatment:
+
+    1. Try ``json.loads`` — if the string parses to a dict / list we
+       descend with :func:`_scrub_mapping` and re-serialise. This is
+       the canonical ``extra={"data": json.dumps(...)}`` shape and
+       gives the cleanest output (no leftover quotes around the
+       marker).
+    2. Otherwise fall back to a regex substitution targeting the
+       ``"<sensitive_field>": "<value>"`` JSON-snippet pattern in
+       free-form text (covers f-string-formatted leaks, partial JSON
+       fragments embedded in human-readable messages, etc.). The
+       comparison is case-insensitive so a defensive ``"Step_Up_Token"``
+       camel-case typo is still caught.
+
+    Non-string structured values (dict / list / tuple) delegate to
+    :func:`_scrub_mapping` so the existing structured-walk semantics
+    are preserved exactly.
+
+    Primitives that are neither strings nor known containers are
+    returned unchanged.
+    """
+    if isinstance(value, str):
+        # Pass 1 — try a JSON round-trip.
+        stripped = value.strip()
+        if stripped and stripped[0] in "{[":
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, (dict, list)):
+                return json.dumps(_scrub_mapping(parsed))
+        # Pass 2 — regex-rewrite any ``"field": "value"`` JSON-style
+        # snippet in the free-form text.
+        return _JSON_KEY_VALUE_REDACT_PATTERN.sub(
+            r'\1"' + REDACTED_MARKER + '"',
+            value,
+        )
+    if isinstance(value, (dict, list, tuple)):
+        return _scrub_mapping(value)
+    return value
 
 
 #: The logger names whose record tree receives the filter. We deliberately
@@ -127,6 +193,12 @@ def _sensitive_redaction_filter(record: logging.LogRecord) -> bool:
         # Walk standard ``args`` — supports both tuple-style
         # ``logger.info("foo %s", arg)`` and dict-style
         # ``logger.info("foo %(k)s", {"k": v})`` invocations.
+        #
+        # Step 12 R1 P0-3: string positional args may carry a
+        # JSON-style snippet (``logger.info("payload=%s", '{"step_up_'
+        # 'token":"..."}')``) so we route them through
+        # :func:`_scrub_extra_value` too. The scrubber is a no-op for
+        # primitives lacking the embedded sensitive-key marker.
         if isinstance(record.args, dict):
             record.args = _scrub_mapping(dict(record.args))
         elif isinstance(record.args, tuple):
@@ -134,6 +206,8 @@ def _sensitive_redaction_filter(record: logging.LogRecord) -> bool:
             for arg in record.args:
                 if isinstance(arg, dict):
                     new_args.append(_scrub_mapping(dict(arg)))
+                elif isinstance(arg, str):
+                    new_args.append(_scrub_extra_value(arg))
                 else:
                     new_args.append(arg)
             record.args = tuple(new_args)
@@ -142,13 +216,20 @@ def _sensitive_redaction_filter(record: logging.LogRecord) -> bool:
         # ``logging`` stamps ``extra`` keys directly onto the record's
         # ``__dict__``; we walk the dict and scrub any value whose key
         # matches a sensitive field name.
+        #
+        # Step 12 R1 P0-3: string values used to be skipped, which let
+        # ``extra={"data": json.dumps({"step_up_token": "..."})}``
+        # leak verbatim. :func:`_scrub_extra_value` now handles both
+        # the structured (dict / list / tuple) and string variants;
+        # plain primitives (int / bool / None / etc.) pass through
+        # unchanged.
         for attr_name in list(record.__dict__.keys()):
             if attr_name in SENSITIVE_FIELDS:
                 setattr(record, attr_name, REDACTED_MARKER)
-            else:
-                value = getattr(record, attr_name)
-                if isinstance(value, (dict, list, tuple)):
-                    setattr(record, attr_name, _scrub_mapping(value))
+                continue
+            value = getattr(record, attr_name)
+            if isinstance(value, (dict, list, tuple, str)):
+                setattr(record, attr_name, _scrub_extra_value(value))
 
         # Final defence — scrub the rendered message string for any
         # inline header-name appearances.

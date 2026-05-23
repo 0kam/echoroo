@@ -47,21 +47,47 @@ is insufficient (FR-011-206).
 
 ### Procedure — API (cURL)
 
+> **Step-up token surface — spec/011 status (Step 12 R1 P1-1).** The
+> dedicated `POST /web-api/v1/auth/step-up/*` endpoints (referred to
+> as T300 / T301 in `specs/011-zero-email-deployment/tasks.md`) that
+> would mint an `admin_recovery`-scoped token via an explicit
+> password + 2FA AND-condition challenge are **NOT YET
+> IMPLEMENTED** in this build. The helper
+> `echoroo.services.step_up_token_service.issue_admin_recovery_step_up_token`
+> exists and is wired through the
+> `require_step_up_token(SCOPE_ADMIN_RECOVERY)` gate on the
+> password-reset endpoint, but no HTTP route currently calls it. A
+> follow-up PR (filed as a spec/011 carry-over task) will land the
+> begin/complete pair.
+>
+> Until then, the only way to obtain a step-up token in production is
+> the **WebAuthn challenge completion path** —
+> `POST /web-api/v1/auth/2fa/webauthn/challenge` returns a
+> `SCOPE_ADMIN_DESTRUCTIVE` token on success. That scope is accepted
+> by the destructive admin endpoints (`reset-2fa`, the PATCH email
+> change, etc.) but **NOT** by the password-reset endpoint, which is
+> explicitly gated on `SCOPE_ADMIN_RECOVERY`. The operator workaround
+> in the interim is to mint the token in-process (test fixture or
+> short-lived admin script invoking the helper directly) and inject
+> the resulting JWT via the `X-Step-Up-Token` header. Production
+> operators should track the follow-up PR and rely on the UI flow
+> (which uses the same backend helper internally) until the endpoint
+> ships.
+
+Once the begin/complete endpoints land, the operator-facing flow will
+mirror the existing `/2fa/webauthn/challenge` shape — the
+`X-Step-Up-Token` header carrying the issued JWT is the contract.
+
 ```bash
-# Step 1: initiate step-up challenge (password + 2FA)
-curl -X POST "https://<host>/web-api/v1/auth/step-up/initiate" \
-  -H "Content-Type: application/json" \
-  -H "Cookie: echoroo_session=${SESSION_COOKIE}" \
-  -H "X-CSRF-Token: ${CSRF_TOKEN}" \
-  -d '{
-    "scope": "admin_recovery",
-    "current_password": "<your-current-password>",
-    "second_factor": {"type": "totp", "code": "123456"}
-  }'
+# Step 1: complete a step-up challenge to obtain X-Step-Up-Token.
+# Today: use the existing WebAuthn challenge endpoint
+# (POST /web-api/v1/auth/2fa/webauthn/challenge — see auth.py).
+# Future (spec/011 T300/T301 follow-up): a dedicated
+# POST /web-api/v1/auth/step-up/begin + .../complete pair will mint
+# an admin_recovery-scoped token via an explicit password + 2FA
+# AND-condition challenge.
 
-# Response carries an X-Step-Up-Token header (5-min TTL).
-
-# Step 2: reset the target user's password
+# Step 2: reset the target user's password.
 curl -X POST "https://<host>/web-api/v1/admin/users/${TARGET_USER_ID}/reset-password" \
   -H "Content-Type: application/json" \
   -H "Cookie: echoroo_session=${SESSION_COOKIE}" \
@@ -72,15 +98,19 @@ curl -X POST "https://<host>/web-api/v1/admin/users/${TARGET_USER_ID}/reset-pass
   }'
 ```
 
-Response (HTTP 200):
+Response (HTTP 200) — shape `AdminPasswordResetResponse` per
+`apps/api/echoroo/schemas/admin.py`:
 
 ```json
 {
-  "target_user_id": "<uuid>",
   "temporary_password": "<short-readable-string>",
-  "temp_password_expires_at": "2026-05-24T10:00:00Z"
+  "expires_at": "2026-05-24T10:00:00Z"
 }
 ```
+
+(The actor / target ids are derived from the URL path + the
+authenticated session cookie; the response body is intentionally
+narrow to keep the one-shot credential surface minimal.)
 
 Headers:
 
@@ -127,20 +157,39 @@ another user's 2FA must themselves have a *fresh* step-up token. The
 operator-facing flow is the existing Phase 17 A-11 endpoint:
 
 ```bash
-curl -X POST "https://<host>/web-api/v1/admin/users/${TARGET_USER_ID}/two-factor/disable" \
+curl -X POST "https://<host>/web-api/v1/admin/users/${TARGET_USER_ID}/reset-2fa" \
   -H "Content-Type: application/json" \
   -H "Cookie: echoroo_session=${SESSION_COOKIE}" \
   -H "X-CSRF-Token: ${CSRF_TOKEN}" \
   -H "X-Step-Up-Token: ${STEP_UP_TOKEN}" \
   -d '{
+    "support_ticket_id": "SUP-2026-05-23-001",
     "reason": "User lost phone — verified identity in-person",
-    "confirmation_token": "<from-confirmation-email-OR-out-of-band>"
+    "skip_delay": false,
+    "confirmation_token": "<value-from-/auth/confirm-identity-for-2fa-reset>"
   }'
 ```
 
-(See `apps/api/echoroo/api/web_v1/admin.py` `/two-factor/disable` for
-the live signature; the spec/011 change is the addition of the
-step-up requirement on top of the existing A-11 confirmation token.)
+Body fields (see `apps/api/echoroo/schemas/admin.py::ResetTwoFactorRequest`):
+
+| Field | Required | Notes |
+|---|---|---|
+| `support_ticket_id` | Yes | Operator-PII Annotated string; PII reject gate at the boundary (Phase 17 A-13) |
+| `reason` | Yes | Operator-PII Annotated string; rejected if it carries email / phone / national identifier patterns |
+| `skip_delay` | No (default `false`) | When `true`, opens an M-of-N approval ticket (two co-signers); when `false`, the row enters `pending_delay` and Celery beat dispatches after the 24h delay (FR-072) |
+| `confirmation_token` | Yes | Short-lived HMAC token from `POST /web-api/v1/auth/confirm-identity-for-2fa-reset/redeem`; bound to the target `user_id` and consumed exactly once. Replay / mismatch / expired → HTTP 409 |
+
+Response: HTTP 202 Accepted on success — the reset is *queued* (or
+queued-pending-approval when `skip_delay=true`); it does not execute
+synchronously. The Celery worker performs the actual 2FA reset after
+the delay / approval-quorum gate clears, at which point the audit log
+records the dispatch.
+
+The route lives at `POST /web-api/v1/admin/users/{user_id}/reset-2fa`
+(see `apps/api/echoroo/api/web_v1/admin.py` `reset_two_factor`
+handler). The step-up requirement uses `SCOPE_ADMIN_DESTRUCTIVE`
+(satisfied by the WebAuthn challenge path), distinct from the
+password-reset endpoint which requires `SCOPE_ADMIN_RECOVERY`.
 
 ### Side effects
 

@@ -141,20 +141,55 @@ forged-token risk.
 
 ### Step 1 — Generate new kid + key (same as planned §3.1)
 
-### Step 2 — Promote current → OLD ONLY for forensic readability
+### Step 2 — Decide between FORENSIC and IMMEDIATE-INVALIDATE postures
 
-Move the compromised values to the `_OLD` slot so the audit log /
-forensic queries can still classify incoming old-kid traffic as
-"signed under the leaked key". Set the grace window to **0 hours**:
+Two configurations exist, distinguished by their effect on the two
+acceptance paths (§1 paths (2) and (3)):
+
+**Posture A — IMMEDIATE INVALIDATE (the canonical emergency response).**
+To kill every outstanding 4-part `_OLD`-kid envelope on the next HTTP
+turn, **unset both `_OLD` env vars**:
 
 ```
+INVITATION_TOKEN_KID_OLD=          # unset
+INVITATION_TOKEN_HMAC_KEY_OLD=     # unset
+```
+
+This relies on the verifier's routing rule (see
+`apps/api/echoroo/services/invitation_service.py::verify_invitation_token`):
+a 4-part envelope whose `{kid}` matches `INVITATION_TOKEN_KID_OLD` is
+ACCEPTED only when that env var is set; with the env unset, the
+verifier falls through to `unknown kid` and rejects on the spot. The
+3-part legacy fallback also rejects (it requires
+`INVITATION_TOKEN_HMAC_KEY_OLD` to be set). This is **not** governed
+by `INVITATION_TOKEN_KID_GRACE_HOURS` — that setting only sizes the
+3-part legacy grace window past `expires_at` and has no effect on
+4-part `_OLD`-kid routing at all.
+
+**Posture B — FORENSIC READABILITY.** If you need to keep classifying
+incoming old-kid traffic as "signed under the leaked key" for a short
+window (e.g. while the audit log catches up), retain the `_OLD`
+values AND shrink the 3-part legacy grace window:
+
+```
+INVITATION_TOKEN_KID_OLD=<compromised-kid>
+INVITATION_TOKEN_HMAC_KEY_OLD=<compromised-key>
 INVITATION_TOKEN_KID_GRACE_HOURS=0
 ```
 
-This causes the verifier to immediately reject any token presented
-under the `_OLD` kid (the grace window is "0 hours past TTL", so any
-already-expired or about-to-expire token under the old kid is dead on
-arrival).
+In this posture the 4-part `_OLD`-kid envelope STILL verifies (the
+verifier routes by kid and checks the MAC under the compromised key).
+The `GRACE_HOURS=0` clamp narrows the 3-part legacy fallback so any
+token whose envelope `expires_at` has already passed is dead on
+arrival, but a 4-part token with future `expires_at` issued under the
+leaked key would still successfully verify. **Posture B does NOT
+fully invalidate `_OLD`-kid traffic — you must combine it with the
+mass-revoke SQL in Step 3 to ensure no compromised token can be
+accepted.**
+
+> Pick Posture A unless you have a specific forensic requirement to
+> keep the leaked-key path live. The defensive default is to unset
+> both `_OLD` env vars.
 
 ### Step 3 — Revoke every outstanding invitation
 
@@ -190,7 +225,12 @@ suspect activity that may indicate the leaked key was actually used.
 Once you are confident no further old-kid traffic is arriving (the
 audit log should show zero), unset
 `INVITATION_TOKEN_KID_OLD` and `INVITATION_TOKEN_HMAC_KEY_OLD`,
-restore `INVITATION_TOKEN_KID_GRACE_HOURS=24` (default), and redeploy.
+restore `INVITATION_TOKEN_KID_GRACE_HOURS=24` (the default — only
+relevant for any future 3-part legacy fallback grace window; has no
+effect on 4-part `_OLD`-kid routing), and redeploy.
+
+(If you chose Posture A in Step 2, the `_OLD` env vars are already
+unset and only the `GRACE_HOURS` restore remains.)
 
 ---
 

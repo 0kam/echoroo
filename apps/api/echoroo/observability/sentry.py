@@ -110,6 +110,30 @@ def _before_send(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any]
                 # so an operator never sees a partial credential.
                 request["cookies"] = REDACTED_MARKER
 
+        # Step 12 R1 P0-1: ``event["response"]`` is the symmetric
+        # counterpart of ``event["request"]``. The Sentry SDK
+        # synthesises it for HTTPX / Starlette integrations and stores
+        # it as a dict with the same shape (``body``, ``data``,
+        # ``cookies``, ``headers``). Response bodies routinely carry
+        # one-shot credentials (e.g. the ``temporary_password`` field
+        # returned by ``POST /admin/users/{id}/reset-password`` per
+        # FR-011-202), so we MUST apply the same redaction walk to the
+        # response side. ``Set-Cookie`` is covered by the extended
+        # SENSITIVE_HEADERS frozenset (Step 12 R1 P0-2).
+        response_payload = event.get("response")
+        if isinstance(response_payload, dict):
+            for body_key in ("body", "data"):
+                if body_key in response_payload:
+                    response_payload[body_key] = _scrub_mapping(
+                        response_payload[body_key]
+                    )
+            if "headers" in response_payload:
+                response_payload["headers"] = _scrub_headers(
+                    response_payload["headers"]
+                )
+            if "cookies" in response_payload:
+                response_payload["cookies"] = REDACTED_MARKER
+
         # ``extra`` and ``contexts`` are free-form key/value blobs from
         # ``sentry_sdk.set_extra`` / ``set_context``; walk them too.
         for top_key in ("extra", "contexts", "tags"):
