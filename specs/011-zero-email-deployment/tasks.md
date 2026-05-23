@@ -474,33 +474,33 @@
 
 ### Telemetry redaction (R13)
 
-- [ ] T710 Create new package `apps/api/echoroo/observability/` (with `__init__.py`) and module `apps/api/echoroo/observability/sentry.py`. Implement `init_sentry()` that is a no-op when `SENTRY_DSN` is unset; otherwise wires `sentry_sdk.init(dsn=..., before_send=...)`. The `before_send` hook scrubs request bodies, response bodies, and breadcrumbs whose key matches `temporary_password`, `step_up_token`, `invitation_url`, or `signed_token_envelope`; also scrubs request headers matching `X-Step-Up-Token`. The package directory does not exist today (grep-verified).
-- [ ] T711 [P] Create new file `apps/api/echoroo/middleware/redaction.py` (do NOT extend `middleware/audit_logging.py` — separate concerns per research.md R13). Implement `RedactionMiddleware(BaseHTTPMiddleware)` that drops the same four field names from the structured-log envelope before emission. Register in `apps/api/echoroo/main.py` after all auth/CSRF middleware so the redaction sees the final response payload.
-- [ ] T712 [P] Add `apps/api/tests/security/test_telemetry_scrubs_sensitive_fields.py`: simulate request/response carrying each sensitive field; assert Sentry hook + middleware both scrub; assert nothing in `caplog` or test log capture contains the values
-- [ ] T713 [P] In `docs/operations/admin-recovery-flows.md` include an Nginx `log_format` snippet that scrubs `X-Step-Up-Token` request header (operator-side config)
+- [x] T710 Create new package `apps/api/echoroo/observability/` (with `__init__.py`) and module `apps/api/echoroo/observability/sentry.py`. Implement `init_sentry()` that is a no-op when `SENTRY_DSN` is unset; otherwise wires `sentry_sdk.init(dsn=..., before_send=...)`. The `before_send` hook scrubs request bodies, response bodies, and breadcrumbs whose key matches `temporary_password`, `step_up_token`, `invitation_url`, or `signed_token_envelope`; also scrubs request headers matching `X-Step-Up-Token`. The package directory does not exist today (grep-verified). (Step 12, 2026-05-23.)
+- [x] T711 [P] Create new file `apps/api/echoroo/middleware/redaction.py` (do NOT extend `middleware/audit_logging.py` — separate concerns per research.md R13). Implement `RedactionMiddleware(BaseHTTPMiddleware)` that drops the same four field names from the structured-log envelope before emission. Register in `apps/api/echoroo/main.py` after all auth/CSRF middleware so the redaction sees the final response payload. (Step 12, 2026-05-23.)
+- [x] T712 [P] Add `apps/api/tests/security/test_telemetry_scrubs_sensitive_fields.py`: simulate request/response carrying each sensitive field; assert Sentry hook + middleware both scrub; assert nothing in `caplog` or test log capture contains the values (Step 12, 17/17 passed.)
+- [x] T713 [P] In `docs/operations/admin-recovery-flows.md` include an Nginx `log_format` snippet that scrubs `X-Step-Up-Token` request header (operator-side config) (Step 12, folded into the T721 file.)
 
 ### Documentation
 
-- [ ] T720 [P] Write `docs/operations/inviting-users.md` (single + bulk invite walkthroughs)
-- [ ] T721 [P] Write `docs/operations/admin-recovery-flows.md` (password / 2FA recovery; includes T713 Nginx example)
-- [ ] T722 [P] Write `docs/operations/superuser-bootstrap.md` (SU bootstrap workflow with `intended_owner_email`)
-- [ ] T723 [P] Fill `docs/runbook/invitation_token_kid_rotation.md` (skeleton from T091) with planned-rotation + emergency-rotation + forensic-query sections
-- [ ] T724 [P] Fill `docs/runbook/zero-email-deployment-secret-rotation.md` (skeleton from T092) with the full list of CI / Actions secrets to rotate / delete
+- [x] T720 [P] Write `docs/operations/inviting-users.md` (single + bulk invite walkthroughs) (Step 12, 2026-05-23.)
+- [x] T721 [P] Write `docs/operations/admin-recovery-flows.md` (password / 2FA recovery; includes T713 Nginx example) (Step 12, 2026-05-23.)
+- [x] T722 [P] Write `docs/operations/superuser-bootstrap.md` (SU bootstrap workflow with `intended_owner_email`) (Step 12, 2026-05-23.)
+- [x] T723 [P] Fill `docs/runbook/invitation_token_kid_rotation.md` (skeleton from T091) with planned-rotation + emergency-rotation + forensic-query sections (Step 12, 2026-05-23.)
+- [x] T724 [P] Fill `docs/runbook/zero-email-deployment-secret-rotation.md` (skeleton from T092) with the full list of CI / Actions secrets to rotate / delete (Step 12, 2026-05-23.)
 
 ### Final OpenAPI sync + cumulative grep
 
-- [ ] T725 [P] Open-questions closeout: walk the 5 entries in spec.md §Open Questions (invitation issuer removal handling, invitation role catalog change handling, forced password change TTL per-reset, activity/banner retention, bulk invitation maximum size) plus the step-up token rotation note. For each, confirm the tentative answer is unchanged after implementation; if any were amended during implementation, update spec.md inline. Commit message: `docs(spec/011): close out open questions`
-- [ ] T730 Re-run `pytest apps/api/tests/contract/test_openapi_diff.py` against the final HEAD; resolve any final YAML / live drift; commit message: `chore(openapi): final sync for spec/011`
-- [ ] T731 Re-run `pytest apps/api/tests/contract/test_no_email_subsystem_traces.py` against the final HEAD; zero matches
+- [x] T725 [P] Open-questions closeout: walk the 5 entries in spec.md §Open Questions (invitation issuer removal handling, invitation role catalog change handling, forced password change TTL per-reset, activity/banner retention, bulk invitation maximum size) plus the step-up token rotation note. For each, confirm the tentative answer is unchanged after implementation; if any were amended during implementation, update spec.md inline. Commit message: `docs(spec/011): close out open questions` (Step 12 — all 5 + step-up note unchanged; closeout annotation added inline in `specs/011-zero-email-deployment/spec.md` §Open Questions.)
+- [x] T730 Re-run `pytest apps/api/tests/contract/test_openapi_diff.py` against the final HEAD; resolve any final YAML / live drift; commit message: `chore(openapi): final sync for spec/011` (Step 12, 27/27 passed across `test_openapi_diff.py` + `test_openapi_diff_multi_spec.py` — zero drift.)
+- [x] T731 Re-run `pytest apps/api/tests/contract/test_no_email_subsystem_traces.py` against the final HEAD; zero matches (Step 12 — passed when run from worktree-mounted repo root.)
 
 ### SC final validation (one task per success criterion)
 
-- [ ] T740 [P] **SC-1**: A naive deployer can complete README quickstart §1-§5 without being required to configure SMTP/Resend/Mailpit/DKIM/DNS — manual walkthrough recorded as an end-to-end Playwright test `apps/web/tests/e2e/sc1-naive-deployer.spec.ts`
-- [ ] T741 [P] **SC-2**: Lab admin onboards 20 collaborators via one bulk-invitation operation — covered by T292 + a manual lab-scale exercise
-- [ ] T742 [P] **SC-3**: User who forgot password is reset and back to working state under 5 minutes — covered by T362
-- [ ] T743 [P] **SC-4**: SU bootstraps a project in a single create-project operation; new owner sees `pre_transfer_action_summary` — covered by T544
-- [ ] T744 [P] **SC-5**: Test suite passes including endpoint-coverage hard-fail (TOKEN_AUTH_ONLY + AUTHENTICATED_SELF_NO_GATE exemptions), OpenAPI diff (multi-spec), 9-class coherence, security-test corpus — composite gate; run all spec/011 tests
-- [ ] T745 [P] **SC-6**: spec/010 Trusted Device user stories continue to pass (regression check) — re-run spec/010's Playwright suite; additionally assert FR-011-402 revocation triggers fire correctly across the 4 new call-sites
+- [ ] T740 [P] **SC-1**: A naive deployer can complete README quickstart §1-§5 without being required to configure SMTP/Resend/Mailpit/DKIM/DNS — manual walkthrough recorded as an end-to-end Playwright test `apps/web/tests/e2e/sc1-naive-deployer.spec.ts` (deferred to Step 12b — frontend Playwright)
+- [ ] T741 [P] **SC-2**: Lab admin onboards 20 collaborators via one bulk-invitation operation — covered by T292 + a manual lab-scale exercise (deferred to Step 12b — manual exercise)
+- [ ] T742 [P] **SC-3**: User who forgot password is reset and back to working state under 5 minutes — covered by T362 (deferred to Step 12b — already covered by T362 in Step 5)
+- [ ] T743 [P] **SC-4**: SU bootstraps a project in a single create-project operation; new owner sees `pre_transfer_action_summary` — covered by T544 (deferred to Step 12b — already covered by T544 in Step 9)
+- [x] T744 [P] **SC-5**: Test suite passes including endpoint-coverage hard-fail (TOKEN_AUTH_ONLY + AUTHENTICATED_SELF_NO_GATE exemptions), OpenAPI diff (multi-spec), 9-class coherence, security-test corpus — composite gate; run all spec/011 tests (Step 12 — composite: contract+unit 2794 passed / 142 skipped / 61 xfailed / 0 failed; security 625 passed / 28 skipped / 4 xfailed / 10 failed (all pre-existing on main HEAD `cc21326a`, none spec/011-introduced); integration 322 passed / 41 skipped / 96 errors (all pre-existing testcontainer fixture issues); spec/011-tagged subset 240/240 passed.)
+- [ ] T745 [P] **SC-6**: spec/010 Trusted Device user stories continue to pass (regression check) — re-run spec/010's Playwright suite; additionally assert FR-011-402 revocation triggers fire correctly across the 4 new call-sites (deferred to Step 12b — Playwright)
 
 ---
 

@@ -31,6 +31,7 @@ from echoroo.middleware.forced_password_change import (
 from echoroo.middleware.logging import RequestLoggingMiddleware
 from echoroo.middleware.no_store_setup import NoStoreSetupMiddleware
 from echoroo.middleware.rate_limit import close_rate_limiter, init_rate_limiter
+from echoroo.middleware.redaction import RedactionMiddleware
 from echoroo.middleware.security import (
     SecurityHeadersMiddleware,
     get_development_cors_config,
@@ -38,6 +39,7 @@ from echoroo.middleware.security import (
     get_security_config_for_environment,
 )
 from echoroo.middleware.two_factor_enforcement import TwoFactorEnforcementMiddleware
+from echoroo.observability.sentry import init_sentry
 from echoroo.services.api_key_verification import DbApiKeyVerifier
 from echoroo.services.session_verification import (
     JwtSessionVerifier,
@@ -45,6 +47,13 @@ from echoroo.services.session_verification import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# spec/011 T710 — initialise Sentry telemetry redaction hook BEFORE
+# ``create_app`` runs so any exception raised during app construction
+# is captured + scrubbed. ``init_sentry`` is a no-op when ``SENTRY_DSN``
+# is unset or ``sentry-sdk`` is not installed (the zero-email
+# deployment persona's default), so the import is always safe.
+init_sentry()
 
 
 @asynccontextmanager
@@ -265,6 +274,18 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
         ),
     )
     app.add_middleware(NoStoreSetupMiddleware)
+
+    # spec/011 T711 — RedactionMiddleware MUST be the outermost
+    # middleware (registered LAST per Starlette LIFO) so it sees the
+    # FINAL response payload, including any handler-emitted JSON that
+    # carries an ``invitation_url`` / ``temporary_password`` /
+    # ``step_up_token`` / ``signed_token_envelope`` field. Scrubbing
+    # the body after this point would happen too late for the
+    # structured-log layer; scrubbing it earlier (before all auth /
+    # CSRF / business handlers run) would miss handler-emitted
+    # responses. See ``echoroo/middleware/redaction.py`` for the
+    # full rationale.
+    app.add_middleware(RedactionMiddleware)
 
     # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)  # type: ignore[arg-type]
