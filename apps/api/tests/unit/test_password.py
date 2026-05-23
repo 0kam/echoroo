@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from echoroo.core.security import hash_password, verify_password
-from echoroo.schemas.auth import PasswordResetConfirm, UserRegisterRequest
+from echoroo.schemas.auth import UserRegisterRequest
 
 
 def test_password_hashing() -> None:
@@ -59,30 +59,11 @@ def test_password_complexity_validation() -> None:
     assert "number" in str(exc_info.value).lower()
 
 
-def test_password_reset_validation() -> None:
-    """Test password reset confirmation validation."""
-    # Valid password reset
-    valid_reset = PasswordResetConfirm(
-        token="some_token",
-        password="NewPass123",
-    )
-    assert valid_reset.password == "NewPass123"
-
-    # Invalid password (too short)
-    with pytest.raises(ValidationError) as exc_info:
-        PasswordResetConfirm(
-            token="some_token",
-            password="short1",
-        )
-    assert "at least 8 characters" in str(exc_info.value).lower()
-
-    # Invalid password (no numbers)
-    with pytest.raises(ValidationError) as exc_info:
-        PasswordResetConfirm(
-            token="some_token",
-            password="onlyletters",
-        )
-    assert "number" in str(exc_info.value).lower()
+# spec/011 Step 10 (T126) — ``test_password_reset_validation`` was
+# removed alongside the deleted ``PasswordResetConfirm`` schema (the
+# self-service ``/auth/password-reset/*`` endpoints were deleted in
+# T119). The admin-mediated replacement uses a separate request schema
+# whose validation is covered by ``tests/unit/api/web_v1/test_admin_*``.
 
 
 def test_argon2_parameters() -> None:

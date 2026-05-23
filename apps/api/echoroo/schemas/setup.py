@@ -59,11 +59,15 @@ class UserResponse(BaseModel):
 
     Used when returning user information after setup.
 
+    spec/011 §FR-011-002 / Step 10 (T127): ``email_verified_at`` was
+    removed alongside the dropped column; the schema no longer surfaces
+    a verification timestamp because no automated verification exists
+    in a zero-email deployment.
+
     Attributes:
         id: User UUID
         email: User email
         display_name: Display name
-        email_verified_at: Email verification timestamp
         two_factor_enabled: Whether 2FA is enabled for the user
         created_at: Creation timestamp
         updated_at: Last update timestamp
@@ -72,10 +76,6 @@ class UserResponse(BaseModel):
     id: UUID = Field(..., description="User unique identifier")
     email: str = Field(..., description="User email address")
     display_name: str | None = Field(None, description="Display name")
-    email_verified_at: datetime | None = Field(
-        None,
-        description="Email verification timestamp",
-    )
     two_factor_enabled: bool = Field(..., description="2FA enabled status")
     created_at: datetime = Field(..., description="Account creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")

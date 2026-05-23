@@ -7,9 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import hashlib
 import logging
 import secrets
 import time
@@ -26,7 +23,7 @@ from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from webauthn.helpers import options_to_json_dict
 
@@ -41,19 +38,12 @@ from echoroo.core.text import has_control_chars
 from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
 from echoroo.middleware.step_up import STEP_UP_HEADER_NAME
-from echoroo.models.password_reset_token import PasswordResetToken
 from echoroo.models.user import User
 from echoroo.repositories.superuser_credentials import get_default_store
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.web_v1.auth import (
-    EmailVerificationResendRequest,
-    EmailVerificationResendResponse,
-    EmailVerifyRequest,
-    EmailVerifyResponse,
     LoginRequest,
     LoginResponse,
-    PasswordResetConfirmRequest,
-    PasswordResetRequest,
     RefreshResponse,
     RegisterRequest,
     RegisterResponse,
@@ -70,7 +60,7 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
-from echoroo.services import invitation_service, outbox_service
+from echoroo.services import invitation_service
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.invitation_service import (
     InvitationAlreadyMemberError,
@@ -91,10 +81,6 @@ from echoroo.services.auth_service import (
     PasswordPolicyError,
     authenticate,
     enforce_password_policy,
-)
-from echoroo.services.email_verification_service import (
-    EmailVerificationError,
-    EmailVerificationService,
 )
 from echoroo.services.login_notification_service import LoginNotificationService
 from echoroo.services.step_up_token_service import (
@@ -151,13 +137,8 @@ _superuser_credential_store = get_default_store()
 _REGISTER_IP_LIMIT = 10
 _REGISTER_EMAIL_LIMIT = 5
 _REGISTER_WINDOW_SECONDS = 60 * 60
-_PASSWORD_RESET_MIN_RESPONSE_SECONDS = 0.05
-_PASSWORD_RESET_TOKEN_TTL = timedelta(minutes=60)
-_EMAIL_VERIFICATION_RESEND_LIMIT = 5
-_EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS = 60 * 60
 # TODO(T178): process-local; multi-worker NOT consistent. Replace with Redis.
 _register_windows: dict[str, list[float]] = {}
-_email_verification_resend_windows: dict[str, list[float]] = {}
 
 
 @dataclass(frozen=True)
@@ -256,93 +237,6 @@ def _rate_limit_register(*, ip: str, email: str) -> None:
             )
         window.append(now)
         _register_windows[key] = window
-
-
-def _rate_limit_email_verification_resend(*, ip: str, email: str) -> int | None:
-    now = time.monotonic()
-    cutoff = now - _EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS
-    scopes = (
-        f"email-verification-resend:ip:{ip}",
-        f"email-verification-resend:email:{email}",
-    )
-    retry_after = 0
-    for key in scopes:
-        window = [
-            timestamp
-            for timestamp in _email_verification_resend_windows.get(key, [])
-            if timestamp >= cutoff
-        ]
-        if len(window) >= _EMAIL_VERIFICATION_RESEND_LIMIT:
-            retry_after = max(
-                retry_after,
-                max(1, int(_EMAIL_VERIFICATION_RESEND_WINDOW_SECONDS - (now - window[0]))),
-            )
-        window.append(now)
-        _email_verification_resend_windows[key] = window
-    return retry_after or None
-
-
-def _encode_reset_token(token: bytes) -> str:
-    return base64.urlsafe_b64encode(token).decode("ascii").rstrip("=")
-
-
-def _decode_reset_token(encoded: str) -> bytes:
-    try:
-        padded = encoded + ("=" * (-len(encoded) % 4))
-        token = base64.urlsafe_b64decode(padded.encode("ascii"))
-    except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        ) from exc
-    if len(token) != 32:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-    return token
-
-
-def _reset_token_hash(token: bytes) -> str:
-    return hashlib.sha256(token).hexdigest()
-
-
-def _password_reset_url(encoded_token: str) -> str:
-    return (
-        f"{settings.web_app_base_url.rstrip('/')}"
-        f"/password-reset/confirm?token={encoded_token}"
-    )
-
-
-async def _sleep_for_minimum_request_time(started_at: float) -> None:
-    remaining = _PASSWORD_RESET_MIN_RESPONSE_SECONDS - (time.monotonic() - started_at)
-    if remaining > 0:
-        await asyncio.sleep(remaining)
-
-
-async def _revoke_refresh_families_for_user(db: DbSession, user_id: UUID) -> None:
-    """Revoke all known refresh-token families for ``user_id``.
-
-    ``SqlTokenStore`` currently exposes family-level revocation but no
-    user-wide helper, so password reset enumerates families inside the same
-    transaction as the password/security-stamp update.
-    """
-    await db.execute(
-        text(
-            "UPDATE token_families "
-            "SET revoked_at = COALESCE(revoked_at, now()) "
-            "WHERE user_id = :user_id"
-        ),
-        {"user_id": user_id},
-    )
-    await db.execute(
-        text(
-            "UPDATE refresh_tokens "
-            "SET revoked_at = COALESCE(revoked_at, now()) "
-            "WHERE user_id = :user_id AND revoked_at IS NULL"
-        ),
-        {"user_id": user_id},
-    )
 
 
 async def _record_login_notification(
@@ -995,12 +889,6 @@ async def register(
 
     try:
         await repo.create(user)
-        await EmailVerificationService(db).issue_verification_token(
-            user=user,
-            email=user.email,
-            ip=_client_ip(request),
-            user_agent=_user_agent(request),
-        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -1009,6 +897,11 @@ async def register(
             detail="Email already registered",
         ) from exc
 
+    # spec/011 §FR-011-001 / §FR-011-005 — the registration handler no
+    # longer issues a verification token. The legacy verification
+    # timestamp + required-flag response fields were removed in Step
+    # 10 (T126 + T127); the ``ForcedPasswordChangeMiddleware`` and
+    # admin-mediated recovery flows replace the pre-spec/011 UX.
     await _write_platform_audit(
         actor_user_id=user.id,
         action="auth.user_registered",
@@ -1018,321 +911,17 @@ async def register(
     return RegisterResponse(
         user_id=user.id,
         email=user.email,
-        email_verified_at=user.email_verified_at,
-        email_verification_required=user.email_verified_at is None,
     )
 
 
-@router.post("/password-reset/request", status_code=status.HTTP_204_NO_CONTENT)
-async def request_password_reset(
-    payload: PasswordResetRequest,
-    request: Request,
-    db: DbSession,
-) -> Response:
-    """Request a password reset email without exposing account existence.
-
-    T150d decision: active 2FA reset cooldown silently drops password-reset
-    requests while leaving an audit record.
-    """
-    started_at = time.monotonic()
-    try:
-        email = _normalize_email(payload.email)
-    except HTTPException:
-        await _write_platform_audit(
-            actor_user_id=None,
-            action="auth.password_reset_requested",
-            request=request,
-            detail={"email_validation_failed": True},
-        )
-        await _sleep_for_minimum_request_time(started_at)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    email_hash = compute_pii_hash(email)
-    token = secrets.token_bytes(32)
-    token_hash = _reset_token_hash(token)
-    encoded_token = _encode_reset_token(token)
-    now = datetime.now(UTC)
-
-    repo = UserRepository(db)
-    user = await repo.get_by_email(email)
-
-    try:
-        if (
-            user is not None
-            and user.deleted_at is None
-            and user.two_factor_reset_cooldown_until is not None
-            and user.two_factor_reset_cooldown_until > now
-        ):
-            await _write_platform_audit(
-                actor_user_id=user.id,
-                action="auth.password_reset_blocked_during_cooldown",
-                request=request,
-                detail={"email_hash": email_hash, "user_id": str(user.id)},
-            )
-            await _sleep_for_minimum_request_time(started_at)
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-        if user is not None and user.deleted_at is None:
-            reset_url = _password_reset_url(encoded_token)
-            expires_at = now + _PASSWORD_RESET_TOKEN_TTL
-            db.add(
-                PasswordResetToken(
-                    user_id=user.id,
-                    token_hash=token_hash,
-                    expires_at=expires_at,
-                    requested_ip=_client_ip(request)[:45],
-                    requested_user_agent=_user_agent(request)[:500],
-                )
-            )
-            await outbox_service.enqueue(
-                db,
-                event_type="password_reset_email",
-                payload={
-                    "user_id": str(user.id),
-                    "reset_url": reset_url,
-                    "expires_at": expires_at.isoformat(),
-                },
-                idempotency_key=f"password-reset:{token_hash}",
-            )
-
-        await _write_platform_audit(
-            actor_user_id=None,
-            action="auth.password_reset_requested",
-            request=request,
-            detail={"email_hash": email_hash},
-        )
-        await _sleep_for_minimum_request_time(started_at)
-    except HTTPException:
-        await _sleep_for_minimum_request_time(started_at)
-        raise
-
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.post("/password-reset/confirm", status_code=status.HTTP_204_NO_CONTENT)
-async def confirm_password_reset(
-    payload: PasswordResetConfirmRequest,
-    request: Request,
-    db: DbSession,
-) -> Response:
-    """Reset a password with a one-time token; does not issue a session."""
-    token = _decode_reset_token(payload.token)
-    token_hash = _reset_token_hash(token)
-    now = datetime.now(UTC)
-
-    result = await db.execute(
-        select(PasswordResetToken)
-        .where(PasswordResetToken.token_hash == token_hash)
-        .with_for_update()
-    )
-    reset_token = result.scalar_one_or_none()
-    if reset_token is None:
-        await _write_platform_audit(
-            actor_user_id=None,
-            action="auth.password_reset_token_invalid",
-            request=request,
-            detail={"token_hash_prefix": token_hash[:8]},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-    if reset_token.expires_at < now:
-        await _write_platform_audit(
-            actor_user_id=reset_token.user_id,
-            action="auth.password_reset_token_expired",
-            request=request,
-            detail={"token_hash_prefix": token_hash[:8], "user_id": str(reset_token.user_id)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-    if reset_token.used_at is not None:
-        await _write_platform_audit(
-            actor_user_id=reset_token.user_id,
-            action="auth.password_reset_token_reuse_attempted",
-            request=request,
-            detail={"token_hash_prefix": token_hash[:8], "user_id": str(reset_token.user_id)},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-
-    user = await UserRepository(db).get_by_id(reset_token.user_id)
-    if user is None or user.deleted_at is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-
-    try:
-        await enforce_password_policy(
-            payload.new_password,
-            hibp=_hibp_checker,
-        )
-    except PasswordPolicyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.reason,
-        ) from exc
-
-    if verify_password(payload.new_password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="new password must differ from current password",
-        )
-
-    user.password_hash = hash_password(payload.new_password)
-    user.security_stamp = secrets.token_urlsafe(48)
-    user.last_first_party_activity_at = now
-    reset_token.used_at = now
-    db.add(user)
-    db.add(reset_token)
-    await _revoke_refresh_families_for_user(db, user.id)
-    revoked_trusted_devices = await TrustedDeviceService(db).revoke_all_for_user(
-        user=user,
-        reason="password_reset_confirmed",
-    )
-    await db.commit()
-
-    await _write_platform_audit(
-        actor_user_id=user.id,
-        action="auth.password_reset_completed",
-        request=request,
-        detail={
-            "user_id": str(user.id),
-            "trusted_devices_revoked": revoked_trusted_devices,
-        },
-    )
-    return Response(
-        status_code=status.HTTP_204_NO_CONTENT,
-        headers={"Cache-Control": "no-store, max-age=0"},
-    )
-
-
-# ---------------------------------------------------------------------------
-# /verify-email
-# ---------------------------------------------------------------------------
-#
-# Auth posture: PUBLIC (no session yet, no auth dependency). The user is
-# verifying the email address attached to their account *before* their
-# first successful login can complete; presenting a session cookie is
-# impossible by construction. The path is registered in
-# ``echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`` so both
-# :class:`echoroo.middleware.auth_router.AuthRouterMiddleware` and
-# :class:`echoroo.middleware.csrf.CsrfMiddleware` bypass the request —
-# identical posture to the sibling ``/password-reset/confirm`` handler
-# above (same "POST from email link, no session, no CSRF token
-# possible" shape).
-#
-# The route delegates to ``EmailVerificationService`` for token lookup,
-# single-use consume, expiry, and account-email binding. Resend remains
-# US2 scope.
-@router.post(
-    "/verify-email",
-    response_model=EmailVerifyResponse,
-    summary="Verify email address",
-    description=(
-        "Verify a user's email address using a one-time token issued in the "
-        "registration email. Pre-session endpoint: no auth, no CSRF — the "
-        "token itself is the proof. Mirrors the legacy "
-        "``POST /api/v1/auth/verify-email`` surface (spec/009 PR B inventory "
-        "gap follow-up)."
-    ),
-    responses={400: {"description": "Invalid, expired, or already-used token"}},
-)
-async def verify_email(
-    payload: EmailVerifyRequest,
-    db: DbSession,
-) -> EmailVerifyResponse | JSONResponse:
-    """Verify user email with token (BFF mirror of legacy /api/v1/auth/verify-email)."""
-    service = EmailVerificationService(db)
-    try:
-        result = await service.verify_token(payload.token)
-    except EmailVerificationError as exc:
-        await db.rollback()
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={"code": exc.code},
-        )
-    await db.commit()
-    return EmailVerifyResponse(
-        user_id=result.user_id,
-        email=result.email,
-        email_verified_at=result.email_verified_at,
-        email_verification_required=False,
-    )
-
-
-@router.post(
-    "/verify-email/resend",
-    response_model=EmailVerificationResendResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Resend email verification",
-    description=(
-        "Accept an email verification resend request without exposing whether "
-        "the account exists or is already verified."
-    ),
-    responses={
-        202: {"description": "Resend request accepted"},
-        429: {"description": "Too many resend attempts"},
-    },
-)
-async def resend_email_verification(
-    payload: EmailVerificationResendRequest,
-    request: Request,
-    db: DbSession,
-) -> EmailVerificationResendResponse | JSONResponse:
-    """Queue a replacement verification token while preserving anti-enumeration."""
-    try:
-        email = _normalize_email(payload.email)
-    except HTTPException:
-        await _write_platform_audit(
-            actor_user_id=None,
-            action="auth.email_verification_resend_requested",
-            request=request,
-            detail={"email_validation_failed": True},
-        )
-        return EmailVerificationResendResponse()
-
-    retry_after = _rate_limit_email_verification_resend(
-        ip=_client_ip(request),
-        email=email,
-    )
-    if retry_after is not None:
-        await _write_platform_audit(
-            actor_user_id=None,
-            action="auth.email_verification_resend_rate_limited",
-            request=request,
-            detail={"email_hash": compute_pii_hash(email)},
-        )
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"code": "ERR_EMAIL_VERIFICATION_RESEND_RATE_LIMITED"},
-            headers={"Retry-After": str(retry_after)},
-        )
-
-    user = await UserRepository(db).get_by_email(email)
-    if user is not None and user.deleted_at is None and user.email_verified_at is None:
-        await EmailVerificationService(db).issue_verification_token(
-            user=user,
-            email=user.email,
-            ip=_client_ip(request),
-            user_agent=_user_agent(request),
-        )
-        await db.commit()
-    else:
-        await db.rollback()
-
-    await _write_platform_audit(
-        actor_user_id=user.id if user is not None and user.deleted_at is None else None,
-        action="auth.email_verification_resend_requested",
-        request=request,
-        detail={"email_hash": compute_pii_hash(email)},
-    )
-    return EmailVerificationResendResponse()
+# spec/011 §FR-011-005 — the legacy self-service password-reset
+# request / confirm + verify-(token) + resend endpoints were removed
+# in Step 10 (T119). Self-service password recovery is replaced by the
+# admin-mediated reset flow (``services/admin_password_reset.py`` +
+# ``POST /web-api/v1/admin/users/{user_id}/password/reset``); the
+# verification flow is removed wholesale because Echoroo no longer
+# treats ``users.email`` as anything other than an operator-supplied
+# login identifier (see spec.md §Summary + FR-011-002).
 
 
 @router.post("/login", response_model=LoginResponse, response_model_exclude_none=True)

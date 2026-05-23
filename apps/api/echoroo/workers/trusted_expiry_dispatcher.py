@@ -131,9 +131,9 @@ async def dispatch_trusted_expiry_notification(
     from echoroo.services.email import _safe_recipient_hash
 
     logger.info(
-        "trusted_expiry_dispatcher: queued warning email "
+        "trusted_expiry_dispatcher: queued warning notification "
         "role=%s recipient_hash=%s invitation_id=%s project_id=%s "
-        "expires_at=%s (Phase 10 stub — Resend wiring lands in Phase 11+)",
+        "expires_at=%s (spec/011 zero-email stub)",
         role,
         _safe_recipient_hash(recipient),
         invitation_id,

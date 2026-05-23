@@ -128,7 +128,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
@@ -311,7 +310,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
@@ -525,7 +523,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
@@ -740,7 +737,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
@@ -922,7 +918,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
@@ -1242,7 +1237,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      RESEND_API_KEY: re_ci_dummy
       TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
       TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development

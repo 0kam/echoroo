@@ -15,13 +15,10 @@ import pytest
 from fastapi import HTTPException, status
 
 from echoroo.api.v1.auth import (
-    confirm_password_reset,
     login,
     logout,
     refresh,
     register,
-    request_password_reset,
-    verify_email,
 )
 
 
@@ -158,63 +155,9 @@ async def test_refresh_sets_new_cookie() -> None:
     response.set_cookie.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_request_password_reset_calls_service() -> None:
-    """request_password_reset() calls service and returns message (lines 259-262)."""
-    auth_service = MagicMock()
-    auth_service.request_password_reset = AsyncMock()
-
-    db = MagicMock()
-    request = MagicMock()
-    request.email = "test@example.com"
-
-    with patch("echoroo.api.v1.auth.AuthService", return_value=auth_service):
-        result = await request_password_reset(
-            request=request,
-            db=db,
-            _rate_limit=None,
-        )
-
-    assert "message" in result
-    auth_service.request_password_reset.assert_called_once_with("test@example.com")
-
-
-@pytest.mark.asyncio
-async def test_confirm_password_reset_calls_service() -> None:
-    """confirm_password_reset() calls service and returns message (lines 294-297)."""
-    auth_service = MagicMock()
-    auth_service.confirm_password_reset = AsyncMock()
-
-    db = MagicMock()
-    request = MagicMock()
-
-    with patch("echoroo.api.v1.auth.AuthService", return_value=auth_service):
-        result = await confirm_password_reset(
-            request=request,
-            db=db,
-        )
-
-    assert "message" in result
-
-
-@pytest.mark.asyncio
-async def test_verify_email_calls_service_and_returns_user() -> None:
-    """verify_email() calls service and validates user (lines 322-325)."""
-    fake_user = MagicMock()
-    auth_service = MagicMock()
-    auth_service.verify_email = AsyncMock(return_value=fake_user)
-
-    db = MagicMock()
-    request = MagicMock()
-    request.token = "verify_token"
-
-    with (
-        patch("echoroo.api.v1.auth.AuthService", return_value=auth_service),
-        patch("echoroo.api.v1.auth.UserResponse.model_validate", return_value=MagicMock()),
-    ):
-        await verify_email(
-            request=request,
-            db=db,
-        )
-
-    auth_service.verify_email.assert_called_once_with("verify_token")
+# spec/011 Step 10 (FR-011-005) — the
+# ``test_request_password_reset_calls_service`` /
+# ``test_confirm_password_reset_calls_service`` /
+# ``test_verify_email_calls_service_and_returns_user`` cases were
+# removed alongside the deleted ``/api/v1/auth/password-reset/*`` and
+# ``/api/v1/auth/verify-email`` endpoints (T120).

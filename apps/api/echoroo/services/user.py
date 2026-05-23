@@ -1,8 +1,10 @@
 """User profile service with business logic."""
 
 import logging
+import unicodedata
 from uuid import UUID
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,11 +13,30 @@ from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.user import PasswordChangeRequest, UserUpdateRequest
 from echoroo.services.email import send_email_change_notification
-from echoroo.services.email_verification_service import (
-    EmailVerificationService,
-    normalize_email_for_verification,
-)
 from echoroo.services.trusted_device_service import TrustedDeviceService
+
+
+def _normalize_email_for_change(email: str) -> str:
+    """Normalize an email address for storage.
+
+    spec/011 Step 10 (T123) inlined the legacy
+    ``EmailVerificationService.normalize_email_for_verification`` helper
+    so removing the email-verification subsystem does not regress the
+    case/Unicode handling of the ``UserService.change_email`` flow
+    (Phase 9 US7 will eventually replace this with the cross-spec
+    ``services.invitation_service.canonicalize_email`` helper once
+    change-email is wired end-to-end).
+    """
+    normalized = unicodedata.normalize("NFKC", email).strip()
+    try:
+        validated = validate_email(
+            normalized,
+            allow_smtputf8=True,
+            check_deliverability=False,
+        )
+    except EmailNotValidError:
+        return normalized.lower()
+    return validated.normalized.lower()
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +169,7 @@ class UserService:
                 detail="User not found",
             )
 
-        normalized_email = normalize_email_for_verification(new_email)
+        normalized_email = _normalize_email_for_change(new_email)
         existing = await self.user_repo.get_by_email(normalized_email)
         if existing is not None and existing.id != user.id:
             raise HTTPException(
@@ -158,22 +179,26 @@ class UserService:
 
         previous_email = user.email
         user.email = normalized_email
-        user.email_verified_at = None
+        # spec/011 §FR-011-002 / Step 10 (T123) — ``email_verified_at``
+        # was removed alongside the email-verification subsystem.
+        # ``change_email`` no longer needs to clear a verification
+        # timestamp; the change-email banner + cool-off invariants are
+        # owned by the FR-011-305 cool-off enforcement (added in
+        # migration 0021).
         await TrustedDeviceService(self.db).revoke_all_for_user(
             user=user,
             reason="email_changed",
         )
-        await EmailVerificationService(self.db).issue_verification_token(
-            user=user,
-            email=normalized_email,
-            ip=ip,
-            user_agent=user_agent,
-        )
+        # Parameters retained for signature parity with the production
+        # FR-011-305 wire-up (Phase 9 US7); they currently land in the
+        # ``send_email_change_notification`` banner stub below.
+        del ip
+        del user_agent
         await self.user_repo.update(user)
         await self.db.commit()
 
         logger.info(
-            "Email changed for user %s; verification reset and trusted devices revoked",
+            "Email changed for user %s; trusted devices revoked",
             user_id,
         )
         if previous_email:

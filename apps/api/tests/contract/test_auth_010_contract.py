@@ -53,21 +53,10 @@ def _properties(schema: dict[str, Any]) -> dict[str, Any]:
     return props
 
 
-def test_verify_email_and_resend_contracts_exist(auth_contract: dict[str, Any]) -> None:
-    paths = auth_contract.get("paths", {})
-
-    verify = paths.get("/auth/verify-email")
-    assert isinstance(verify, dict)
-    assert "post" in verify
-    assert verify["post"].get("security") == []
-    assert "200" in verify["post"].get("responses", {})
-
-    resend = paths.get("/auth/verify-email/resend")
-    assert isinstance(resend, dict)
-    assert "post" in resend
-    assert resend["post"].get("security") == []
-    assert "202" in resend["post"].get("responses", {})
-    assert "429" in resend["post"].get("responses", {})
+# spec/011 §FR-011-005 (NFR-011-009) — the
+# ``test_verify_email_and_resend_contracts_exist`` case was removed
+# alongside the deleted ``/auth/verify-email{,resend}`` path-items in
+# ``specs/006-permissions-redesign/contracts/auth.yaml``.
 
 
 def test_login_response_contract_documents_complete_state(

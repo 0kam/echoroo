@@ -5,9 +5,11 @@ admin 2FA reset workflow:
 
 1. ``POST /confirm-identity-for-2fa-reset``
    * Body: ``{"email": "user@example.com"}``.
-   * Response: **always 202 Accepted** (enumeration defence — mirrors
-     A-6 / password reset). For known accounts we issue a magic-link
-     token and dispatch it via Resend.
+   * Response: **always 202 Accepted** (enumeration defence). For
+     known accounts the service issues a single-use magic-link token
+     and persists its hash; the unhashed token is returned only via
+     the admin-mediated channel (spec/011 Step 4 — the outbound-email
+     dispatch was removed alongside the rest of the email subsystem).
 2. ``POST /confirm-identity-for-2fa-reset/redeem``
    * Body: ``{"magic_token": "..."}``.
    * Response: ``{"confirmation_token": "...", "expires_at": "..."}``.
@@ -152,9 +154,11 @@ class ConfirmIdentityRedeemResponse(BaseModel):
     description=(
         "Always returns 202 Accepted to prevent account enumeration. "
         "When the email matches a real account, a short-lived (30 min) "
-        "magic link is dispatched via Resend. The user clicks the link, "
-        "the redeem endpoint mints a confirmation token, and the support "
-        "agent pastes it into POST /admin/users/{userId}/reset-2fa."
+        "magic link is persisted server-side (spec/011 §FR-011-005 "
+        "removed the outbound-email dispatch). The user receives the "
+        "link out-of-band, clicks it, the redeem endpoint mints a "
+        "confirmation token, and the support agent pastes it into "
+        "POST /admin/users/{userId}/reset-2fa."
     ),
 )
 async def request_confirm_identity(

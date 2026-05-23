@@ -915,7 +915,7 @@ async def test_dispatch_email_failure_writes_email_notification_failed_audit(
     from echoroo.services.two_factor_reset_service import run_dispatch_due_requests
 
     async def _boom(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("simulated Resend outage")
+        raise RuntimeError("simulated banner-enqueue outage")
 
     monkeypatch.setattr(email_svc, "send_2fa_reset_dispatched", _boom)
 

@@ -140,36 +140,13 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
-    AllowlistEntry(
-        path_pattern="/api/v1/auth/password-reset/request",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Pre-authentication password reset request; rate-limited",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/api/v1/auth/password-reset/confirm",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Token-authenticated password reset; token is the credential",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/api/v1/auth/verify-email",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Token-authenticated email verification; runs pre-session",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
+    # spec/011 §FR-011-005 / Step 10 (T129) — the legacy
+    # ``/api/v1/auth/password-reset/{request,confirm}`` +
+    # ``/api/v1/auth/verify-email`` allowlist entries were removed
+    # alongside the deleted route handlers. The endpoint-coverage
+    # hard-fail test in ``tests/security/authorization/
+    # test_endpoint_coverage.py`` therefore no longer needs to exempt
+    # them; the test naturally passes because the endpoints are gone.
     # ---- auth_callback: session surface (/web-api/v1/auth/*) -------------
     AllowlistEntry(
         path_pattern="/web-api/v1/auth/register",
@@ -211,46 +188,10 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
-    AllowlistEntry(
-        path_pattern="/web-api/v1/auth/password-reset/request",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Pre-authentication password reset request; rate-limited",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/web-api/v1/auth/password-reset/confirm",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Token-authenticated password reset; token is the credential",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/web-api/v1/auth/verify-email",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Token-authenticated email verification; runs pre-session",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/web-api/v1/auth/verify-email/resend",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Pre-authentication email verification resend; anti-enumeration response",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
+    # spec/011 §FR-011-005 / Step 10 (T129) — the legacy
+    # ``/web-api/v1/auth/password-reset/{request,confirm}`` +
+    # ``/web-api/v1/auth/verify-email{,/resend}`` allowlist entries were
+    # removed alongside the deleted route handlers.
     AllowlistEntry(
         path_pattern="/web-api/v1/auth/2fa/setup/totp",
         methods=frozenset({"POST"}),

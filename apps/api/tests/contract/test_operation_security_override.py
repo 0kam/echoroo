@@ -61,7 +61,11 @@ _STATE_CHANGING_METHODS = frozenset({"post", "patch", "delete", "put"})
 # no session yet (pre-session auth flow).  Matched against exact path strings.
 _CSRF_EXEMPT_PATHS: frozenset[str] = frozenset(PUBLIC_AUTH_PATHS)
 
-# Paths under /api/v1/ that are public (no auth required, no security override).
+# Paths under /api/v1/ that are public (no auth required, no security
+# override). spec/011 §FR-011-005 / Step 10: the
+# ``/api/v1/auth/password-reset/{request,confirm}`` +
+# ``/api/v1/auth/verify-email`` entries were removed alongside the
+# deleted route handlers (T120).
 _API_V1_PUBLIC_PATHS: frozenset[str] = frozenset(
     {
         "/api/v1/setup/initialize",
@@ -69,9 +73,6 @@ _API_V1_PUBLIC_PATHS: frozenset[str] = frozenset(
         "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/refresh",
-        "/api/v1/auth/password-reset/request",
-        "/api/v1/auth/password-reset/confirm",
-        "/api/v1/auth/verify-email",
     }
 )
 

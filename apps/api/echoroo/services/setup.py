@@ -217,6 +217,12 @@ class SetupService:
             bootstrap_token = _generate_bootstrap_token()
             bootstrap_token_expires = datetime.now(UTC) + _bootstrap_token_ttl()
 
+            # spec/011 §FR-011-002 / FR-011-009 — the bootstrap superuser
+            # row no longer sets ``email_verified_at`` because the
+            # column is dropped in migration 0022. The setup wizard
+            # path is the canonical "no email infrastructure" entry
+            # point: requiring a verification timestamp on the very
+            # first user contradicts spec/011's zero-email goal.
             user_row = User(
                 id=uuid4(),
                 email=str(setup_request.email),
@@ -226,7 +232,6 @@ class SetupService:
                 two_factor_secret_encrypted=encrypted_secret,
                 two_factor_secret_dek_version=encrypted_secret_dek_version,
                 two_factor_backup_codes_hashed=None,
-                email_verified_at=datetime.now(UTC),
                 security_stamp=_security_stamp(),
             )
             self.session.add(user_row)

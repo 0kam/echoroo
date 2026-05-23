@@ -230,7 +230,6 @@ def _build_app() -> object:
     routes = [
         Route("/web-api/v1/auth/login", _ok, methods=["POST"]),
         Route("/web-api/v1/auth/refresh", _ok, methods=["POST"]),
-        Route("/web-api/v1/auth/forgot-password", _ok, methods=["POST"]),
         Route("/web-api/v1/projects", _ok, methods=["POST"]),
         Route("/web-api/v1/projects/123/members", _ok, methods=["POST"]),
     ]
@@ -262,14 +261,9 @@ def test_exempt_refresh_path_passes_without_csrf_token() -> None:
     assert resp.status_code == 200
 
 
-def test_exempt_forgot_password_passes_without_csrf_token() -> None:
-    """Phase 2.10 #6 added forgot-password to the exemption list."""
-    from starlette.testclient import TestClient
-
-    app = _build_app()
-    with TestClient(app) as client:
-        resp = client.post("/web-api/v1/auth/forgot-password")
-    assert resp.status_code == 200
+# spec/011 §FR-011-005 / Step 10 — the legacy ``/web-api/v1/auth/forgot-password``
+# CSRF-exemption case was removed alongside the deleted self-service
+# password-reset route.
 
 
 def test_non_exempt_path_is_blocked_without_csrf_credentials() -> None:

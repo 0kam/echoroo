@@ -50,35 +50,13 @@ class TokenResponse(BaseModel):
     expires_in: int = Field(..., description="Seconds until token expires")
 
 
-class PasswordResetRequest(BaseModel):
-    """Password reset request schema."""
-
-    email: EmailStr = Field(..., description="User's email address")
-
-
-class PasswordResetConfirm(BaseModel):
-    """Password reset confirmation schema."""
-
-    token: str = Field(..., description="Reset token from email")
-    password: str = Field(
-        ..., min_length=8, max_length=128, description="New password (min 8 chars, max 128 chars, must contain letters and numbers)"
-    )
-
-    @field_validator("password")
-    @classmethod
-    def validate_password_complexity(cls, v: str) -> str:
-        """Validate password complexity requirements."""
-        if not any(c.isalpha() for c in v):
-            raise ValueError("Password must contain at least one letter")
-        if not any(c.isdigit() for c in v):
-            raise ValueError("Password must contain at least one number")
-        return v
-
-
-class EmailVerifyRequest(BaseModel):
-    """Email verification request schema."""
-
-    token: str = Field(..., description="Verification token from email")
+# spec/011 Step 10 (T126) — ``PasswordResetRequest`` /
+# ``PasswordResetConfirm`` / ``EmailVerifyRequest`` schemas were
+# removed alongside the deleted self-service password-reset and
+# email-verification endpoints (T119/T120). Password recovery is now
+# admin-mediated (``services/admin_password_reset.py``) and uses the
+# request schemas in ``schemas/web_v1/auth.py``; email verification is
+# removed wholesale (FR-011-005).
 
 
 class UserResponse(BaseModel):

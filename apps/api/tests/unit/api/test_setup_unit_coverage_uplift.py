@@ -25,7 +25,6 @@ def _setup_response() -> SetupCompleteResponse:
                 "id": uuid4(),
                 "email": "admin@example.com",
                 "display_name": "Admin",
-                "email_verified_at": None,
                 "two_factor_enabled": True,
                 "created_at": "2026-01-01T00:00:00Z",
                 "updated_at": "2026-01-01T00:00:00Z",

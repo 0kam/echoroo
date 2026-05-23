@@ -9,15 +9,11 @@ from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
 from echoroo.middleware.rate_limit import (
     login_rate_limiter,
-    password_reset_rate_limiter,
     register_rate_limiter,
 )
 from echoroo.schemas.auth import (
-    EmailVerifyRequest,
     LoginRequest,
     LogoutResponse,
-    PasswordResetConfirm,
-    PasswordResetRequest,
     TokenResponse,
     UserRegisterRequest,
     UserResponse,
@@ -226,101 +222,9 @@ async def refresh(
     return token_response
 
 
-@router.post(
-    "/password-reset/request",
-    status_code=status.HTTP_200_OK,
-    summary="Request password reset",
-    description="Send password reset email (always returns success for security)",
-    responses={
-        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
-        # 204 No Content. The legacy /api/v1 surface still returns 200
-        # with a JSON body for backward compat; only the contract
-        # declaration is widened. Wire behaviour is unchanged.
-        204: {"description": "Reset request accepted (no content)"},
-    },
-)
-async def request_password_reset(
-    request: PasswordResetRequest,
-    db: DbSession,
-    _rate_limit: None = Depends(password_reset_rate_limiter()),
-) -> dict[str, str]:
-    """Request password reset email.
-
-    Args:
-        request: Password reset request data
-        db: Database session
-
-    Returns:
-        Success message
-
-    Note:
-        Always returns success even if email doesn't exist (security best practice)
-    """
-    auth_service = AuthService(db)
-    await auth_service.request_password_reset(request.email)
-
-    return {"message": "If the email exists, a password reset link has been sent"}
-
-
-@router.post(
-    "/password-reset/confirm",
-    status_code=status.HTTP_200_OK,
-    summary="Confirm password reset",
-    description="Reset password using token from email",
-    responses={
-        # Phase 17 contract drift cleanup: contracts/auth.yaml declares
-        # 204 No Content. The legacy /api/v1 surface still returns 200
-        # with a JSON body for backward compat; only the contract
-        # declaration is widened. Wire behaviour is unchanged.
-        204: {"description": "Reset confirmed (no content)"},
-    },
-)
-async def confirm_password_reset(
-    request: PasswordResetConfirm,
-    db: DbSession,
-) -> dict[str, str]:
-    """Confirm password reset with token.
-
-    Args:
-        request: Password reset confirmation data
-        db: Database session
-
-    Returns:
-        Success message
-
-    Raises:
-        400: Invalid or expired token
-    """
-    auth_service = AuthService(db)
-    await auth_service.confirm_password_reset(request)
-
-    return {"message": "Password reset successful"}
-
-
-@router.post(
-    "/verify-email",
-    response_model=UserResponse,
-    summary="Verify email address",
-    description="Verify email using token from registration email",
-    responses={400: {"description": "Invalid or expired token"}},
-)
-async def verify_email(
-    request: EmailVerifyRequest,
-    db: DbSession,
-) -> UserResponse:
-    """Verify user email with token.
-
-    Args:
-        request: Email verification request data
-        db: Database session
-
-    Returns:
-        Updated user response
-
-    Raises:
-        400: Invalid or expired token
-    """
-    auth_service = AuthService(db)
-    user = await auth_service.verify_email(request.token)
-
-    return UserResponse.model_validate(user)
+# spec/011 §FR-011-005 — the legacy ``/api/v1/auth/password-reset/{request,confirm}``
+# and ``/api/v1/auth/verify-email`` endpoints were removed in Step 10
+# (T120). Self-service password recovery is replaced by the
+# admin-mediated reset flow exposed via ``/web-api/v1/admin/users/
+# {user_id}/password/reset``; email verification is removed wholesale
+# (FR-011-002).

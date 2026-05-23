@@ -163,35 +163,15 @@ uv run pytest tests/integration/
 uv run pytest tests/contract/
 ```
 
-### Local Email Verification and Trusted-Device Checks
+### Local Trusted-Device Checks
 
-Use these focused checks when changing email verification, 2FA, or trusted-device behavior. Run commands from `apps/api`.
+Use these focused checks when changing 2FA or trusted-device behavior. Run commands from `apps/api`. spec/011 zero-email deployment removed the verification token flow and the protected-action enforcement gate; the equivalent enforcement under the new model is the forced-password-change middleware covered by `tests/integration/test_must_change_password_middleware.py`.
 
 Keep rollout flags explicit during local testing:
 
 ```bash
-export EMAIL_VERIFICATION_ENFORCEMENT_ENABLED=false
 export TRUSTED_DEVICE_REGISTRATION_ENABLED=false
 export TRUSTED_DEVICE_BYPASS_ENABLED=false
-```
-
-Email verification token flow:
-
-```bash
-uv run pytest tests/integration/api/web_v1/test_auth_verify_email.py
-uv run pytest tests/security/authentication/test_email_verification.py
-uv run pytest tests/security/rate_limiting/test_email_verification_resend.py
-uv run pytest tests/unit/services/test_email_verification_service.py
-uv run pytest tests/unit/workers/test_email_verification_dispatcher.py
-```
-
-For manual local verification, register through `POST /web-api/v1/auth/register`, confirm the user starts with `email_verified_at IS NULL`, inspect the local mail sink or email outbox event for the verification token, then submit it to `POST /web-api/v1/auth/verify-email`. Reusing the same token should fail, and the database should store only the token hash.
-
-Protected-action enforcement:
-
-```bash
-EMAIL_VERIFICATION_ENFORCEMENT_ENABLED=true \
-  uv run pytest tests/security/authentication/test_email_verification_required.py
 ```
 
 Trusted-device registration and cookie behavior:
@@ -254,7 +234,6 @@ This API follows a layered architecture:
 
 - **Authentication**: JWT-based authentication with refresh tokens
 - **Rate Limiting**: Redis-backed rate limiting for API endpoints
-- **Email Notifications**: Using Resend for transactional emails
 - **CAPTCHA Verification**: Server-side CAPTCHA validation
 - **Async Support**: Fully async/await for high performance
 - **Type Safety**: Strict type checking with mypy and Pydantic

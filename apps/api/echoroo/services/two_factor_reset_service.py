@@ -128,6 +128,18 @@ AUDIT_ACTION_APPLIED = "two_factor_reset.applied"
 AUDIT_ACTION_EXPIRED = "two_factor_reset.expired"
 AUDIT_ACTION_CANCELLED = "two_factor_reset.cancelled"
 AUDIT_ACTION_FAILED = "two_factor_reset.failed"
+# spec/011 Step 10 (T125 / carry-over #7): the constant is retained
+# because the dispatch poller (``_apply_one`` below) still wraps
+# ``email_service.send_2fa_reset_dispatched`` in a ``try`` / ``except``
+# defence-in-depth branch that writes this audit row if the stub ever
+# raises. The stub itself is a no-op after spec/011 Step 2 (no Resend
+# call, no network IO), so the branch is unreachable in production —
+# but keeping the constant + branch costs nothing and gives us a
+# pre-wired audit row when Phase 9 US7 rewrites the helper to emit a
+# real banner enqueue (which can fail with DB / serialization errors).
+# The ``stage="applied_notification"`` detail label is a legacy
+# breadcrumb from the email era; it is intentionally preserved so the
+# audit query that filters on the stage still resolves.
 AUDIT_ACTION_EMAIL_FAILED = "two_factor_reset.email_notification_failed"
 AUDIT_ACTION_TOKEN_ISSUED = "two_factor_reset.confirmation_token_issued"
 AUDIT_ACTION_TOKEN_REDEEMED = "two_factor_reset.confirmation_token_redeemed"

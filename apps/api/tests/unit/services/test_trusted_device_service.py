@@ -37,7 +37,6 @@ async def _create_user(session: AsyncSession, email: str = "trusted@example.com"
         display_name="Trusted Device User",
         security_stamp="s" * 64,
         two_factor_enabled=True,
-        email_verified_at=datetime.now(UTC),
     )
     session.add(user)
     await session.flush()

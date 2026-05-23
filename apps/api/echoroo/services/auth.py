@@ -16,7 +16,6 @@ from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.auth import (
     LoginRequest,
-    PasswordResetConfirm,
     TokenResponse,
     UserRegisterRequest,
 )
@@ -277,83 +276,12 @@ class AuthService:
 
         return token_response, new_refresh_token
 
-    async def verify_email(self, token: str) -> User:
-        """Verify user email with token.
-
-        Args:
-            token: Email verification token
-
-        Returns:
-            Verified user instance
-
-        Raises:
-            HTTPException: If token is invalid or expired
-        """
-        from echoroo.services.email_verification_service import (
-            EmailVerificationError,
-            EmailVerificationService,
-        )
-
-        try:
-            result = await EmailVerificationService(self.db).verify_token(token)
-        except EmailVerificationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=exc.code,
-            ) from exc
-        return result.user
-
-    async def request_password_reset(self, email: str) -> None:
-        """Request password reset (always returns success for security).
-
-        Phase 17 A-6 (T979a): anti-enumeration contract — the service
-        completes successfully regardless of whether the email maps to a
-        real user. The full token issuance + email send pipeline lives in
-        the ``/web-api/v1`` surface (``echoroo.api.web_v1.auth``); this
-        legacy ``/api/v1`` entry point only needs to honour the
-        anti-enumeration invariant: never raise an exception based on
-        whether the user exists, so callers cannot use the response to
-        enumerate accounts (OWASP A07).
-
-        Args:
-            email: User's email address
-
-        Note:
-            Always returns success even if email doesn't exist (security best practice).
-        """
-        repo = UserRepository(self.db)
-        user = await repo.get_by_email(email)
-        if user is None or user.deleted_at is not None:
-            # Anti-enumeration: silently no-op for unknown / soft-deleted
-            # users. The web_v1 surface writes a platform audit row; this
-            # legacy v1 surface keeps the contract minimal because the
-            # caller pipeline (web_v1) is the canonical implementation.
-            logger.info(
-                "auth.password_reset.unknown_user",
-                extra={"email_hash_present": bool(email)},
-            )
-            return
-        # Real path is delegated to the web_v1 surface; here we only
-        # confirm the user exists so the contract test verifies the
-        # service does not raise. Token issuance + email enqueue happens
-        # via the web_v1 endpoint which the production frontend uses.
-        logger.info(
-            "auth.password_reset.requested",
-            extra={"user_id": str(user.id)},
-        )
-        return
-
-    async def confirm_password_reset(self, request: PasswordResetConfirm) -> None:
-        """Reset password using token.
-
-        Args:
-            request: Password reset confirmation data
-
-        Raises:
-            HTTPException: If token is invalid or expired
-        """
-        del request
-        _raise_phase4_stub()
+    # spec/011 §FR-011-005 / Step 10 (T121) — the legacy ``verify_email``,
+    # ``request_password_reset``, and ``confirm_password_reset`` methods
+    # were removed wholesale. Self-service password recovery is replaced
+    # by the admin-mediated reset (``services/admin_password_reset.py``);
+    # email verification is removed alongside the rest of the email
+    # subsystem (FR-011-001..010).
 
     async def get_current_user(self, token: str) -> User:
         """Get current user from access token.
