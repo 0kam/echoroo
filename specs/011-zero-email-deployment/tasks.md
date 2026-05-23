@@ -469,8 +469,8 @@
 
 ### Migration 0022 (destructive — runs AFTER all readers gone)
 
-- [ ] T700 Create `apps/api/alembic/versions/0022_email_subsystem_removal.py` (FR-011-002..003): drops `email_verification_tokens`, `password_reset_tokens`, `users.email_verified_at`. `downgrade()` raises (forward-only, NFR-011-002)
-- [ ] T701 [P] Verify the migration runs cleanly on a dev DB that has already received `0021`: pre-migration assert tables exist, run upgrade, post-migration assert tables absent + column absent + every reader from spec/011 Removal Plan grep produces zero hits
+- [x] T700 Create `apps/api/alembic/versions/0022_email_subsystem_removal.py` (FR-011-002..003): drops `email_verification_tokens`, `password_reset_tokens`, `users.email_verified_at`. `downgrade()` raises (forward-only, NFR-011-002)
+- [x] T701 [P] Verify the migration runs cleanly on a dev DB that has already received `0021`: pre-migration assert tables exist, run upgrade, post-migration assert tables absent + column absent + every reader from spec/011 Removal Plan grep produces zero hits
 
 ### Telemetry redaction (R13)
 

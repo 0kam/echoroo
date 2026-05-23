@@ -141,6 +141,15 @@ _EXCLUSION_PREDICATES = (
         rel,
     )
     is not None,
+    # spec/011 Step 11 migration tests (T700/T701) verify the destructive
+    # ``0022_email_subsystem_removal`` migration drops the
+    # ``email_verified_at`` column and the email-token tables; they
+    # therefore reference the deleted-surface identifiers as the very
+    # subject of their assertions. Same rationale as the migration-file
+    # exclusion above — historical-by-design.
+    lambda rel: rel == "apps/api/tests/unit/test_migration_0022.py",
+    lambda rel: rel
+    == "apps/api/tests/integration/migrations/test_0022_email_subsystem_removal.py",
     # spec/011 Step 10b handles the frontend cleanup (T140-T149). Until
     # that PR lands the SvelteKit tree still references the deleted
     # surface in legacy stores, tests, and route components. The
