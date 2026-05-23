@@ -1,12 +1,40 @@
 /**
  * Detection runs API client for TanStack Query.
+ *
+ * spec/009 PR 2: all mutations route through the first-party BFF surface
+ * (`/web-api/v1/*`) so they pass through the cookie + CSRF middleware
+ * stack. The legacy `/api/v1` route is now reserved for programmatic
+ * API-key callers (FR-006).
  */
 
 import type { DetectionRun, DetectionRunListResponse } from '$lib/types/detection';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /** Map from model name to its default version string. */
 const MODEL_VERSIONS: Record<string, string> = {
@@ -41,13 +69,14 @@ export async function createDetectionRun(
 ): Promise<DetectionRun> {
   const modelVersion = MODEL_VERSIONS[modelName] ?? '1.0';
   return apiClient.post<DetectionRun>(
-    `${API_BASE}/projects/${projectId}/detection-runs`,
+    `${WEB_API_BASE}/projects/${projectId}/detection-runs`,
     {
       dataset_id: datasetId,
       model_name: modelName,
       model_version: modelVersion,
       embedding_only: embeddingOnly,
-    }
+    },
+    { headers: csrfHeaders() }
   );
 }
 
@@ -69,7 +98,9 @@ export async function retryDetectionRun(
   runId: string
 ): Promise<DetectionRun> {
   return apiClient.post<DetectionRun>(
-    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/retry`
+    `${WEB_API_BASE}/projects/${projectId}/detection-runs/${runId}/retry`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -81,6 +112,8 @@ export async function cancelDetectionRun(
   runId: string
 ): Promise<DetectionRun> {
   return apiClient.post<DetectionRun>(
-    `${API_BASE}/projects/${projectId}/detection-runs/${runId}/cancel`
+    `${WEB_API_BASE}/projects/${projectId}/detection-runs/${runId}/cancel`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }

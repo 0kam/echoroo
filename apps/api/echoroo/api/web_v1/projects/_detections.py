@@ -1,13 +1,17 @@
-"""Project detection read BFF adapters."""
+"""Project detection BFF adapters (read + spec/009 PR 2 write mutations)."""
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, status
 
 from echoroo.api.v1 import detections as legacy_detections
-from echoroo.core.actions import DETECTION_LIST_ACTION
+from echoroo.core.actions import (
+    DETECTION_CHANGE_SPECIES_ACTION,
+    DETECTION_CREATE_ACTION,
+    DETECTION_LIST_ACTION,
+)
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
@@ -135,4 +139,76 @@ async def get_temporal_data(
         dataset_id=dataset_id,
         detection_run_id=detection_run_id,
         locale=locale,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec/009 PR 2 — write mutations
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/detections",
+    response_model=legacy_detections.DetectionResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create detection",
+    description="BFF adapter for the legacy detection create endpoint.",
+)
+async def create_detection(
+    project_id: UUID,
+    request: legacy_detections.DetectionCreate,
+    http_request: Request,
+    current_user: CurrentUser,
+    service: legacy_detections.DetectionServiceDep,
+    db: DbSession,
+) -> legacy_detections.DetectionResponse:
+    """Delegate detection creation to the legacy handler."""
+    await gate_action(
+        action=DETECTION_CREATE_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    return await legacy_detections.create_detection(
+        project_id=project_id,
+        request=request,
+        http_request=http_request,
+        current_user=current_user,
+        service=service,
+        db=db,
+    )
+
+
+@router.post(
+    "/{project_id}/detections/{detection_id}/change-species",
+    response_model=legacy_detections.DetectionResponse,
+    summary="Change detection species",
+    description="BFF adapter for the legacy detection change-species endpoint.",
+)
+async def change_detection_species(
+    project_id: UUID,
+    detection_id: UUID,
+    request: legacy_detections.ChangeSpeciesRequest,
+    http_request: Request,
+    current_user: CurrentUser,
+    service: legacy_detections.DetectionServiceDep,
+    db: DbSession,
+) -> legacy_detections.DetectionResponse:
+    """Delegate species reassignment to the legacy handler."""
+    await gate_action(
+        action=DETECTION_CHANGE_SPECIES_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=http_request,
+        db=db,
+    )
+    return await legacy_detections.change_species(
+        project_id=project_id,
+        detection_id=detection_id,
+        request=request,
+        http_request=http_request,
+        current_user=current_user,
+        service=service,
+        db=db,
     )

@@ -114,23 +114,38 @@ export async function getRecording(
 
 /**
  * Update a recording.
+ *
+ * spec/009 PR 2: routes through the BFF surface (`/web-api/v1`) so the
+ * mutation passes through CSRF + session-cookie auth.
  */
 export async function updateRecording(
   projectId: string,
   recordingId: string,
   data: RecordingUpdate
 ): Promise<RecordingDetail> {
+  const headers: Record<string, string> = {};
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   return apiClient.patch<RecordingDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}`,
+    data,
+    { headers }
   );
 }
 
 /**
  * Delete a recording.
+ *
+ * spec/009 PR 2: routes through the BFF surface (`/web-api/v1`).
  */
 export async function deleteRecording(projectId: string, recordingId: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/recordings/${recordingId}`);
+  const headers: Record<string, string> = {};
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}`,
+    { headers }
+  );
 }
 
 /**

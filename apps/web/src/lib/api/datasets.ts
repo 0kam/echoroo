@@ -18,8 +18,31 @@ import type {
 } from '$lib/types/data';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Fetch datasets for a project.
@@ -59,7 +82,9 @@ export async function createDataset(
   projectId: string,
   data: DatasetCreate
 ): Promise<DatasetDetail> {
-  return apiClient.post<DatasetDetail>(`${API_BASE}/projects/${projectId}/datasets`, data);
+  return apiClient.post<DatasetDetail>(`${WEB_API_BASE}/projects/${projectId}/datasets`, data, {
+    headers: csrfHeaders(),
+  });
 }
 
 /**
@@ -71,8 +96,9 @@ export async function updateDataset(
   data: DatasetUpdate
 ): Promise<DatasetDetail> {
   return apiClient.patch<DatasetDetail>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -80,7 +106,10 @@ export async function updateDataset(
  * Delete a dataset.
  */
 export async function deleteDataset(projectId: string, datasetId: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/datasets/${datasetId}`);
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}`,
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
@@ -92,20 +121,28 @@ export async function startImport(
   data: ImportRequest = {}
 ): Promise<ImportStatusResponse> {
   return apiClient.post<ImportStatusResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/import`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/import`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
 /**
  * Rescan a dataset for new files.
+ *
+ * NOTE: the backend route `/datasets/{id}/rescan` is not yet implemented;
+ * the path migrated to `/web-api/v1` as part of spec/009 PR 2 so when the
+ * backend handler lands it will already live on the first-party surface.
+ * Until then the call returns HTTP 404 (same as before the migration).
  */
 export async function rescanDataset(
   projectId: string,
   datasetId: string
 ): Promise<ImportStatusResponse> {
   return apiClient.post<ImportStatusResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/rescan`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/rescan`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -117,7 +154,7 @@ export async function fetchImportStatus(
   datasetId: string
 ): Promise<ImportStatusResponse> {
   return apiClient.get<ImportStatusResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/import-status`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/import-status`
   );
 }
 
@@ -153,7 +190,9 @@ export async function autoDetectDatetime(
   datasetId: string
 ): Promise<DatetimeAutoDetectResult> {
   return apiClient.post<DatetimeAutoDetectResult>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/auto-detect`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/auto-detect`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -168,8 +207,9 @@ export async function testDatetimePattern(
   timezone?: string
 ): Promise<DatetimeTestResult[]> {
   return apiClient.post<DatetimeTestResult[]>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/test`,
-    { pattern, format_str: formatStr, timezone: timezone || null }
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/test`,
+    { pattern, format_str: formatStr, timezone: timezone || null },
+    { headers: csrfHeaders() }
   );
 }
 
@@ -184,7 +224,8 @@ export async function applyDatetimePattern(
   timezone?: string
 ): Promise<DatetimeApplyResult> {
   return apiClient.post<DatetimeApplyResult>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/apply`,
-    { pattern, format_str: formatStr, timezone: timezone || null }
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/datetime-config/apply`,
+    { pattern, format_str: formatStr, timezone: timezone || null },
+    { headers: csrfHeaders() }
   );
 }

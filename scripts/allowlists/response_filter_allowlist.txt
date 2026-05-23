@@ -19,3 +19,9 @@ apps/api/echoroo/api/v1/detections.py:reject_detection:missing-response-filter  
 apps/api/echoroo/api/v1/search/annotations.py:create_search_annotation:missing-response-filter  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/sites.py:create_site:missing-response-filter  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/sites.py:update_site:missing-response-filter  # legacy: Phase 3 US11 T1xx
+
+# spec/009 PR 2 thin BFF adapters — same Phase 3 US11 T1xx scope as their legacy counterparts.
+# The BFF handler awaits the legacy function (which is itself allowlisted) and returns its
+# response unchanged. Filter alignment will land alongside the legacy fix.
+apps/api/echoroo/api/web_v1/projects/_detections.py:create_detection:missing-response-filter  # spec/009 PR 2: thin adapter
+apps/api/echoroo/api/web_v1/projects/_detections.py:change_detection_species:missing-response-filter  # spec/009 PR 2: thin adapter
