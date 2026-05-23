@@ -1,5 +1,11 @@
 /**
  * Clip Annotations and Sound Event Annotations API client for TanStack Query.
+ *
+ * Spec/009 PR 2.5: moved off legacy ``/api/v1`` Bearer surface onto the
+ * first-party Cookie + CSRF BFF (`/web-api/v1`). The mutation helpers
+ * attach the CSRF header via ``csrfHeaders()`` (read from
+ * ``echoroo_csrf`` cookie); the GET helper omits it because the BFF
+ * exempts GETs from CSRF.
  */
 
 import type {
@@ -10,7 +16,31 @@ import type {
 } from '$lib/types/annotation';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Get or create the clip annotation associated with an annotation task.
@@ -20,7 +50,7 @@ export async function getOrCreateClipAnnotation(
   taskId: string
 ): Promise<ClipAnnotationDetail> {
   return apiClient.get<ClipAnnotationDetail>(
-    `${API_BASE}/projects/${projectId}/annotation-tasks/${taskId}/clip-annotation`
+    `${WEB_API_BASE}/projects/${projectId}/annotation-tasks/${taskId}/clip-annotation`
   );
 }
 
@@ -34,8 +64,9 @@ export async function addClipTag(
 ): Promise<ClipAnnotationDetail> {
   const body: AddTagRequest = { tag_id: tagId };
   return apiClient.post<ClipAnnotationDetail>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags`,
-    body
+    `${WEB_API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags`,
+    body,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -48,7 +79,8 @@ export async function removeClipTag(
   tagId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags/${tagId}`
+    `${WEB_API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/tags/${tagId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -61,8 +93,9 @@ export async function createSoundEvent(
   data: SoundEventAnnotationCreate
 ): Promise<SoundEventAnnotation> {
   return apiClient.post<SoundEventAnnotation>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/sound-events`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -74,7 +107,8 @@ export async function deleteSoundEvent(
   soundEventId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}`
+    `${WEB_API_BASE}/projects/${projectId}/sound-events/${soundEventId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -88,8 +122,9 @@ export async function addSoundEventTag(
 ): Promise<SoundEventAnnotation> {
   const body: AddTagRequest = { tag_id: tagId };
   return apiClient.post<SoundEventAnnotation>(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags`,
-    body
+    `${WEB_API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags`,
+    body,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -102,7 +137,8 @@ export async function removeSoundEventTag(
   tagId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags/${tagId}`
+    `${WEB_API_BASE}/projects/${projectId}/sound-events/${soundEventId}/tags/${tagId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -116,8 +152,8 @@ export async function reviewClipAnnotation(
   comment?: string
 ): Promise<ClipAnnotationDetail> {
   return apiClient.post<ClipAnnotationDetail>(
-    `${API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/review`,
-    { status, comment }
+    `${WEB_API_BASE}/projects/${projectId}/clip-annotations/${clipAnnotationId}/review`,
+    { status, comment },
+    { headers: csrfHeaders() }
   );
 }
-
