@@ -13,8 +13,31 @@ import type {
 } from '$lib/types/detection';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 // ============================================
 // Query param helpers
@@ -104,8 +127,9 @@ export async function changeDetectionSpecies(
   data: ChangeSpeciesRequest
 ): Promise<Detection> {
   return apiClient.post<Detection>(
-    `${API_BASE}/projects/${projectId}/detections/${detectionId}/change-species`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/detections/${detectionId}/change-species`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -117,8 +141,9 @@ export async function createDetection(
   data: DetectionCreateRequest
 ): Promise<Detection> {
   return apiClient.post<Detection>(
-    `${API_BASE}/projects/${projectId}/detections`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/detections`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 

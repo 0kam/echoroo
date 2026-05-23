@@ -47,6 +47,7 @@ from . import (
     _members,
     _overview,
     _ownership,
+    _recordings,
     _restricted_config,
 )
 
@@ -74,6 +75,12 @@ router.include_router(_ownership.router)
 # Media streams + exports (spec/009 PR D0) — legacy behavior adapters for
 # ``/{project_id}/recordings/{recording_id}/...`` and export downloads.
 router.include_router(_media.router)
+
+# Recording write mutations (spec/009 PR 2) — PATCH / DELETE on
+# ``/{project_id}/recordings/{recording_id}``. Kept separate from
+# ``_media`` so the mutation surface is reviewable independently of the
+# media streaming surface.
+router.include_router(_recordings.router)
 
 # Dataset reads used by the PR D data export screen.
 router.include_router(_datasets.router)
