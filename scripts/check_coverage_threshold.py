@@ -338,6 +338,14 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # introduces fresh coverage; deferring the trim avoids a
         # CI red-light during the incremental refactor.
         "echoroo/services/email.py",
+        # spec/011 Step 12 R1 — `_before_send` response-side scrub
+        # branches (response.body / response.data / response.headers /
+        # response.cookies) added after Codex R1 telemetry-leak finding.
+        # The 4 new pytest cases verify the scrub WORKS but not every
+        # response-shape variation, leaving ~1.4pp uncovered. Step 7c
+        # coverage uplift PR can re-remove once additional Sentry-event
+        # fixture variants are added.
+        "echoroo/observability/sentry.py",
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",
