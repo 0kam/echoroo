@@ -12,20 +12,49 @@
 import type { VoteSummary, CastVoteRequest, VoteValue, SignalQuality } from '$lib/types/detection';
 import { apiClient } from './client';
 
+// spec/009 PR 3a: the generic annotation-vote path (used by search-result
+// review screens) is migrated to ``/web-api/v1``. The detection-vote path
+// (used by the detection review grid) still targets ``/api/v1`` — moving
+// it requires extending the detection BFF module first.
 const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
- * Build the vote URL for a detection (legacy path).
+ * Build the vote URL for a detection (legacy path — still ``/api/v1``).
  */
 function detectionVoteUrl(projectId: string, detectionId: string): string {
   return `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes`;
 }
 
 /**
- * Build the vote URL for a generic annotation.
+ * Build the vote URL for a generic annotation (``/web-api/v1``).
  */
 function annotationVoteUrl(projectId: string, annotationId: string): string {
-  return `${API_BASE}/projects/${projectId}/annotations/${annotationId}/votes`;
+  return `${WEB_API_BASE}/projects/${projectId}/annotations/${annotationId}/votes`;
 }
 
 /**
@@ -105,7 +134,8 @@ export async function castAnnotationVote(
 
   return apiClient.post<VoteSummary>(
     annotationVoteUrl(projectId, annotationId),
-    body
+    body,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -120,6 +150,7 @@ export async function deleteAnnotationVote(
   annotationId: string
 ): Promise<VoteSummary> {
   return apiClient.delete<VoteSummary>(
-    annotationVoteUrl(projectId, annotationId)
+    annotationVoteUrl(projectId, annotationId),
+    { headers: csrfHeaders() }
   );
 }

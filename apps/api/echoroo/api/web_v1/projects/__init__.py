@@ -38,6 +38,7 @@ from . import (
     _annotation_projects,
     _annotation_tasks,
     _annotations,
+    _clips,
     _core,
     _datasets,
     _detection_runs,
@@ -49,6 +50,10 @@ from . import (
     _ownership,
     _recordings,
     _restricted_config,
+    _sites,
+    _tags,
+    _uploads,
+    _votes,
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -99,6 +104,27 @@ router.include_router(_annotation_tasks.router)
 # Annotation mutations (spec/009 PR D) — legacy behavior adapter for
 # ``/{project_id}/clip-annotations/batch-tag``.
 router.include_router(_annotations.router)
+
+# Site CRUD (spec/009 PR 3a) — ``/{project_id}/sites``.
+router.include_router(_sites.router)
+
+# Tag CRUD + GBIF helpers + statistics (spec/009 PR 3a) — ``/{project_id}/tags``.
+router.include_router(_tags.router)
+
+# Clip write mutations (spec/009 PR 3a) — ``/{project_id}/recordings/{recording_id}/clips``
+# POST / PATCH / DELETE / generate. The GET list + GET detail counterparts
+# already live in ``_media`` so this module only owns the write surface.
+router.include_router(_clips.router)
+
+# Upload-session lifecycle (spec/009 PR 3a) — presigned URL issue +
+# completion + status polling under ``/{project_id}/datasets/{dataset_id}/upload-sessions``.
+router.include_router(_uploads.router)
+
+# Generic annotation votes (spec/009 PR 3a) — ``/{project_id}/annotations/{annotation_id}/votes``.
+# The detection-vote path (``/detections/{id}/votes``) is intentionally not
+# in scope here and remains on ``/api/v1`` until the detection BFF is
+# extended.
+router.include_router(_votes.router)
 
 # Trusted overlay management (Phase 10 / T510) — Owner/Admin enumeration
 # under the same ``/projects`` prefix as the rest of the project surface.

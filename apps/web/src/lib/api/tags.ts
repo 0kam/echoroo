@@ -1,5 +1,9 @@
 /**
  * Tags API client for TanStack Query.
+ *
+ * spec/009 PR 3a: all tag CRUD + GBIF + statistics calls go through
+ * ``/web-api/v1`` (cookie + CSRF session boundary). Mutations attach
+ * ``X-CSRF-Token`` via the inline helper below.
  */
 
 import type {
@@ -14,7 +18,31 @@ import type {
 } from '$lib/types/annotation';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Fetch paginated tags for a project.
@@ -33,7 +61,7 @@ export async function fetchTags(
   if (params.search) searchParams.set('search', params.search);
   if (params.locale) searchParams.set('locale', params.locale);
 
-  const url = `${API_BASE}/projects/${projectId}/tags?${searchParams}`;
+  const url = `${WEB_API_BASE}/projects/${projectId}/tags?${searchParams}`;
   return apiClient.get<TagListResponse>(url);
 }
 
@@ -51,14 +79,18 @@ export async function fetchTag(
   const searchParams = new URLSearchParams();
   if (params.locale) searchParams.set('locale', params.locale);
   const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
-  return apiClient.get<TagDetail>(`${API_BASE}/projects/${projectId}/tags/${tagId}${qs}`);
+  return apiClient.get<TagDetail>(`${WEB_API_BASE}/projects/${projectId}/tags/${tagId}${qs}`);
 }
 
 /**
  * Create a new tag.
  */
 export async function createTag(projectId: string, data: TagCreate): Promise<Tag> {
-  return apiClient.post<Tag>(`${API_BASE}/projects/${projectId}/tags`, data);
+  return apiClient.post<Tag>(
+    `${WEB_API_BASE}/projects/${projectId}/tags`,
+    data,
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
@@ -69,14 +101,21 @@ export async function updateTag(
   tagId: string,
   data: TagUpdate
 ): Promise<Tag> {
-  return apiClient.patch<Tag>(`${API_BASE}/projects/${projectId}/tags/${tagId}`, data);
+  return apiClient.patch<Tag>(
+    `${WEB_API_BASE}/projects/${projectId}/tags/${tagId}`,
+    data,
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
  * Delete a tag by ID.
  */
 export async function deleteTag(projectId: string, tagId: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/projects/${projectId}/tags/${tagId}`);
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/tags/${tagId}`,
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
@@ -89,7 +128,7 @@ export async function fetchGBIFSuggestions(
 ): Promise<GBIFSuggestion[]> {
   const searchParams = new URLSearchParams({ q: query, limit: limit.toString() });
   return apiClient.get<GBIFSuggestion[]>(
-    `${API_BASE}/projects/${projectId}/tags/gbif-suggest?${searchParams}`
+    `${WEB_API_BASE}/projects/${projectId}/tags/gbif-suggest?${searchParams}`
   );
 }
 
@@ -107,6 +146,6 @@ export async function fetchTagStatistics(
   if (params.locale) searchParams.set('locale', params.locale);
   const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
   return apiClient.get<TagStatistic[]>(
-    `${API_BASE}/projects/${projectId}/tags/statistics${qs}`,
+    `${WEB_API_BASE}/projects/${projectId}/tags/statistics${qs}`,
   );
 }

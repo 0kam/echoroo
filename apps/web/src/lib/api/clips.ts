@@ -16,8 +16,36 @@ import type {
 import { apiClient } from './client';
 import { getAuthenticatedRecordingMediaUrl, getPlaybackUrl, getSpectrogramUrl } from './recordings';
 
+// spec/009 PR 3a: write surface (create / update / delete / generate)
+// migrated to ``/web-api/v1`` (cookie + CSRF). Audio / spectrogram /
+// download URL builders below still target ``/api/v1`` — they ride the
+// media-token scoped-token pattern and are tracked separately.
 const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 export interface ListClipsParams {
   projectId: string;
@@ -65,8 +93,9 @@ export async function createClip(
   data: ClipCreate
 ): Promise<ClipDetail> {
   return apiClient.post<ClipDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -80,8 +109,9 @@ export async function updateClip(
   data: ClipUpdate
 ): Promise<ClipDetail> {
   return apiClient.patch<ClipDetail>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -94,7 +124,8 @@ export async function deleteClip(
   clipId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -107,8 +138,9 @@ export async function generateClips(
   request: ClipGenerateRequest
 ): Promise<ClipGenerateResponse> {
   return apiClient.post<ClipGenerateResponse>(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/generate`,
-    request
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/generate`,
+    request,
+    { headers: csrfHeaders() }
   );
 }
 

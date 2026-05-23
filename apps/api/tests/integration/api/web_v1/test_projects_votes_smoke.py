@@ -1,0 +1,220 @@
+"""Smoke coverage for spec/009 PR 3a generic annotation-vote BFF adapters.
+
+PR 3a moves the generic annotation-vote endpoints (used by search-result
+review screens where annotations are created on the fly and are not
+tied to a detection-run) from ``/api/v1`` to ``/web-api/v1``. The
+detection-vote path (``/detections/{id}/votes`` — used by the detection
+review grid) is intentionally NOT in scope here and stays on
+``/api/v1`` until the detection BFF is extended.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from types import SimpleNamespace
+from typing import Any
+from uuid import UUID, uuid4
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from echoroo.api.v1 import annotation_votes as legacy_annotation_votes
+from echoroo.api.web_v1.projects import _votes as bff_votes
+from echoroo.core.actions import (
+    ANNOTATION_VOTE_CREATE_ACTION,
+    ANNOTATION_VOTE_LIST_ACTION,
+)
+from echoroo.core.database import get_db
+from echoroo.middleware.auth import get_current_user
+from echoroo.models.enums import DetectionStatus
+from echoroo.schemas.annotation_vote import VoteSummaryResponse
+from tests.integration.api.web_v1._helpers import assert_api_key_cross_rejected
+
+
+def _fake_vote_summary(*, annotation_id: UUID) -> VoteSummaryResponse:
+    return VoteSummaryResponse(
+        annotation_id=annotation_id,
+        agree_count=0,
+        disagree_count=0,
+        unsure_count=0,
+        user_vote=None,
+        user_signal_quality=None,
+        signal_quality_counts={},
+        consensus_status=DetectionStatus.UNREVIEWED,
+        voters=[],
+    )
+
+
+async def _fake_db() -> AsyncIterator[object]:
+    yield object()
+
+
+def _make_capturing_gate_action(captured: dict[str, object]) -> Any:
+    async def fake(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return object()
+
+    return fake
+
+
+def _build_app(*, user: object, service: object) -> FastAPI:
+    app = FastAPI()
+    app.include_router(bff_votes.router, prefix="/web-api/v1/projects")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = _fake_db
+    app.dependency_overrides[legacy_annotation_votes.get_vote_service] = (
+        lambda: service
+    )
+    return app
+
+
+@pytest.mark.asyncio
+async def test_vote_summary_bff_delegates_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    annotation_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_get_votes(**kwargs: object) -> VoteSummaryResponse:
+        captured.update(kwargs)
+        return _fake_vote_summary(annotation_id=annotation_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_votes, "get_annotation_votes", fake_get_votes
+    )
+    monkeypatch.setattr(
+        bff_votes, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes"
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["project_id"] == project_id
+    assert captured["annotation_id"] == annotation_id
+    assert captured["current_user"] is user
+    assert captured["vote_service"] is service
+    assert gate_captured["action"] is ANNOTATION_VOTE_LIST_ACTION
+
+
+@pytest.mark.asyncio
+async def test_vote_cast_bff_delegates_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    annotation_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_cast_vote(**kwargs: object) -> VoteSummaryResponse:
+        captured.update(kwargs)
+        return _fake_vote_summary(annotation_id=annotation_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_votes, "cast_annotation_vote", fake_cast_vote
+    )
+    monkeypatch.setattr(
+        bff_votes, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes",
+            json={"vote": "agree"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["project_id"] == project_id
+    assert captured["annotation_id"] == annotation_id
+    payload = captured["request"]
+    assert isinstance(payload, legacy_annotation_votes.VoteCastRequest)
+    assert payload.vote.value == "agree"
+    assert gate_captured["action"] is ANNOTATION_VOTE_CREATE_ACTION
+
+
+@pytest.mark.asyncio
+async def test_vote_delete_bff_delegates_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = uuid4()
+    annotation_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_delete_vote(**kwargs: object) -> VoteSummaryResponse:
+        captured.update(kwargs)
+        return _fake_vote_summary(annotation_id=annotation_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_votes, "delete_annotation_vote", fake_delete_vote
+    )
+    monkeypatch.setattr(
+        bff_votes, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.delete(
+            f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes"
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["project_id"] == project_id
+    assert captured["annotation_id"] == annotation_id
+    assert gate_captured["action"] is ANNOTATION_VOTE_CREATE_ACTION
+
+
+def test_vote_bff_paths_declared_in_openapi() -> None:
+    app = _build_app(user=SimpleNamespace(id=uuid4()), service=object())
+    paths = app.openapi()["paths"]
+
+    votes_path = (
+        "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes"
+    )
+    assert "get" in paths[votes_path]
+    assert "post" in paths[votes_path]
+    assert "delete" in paths[votes_path]
+
+
+@pytest.mark.asyncio
+async def test_vote_bff_paths_reject_api_key_bearer(
+    client: AsyncClient,
+) -> None:
+    project_id = uuid4()
+    annotation_id = uuid4()
+
+    await assert_api_key_cross_rejected(
+        client,
+        "GET",
+        f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes",
+    )
+    await assert_api_key_cross_rejected(
+        client,
+        "POST",
+        f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes",
+        body={"vote": "agree"},
+    )
+    await assert_api_key_cross_rejected(
+        client,
+        "DELETE",
+        f"/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes",
+    )
