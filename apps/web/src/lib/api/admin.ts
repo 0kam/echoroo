@@ -1,5 +1,13 @@
 /**
- * Admin API endpoints
+ * Admin API endpoints.
+ *
+ * spec/009 PR 5: the four superuser surfaces (list/update users, get/update
+ * system settings) now resolve through the cookie + CSRF BFF mount
+ * (`/web-api/v1/admin/*`). The legacy `/api/v1/admin/*` route stays live
+ * for M2M API-key callers, but cookie-session admins must go through the
+ * BFF or the AuthRouter middleware rejects the request with 401 →
+ * auto-logout. Mutations attach `X-CSRF-Token` via the inline
+ * `csrfHeaders()` helper used by every other migrated BFF module.
  */
 
 import type {
@@ -13,6 +21,32 @@ import { apiClient } from './client';
 
 // Re-export types for convenience
 export type { SystemSetting, AdminUserUpdateRequest, SystemSettingsUpdateRequest };
+
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 export const adminApi = {
   /**
@@ -31,7 +65,7 @@ export const adminApi = {
     if (params?.is_active !== undefined) queryParams.set('is_active', params.is_active.toString());
 
     const query = queryParams.toString();
-    const endpoint = `/api/v1/admin/users${query ? `?${query}` : ''}`;
+    const endpoint = `${WEB_API_BASE}/admin/users${query ? `?${query}` : ''}`;
 
     return apiClient.get<AdminUserListResponse>(endpoint);
   },
@@ -40,20 +74,28 @@ export const adminApi = {
    * Update user (superuser only)
    */
   updateUser: async (userId: string, data: AdminUserUpdateRequest): Promise<AdminUserResponse> => {
-    return apiClient.patch<AdminUserResponse>(`/api/v1/admin/users/${userId}`, data);
+    return apiClient.patch<AdminUserResponse>(
+      `${WEB_API_BASE}/admin/users/${userId}`,
+      data,
+      { headers: csrfHeaders() }
+    );
   },
 
   /**
    * Get system settings (superuser only)
    */
   getSystemSettings: async (): Promise<Record<string, SystemSetting>> => {
-    return apiClient.get<Record<string, SystemSetting>>('/api/v1/admin/settings');
+    return apiClient.get<Record<string, SystemSetting>>(`${WEB_API_BASE}/admin/settings`);
   },
 
   /**
    * Update system settings (superuser only)
    */
   updateSystemSettings: async (data: SystemSettingsUpdateRequest): Promise<void> => {
-    return apiClient.patch<void>('/api/v1/admin/settings', data);
+    return apiClient.patch<void>(
+      `${WEB_API_BASE}/admin/settings`,
+      data,
+      { headers: csrfHeaders() }
+    );
   },
 };
