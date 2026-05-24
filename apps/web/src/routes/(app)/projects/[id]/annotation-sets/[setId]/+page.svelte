@@ -49,7 +49,7 @@
   const detailQuery = $derived(
     createQuery({
       queryKey: ['annotation-set', setId],
-      queryFn: () => getAnnotationSet(setId),
+      queryFn: () => getAnnotationSet(projectId, setId),
       enabled: !!setId,
       refetchOnWindowFocus: false,
       // Poll while sampling; stop once ready/in_progress/completed.
@@ -91,7 +91,7 @@
     createQuery({
       queryKey: ['annotation-set-segments', setId, segmentFilter],
       queryFn: () =>
-        listSegments(setId, {
+        listSegments(projectId, setId, {
           status: segmentFilter === 'all' ? undefined : segmentFilter,
           page_size: 100,
         }),
@@ -108,7 +108,7 @@
   let renameValue = $state('');
 
   const renameMutationState = createMutation({
-    mutationFn: (name: string) => updateAnnotationSet(setId, { name }),
+    mutationFn: (name: string) => updateAnnotationSet(projectId, setId, { name }),
     onSuccess: (updated) => {
       queryClient.setQueryData(['annotation-set', setId], updated);
       queryClient.invalidateQueries({ queryKey: ['annotation-sets', projectId] });
@@ -144,7 +144,7 @@
   let evaluationDialogOpen = $state(false);
 
   const deleteMutationState = createMutation({
-    mutationFn: () => deleteAnnotationSet(setId),
+    mutationFn: () => deleteAnnotationSet(projectId, setId),
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ['annotation-set', setId] });
       queryClient.invalidateQueries({ queryKey: ['annotation-sets', projectId] });
@@ -188,7 +188,7 @@
   });
 
   const addPaletteMutationState = createMutation({
-    mutationFn: (speciesId: string) => addPalette(setId, { species_id: speciesId }),
+    mutationFn: (speciesId: string) => addPalette(projectId, setId, { species_id: speciesId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
       paletteQuery = '';
@@ -200,7 +200,7 @@
   });
 
   const removePaletteMutationState = createMutation({
-    mutationFn: (speciesId: string) => removePalette(setId, speciesId),
+    mutationFn: (speciesId: string) => removePalette(projectId, setId, speciesId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
     },

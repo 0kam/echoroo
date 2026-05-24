@@ -1,8 +1,15 @@
 /**
  * Similarity search API client.
  *
- * Provides functions for searching audio embeddings by similarity using
- * either an existing embedding ID or an uploaded audio file.
+ * spec/009 PR 4: all search, xeno-canto, embedding-stats, and search
+ * annotation calls go through ``/web-api/v1`` (cookie + CSRF session
+ * boundary). Mutations attach ``X-CSRF-Token`` via the inline helper
+ * below.
+ *
+ * Out of scope for the migration: ``getReferenceAudioUrl`` returns a
+ * synchronous URL string for ``<audio src=...>`` consumption (not a
+ * fetch), so it continues to point at the legacy ``/api/v1`` mount.
+ * Moving it would require a media-token plumb on the BFF side.
  */
 
 import type {
@@ -21,7 +28,33 @@ import type {
 import { apiClient } from './client';
 import { ApiError } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+// Legacy mount retained for ``getReferenceAudioUrl`` only — see note above.
+const LEGACY_API_BASE = '/api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Fetch embedding statistics for a project.
@@ -43,7 +76,7 @@ export async function fetchEmbeddingStats(
   }
   const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<EmbeddingStats>(
-    `${API_BASE}/projects/${projectId}/search/embedding-stats${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/search/embedding-stats${qs}`
   );
 }
 
@@ -76,7 +109,7 @@ export async function searchXenoCanto(
   if (params.per_page !== undefined) qs.set('per_page', String(params.per_page));
 
   return apiClient.get<XenoCantoSearchResponse>(
-    `${API_BASE}/projects/${projectId}/xeno-canto/search?${qs.toString()}`
+    `${WEB_API_BASE}/projects/${projectId}/xeno-canto/search?${qs.toString()}`
   );
 }
 
@@ -94,7 +127,7 @@ export async function fetchXenoCantoAudio(
   xcId: string
 ): Promise<ArrayBuffer> {
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/xeno-canto/audio/${xcId}`
+    `${WEB_API_BASE}/projects/${projectId}/xeno-canto/audio/${xcId}`
   );
   if (!response.ok) {
     throw new Error(`Failed to fetch Xeno-canto audio: ${response.status} ${response.statusText}`);
@@ -107,6 +140,13 @@ export async function fetchXenoCantoAudio(
  *
  * The backend streams the audio from S3, supporting HTTP Range headers for seeking.
  *
+ * spec/009 PR 4 NOTE: this is a synchronous URL builder used in
+ * ``<audio src=...>`` markup, NOT an XHR. The browser sends the request
+ * with no Authorization header (the BFF cookie auto-attaches only via
+ * fetch credentials), so migrating it to ``/web-api/v1`` requires a
+ * media-token flow on the BFF side. Kept on the legacy mount until the
+ * media-token plumb lands.
+ *
  * @param projectId - Project UUID
  * @param sessionId - Search session UUID that owns the audio
  * @param sourceIndex - Index of the audio file within the session's reference_audio_keys list
@@ -117,7 +157,7 @@ export function getReferenceAudioUrl(
   sessionId: string,
   sourceIndex: number
 ): string {
-  return `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}`;
+  return `${LEGACY_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}`;
 }
 
 /**
@@ -192,11 +232,12 @@ export async function searchBatch(
 
   // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/batch`,
+    `${WEB_API_BASE}/projects/${projectId}/search/batch`,
     {
       method: 'POST',
       // Do not set Content-Type — browser sets it with the correct multipart boundary
       body: formData,
+      headers: csrfHeaders(),
     }
   );
 
@@ -230,7 +271,7 @@ export async function getSearchJobStatus(
 ): Promise<SearchJobStatusResponse> {
   const params = locale ? `?locale=${locale}` : '';
   return apiClient.get<SearchJobStatusResponse>(
-    `${API_BASE}/projects/${projectId}/search/jobs/${jobId}${params}`
+    `${WEB_API_BASE}/projects/${projectId}/search/jobs/${jobId}${params}`
   );
 }
 
@@ -255,11 +296,15 @@ export async function createAnnotationFromSearch(
     search_session_id?: string;
   }
 ): Promise<unknown> {
-  return apiClient.post<unknown>(`${API_BASE}/projects/${projectId}/annotations`, {
-    ...data,
-    review_status: data.review_status ?? 'confirmed',
-    source: data.source ?? 'similarity_search',
-  });
+  return apiClient.post<unknown>(
+    `${WEB_API_BASE}/projects/${projectId}/annotations`,
+    {
+      ...data,
+      review_status: data.review_status ?? 'confirmed',
+      source: data.source ?? 'similarity_search',
+    },
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
@@ -282,7 +327,7 @@ export async function listSearchSessions(
     params.set('locale', locale);
   }
   return apiClient.get<SearchSessionListResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions?${params}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions?${params}`
   );
 }
 
@@ -301,7 +346,7 @@ export async function getSearchSession(
 ): Promise<SearchSession> {
   const params = locale ? `?locale=${locale}` : '';
   return apiClient.get<SearchSession>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}${params}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}${params}`
   );
 }
 
@@ -316,7 +361,8 @@ export async function deleteSearchSession(
   sessionId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -334,8 +380,9 @@ export async function updateSearchSession(
   name: string
 ): Promise<SearchSession> {
   return apiClient.patch<SearchSession>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
-    { name }
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}`,
+    { name },
+    { headers: csrfHeaders() }
   );
 }
 
@@ -407,10 +454,11 @@ export async function rerunSearchSession(
 
   // Use requestRaw to avoid automatic Content-Type injection (browser sets multipart boundary)
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/rerun`,
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/rerun`,
     {
       method: 'PUT',
       body: formData,
+      headers: csrfHeaders(),
     }
   );
 
@@ -437,7 +485,7 @@ export async function exportSearchSessionCSV(
   sessionId: string
 ): Promise<void> {
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export/csv`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export/csv`
   );
 
   if (!response.ok) {
@@ -482,7 +530,7 @@ export async function getSessionDistribution(
   }
   const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<SessionDistributionResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/distribution${qs}`
   );
 }
 
@@ -508,7 +556,7 @@ export async function getSessionTimeDistribution(
   }
   const qs = params.toString() ? `?${params.toString()}` : '';
   return apiClient.get<SessionTimeDistributionResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/time-distribution${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/time-distribution${qs}`
   );
 }
 
@@ -542,7 +590,7 @@ export async function getSessionSample(
     params.set('species_key', speciesKey);
   }
   return apiClient.get<SessionSampleResponse>(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/sample?${params}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/sample?${params}`
   );
 }
 
@@ -563,7 +611,7 @@ export async function exportSearchSessionRecordingsCSV(
 ): Promise<void> {
   const params = locale ? `?locale=${locale}` : '';
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings${params}`
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/export-recordings${params}`
   );
 
   if (!response.ok) {

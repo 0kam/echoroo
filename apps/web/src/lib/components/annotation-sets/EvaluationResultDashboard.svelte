@@ -38,7 +38,7 @@
   const summaryQuery = $derived(
     createQuery({
       queryKey: ['evaluation-run', evaluationRunId],
-      queryFn: () => getEvaluationRun(evaluationRunId),
+      queryFn: () => getEvaluationRun(projectId, evaluationRunId),
       enabled: !!evaluationRunId,
       refetchOnWindowFocus: false,
       refetchInterval: (query): number | false => {

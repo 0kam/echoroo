@@ -181,3 +181,9 @@ apps/api/echoroo/api/web_v1/projects/_tags.py:get_statistics:missing-permission-
 apps/api/echoroo/api/web_v1/projects/_tags.py:get_tag:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_tags.py:list_tags:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_uploads.py:get_upload_session_status:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
+
+# spec/009 PR 4 thin BFF adapters — same Phase 3 US11 T1xx scope as the legacy
+# api/v1/recorders.py entry above. The BFF delegates to the legacy ``list_recorders``
+# handler (which itself is allowlisted) and adds no guard of its own — the
+# public recorder catalog has no project_id to gate on; auth alone is sufficient.
+apps/api/echoroo/api/web_v1/_recorders.py:list_recorders:missing-permission-guard  # spec/009 PR 4: thin adapter (legacy unguarded)

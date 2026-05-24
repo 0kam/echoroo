@@ -66,7 +66,7 @@
 
   const mutation = createMutation({
     mutationFn: (refs: EvaluationModelRef[]) =>
-      evaluateAnnotationSet(setId, { model_refs: refs }),
+      evaluateAnnotationSet(projectId, setId, { model_refs: refs }),
     onSuccess: (run) => {
       queryClient.invalidateQueries({
         queryKey: ['evaluation-runs', setId],

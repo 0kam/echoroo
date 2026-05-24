@@ -71,6 +71,7 @@ _EXCLUDED_PATH_PREFIXES: tuple[str, ...] = (
     "/api/v1/h3",              # H3 ↔ lat/lng conversion tools
     "/api/v1/projects/{project_id}/xeno-canto",  # Xeno-Canto proxy
     "/api/v1/projects/{project_id}/overview",    # Admin overview stats
+    "/web-api/v1/projects/{project_id}/xeno-canto",  # spec/009 PR 4: BFF mirror of Xeno-Canto proxy
 )
 
 

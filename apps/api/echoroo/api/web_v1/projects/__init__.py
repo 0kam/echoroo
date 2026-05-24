@@ -36,12 +36,14 @@ from echoroo.api.web_v1 import trusted as trusted_module
 
 from . import (
     _annotation_projects,
+    _annotation_sets,
     _annotation_tasks,
     _annotations,
     _clips,
     _core,
     _custom_models,
     _datasets,
+    _detection_export,
     _detection_runs,
     _detections,
     _license,
@@ -51,6 +53,7 @@ from . import (
     _ownership,
     _recordings,
     _restricted_config,
+    _search,
     _sites,
     _tags,
     _uploads,
@@ -133,6 +136,32 @@ router.include_router(_votes.router)
 # routes are centrally gated through ``gate_action`` (no allowlist
 # entries required).
 router.include_router(_custom_models.router)
+
+# Detection export (spec/009 PR 4) — ``/{project_id}/detections/export/...``.
+# Two streaming endpoints (CSV row-by-row + ZIP archive) delegated to the
+# legacy ``detections.py`` handlers. Mounted BEFORE ``_search.router`` so
+# the literal ``/detections/export/*`` segments win deterministically over
+# any future ``/detections/{id}/...`` adapter additions.
+router.include_router(_detection_export.router)
+
+# Annotation-set ground-truth + segment + evaluation surface (spec/009 PR 4).
+# 18 endpoints covering AnnotationSet CRUD, Palette, Segment lifecycle,
+# TimeRangeAnnotation lifecycle, notes, and EvaluationRun lifecycle. Each
+# BFF adapter project-scopes a legacy path that originally lived under the
+# tenant-wide ``/api/v1/annotation-sets`` / ``/segments`` / ``/annotations``
+# / ``/evaluation-runs`` mounts (no allowlist entries required — every BFF
+# handler fires ``gate_action`` even though the legacy handlers do not).
+router.include_router(_annotation_sets.router)
+
+# Search surface (spec/009 PR 4) — ``/{project_id}/search/...``,
+# ``/{project_id}/xeno-canto/...``, ``/{project_id}/annotations``.
+# 16 endpoints covering session CRUD, distribution / sample, batch
+# submission + polling, embedding stats, Xeno-canto proxy, and search
+# annotation creation (plus 2 streaming CSV exports). Each route fires a
+# per-endpoint Action gate at the BFF layer before delegating to the
+# legacy handler (whose own ``AuthorizedSearchSessionServiceDep`` re-fires
+# ``SEARCH_SESSION_LIST_ACTION`` idempotently).
+router.include_router(_search.router)
 
 # Trusted overlay management (Phase 10 / T510) — Owner/Admin enumeration
 # under the same ``/projects`` prefix as the rest of the project surface.

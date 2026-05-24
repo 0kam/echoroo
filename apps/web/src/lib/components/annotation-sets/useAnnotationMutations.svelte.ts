@@ -88,7 +88,8 @@ export function useAnnotationMutations(
   }
 
   const createAnnotationMutation = createMutation({
-    mutationFn: (args: CreateArgs) => createAnnotation(args.capturedSegmentId, args.body),
+    mutationFn: (args: CreateArgs) =>
+      createAnnotation(input.projectId(), args.capturedSegmentId, args.body),
     onSuccess: (annotation: TimeRangeAnnotation, args: CreateArgs) => {
       if (disposed) return;
       queryClient.invalidateQueries({
@@ -112,7 +113,7 @@ export function useAnnotationMutations(
 
   const updateAnnotationSpeciesMutation = createMutation({
     mutationFn: (args: { id: string; speciesId: string }) =>
-      updateAnnotation(args.id, { species_id: args.speciesId }),
+      updateAnnotation(input.projectId(), args.id, { species_id: args.speciesId }),
     onSuccess: () => {
       if (disposed) return;
       queryClient.invalidateQueries({
@@ -136,7 +137,7 @@ export function useAnnotationMutations(
   }
 
   const deleteAnnotationMutation = createMutation({
-    mutationFn: (args: DeleteArgs) => deleteAnnotation(args.id),
+    mutationFn: (args: DeleteArgs) => deleteAnnotation(input.projectId(), args.id),
     onSuccess: (_result, args: DeleteArgs) => {
       if (disposed) return;
       queryClient.invalidateQueries({
@@ -160,7 +161,7 @@ export function useAnnotationMutations(
     mutationFn: (body: {
       status?: AnnotationSegmentDetail['status'];
       is_empty?: boolean;
-    }) => updateSegment(input.segmentId(), body),
+    }) => updateSegment(input.projectId(), input.segmentId(), body),
     onSuccess: () => {
       if (disposed) return;
       const setId = input.setId();
@@ -180,7 +181,7 @@ export function useAnnotationMutations(
 
   const addPaletteMutation = createMutation({
     mutationFn: (speciesId: string) =>
-      addPalette(input.setId(), { species_id: speciesId }),
+      addPalette(input.projectId(), input.setId(), { species_id: speciesId }),
     onSuccess: () => {
       if (disposed) return;
       queryClient.invalidateQueries({
@@ -195,7 +196,7 @@ export function useAnnotationMutations(
 
   const createSegmentNoteMutation = createMutation({
     mutationFn: (body: { content: string; is_issue: boolean }) =>
-      createSegmentNote(input.segmentId(), body),
+      createSegmentNote(input.projectId(), input.segmentId(), body),
     onSuccess: () => {
       if (disposed) return;
       queryClient.invalidateQueries({
@@ -215,7 +216,7 @@ export function useAnnotationMutations(
       content: string;
       is_issue: boolean;
     }) =>
-      createAnnotationNote(args.annotationId, {
+      createAnnotationNote(input.projectId(), args.annotationId, {
         content: args.content,
         is_issue: args.is_issue,
       }),
