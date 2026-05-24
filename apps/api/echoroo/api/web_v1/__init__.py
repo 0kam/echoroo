@@ -2,6 +2,10 @@
 
 from fastapi import APIRouter
 
+from echoroo.api.web_v1 import _admin_licenses as admin_licenses_module
+from echoroo.api.web_v1 import _admin_recorders as admin_recorders_module
+from echoroo.api.web_v1 import _admin_settings as admin_settings_module
+from echoroo.api.web_v1 import _admin_users as admin_users_module
 from echoroo.api.web_v1 import _recorders as recorders_module
 from echoroo.api.web_v1 import admin as admin_module
 from echoroo.api.web_v1 import audit as audit_module
@@ -53,5 +57,16 @@ web_v1_router.include_router(users_module.router)
 # router is a tenant-wide catalog endpoint (no ``project_id`` in the
 # path), consumed by the dataset creation UI.
 web_v1_router.include_router(recorders_module.router)
+# Spec/009 PR 5 — admin superuser BFF migration (launch blocker fix).
+# Mirrors the 14 ``/api/v1/admin/{users,settings,recorders,licenses}``
+# endpoints onto ``/web-api/v1/admin/*`` so admin pages stop 401-ing on
+# cookie-session admin users after spec/006 restricted the legacy
+# programmatic mount to M2M API-key callers. Each sub-router shares
+# the same ``/admin`` prefix and is wired alongside the legacy
+# ``admin_module`` above (looser-override + archive + 2FA reset etc.).
+web_v1_router.include_router(admin_users_module.router)
+web_v1_router.include_router(admin_settings_module.router)
+web_v1_router.include_router(admin_recorders_module.router)
+web_v1_router.include_router(admin_licenses_module.router)
 
 __all__ = ["web_v1_router"]

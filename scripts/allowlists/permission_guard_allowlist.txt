@@ -187,3 +187,27 @@ apps/api/echoroo/api/web_v1/projects/_uploads.py:get_upload_session_status:missi
 # handler (which itself is allowlisted) and adds no guard of its own — the
 # public recorder catalog has no project_id to gate on; auth alone is sufficient.
 apps/api/echoroo/api/web_v1/_recorders.py:list_recorders:missing-permission-guard  # spec/009 PR 4: thin adapter (legacy unguarded)
+
+# spec/009 PR 5 thin admin BFF adapters — sibling of the 14
+# api/v1/admin.py entries above. Each handler calls the module-local
+# ``_gate_admin_platform_action`` helper (mirrors the legacy v1
+# pattern), which in turn calls ``is_allowed`` directly. The lint
+# walks the path operation function body only, so the inner is_allowed
+# is invisible and the legacy parity allowlist applies here too.
+# Phase 3 US11 T1xx cleanup will replace the helper invocation with
+# a canonical ``gate_action`` once the platform-scope Action surface
+# grows a project-less binding.
+apps/api/echoroo/api/web_v1/_admin_licenses.py:create_license:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_licenses.py:delete_license:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_licenses.py:get_license:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_licenses.py:list_licenses:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_licenses.py:update_license:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_recorders.py:create_recorder:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_recorders.py:delete_recorder:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_recorders.py:get_recorder:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_recorders.py:list_recorders:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_recorders.py:update_recorder:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_settings.py:get_system_settings:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_settings.py:update_system_settings:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_users.py:list_users:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/_admin_users.py:update_user:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
