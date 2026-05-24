@@ -1,11 +1,17 @@
 /**
- * Recorder API endpoints
+ * Recorder API endpoints.
+ *
+ * spec/009 PR 4: the public ``fetchRecorders`` call goes through
+ * ``/web-api/v1`` (cookie + CSRF session boundary). The admin
+ * ``recorderApi`` surface stays on the legacy ``/api/v1/admin/recorders``
+ * mount — those routes are superuser-only and not part of the BFF
+ * migration scope.
  */
 
 import type { Recorder, RecorderCreateRequest, RecorderUpdateRequest, RecorderListResponse } from '$lib/types';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 /**
  * Fetch all recorders (public, authenticated endpoint).
@@ -16,7 +22,7 @@ export async function fetchRecorders(params?: { page?: number; limit?: number })
   if (params?.limit) searchParams.set('limit', params.limit.toString());
   const query = searchParams.toString();
 
-  return apiClient.get<RecorderListResponse>(`${API_BASE}/recorders${query ? `?${query}` : ''}`);
+  return apiClient.get<RecorderListResponse>(`${WEB_API_BASE}/recorders${query ? `?${query}` : ''}`);
 }
 
 export const recorderApi = {

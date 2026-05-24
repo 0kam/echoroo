@@ -37,7 +37,7 @@
   const runsQuery = $derived(
     createQuery({
       queryKey: ['evaluation-runs', setId],
-      queryFn: () => listEvaluationRuns(setId, { limit: 50 }),
+      queryFn: () => listEvaluationRuns(projectId, setId, { limit: 50 }),
       enabled: !!setId,
       refetchOnWindowFocus: false,
       refetchInterval: (query): number | false => {
@@ -76,7 +76,7 @@
   let deletingId = $state<string | null>(null);
 
   const deleteMutation = createMutation({
-    mutationFn: (id: string) => deleteEvaluationRun(id),
+    mutationFn: (id: string) => deleteEvaluationRun(projectId, id),
     onSuccess: (_, id) => {
       if (expandedId === id) expandedId = null;
       deletingId = null;

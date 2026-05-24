@@ -32,3 +32,9 @@ apps/api/echoroo/api/web_v1/projects/_detections.py:change_detection_species:mis
 # filter via ``_filter_site_response``) and returns the response unchanged.
 apps/api/echoroo/api/web_v1/projects/_sites.py:create_site:missing-response-filter  # spec/009 PR 3a: thin adapter
 apps/api/echoroo/api/web_v1/projects/_sites.py:update_site:missing-response-filter  # spec/009 PR 3a: thin adapter
+
+# spec/009 PR 4 thin BFF adapter — same Phase 3 US11 T1xx scope as the legacy
+# ``api/v1/search/annotations.py:create_search_annotation`` entry above. The
+# BFF delegates to the legacy function (which returns DetectionResponse) and
+# returns it unchanged. Filter alignment will land alongside the legacy fix.
+apps/api/echoroo/api/web_v1/projects/_search.py:create_annotation_from_search:missing-response-filter  # spec/009 PR 4: thin adapter

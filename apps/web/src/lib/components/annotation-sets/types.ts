@@ -71,6 +71,8 @@ export interface DraftHookApi {
  * Step 1 `types.ts` file does not need to be touched in the follow-up PR.
  */
 export interface MutationHookInput {
+  /** Owning project id (spec/009 PR 4 — required by the BFF path). */
+  projectId: () => string;
   /** Current segment id. */
   segmentId: () => string;
   /** Current annotation set id. */

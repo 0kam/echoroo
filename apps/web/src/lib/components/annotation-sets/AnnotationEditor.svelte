@@ -56,7 +56,7 @@
   const setQuery = $derived(
     createQuery({
       queryKey: ['annotation-set', setId],
-      queryFn: () => getAnnotationSet(setId),
+      queryFn: () => getAnnotationSet(projectId, setId),
       refetchOnWindowFocus: false,
     }),
   );
@@ -64,7 +64,7 @@
   const segmentQuery = $derived(
     createQuery({
       queryKey: ['annotation-segment', segmentId],
-      queryFn: () => getSegment(segmentId),
+      queryFn: () => getSegment(projectId, segmentId),
       refetchOnWindowFocus: false,
     }),
   );
@@ -73,7 +73,7 @@
   const segmentsListQuery = $derived(
     createQuery({
       queryKey: ['annotation-set-segments', setId, 'all'],
-      queryFn: () => listSegments(setId, { page_size: 500 }),
+      queryFn: () => listSegments(projectId, setId, { page_size: 500 }),
       refetchOnWindowFocus: false,
     }),
   );
@@ -189,6 +189,7 @@
   // committed to (stale-segment guard, plan.md §3.2 last bullet). So here
   // we can safely sync selection and clear the draft unconditionally.
   const mutations = useAnnotationMutations({
+    projectId: () => projectId,
     segmentId: () => segmentId,
     setId: () => setId,
     clipStart: () => clipStart,

@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from echoroo.api.web_v1 import _recorders as recorders_module
 from echoroo.api.web_v1 import admin as admin_module
 from echoroo.api.web_v1 import audit as audit_module
 from echoroo.api.web_v1 import auth as auth_module
@@ -47,5 +48,10 @@ web_v1_router.include_router(audit_module.router)
 # auto-logout. Scope is intentionally read-only — see
 # :mod:`echoroo.api.web_v1.users`.
 web_v1_router.include_router(users_module.router)
+# Spec/009 PR 4 — first-party recorders catalog. Mounted at the top
+# level of ``/web-api/v1`` (not under ``/projects``) because the legacy
+# router is a tenant-wide catalog endpoint (no ``project_id`` in the
+# path), consumed by the dataset creation UI.
+web_v1_router.include_router(recorders_module.router)
 
 __all__ = ["web_v1_router"]

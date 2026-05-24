@@ -1,10 +1,14 @@
 /**
  * Detection export API client for downloading CSV and ML datasets.
+ *
+ * spec/009 PR 4: both endpoints go through ``/web-api/v1`` (cookie +
+ * CSRF session boundary). These are GET requests — no CSRF header is
+ * required.
  */
 
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
 
 /**
  * Build query string from export filter params.
@@ -34,7 +38,7 @@ export async function exportDetectionsCSV(
 ): Promise<void> {
   const qs = buildExportParams(params);
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/detections/export/csv${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/detections/export/csv${qs}`
   );
   if (!response.ok) {
     throw new Error(`Export failed: ${response.statusText}`);
@@ -52,7 +56,7 @@ export async function exportMLDataset(
 ): Promise<void> {
   const qs = buildExportParams(params);
   const response = await apiClient.requestRaw(
-    `${API_BASE}/projects/${projectId}/detections/export/ml-dataset${qs}`
+    `${WEB_API_BASE}/projects/${projectId}/detections/export/ml-dataset${qs}`
   );
   if (!response.ok) {
     throw new Error(`Export failed: ${response.statusText}`);

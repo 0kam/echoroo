@@ -1,10 +1,10 @@
 /**
  * Annotation-Set API client.
  *
- * Thin wrappers over the backend endpoints defined by the OpenAPI contracts
- * under `specs/003-annotation/contracts/`. Designed for consumption via
- * TanStack Query (createQuery / createMutation) — each function returns a
- * plain Promise and accepts only serialisable arguments.
+ * spec/009 PR 4: all annotation-set, segment, time-range-annotation,
+ * and evaluation-run calls go through ``/web-api/v1`` (cookie + CSRF
+ * session boundary). Mutations attach ``X-CSRF-Token`` via the inline
+ * helper below.
  *
  * Terminology: the public API (and therefore these clients) uses
  * `species_id`. The backend maps that to `taxon_id` internally.
@@ -34,7 +34,31 @@ import type {
 } from '$lib/types/annotation-set';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 // ============================================================
 // AnnotationSet
@@ -54,42 +78,59 @@ export async function listAnnotationSets(params: {
   page_size?: number;
 }): Promise<AnnotationSetListResponse> {
   const qs = new URLSearchParams();
-  qs.set('project_id', params.project_id);
   if (params.dataset_id) qs.set('dataset_id', params.dataset_id);
   if (params.status) qs.set('status', params.status);
   if (params.page !== undefined) qs.set('page', String(params.page));
   if (params.page_size !== undefined) qs.set('page_size', String(params.page_size));
+  const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiClient.get<AnnotationSetListResponse>(
-    `${API_BASE}/annotation-sets?${qs.toString()}`,
+    `${WEB_API_BASE}/projects/${params.project_id}/annotation-sets${query}`,
   );
 }
 
 /** Fetch a single annotation set with palette + progress. */
-export async function getAnnotationSet(id: string): Promise<AnnotationSetDetail> {
-  return apiClient.get<AnnotationSetDetail>(`${API_BASE}/annotation-sets/${id}`);
+export async function getAnnotationSet(
+  projectId: string,
+  id: string,
+): Promise<AnnotationSetDetail> {
+  return apiClient.get<AnnotationSetDetail>(
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${id}`,
+  );
 }
 
 /** Create a new annotation set (status starts as `sampling`). */
 export async function createAnnotationSet(
   body: AnnotationSetCreate,
 ): Promise<AnnotationSetDetail> {
-  return apiClient.post<AnnotationSetDetail>(`${API_BASE}/annotation-sets`, body);
+  return apiClient.post<AnnotationSetDetail>(
+    `${WEB_API_BASE}/projects/${body.project_id}/annotation-sets`,
+    body,
+    { headers: csrfHeaders() },
+  );
 }
 
 /** Rename an annotation set (only `name` is mutable after sampling). */
 export async function updateAnnotationSet(
+  projectId: string,
   id: string,
   body: AnnotationSetUpdate,
 ): Promise<AnnotationSetDetail> {
   return apiClient.patch<AnnotationSetDetail>(
-    `${API_BASE}/annotation-sets/${id}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${id}`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /** Delete an annotation set (cascades to segments / annotations). */
-export async function deleteAnnotationSet(id: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/annotation-sets/${id}`);
+export async function deleteAnnotationSet(
+  projectId: string,
+  id: string,
+): Promise<void> {
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${id}`,
+    { headers: csrfHeaders() },
+  );
 }
 
 // ============================================================
@@ -98,19 +139,26 @@ export async function deleteAnnotationSet(id: string): Promise<void> {
 
 /** Add a species to the palette of an annotation set. */
 export async function addPalette(
+  projectId: string,
   setId: string,
   body: PaletteEntryCreate,
 ): Promise<PaletteEntry> {
   return apiClient.post<PaletteEntry>(
-    `${API_BASE}/annotation-sets/${setId}/palette`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/palette`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /** Remove a species from the palette (existing annotations are preserved). */
-export async function removePalette(setId: string, speciesId: string): Promise<void> {
+export async function removePalette(
+  projectId: string,
+  setId: string,
+  speciesId: string,
+): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/annotation-sets/${setId}/palette/${speciesId}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/palette/${speciesId}`,
+    { headers: csrfHeaders() },
   );
 }
 
@@ -120,6 +168,7 @@ export async function removePalette(setId: string, speciesId: string): Promise<v
 
 /** List segments within a set (filter by status / is_empty). */
 export async function listSegments(
+  projectId: string,
   setId: string,
   params: ListSegmentsParams = {},
 ): Promise<AnnotationSegmentListResponse> {
@@ -130,23 +179,30 @@ export async function listSegments(
   if (params.page_size !== undefined) qs.set('page_size', String(params.page_size));
   const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiClient.get<AnnotationSegmentListResponse>(
-    `${API_BASE}/annotation-sets/${setId}/segments${query}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/segments${query}`,
   );
 }
 
 /** Fetch full segment detail including annotations and notes. */
-export async function getSegment(id: string): Promise<AnnotationSegmentDetail> {
-  return apiClient.get<AnnotationSegmentDetail>(`${API_BASE}/segments/${id}`);
+export async function getSegment(
+  projectId: string,
+  id: string,
+): Promise<AnnotationSegmentDetail> {
+  return apiClient.get<AnnotationSegmentDetail>(
+    `${WEB_API_BASE}/projects/${projectId}/segments/${id}`,
+  );
 }
 
 /** Update segment state (status, is_empty). */
 export async function updateSegment(
+  projectId: string,
   id: string,
   body: AnnotationSegmentUpdate,
 ): Promise<AnnotationSegmentDetail> {
   return apiClient.patch<AnnotationSegmentDetail>(
-    `${API_BASE}/segments/${id}`,
+    `${WEB_API_BASE}/projects/${projectId}/segments/${id}`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
@@ -159,29 +215,39 @@ export async function updateSegment(
  * Side effect: segment.is_empty is forced to false on success.
  */
 export async function createAnnotation(
+  projectId: string,
   segmentId: string,
   body: TimeRangeAnnotationCreate,
 ): Promise<TimeRangeAnnotation> {
   return apiClient.post<TimeRangeAnnotation>(
-    `${API_BASE}/segments/${segmentId}/annotations`,
+    `${WEB_API_BASE}/projects/${projectId}/segments/${segmentId}/annotations`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /** Update an existing TimeRangeAnnotation. */
 export async function updateAnnotation(
+  projectId: string,
   id: string,
   body: TimeRangeAnnotationUpdate,
 ): Promise<TimeRangeAnnotation> {
   return apiClient.patch<TimeRangeAnnotation>(
-    `${API_BASE}/annotations/${id}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotations/${id}`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /** Delete a TimeRangeAnnotation (parent segment.is_empty may flip). */
-export async function deleteAnnotation(id: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/annotations/${id}`);
+export async function deleteAnnotation(
+  projectId: string,
+  id: string,
+): Promise<void> {
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/annotations/${id}`,
+    { headers: csrfHeaders() },
+  );
 }
 
 // ============================================================
@@ -190,23 +256,27 @@ export async function deleteAnnotation(id: string): Promise<void> {
 
 /** Attach a note to a segment. */
 export async function createSegmentNote(
+  projectId: string,
   segmentId: string,
   body: AnnotationNoteCreate,
 ): Promise<AnnotationNote> {
   return apiClient.post<AnnotationNote>(
-    `${API_BASE}/segments/${segmentId}/notes`,
+    `${WEB_API_BASE}/projects/${projectId}/segments/${segmentId}/notes`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /** Attach a note to a TimeRangeAnnotation. */
 export async function createAnnotationNote(
+  projectId: string,
   annotationId: string,
   body: AnnotationNoteCreate,
 ): Promise<AnnotationNote> {
   return apiClient.post<AnnotationNote>(
-    `${API_BASE}/annotations/${annotationId}/notes`,
+    `${WEB_API_BASE}/projects/${projectId}/annotations/${annotationId}/notes`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
@@ -216,22 +286,26 @@ export async function createAnnotationNote(
 
 /** Dispatch a cross-model evaluation run for a set. */
 export async function evaluateAnnotationSet(
+  projectId: string,
   setId: string,
   body: EvaluationDispatchRequest,
 ): Promise<EvaluationRunResponse> {
   return apiClient.post<EvaluationRunResponse>(
-    `${API_BASE}/annotation-sets/${setId}/evaluate`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/evaluate`,
     body,
+    { headers: csrfHeaders() },
   );
 }
 
 /**
  * List evaluation runs for a set (most recent first).
  *
+ * @param projectId - Project UUID (for BFF scoping)
  * @param setId - AnnotationSet UUID
  * @param params - Optional pagination (limit/offset)
  */
 export async function listEvaluationRuns(
+  projectId: string,
   setId: string,
   params?: { limit?: number; offset?: number },
 ): Promise<EvaluationRunListResponse> {
@@ -240,16 +314,27 @@ export async function listEvaluationRuns(
   if (params?.offset !== undefined) qs.set('offset', String(params.offset));
   const query = qs.toString() ? `?${qs.toString()}` : '';
   return apiClient.get<EvaluationRunListResponse>(
-    `${API_BASE}/annotation-sets/${setId}/evaluation-runs${query}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/evaluation-runs${query}`,
   );
 }
 
 /** Get grouped-by-model summary for an evaluation run. */
-export async function getEvaluationRun(id: string): Promise<EvaluationSummary> {
-  return apiClient.get<EvaluationSummary>(`${API_BASE}/evaluation-runs/${id}`);
+export async function getEvaluationRun(
+  projectId: string,
+  id: string,
+): Promise<EvaluationSummary> {
+  return apiClient.get<EvaluationSummary>(
+    `${WEB_API_BASE}/projects/${projectId}/evaluation-runs/${id}`,
+  );
 }
 
 /** Delete an evaluation run (cascades to results). */
-export async function deleteEvaluationRun(id: string): Promise<void> {
-  return apiClient.delete<void>(`${API_BASE}/evaluation-runs/${id}`);
+export async function deleteEvaluationRun(
+  projectId: string,
+  id: string,
+): Promise<void> {
+  return apiClient.delete<void>(
+    `${WEB_API_BASE}/projects/${projectId}/evaluation-runs/${id}`,
+    { headers: csrfHeaders() },
+  );
 }
