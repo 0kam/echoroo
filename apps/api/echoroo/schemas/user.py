@@ -24,6 +24,14 @@ class UserResponse(BaseModel):
     last_login_at: datetime | None
     two_factor_enabled: bool
     must_change_password: bool = False
+    # spec/009 PR 5b: surface superuser flag so the SPA admin layout can
+    # client-side gate `/admin/*` routes without a separate round-trip.
+    # The flag is a transient attribute set by ``CurrentUser`` dependency
+    # from the ``superusers`` table (not a persisted user column).
+    # Defaults to ``False`` for backward compatibility with consumers that
+    # don't populate the attribute (e.g. admin list responses returning
+    # ``User`` ORM rows without the dependency stamp).
+    is_superuser: bool = False
 
     model_config = {"from_attributes": True}
 
