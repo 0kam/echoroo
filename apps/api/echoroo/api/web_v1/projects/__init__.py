@@ -40,6 +40,7 @@ from . import (
     _annotations,
     _clips,
     _core,
+    _custom_models,
     _datasets,
     _detection_runs,
     _detections,
@@ -125,6 +126,13 @@ router.include_router(_uploads.router)
 # in scope here and remains on ``/api/v1`` until the detection BFF is
 # extended.
 router.include_router(_votes.router)
+
+# Custom-model ML lifecycle (spec/009 PR 3b) — ``/{project_id}/custom-models/...``.
+# 13 endpoints covering CRUD, training, status polling, dataset apply,
+# detection-run listing, and seed/active-learning sampling rounds. All
+# routes are centrally gated through ``gate_action`` (no allowlist
+# entries required).
+router.include_router(_custom_models.router)
 
 # Trusted overlay management (Phase 10 / T510) — Owner/Admin enumeration
 # under the same ``/projects`` prefix as the rest of the project surface.

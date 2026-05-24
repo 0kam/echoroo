@@ -1,6 +1,10 @@
 /**
  * Custom SVM classifier models API client.
  *
+ * spec/009 PR 3b: all custom-model lifecycle calls go through
+ * ``/web-api/v1`` (cookie + CSRF session boundary). Mutations attach
+ * ``X-CSRF-Token`` via the inline helper below.
+ *
  * Provides functions for creating, training, and managing custom
  * species classifiers trained on labeled similarity search data.
  */
@@ -16,7 +20,31 @@ import type {
 } from '$lib/types/custom-model';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Fetch all custom models for a project.
@@ -36,7 +64,7 @@ export async function fetchCustomModels(
   const queryString = qs.toString() ? `?${qs.toString()}` : '';
 
   return apiClient.get<CustomModelListResponse>(
-    `${API_BASE}/projects/${projectId}/custom-models${queryString}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models${queryString}`
   );
 }
 
@@ -51,7 +79,11 @@ export async function createCustomModel(
   projectId: string,
   data: CustomModelCreate
 ): Promise<CustomModel> {
-  return apiClient.post<CustomModel>(`${API_BASE}/projects/${projectId}/custom-models`, data);
+  return apiClient.post<CustomModel>(
+    `${WEB_API_BASE}/projects/${projectId}/custom-models`,
+    data,
+    { headers: csrfHeaders() }
+  );
 }
 
 /**
@@ -63,7 +95,7 @@ export async function createCustomModel(
  */
 export async function getCustomModel(projectId: string, modelId: string): Promise<CustomModel> {
   return apiClient.get<CustomModel>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}`
   );
 }
 
@@ -84,8 +116,9 @@ export async function trainCustomModel(
   params?: CustomModelTrainRequest
 ): Promise<CustomModel> {
   return apiClient.post<CustomModel>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/train`,
-    params ?? {}
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/train`,
+    params ?? {},
+    { headers: csrfHeaders() }
   );
 }
 
@@ -97,7 +130,8 @@ export async function trainCustomModel(
  */
 export async function deleteCustomModel(projectId: string, modelId: string): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -160,12 +194,13 @@ export async function generateSeedSamples(
   options: GenerateSeedSamplesOptions
 ): Promise<SamplingRound> {
   return apiClient.post<SamplingRound>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/seed-samples`,
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/seed-samples`,
     {
       search_session_id: options.search_session_id ?? null,
       reference_embedding_ids: options.reference_embedding_ids ?? null,
       config: options.config ?? null,
-    }
+    },
+    { headers: csrfHeaders() }
   );
 }
 
@@ -181,7 +216,7 @@ export async function getSamplingRounds(
   modelId: string
 ): Promise<SamplingRoundListResponse> {
   return apiClient.get<SamplingRoundListResponse>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/sampling-rounds`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/sampling-rounds`
   );
 }
 
@@ -199,7 +234,7 @@ export async function getSamplingRound(
   roundId: string
 ): Promise<SamplingRound> {
   return apiClient.get<SamplingRound>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/sampling-rounds/${roundId}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/sampling-rounds/${roundId}`
   );
 }
 
@@ -219,8 +254,9 @@ export async function suggestNextSamples(
   modelId: string
 ): Promise<SamplingRound> {
   return apiClient.post<SamplingRound>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/suggest-samples`,
-    {}
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/suggest-samples`,
+    {},
+    { headers: csrfHeaders() }
   );
 }
 
@@ -243,7 +279,9 @@ export async function applyCustomModel(
   threshold: number = 0.5
 ): Promise<{ detection_run_id: string }> {
   return apiClient.post<{ detection_run_id: string }>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/apply?dataset_id=${datasetId}&threshold=${threshold}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/apply?dataset_id=${datasetId}&threshold=${threshold}`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -264,7 +302,6 @@ export async function listCustomModelDetectionRuns(
   limit: number = 5
 ): Promise<CustomModelDetectionRunListResponse> {
   return apiClient.get<CustomModelDetectionRunListResponse>(
-    `${API_BASE}/projects/${projectId}/custom-models/${modelId}/detection-runs?limit=${limit}`
+    `${WEB_API_BASE}/projects/${projectId}/custom-models/${modelId}/detection-runs?limit=${limit}`
   );
 }
-
