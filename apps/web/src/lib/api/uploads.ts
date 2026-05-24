@@ -11,7 +11,35 @@ import type {
 } from '$lib/types/data';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
+// spec/009 PR 3a: upload-session orchestration (create / complete /
+// status) migrated to ``/web-api/v1``. The S3 PUT itself
+// (``uploadFileToPresignedUrl`` below) talks to S3 directly and never
+// flows through the FastAPI app, so it is intentionally out of scope.
+const WEB_API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Create a new upload session for a dataset.
@@ -23,8 +51,9 @@ export async function createUploadSession(
   data: CreateUploadSessionRequest
 ): Promise<CreateUploadSessionResponse> {
   return apiClient.post<CreateUploadSessionResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions`,
-    data
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions`,
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -37,7 +66,9 @@ export async function completeUploadSession(
   sessionId: string
 ): Promise<CompleteUploadResponse> {
   return apiClient.post<CompleteUploadResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/complete`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/complete`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -51,7 +82,7 @@ export async function fetchUploadSessionStatus(
   sessionId: string
 ): Promise<UploadSessionStatusResponse> {
   return apiClient.get<UploadSessionStatusResponse>(
-    `${API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`
   );
 }
 

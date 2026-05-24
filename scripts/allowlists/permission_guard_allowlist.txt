@@ -171,3 +171,13 @@ apps/api/echoroo/api/v1/users.py:update_current_user:missing-permission-guard  #
 apps/api/echoroo/api/v1/xeno_canto.py:proxy_sonogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/web_v1/users.py:get_current_user_me:missing-permission-guard  # PR #71: BFF cookie-friendly mirror of /api/v1/users/me — auth-only, no project scope
 apps/api/echoroo/api/web_v1/auth.py:verify_email:missing-permission-guard  # public pre-session auth route; project/user permission guard not applicable
+
+# spec/009 PR 3a thin BFF adapters — same Phase 3 US11 T1xx scope as the legacy
+# api/v1/tags.py and api/v1/uploads.py read-endpoint entries above. The BFF
+# delegates to the legacy handler (which itself is allowlisted) and adds no
+# guard of its own pending TAG_LIST/GET/GBIF/STATISTICS/UPLOAD_GET Action introduction.
+apps/api/echoroo/api/web_v1/projects/_tags.py:gbif_suggest:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/projects/_tags.py:get_statistics:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/projects/_tags.py:get_tag:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/projects/_tags.py:list_tags:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
+apps/api/echoroo/api/web_v1/projects/_uploads.py:get_upload_session_status:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
