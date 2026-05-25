@@ -797,6 +797,33 @@ launch readiness review or sooner if a quarterly run surfaces a regression.
 
 ---
 
+## G. FR-112b audit-log enrichment (spec Rev.3.3 follow-up, 2026-05-25)
+
+- **Origin**: `spec.md` Rev.3.3 (2026-05-25) formalised the existing
+  non-member-superuser role-mapping behaviour as **FR-112b**. The added
+  clarification is behaviour-preserving — `permissions.py` Step 2 has been
+  upgrading non-member superusers to `Owner` since Phase 4 — but FR-112b
+  itself records the requirement that **allowlist-外 superuser actions on
+  non-member projects** be auditable. FR-111 already mandates
+  `platform_audit_log` for `superuser:*` events (allowlist 内 + 各種
+  break-glass)、ただし allowlist 外の通常 project action は record 対象外。
+- **Action**: 次の Phase 17 cycle で以下を実装:
+  - `is_allowed` Step 2 で `_is_superuser(user)` による role upgrade が
+    発生した場合 (≒ resolve_role が Owner / Admin を返していない場合)、
+    `platform_audit_log` に `action=superuser:non_member_project_access`、
+    `detail={project_id, action_name, normalized_role_before, normalized_role_after}`
+    を非同期で記録 (request-path 上の同期 INSERT は p95 < 30ms NFR-001 を
+    破壊する恐れがあるため Celery task で 1 イベント / 1 INSERT)。
+  - read 系で爆発を避けるため、`is_mutating=True` のみを記録対象とする
+    第一弾実装でも可。判断は backlog 着手時の operations input で固める。
+- **Why deferred**: 本 PR は Rev.3.3 を behavior-preserving clarification として
+  着地させることに専念し、新規 audit infra を同梱しない。`platform_audit_log`
+  schema は spec/006 では既に存在するが Celery 経由 INSERT の bench は未取得で、
+  別 PR でベンチ + 実装が妥当。
+- **Trace**: spec.md FR-112b 末尾 "フォローアップ" 行。
+
+---
+
 ## Maintenance
 
 - When introducing a new `xfail` / warn-only / deferred item, **add a ticket

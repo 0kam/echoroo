@@ -1036,9 +1036,24 @@ def is_allowed(
     raw_role = resolve_role(user, project) if user is not None else "Guest"
     normalized = normalize_role(raw_role, project)
 
-    # Superusers fall through to here if not on allowlist — upgrade their role
-    # to Owner-equivalent for the decision (FR-112a ensures Response filter
-    # still applies raw-data protections).
+    # FR-112b (spec Rev.3.3): non-member superuser project-scope role mapping.
+    # Superusers who reach Step 2 are by construction outside the Step 0b
+    # allowlist (otherwise they would already have returned) and the action
+    # is not `is_superuser_only` (otherwise Step 0c would have hard-failed).
+    # Upgrade the normalized role to Owner so the Canonical Matrix grants
+    # owner-equivalent project permissions. This is what makes admin tools
+    # and operational debugging work on non-member projects regardless of
+    # Public / Restricted visibility.
+    #
+    # Safety guards stacked on top of this upgrade:
+    #   - FR-112a: Response filter still strips raw lat/lng and HIDDEN-clamps
+    #     H3 even for the Superuser normalized role.
+    #   - FR-084 / Step -1 / Step 0a-0c: API key superuser principals and
+    #     `is_superuser_only` actions never reach this branch.
+    #   - Step 1: archived projects still block mutating actions.
+    # Audit-log enrichment for this code path is tracked as PHASE17_BACKLOG
+    # section G (FR-112b follow-up); current code does not emit a
+    # `platform_audit_log` entry on the upgrade.
     if user is not None and _is_superuser(user) and normalized not in {
         "Owner",
         "Admin",

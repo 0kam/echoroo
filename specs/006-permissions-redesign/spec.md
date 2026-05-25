@@ -1,11 +1,13 @@
 # 機能仕様書: 権限・公開レベル再設計（Permissions and Visibility Redesign）
 
 **フィーチャーブランチ**: `006-permissions-redesign`
-**作成日**: 2026-04-24（初版）／ Rev.2（3者レビュー 1 回目反映）／ Rev.3（3者レビュー 2 回目反映）／ Rev.3.1（3者レビュー 3 回目の pin-point 追記）／ **Rev.3.2（3者包括レビュー 4 回目の pin-point 追記、`/speckit.plan` 対象）**
-**ステータス**: ドラフト（Rev.3.2、3者 GO 済み、plan 着手可）
+**作成日**: 2026-04-24（初版）／ Rev.2（3者レビュー 1 回目反映）／ Rev.3（3者レビュー 2 回目反映）／ Rev.3.1（3者レビュー 3 回目の pin-point 追記）／ Rev.3.2（3者包括レビュー 4 回目の pin-point 追記、`/speckit.plan` 対象）／ **Rev.3.3 (2026-05-25: FR-112b clarification — 非 member superuser project-scope role mapping を規範化)**
+**ステータス**: 実装済み（Rev.3.3、main merged、Rev.3.3 は clarification のみ、behavior-preserving）
 **入力**: Discord 議論（2026-04-23〜04-24）での合意事項 + codex / architect-reviewer / security-auditor による 4 回の 3者レビュー
 
 > *Amended by:* `spec/008-permissions-vocabulary-refinement` (2026-05-12) — introduces `MANAGE_DATASET_ADMIN` vocabulary refinement, behavior-preserving.
+>
+> *Self-amendment:* Rev.3.3 (2026-05-25) — adds **FR-112b** to formalise the existing non-member superuser role-mapping behaviour that the Stage-1 pseudocode already described informally (`is_allowed` Step 2). Behaviour unchanged; closes the spec/impl drift where `permissions.py` cited `FR-112a` (Response filter) for a role-mapping rule.
 
 ## 概要
 
@@ -128,7 +130,7 @@ Echoroo の権限モデルを、プレローンチ段階で全面的に再設計
 | 5 | **Admin** | メンバー管理権限あり |
 | 6 | **Owner** | 所有者、1 プロジェクトに 1 人 |
 
-**Superuser** はプラットフォーム横断の別枠（FR-111）。`resolve_role` が Project 判定用に返す値には含まれない（platform-scope guard で別処理）。
+**Superuser** はプラットフォーム横断の別枠（FR-111）。`resolve_role` が Project 判定用に返す値には含まれない（platform-scope guard で別処理）。ただし、allowlist 外の project-scope action を非 member の superuser が叩いた場合、Stage-1 Step 2 において `normalized_role` を **Owner** に upgrade して Matrix を引く（FR-112b）。Public / Restricted の visibility は guest / authenticated に対するアクセス制御であり superuser には適用されない。raw 値・HIDDEN clamp は Response filter (FR-112a) が引き続き強制する。
 
 ### Trusted User (Authenticated への capability overlay)
 
@@ -212,8 +214,8 @@ def is_allowed(user, project, action: Action, auth_method, request) -> tuple[boo
             request.state.normalized_role = "Superuser"
             return True, effective
         # allowlist 外の project action は通常経路（Superuser も Response filter を通過、raw 不可）
-        # ただし superuser は他人プロジェクトで Owner/Admin と同等の Permission にマッピングする
-        # 実装詳細は FR-112a 参照
+        # ただし superuser は他人プロジェクトで Owner と同等の Permission にマッピングする（Step 2 で実施）
+        # 規範: FR-112b（role mapping）+ FR-112a（Response filter raw 排除）
 
     # 1. Archived プロジェクト制限
     if project.status == "archived" and action.is_mutating:
@@ -221,6 +223,11 @@ def is_allowed(user, project, action: Action, auth_method, request) -> tuple[boo
 
     # 2. normalized_role を 1 回だけ確定（Public での Viewer → Authenticated 正規化を含む）
     normalized_role = normalize_role(user, project)
+
+    # 2a. FR-112b: 非 member superuser を Owner に upgrade（allowlist 外 + not is_superuser_only の落ち穂）
+    # Owner / Admin を resolve_role で得ている superuser は維持（自分が member の場合）。
+    if user and is_superuser(user) and normalized_role not in {"Owner", "Admin"}:
+        normalized_role = "Owner"
 
     # 3. ベース Permission の確定（normalized_role を引数渡し、内部で resolve_role を再呼び出ししない）
     effective = compute_effective_permissions(normalized_role, user, project, auth_method, request)
@@ -848,6 +855,13 @@ Authenticated 対象:
 - **FR-111a**: superuser 数の遷移を厳格に監査: `platform_audit_log` に `action=superuser:count_changed, detail={from, to, event}` を **同一 TX 内で記録**。`count` カラムを snapshot。3→2 の遷移で 72h break-glass タイマー開始、2→1 で即時 freeze + 創業者 break-glass チャンネル自動通知、**1→0 の DELETE は DB trigger で block**（最後の 1 名の DELETE は creator_founder 手動 override のみ許可）
 - **FR-112**: 初期 superuser は CLI interactive で TOTP + 一時パスワード発行、24h 以内に Web UI で hardware key 登録、未登録なら自動 revoke
 - **FR-112a**: Response filter は Superuser にも適用（raw 値を通常 UI で見せない）、raw が法的に必要な場合は別 runbook で DB 直 access
+- **FR-112b** (Rev.3.3): **非 member superuser の project-scope role mapping**。`SUPERUSER_PROJECT_SCOPE_ALLOWLIST` 外かつ `is_superuser_only=False` の project-scope action について、Stage-1 Step 2 で `normalize_role` の結果が `Owner` / `Admin` でない場合に `normalized_role` を **Owner** に upgrade し、Canonical Matrix を引く。これにより superuser は Public / Restricted いずれの project に対しても owner 相当の read / write 操作が可能となる（visibility は guest / authenticated に対する制御であり superuser には適用されない）。安全側のガードは以下の通り重ね掛けする:
+  - **(a) raw データ遮断**: Response filter (FR-112a) が raw lat/lng・HIDDEN clamp・species masking 対象判定を superuser に対しても適用する（masking 自体は member 同等として免除されるが、raw 排除と HIDDEN clamp は不可避）
+  - **(b) `is_superuser_only=True` の遮断**: Stage-1 Step 0c で hard-fail（allowlist 内の場合のみ Step 0b で bypass）
+  - **(c) API key principal の遮断**: Step -1 / Step 0a / Step 0b の veto により superuser-owned API key からの platform / allowlist action は通らない（allowlist 外の通常 project action は API key scope と Matrix の交差で判定される）
+  - **(d) archived project の mutating 遮断**: Step 1 で archived は mutating 不可（superuser 例外なし、復帰は allowlist 内の `project.restore` のみ）
+
+  設計意図は **運用調査・障害対応のため superuser が全 project を技術的に閲覧・操作可能**であること。Stage-1 Step 2 の upgrade を明示することで「FR-112a を role mapping の根拠に流用する」過去の慣習を解消し、normative な根拠を分離する。フォローアップ: 非 member superuser action の `platform_audit_log` 記録 (action 名 / project_id / role upgrade flag) は Phase 17 backlog に登録（現状は FR-111 が allowlist 内 superuser 操作の `superuser:*` 記録のみ要求しており、allowlist 外の通常 project action は記録対象外）
 
 **マイグレーション**
 
