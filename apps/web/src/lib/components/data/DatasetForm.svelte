@@ -215,30 +215,48 @@
           <p class="text-xs text-stone-400">{m.form_dataset_recorder_hint()}</p>
         </div>
 
-        <div class="flex flex-col gap-1.5">
-          <label for="license" class="text-sm font-medium text-stone-700">{m.form_dataset_license_label()}</label>
-          <input
-            id="license"
-            type="text"
-            bind:value={licenseId}
-            placeholder={m.form_dataset_license_placeholder()}
-            class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-          />
-          <p class="text-xs text-stone-400">{m.form_dataset_license_hint()}</p>
-        </div>
+        <!--
+          spec/009 PR 6: license is configured at the project level, so
+          per-dataset re-entry is unnecessary noise on the create form.
+          Field bindings stay live (submit logic continues to send the
+          default empty value) so the input can be re-enabled by
+          flipping the {#if false} guard once project-level license
+          inheritance ships.
+        -->
+        {#if false}
+          <div class="flex flex-col gap-1.5">
+            <label for="license" class="text-sm font-medium text-stone-700">{m.form_dataset_license_label()}</label>
+            <input
+              id="license"
+              type="text"
+              bind:value={licenseId}
+              placeholder={m.form_dataset_license_placeholder()}
+              class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+            />
+            <p class="text-xs text-stone-400">{m.form_dataset_license_hint()}</p>
+          </div>
+        {/if}
       </div>
 
       <div class="grid grid-cols-2 gap-4">
-        <div class="flex flex-col gap-1.5">
-          <label for="doi" class="text-sm font-medium text-stone-700">{m.form_dataset_doi_label()}</label>
-          <input
-            id="doi"
-            type="text"
-            bind:value={doi}
-            placeholder={m.form_dataset_doi_placeholder()}
-            class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
-          />
-        </div>
+        <!--
+          spec/009 PR 6: DOI will be populated by the planned DOI
+          import flow rather than free-text entry. Hidden but the
+          binding + DB column remain so the future importer can
+          backfill existing rows.
+        -->
+        {#if false}
+          <div class="flex flex-col gap-1.5">
+            <label for="doi" class="text-sm font-medium text-stone-700">{m.form_dataset_doi_label()}</label>
+            <input
+              id="doi"
+              type="text"
+              bind:value={doi}
+              placeholder={m.form_dataset_doi_placeholder()}
+              class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
+            />
+          </div>
+        {/if}
 
         <div class="flex flex-col gap-1.5">
           <label for="gain" class="text-sm font-medium text-stone-700">{m.form_dataset_gain_label()}</label>
