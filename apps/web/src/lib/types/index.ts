@@ -776,11 +776,22 @@ export interface ProjectMemberUpdateRequest {
 // ============================================
 
 /**
- * Admin user update request
+ * Admin user update request.
+ *
+ * spec/011 follow-up: the backend now only honours ``display_name``.
+ * ``is_active`` / ``is_superuser`` / ``is_verified`` remain on the
+ * payload for SPA backwards compatibility (the buttons in
+ * ``/admin/users`` still send them) but the API silently drops them —
+ * actual superuser promotion lives in the ``/admin/superusers`` M-of-N
+ * flow. UI element cleanup is tracked separately.
  */
 export interface AdminUserUpdateRequest {
+  display_name?: string | null;
+  /** @deprecated Ignored by the backend (spec/006 dropped users.is_active). */
   is_active?: boolean;
+  /** @deprecated Use /admin/superusers + M-of-N approval flow (spec/006 FR-111). */
   is_superuser?: boolean;
+  /** @deprecated Ignored by the backend (spec/011 removed email verification). */
   is_verified?: boolean;
 }
 

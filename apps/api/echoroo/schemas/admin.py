@@ -51,11 +51,52 @@ class AdminUserListResponse(BaseModel):
 
 
 class AdminUserUpdateRequest(BaseModel):
-    """Admin request to update user status."""
+    """Admin request to update a user profile (spec/011 follow-up).
 
-    is_active: bool | None = Field(None, description="Whether the user account is active")
-    is_superuser: bool | None = Field(None, description="Whether the user is a superuser")
-    is_verified: bool | None = Field(None, description="Whether the user's email is verified")
+    spec/006 dropped the persisted ``is_active`` / ``is_superuser`` /
+    ``is_verified`` flags from the ``users`` table — superuser status now
+    lives in the ``superusers`` entitlement table (modified via the
+    ``/admin/superusers`` M-of-N flow), email verification was removed
+    wholesale in spec/011 (FR-011-005), and accounts have no ``active``
+    column (soft-delete via ``deleted_at`` is the only deactivation
+    primitive). Those request fields are accepted as no-ops here so the
+    pre-spec/006 SPA payload does not crash with a 422; the service layer
+    silently ignores them. A future PR may drop the legacy fields once
+    the admin UI stops sending them.
+    """
+
+    display_name: str | None = Field(
+        None,
+        max_length=100,
+        description="Updated display name for the user (NULL clears it)",
+    )
+    # Legacy fields — accepted for client compatibility, ignored by the
+    # service. See class docstring for the spec/006 + spec/011 rationale.
+    is_active: bool | None = Field(
+        None,
+        description=(
+            "Deprecated — spec/006 dropped the persisted ``users.is_active`` "
+            "column; field is accepted for client compatibility but ignored. "
+            "Use soft-delete (DELETE /admin/users/{id}) when account "
+            "deactivation lands in a future PR."
+        ),
+    )
+    is_superuser: bool | None = Field(
+        None,
+        description=(
+            "Deprecated — superuser status lives in the ``superusers`` "
+            "entitlement table (FR-111). Use POST /admin/superusers + the "
+            "M-of-N approval flow. Accepted here for client compatibility "
+            "but ignored."
+        ),
+    )
+    is_verified: bool | None = Field(
+        None,
+        description=(
+            "Deprecated — spec/011 removed email verification (FR-011-005). "
+            "Accepted here for client compatibility but ignored."
+        ),
+    )
 
 
 class SystemSettingResponse(BaseModel):

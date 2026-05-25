@@ -136,10 +136,12 @@ async def test_full_admin_settings_flow(
 
 @pytest.mark.skip(
     reason=(
-        "Legacy /api/v1/admin/users integration flow — admin user-management "
-        "is a Phase 4 stub returning 501 and the test body references User "
-        "columns dropped in Phase 13 (is_active / is_verified / is_superuser). "
-        "Re-enable once the admin-API rewrite reinstates the endpoints."
+        "Legacy /api/v1/admin/users integration flow — the underlying "
+        "endpoint is now live (spec/011 follow-up un-stub) but this "
+        "scenario asserts an activate/deactivate round-trip that no "
+        "longer maps to the spec/006 schema (no persisted ``is_active`` "
+        "column). The smoke coverage in ``tests/contract/test_admin.py`` "
+        "TestListUsers + TestUpdateUser is the new authoritative surface."
     )
 )
 async def test_full_admin_user_management_flow(

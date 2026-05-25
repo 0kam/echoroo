@@ -104,3 +104,56 @@ async def test_get_by_id_returns_scalar() -> None:
     repo = UserRepository(db)
     found = await repo.get_by_id(user.id)
     assert found is user
+
+
+@pytest.mark.asyncio
+async def test_list_users_returns_rows_and_total_without_search() -> None:
+    """list_users() returns ``(rows, total)`` from two SQL round-trips.
+
+    spec/011 follow-up: minimal unit coverage for the pagination path.
+    The first execute() call resolves ``SELECT COUNT(*)`` and returns a
+    scalar; the second resolves ``SELECT users ORDER BY created_at DESC``
+    and returns a scalar list. We assert the tuple shape and call order.
+    """
+    user = _make_user()
+
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 5
+
+    rows_result = MagicMock()
+    scalars_obj = MagicMock()
+    scalars_obj.all.return_value = [user]
+    rows_result.scalars.return_value = scalars_obj
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+
+    repo = UserRepository(db)
+    users, total = await repo.list_users(offset=0, limit=20)
+    assert users == [user]
+    assert total == 5
+    assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_list_users_search_filter_applied() -> None:
+    """list_users() with a search term still resolves the two-query pattern.
+
+    The match itself runs in PostgreSQL (ILIKE); the unit test only
+    verifies the call signature so the production query keeps shape.
+    """
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 0
+
+    rows_result = MagicMock()
+    scalars_obj = MagicMock()
+    scalars_obj.all.return_value = []
+    rows_result.scalars.return_value = scalars_obj
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+
+    repo = UserRepository(db)
+    users, total = await repo.list_users(offset=10, limit=10, search="abc")
+    assert users == []
+    assert total == 0

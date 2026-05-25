@@ -67,21 +67,27 @@ class AdminService:
         page: int = 1,
         limit: int = 20,
         search: str | None = None,
-        is_active: bool | None = None,
+        is_active: bool | None = None,  # noqa: ARG002 — deprecated, spec/006 dropped the column
     ) -> AdminUserListResponse:
-        """List all users with optional filtering and pagination.
+        """List all users with optional pagination + search.
 
-        Args:
-            page: Page number (1-indexed)
-            limit: Number of items per page
-            search: Search term for email or display name
-            is_active: Filter by active status
-
-        Returns:
-            Paginated user list with total count
+        spec/011 PR 7: un-stubbed. spec/006 dropped ``users.is_active`` so
+        the ``is_active`` parameter is accepted for API compatibility but
+        silently ignored. Uses :meth:`UserRepository.list_users` with
+        offset/limit translation.
         """
-        del page, limit, search, is_active
-        _raise_phase4_stub()
+        del is_active  # accepted for compat, no longer filterable
+        offset = (page - 1) * limit
+        rows, total = await self.user_repo.list_users(
+            offset=offset, limit=limit, search=search,
+        )
+        from echoroo.schemas.auth import UserResponse
+        return AdminUserListResponse(
+            items=[UserResponse.model_validate(u) for u in rows],
+            total=total,
+            page=page,
+            limit=limit,
+        )
 
     async def update_user(
         self,
@@ -89,21 +95,25 @@ class AdminService:
         request: AdminUserUpdateRequest,
         admin_id: UUID,  # noqa: ARG002 - reserved for future audit logging
     ) -> User:
-        """Update user status and permissions.
+        """Update a user profile.
 
-        Args:
-            user_id: UUID of user to update
-            request: Update request with fields to change
-            admin_id: UUID of admin performing the update (reserved for audit logging)
-
-        Returns:
-            Updated user instance
-
-        Raises:
-            HTTPException: If user not found or trying to disable last superuser
+        spec/011 PR 7: un-stubbed. Only ``display_name`` is applied;
+        legacy ``is_active`` / ``is_superuser`` / ``is_verified`` fields
+        are accepted in the request schema for client compatibility but
+        silently ignored (spec/006 dropped those columns from ``users``).
+        Raises 404 when the target user is missing or soft-deleted.
         """
-        del user_id, request, admin_id
-        _raise_phase4_stub()
+        user = await self.user_repo.get_by_id(user_id)
+        if user is None or user.deleted_at is not None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        if request.display_name is not None:
+            user.display_name = request.display_name
+        await self.user_repo.update(user)
+        await self.db.commit()
+        return user
 
     async def get_system_settings(self) -> dict[str, SystemSettingResponse]:
         """Get all system settings.

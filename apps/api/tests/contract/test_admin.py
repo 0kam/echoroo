@@ -166,21 +166,19 @@ async def system_settings(
 
 
 # ---------------------------------------------------------------------------
-# /api/v1/admin/users — Phase 4 stub. Skipped at class level until rewritten.
+# /api/v1/admin/users — spec/011 follow-up un-stub.
+#
+# The legacy ``/api/v1/admin/users`` surface previously returned 501 (Phase
+# 4 ``_raise_phase4_stub``). spec/011 follow-up reinstates the endpoints
+# against the spec/006 superusers SOT: list + update with the new
+# (no ``is_active`` / ``is_verified`` columns) shape. The promotion /
+# demotion flow lives on ``POST /admin/superusers`` (M-of-N) — toggling
+# ``is_superuser`` here is a deprecated no-op on the request body.
 # ---------------------------------------------------------------------------
 
-_USERS_STUB_SKIP_REASON = (
-    "Legacy /api/v1/admin/users contract — admin user-management is a "
-    "Phase 4 stub returning 501 and the test bodies reference dropped "
-    "User columns (is_active / is_verified / is_superuser). Re-enable "
-    "once the admin-API rewrite reinstates the endpoints against the "
-    "Phase 13 superusers SOT."
-)
 
-
-@pytest.mark.skip(reason=_USERS_STUB_SKIP_REASON)
 class TestListUsers:
-    """Tests for GET /admin/users endpoint."""
+    """Tests for GET /admin/users endpoint (spec/011 follow-up)."""
 
     async def test_list_users_as_superuser(
         self,
@@ -189,7 +187,7 @@ class TestListUsers:
         superuser: User,  # noqa: ARG002 - needed to create user
         regular_user: User,  # noqa: ARG002 - needed to create user
     ) -> None:
-        """Test listing users as superuser."""
+        """Test listing users as superuser surfaces both seeded rows."""
         response = await client.get("/api/v1/admin/users", headers=superuser_headers)
 
         assert response.status_code == 200
@@ -218,11 +216,11 @@ class TestListUsers:
         superuser_headers: dict[str, str],
         regular_user: User,  # noqa: ARG002 - needed to create user
     ) -> None:
-        """Test listing users with search parameter."""
+        """Test listing users with the search parameter (display_name ILIKE)."""
         response = await client.get(
             "/api/v1/admin/users",
             headers=superuser_headers,
-            params={"search": "regular"},
+            params={"search": "Regular"},
         )
 
         assert response.status_code == 200
@@ -236,7 +234,7 @@ class TestListUsers:
         superuser: User,  # noqa: ARG002 - needed to create user
         regular_user: User,  # noqa: ARG002 - needed to create user
     ) -> None:
-        """Test user list pagination."""
+        """Test user list pagination clamps to the requested limit."""
         response = await client.get(
             "/api/v1/admin/users",
             headers=superuser_headers,
@@ -250,54 +248,46 @@ class TestListUsers:
         assert len(data["items"]) == 1
 
 
-@pytest.mark.skip(reason=_USERS_STUB_SKIP_REASON)
 class TestUpdateUser:
-    """Tests for PATCH /admin/users/{userId} endpoint."""
+    """Tests for PATCH /admin/users/{userId} endpoint (spec/011 follow-up)."""
 
-    async def test_update_user_activate(
+    async def test_update_user_display_name(
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
         regular_user: User,
     ) -> None:
-        """Test activating a user."""
+        """display_name updates are persisted and reflected in the response."""
         response = await client.patch(
             f"/api/v1/admin/users/{regular_user.id}",
             headers=superuser_headers,
-            json={"is_active": True},
+            json={"display_name": "Renamed"},
         )
 
         assert response.status_code == 200
+        assert response.json()["display_name"] == "Renamed"
 
-    async def test_update_user_make_superuser(
+    async def test_update_user_ignores_deprecated_flags(
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
         regular_user: User,
     ) -> None:
-        """Test promoting user to superuser."""
+        """is_active / is_superuser / is_verified are accepted but ignored.
+
+        spec/006 dropped the persisted ``users.is_active`` and
+        ``users.is_superuser`` columns; spec/011 removed email
+        verification. The fields stay on the request schema for SPA
+        compatibility but the service silently drops them — sending them
+        MUST NOT yield a 4xx (the SPA still ships pre-spec/006 payloads).
+        """
         response = await client.patch(
             f"/api/v1/admin/users/{regular_user.id}",
             headers=superuser_headers,
-            json={"is_superuser": True},
+            json={"is_active": False, "is_superuser": True, "is_verified": False},
         )
 
         assert response.status_code == 200
-
-    async def test_cannot_disable_last_superuser(
-        self,
-        client: AsyncClient,
-        superuser_headers: dict[str, str],
-        superuser: User,
-    ) -> None:
-        """Test that the last superuser cannot be deactivated."""
-        response = await client.patch(
-            f"/api/v1/admin/users/{superuser.id}",
-            headers=superuser_headers,
-            json={"is_active": False},
-        )
-
-        assert response.status_code == 400
 
     async def test_update_user_as_non_superuser_forbidden(
         self,
@@ -309,7 +299,7 @@ class TestUpdateUser:
         response = await client.patch(
             f"/api/v1/admin/users/{regular_user.id}",
             headers=regular_user_headers,
-            json={"is_active": True},
+            json={"display_name": "Hacked"},
         )
 
         assert response.status_code == 403
@@ -324,7 +314,7 @@ class TestUpdateUser:
         response = await client.patch(
             f"/api/v1/admin/users/{fake_uuid}",
             headers=superuser_headers,
-            json={"is_active": False},
+            json={"display_name": "Ghost"},
         )
 
         assert response.status_code == 404
