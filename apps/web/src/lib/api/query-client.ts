@@ -22,6 +22,18 @@
  * If the failing query IS the project detail itself, we instead
  * remove the cache entry and navigate to a fallback route — a
  * refetch would just 403 again and spin a loop.
+ *
+ * Spec/009 PR 6 (post-launch UX fix): the original implementation
+ * (a) did not dedupe toasts when projectId was absent (account-level
+ * 403s could stack toasts), (b) re-invalidated `['project', id]` on
+ * every project-scoped 403 even when a toast was already showing,
+ * which combined with `refetchOnWindowFocus: true` triggered a
+ * burst of duplicate requests after a single demotion. The handler
+ * now keeps a unified dedupe map keyed by projectId (or the literal
+ * `__no_project__` sentinel) with a longer 30 s window, suppresses
+ * the invalidate while the dedupe window is open, and temporarily
+ * disables window-focus refetch for 60 s so a stale token cannot
+ * keep firing the same 403 burst every time the tab regains focus.
  */
 
 import {
@@ -35,16 +47,40 @@ import { toasts } from '$lib/stores/toast';
 import { ApiError } from './client';
 
 /**
- * Last-toast timestamps keyed by projectId. Used to dedupe the
- * "your permissions have changed" toast — at most one per project
- * within `TOAST_DEDUPE_WINDOW_MS`.
+ * Dedupe key used when a 403 has no associated project (account-level
+ * endpoints such as `/users/me` or `/admin/...`). Kept as a string
+ * literal so it cannot collide with a real UUID v4.
+ */
+export const NO_PROJECT_KEY = '__no_project__';
+
+/**
+ * Last-toast timestamps keyed by projectId (or `NO_PROJECT_KEY`).
+ * Used to dedupe the "your permissions have changed" toast and the
+ * accompanying invalidate burst.
  *
  * Exported for unit tests; production code should not read/write
  * this directly.
  */
-export const _lastToastByProjectId = new Map<string, number>();
+export const _lastToastByKey = new Map<string, number>();
 
-const TOAST_DEDUPE_WINDOW_MS = 5_000;
+/**
+ * Backwards-compat alias retained so external imports do not break
+ * while spec/009 PR 6 lands. New code MUST use `_lastToastByKey`.
+ *
+ * @deprecated Use {@link _lastToastByKey}.
+ */
+export const _lastToastByProjectId = _lastToastByKey;
+
+const TOAST_DEDUPE_WINDOW_MS = 30_000;
+const FOCUS_REFETCH_SUPPRESS_MS = 60_000;
+
+/**
+ * Timestamp of the most recent 403, regardless of project. Used to
+ * temporarily disable `refetchOnWindowFocus` so a stale session
+ * cannot re-fire the same 403 burst the moment the tab regains
+ * focus.
+ */
+let _last403At = 0;
 
 /**
  * Regex that matches a project UUID v4 segment in a request URL.
@@ -95,34 +131,29 @@ export function _handle403(
   client: QueryClient,
   now: number = Date.now(),
 ): void {
+  _last403At = now;
+
   const metaProjectId =
     typeof meta?.projectId === 'string' && meta.projectId.length > 0
       ? (meta.projectId as string)
       : null;
   const projectId = metaProjectId ?? extractProjectIdFromUrl(source.url ?? null);
+  const dedupeKey = projectId ?? NO_PROJECT_KEY;
 
-  if (!projectId) {
-    // No projectId context — the failing endpoint is either
-    // project-agnostic (account-level) or the caller forgot to
-    // tag the query. Either way the demotion mitigation can't
-    // target a specific cache key, so just warn the user.
-    console.warn(
-      '[permissions] 403 received without projectId context',
-      { sourceKind: source.kind, queryKey: source.queryKey, url: source.url },
-    );
-    toasts.warning(
-      'Your permissions may have changed. Please refresh the page.',
-    );
-    return;
-  }
+  const last = _lastToastByKey.get(dedupeKey) ?? 0;
+  const withinWindow = now - last <= TOAST_DEDUPE_WINDOW_MS;
 
   // Refetch-loop guard: if the project detail query ITSELF is the
   // one that 403'd, refetching it would just 403 again. Drop the
-  // cache entry and bounce to a fallback page.
+  // cache entry and bounce to a fallback page. This must run even
+  // when the dedupe window is open, otherwise a user landing on a
+  // forbidden project page would just see the cached "loading"
+  // spinner without ever being redirected.
   //
   // TODO(spec/007 Phase 4): replace the bounce target with a
   // dedicated `/projects/{id}/no-access` page once design lands.
   const isProjectDetailQuery =
+    projectId !== null &&
     source.kind === 'query' &&
     Array.isArray(source.queryKey) &&
     source.queryKey.length === 2 &&
@@ -131,26 +162,44 @@ export function _handle403(
 
   if (isProjectDetailQuery) {
     client.removeQueries({ queryKey: ['project', projectId], exact: true });
-    // Use a fire-and-forget navigation; goto returns a promise but
-    // we have nothing useful to do on completion.
     void goto(localizeHref('/projects'), { replaceState: true });
-  } else {
+  } else if (projectId !== null && !withinWindow) {
+    // Only invalidate when we are about to surface a fresh toast.
+    // Re-invalidating while a previous toast is still on screen just
+    // produces another burst of project-scoped queries that will all
+    // 403 again until the backend role change propagates.
     void client.invalidateQueries({
       queryKey: ['project', projectId],
       refetchType: 'active',
     });
   }
 
-  // Toast dedupe: at most one warning per project per 5s. Without
-  // this, a page that fires several mutations in parallel (e.g.
-  // batch vote) would stack three or four identical toasts.
-  const last = _lastToastByProjectId.get(projectId) ?? 0;
-  if (now - last > TOAST_DEDUPE_WINDOW_MS) {
+  if (withinWindow) {
+    // Still inside the dedupe window — no toast, no invalidate.
+    if (!projectId) {
+      console.warn(
+        '[permissions] 403 received without projectId context (deduped)',
+        { sourceKind: source.kind, queryKey: source.queryKey, url: source.url },
+      );
+    }
+    return;
+  }
+
+  if (!projectId) {
+    console.warn(
+      '[permissions] 403 received without projectId context',
+      { sourceKind: source.kind, queryKey: source.queryKey, url: source.url },
+    );
+    toasts.warning(
+      'Your permissions may have changed. Please refresh the page.',
+    );
+  } else {
     toasts.warning(
       'Your permissions have changed. Refreshing project access...',
     );
-    _lastToastByProjectId.set(projectId, now);
   }
+
+  _lastToastByKey.set(dedupeKey, now);
 }
 
 /**
@@ -173,6 +222,24 @@ function urlFromError(error: unknown, meta: Record<string, unknown> | undefined)
   return null;
 }
 
+/**
+ * Window-focus refetch should be suppressed for `FOCUS_REFETCH_SUPPRESS_MS`
+ * after the most recent 403 so a stale token cannot keep re-firing the
+ * same 403 burst every time the tab regains focus. Exported for tests.
+ */
+export function _shouldRefetchOnFocus(now: number = Date.now()): boolean {
+  if (_last403At === 0) return true;
+  return now - _last403At > FOCUS_REFETCH_SUPPRESS_MS;
+}
+
+/**
+ * Test-only helper: reset the suppression clock between tests so
+ * unrelated test ordering does not leak state.
+ */
+export function _resetFocusRefetchClock(): void {
+  _last403At = 0;
+}
+
 export const queryClient: QueryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -180,7 +247,10 @@ export const queryClient: QueryClient = new QueryClient({
       // so a demotion is picked up promptly on the next focus/refetch.
       // Pages can still override per-query if they need fresher data.
       staleTime: 30_000,
-      refetchOnWindowFocus: true,
+      // Spec/009 PR 6: function form lets us suppress focus-refetch
+      // for FOCUS_REFETCH_SUPPRESS_MS after a 403 so a stale session
+      // does not keep replaying the same 403 burst on every focus.
+      refetchOnWindowFocus: () => _shouldRefetchOnFocus(),
       retry: 1,
     },
   },

@@ -1,18 +1,25 @@
 /**
  * Unit tests for the demotion-race mitigation (spec/007 Phase 1.5 /
- * AD-3). Covers:
+ * AD-3) plus the spec/009 PR 6 toast/invalidate dedupe hardening.
+ *
+ * Covers:
  *
  *   - `extractProjectIdFromUrl` regex (UUID v4 segment matches; non-UUID
  *     segments like `/projects/feed` are rejected).
  *   - `_handle403` with `meta.projectId` → invalidateQueries on the
- *     `['project', projectId]` key.
+ *     `['project', projectId]` key on the FIRST hit only (subsequent
+ *     hits within the dedupe window must NOT re-invalidate).
  *   - `_handle403` URL fallback when meta is missing.
- *   - `_handle403` with no projectId context → warn + generic toast,
- *     no cache mutation.
+ *   - `_handle403` with no projectId context → dedupe still applies
+ *     via the `__no_project__` sentinel key.
  *   - Refetch-loop guard: 403 on the project detail query itself →
- *     removeQueries + goto fallback (NOT invalidate).
- *   - Toast dedupe — at most one toast per project within the 5s
- *     window.
+ *     removeQueries + goto fallback (NOT invalidate), even when the
+ *     dedupe window is open.
+ *   - Toast dedupe — at most one toast per key within the 30 s
+ *     window, per-project isolation, re-arm after the window
+ *     elapses.
+ *   - Window-focus refetch suppression for 60 s after the most
+ *     recent 403.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,8 +46,11 @@ vi.mock('$lib/stores/toast', () => ({
 // Now import the module under test — its top-level QueryClient
 // construction will pick up the mocks above.
 import {
+  NO_PROJECT_KEY,
   _handle403,
-  _lastToastByProjectId,
+  _lastToastByKey,
+  _resetFocusRefetchClock,
+  _shouldRefetchOnFocus,
   extractProjectIdFromUrl,
 } from '$lib/api/query-client';
 import { goto } from '$app/navigation';
@@ -95,7 +105,8 @@ describe('_handle403 — invalidate via meta.projectId', () => {
   beforeEach(() => {
     client = new QueryClient();
     toastWarning.mockClear();
-    _lastToastByProjectId.clear();
+    _lastToastByKey.clear();
+    _resetFocusRefetchClock();
     vi.mocked(goto).mockClear();
   });
 
@@ -103,7 +114,7 @@ describe('_handle403 — invalidate via meta.projectId', () => {
     client.clear();
   });
 
-  it('invalidates ["project", projectId] when meta.projectId is set', () => {
+  it('invalidates ["project", projectId] on the first 403 for the key', () => {
     const spy = vi.spyOn(client, 'invalidateQueries');
     _handle403(
       { projectId: VALID_UUID },
@@ -135,6 +146,29 @@ describe('_handle403 — invalidate via meta.projectId', () => {
     });
   });
 
+  it('suppresses invalidate inside the dedupe window (spec/009 PR 6)', () => {
+    const spy = vi.spyOn(client, 'invalidateQueries');
+
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_010_000); // +10s
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_020_000); // +20s
+
+    // Only the first call should have invalidated; the next two are
+    // within the 30 s dedupe window.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(toastWarning).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-invalidates once the dedupe window elapses', () => {
+    const spy = vi.spyOn(client, 'invalidateQueries');
+
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_031_000); // +31s
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(toastWarning).toHaveBeenCalledTimes(2);
+  });
+
   it('warns + generic toast when neither meta nor URL contains a project id', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
@@ -152,6 +186,20 @@ describe('_handle403 — invalidate via meta.projectId', () => {
     );
     warnSpy.mockRestore();
   });
+
+  it('dedupes the no-projectId toast (spec/009 PR 6)', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    _handle403(undefined, { kind: 'mutation', url: '/api/v1/users/me' }, client, 1_000_000);
+    _handle403(undefined, { kind: 'mutation', url: '/api/v1/users/me' }, client, 1_005_000);
+    _handle403(undefined, { kind: 'mutation', url: '/api/v1/admin/users' }, client, 1_020_000);
+
+    // All three share the NO_PROJECT_KEY sentinel; only the first
+    // should reach the toast store.
+    expect(toastWarning).toHaveBeenCalledTimes(1);
+    expect(_lastToastByKey.has(NO_PROJECT_KEY)).toBe(true);
+    warnSpy.mockRestore();
+  });
 });
 
 describe('_handle403 — refetch-loop guard for project detail query', () => {
@@ -160,7 +208,8 @@ describe('_handle403 — refetch-loop guard for project detail query', () => {
   beforeEach(() => {
     client = new QueryClient();
     toastWarning.mockClear();
-    _lastToastByProjectId.clear();
+    _lastToastByKey.clear();
+    _resetFocusRefetchClock();
     vi.mocked(goto).mockClear();
   });
 
@@ -204,6 +253,31 @@ describe('_handle403 — refetch-loop guard for project detail query', () => {
     expect(removeSpy).not.toHaveBeenCalled();
     expect(goto).not.toHaveBeenCalled();
   });
+
+  it('still bounces inside the dedupe window when project detail 403s', () => {
+    const removeSpy = vi.spyOn(client, 'removeQueries');
+
+    // Prime dedupe with a sibling query.
+    _handle403(
+      { projectId: VALID_UUID },
+      { kind: 'query', queryKey: ['datasets', VALID_UUID] },
+      client,
+      1_000_000,
+    );
+    // Project detail 403 inside the window — bounce must still fire.
+    _handle403(
+      { projectId: VALID_UUID },
+      { kind: 'query', queryKey: ['project', VALID_UUID] },
+      client,
+      1_001_000,
+    );
+
+    expect(removeSpy).toHaveBeenCalledWith({
+      queryKey: ['project', VALID_UUID],
+      exact: true,
+    });
+    expect(goto).toHaveBeenCalled();
+  });
 });
 
 describe('_handle403 — toast dedupe', () => {
@@ -212,64 +286,66 @@ describe('_handle403 — toast dedupe', () => {
   beforeEach(() => {
     client = new QueryClient();
     toastWarning.mockClear();
-    _lastToastByProjectId.clear();
+    _lastToastByKey.clear();
+    _resetFocusRefetchClock();
   });
 
-  it('shows at most one toast per project within the 5s window', () => {
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_000_000,
-    );
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_000_500, // +500ms
-    );
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_004_000, // +4s
-    );
+  it('shows at most one toast per project within the 30s window', () => {
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_500);
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_020_000); // +20s
 
     expect(toastWarning).toHaveBeenCalledTimes(1);
   });
 
-  it('re-arms after 5s elapsed', () => {
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_000_000,
-    );
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_006_000, // +6s
-    );
+  it('re-arms after 30s elapsed', () => {
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_031_000); // +31s
 
     expect(toastWarning).toHaveBeenCalledTimes(2);
   });
 
   it('keeps dedupe per-project (different projectIds → separate toasts)', () => {
     const otherProject = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
-    _handle403(
-      { projectId: VALID_UUID },
-      { kind: 'mutation' },
-      client,
-      1_000_000,
-    );
-    _handle403(
-      { projectId: otherProject },
-      { kind: 'mutation' },
-      client,
-      1_000_100,
-    );
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    _handle403({ projectId: otherProject }, { kind: 'mutation' }, client, 1_000_100);
 
     expect(toastWarning).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('_shouldRefetchOnFocus — 60s suppression after 403 (spec/009 PR 6)', () => {
+  let client: QueryClient;
+
+  beforeEach(() => {
+    client = new QueryClient();
+    toastWarning.mockClear();
+    _lastToastByKey.clear();
+    _resetFocusRefetchClock();
+  });
+
+  it('returns true when no 403 has occurred', () => {
+    expect(_shouldRefetchOnFocus(1_000_000)).toBe(true);
+  });
+
+  it('returns false for 60s after a 403', () => {
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    expect(_shouldRefetchOnFocus(1_000_100)).toBe(false);
+    expect(_shouldRefetchOnFocus(1_030_000)).toBe(false);
+    expect(_shouldRefetchOnFocus(1_060_000)).toBe(false);
+  });
+
+  it('returns true once 60s has elapsed since the last 403', () => {
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    expect(_shouldRefetchOnFocus(1_060_001)).toBe(true);
+  });
+
+  it('extends suppression on every fresh 403', () => {
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_000_000);
+    expect(_shouldRefetchOnFocus(1_059_000)).toBe(false);
+    // Fresh 403 at +59s — clock should reset.
+    _handle403({ projectId: VALID_UUID }, { kind: 'mutation' }, client, 1_059_000);
+    expect(_shouldRefetchOnFocus(1_100_000)).toBe(false);
+    expect(_shouldRefetchOnFocus(1_119_001)).toBe(true);
   });
 });
