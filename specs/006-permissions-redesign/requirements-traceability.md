@@ -223,6 +223,7 @@ spec の各要件が plan 成果物のどこで具体化されているかを追
 | FR-111a | count 遷移監査 + 1→0 DB trigger block | D §4.1 | ✅ |
 | FR-112 | 初期 superuser CLI + 24h WebAuthn 登録 | Q § 3 初期 superuser | ✅ |
 | FR-112a | Response filter は Superuser にも適用 | spec 擬似コード | ✅ |
+| FR-112b | 非 member superuser project-scope role mapping (Owner upgrade、Rev.3.3) | P core/permissions.py is_allowed Step 2 + tests/security/authorization/test_superuser_non_member_role_mapping.py | ✅ |
 | FR-113 | 既存データ全削除、Alembic 単一 baseline | P, D §2 Migration Order | ✅ |
 | FR-114 | Wipe 3 点一致ガード | D §3.21 wipe_guard、Q § 2 | ✅ |
 
