@@ -47,24 +47,72 @@ def test_raise_phase4_stub_raises_501() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_users_raises_phase4_stub() -> None:
-    """list_users() raises the Phase 4 stub (lines 83-84)."""
+async def test_list_users_paginates_and_wraps_response() -> None:
+    """list_users() delegates pagination to UserRepository and wraps the response (PR 7 un-stub)."""
+    user_row = MagicMock()
+    user_row.id = uuid4()
+    user_row.email = "u@example.com"
+    user_row.display_name = "U"
+    user_row.created_at = datetime.now(UTC)
+    user_row.updated_at = datetime.now(UTC)
+    user_row.last_login_at = None
+    user_row.two_factor_enabled = False
+    user_row.must_change_password = False
+    user_row.is_superuser = False
+
     db = MagicMock()
     service = AdminService(db)
-    with pytest.raises(HTTPException) as exc_info:
-        await service.list_users(page=1, limit=20)
-    assert exc_info.value.status_code == 501
+    service.user_repo.list_users = AsyncMock(return_value=([user_row], 1))  # type: ignore[method-assign]
+
+    out = await service.list_users(page=2, limit=10, search="abc", is_active=True)
+
+    service.user_repo.list_users.assert_awaited_once_with(
+        offset=10, limit=10, search="abc",
+    )
+    assert out.total == 1
+    assert out.page == 2
+    assert out.limit == 10
+    assert len(out.items) == 1
 
 
 @pytest.mark.asyncio
-async def test_update_user_raises_phase4_stub() -> None:
-    """update_user() raises the Phase 4 stub (lines 105-106)."""
+async def test_update_user_applies_display_name() -> None:
+    """update_user() applies display_name and ignores deprecated fields (PR 7 un-stub)."""
+    existing = MagicMock()
+    existing.id = uuid4()
+    existing.deleted_at = None
+    existing.display_name = "old"
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+    service = AdminService(db)
+    service.user_repo.get_by_id = AsyncMock(return_value=existing)  # type: ignore[method-assign]
+    service.user_repo.update = AsyncMock(return_value=existing)  # type: ignore[method-assign]
+
+    request = AdminUserUpdateRequest(
+        display_name="new", is_active=False, is_superuser=True, is_verified=True,
+    )
+    out = await service.update_user(existing.id, request, uuid4())
+
+    assert out is existing
+    assert existing.display_name == "new"
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_user_raises_404_when_missing() -> None:
+    """update_user() raises 404 when the target user is missing or soft-deleted (PR 7 un-stub)."""
     db = MagicMock()
     service = AdminService(db)
-    request = AdminUserUpdateRequest(is_active=False)
+    service.user_repo.get_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
     with pytest.raises(HTTPException) as exc_info:
-        await service.update_user(uuid4(), request, uuid4())
-    assert exc_info.value.status_code == 501
+        await service.update_user(
+            uuid4(),
+            AdminUserUpdateRequest(display_name="x"),
+            uuid4(),
+        )
+    assert exc_info.value.status_code == 404
 
 
 @pytest.mark.asyncio
