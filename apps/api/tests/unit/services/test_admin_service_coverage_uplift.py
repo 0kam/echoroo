@@ -48,31 +48,49 @@ def test_raise_phase4_stub_raises_501() -> None:
 
 @pytest.mark.asyncio
 async def test_list_users_paginates_and_wraps_response() -> None:
-    """list_users() delegates pagination to UserRepository and wraps the response (PR 7 un-stub)."""
-    user_row = MagicMock()
-    user_row.id = uuid4()
-    user_row.email = "u@example.com"
-    user_row.display_name = "U"
-    user_row.created_at = datetime.now(UTC)
-    user_row.updated_at = datetime.now(UTC)
-    user_row.last_login_at = None
-    user_row.two_factor_enabled = False
-    user_row.must_change_password = False
-    user_row.is_superuser = False
+    """list_users() delegates pagination to UserRepository and wraps the response.
+
+    spec/011 follow-up (2026-05-26): the repository now returns
+    ``list[tuple[User, bool]]`` instead of ``list[User]`` — the service
+    layer must propagate the ``is_superuser`` flag (resolved from the
+    ``superusers`` LEFT JOIN) into each :class:`AdminUserItemResponse`
+    row. We assert both the legacy (``False``) and superuser (``True``)
+    branches so the join wiring is covered.
+    """
+    regular_row = MagicMock()
+    regular_row.id = uuid4()
+    regular_row.email = "u@example.com"
+    regular_row.display_name = "U"
+    regular_row.created_at = datetime.now(UTC)
+    regular_row.last_login_at = None
+
+    su_row = MagicMock()
+    su_row.id = uuid4()
+    su_row.email = "su@example.com"
+    su_row.display_name = "SU"
+    su_row.created_at = datetime.now(UTC)
+    su_row.last_login_at = None
 
     db = MagicMock()
     service = AdminService(db)
-    service.user_repo.list_users = AsyncMock(return_value=([user_row], 1))  # type: ignore[method-assign]
+    service.user_repo.list_users = AsyncMock(  # type: ignore[method-assign]
+        return_value=([(regular_row, False), (su_row, True)], 2)
+    )
 
     out = await service.list_users(page=2, limit=10, search="abc", is_active=True)
 
     service.user_repo.list_users.assert_awaited_once_with(
         offset=10, limit=10, search="abc",
     )
-    assert out.total == 1
+    assert out.total == 2
     assert out.page == 2
     assert out.limit == 10
-    assert len(out.items) == 1
+    assert len(out.items) == 2
+    # Order is preserved end-to-end; is_superuser must mirror the join result.
+    assert out.items[0].is_superuser is False
+    assert out.items[0].email == "u@example.com"
+    assert out.items[1].is_superuser is True
+    assert out.items[1].email == "su@example.com"
 
 
 @pytest.mark.asyncio

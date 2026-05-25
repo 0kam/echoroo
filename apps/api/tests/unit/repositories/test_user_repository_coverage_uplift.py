@@ -110,10 +110,12 @@ async def test_get_by_id_returns_scalar() -> None:
 async def test_list_users_returns_rows_and_total_without_search() -> None:
     """list_users() returns ``(rows, total)`` from two SQL round-trips.
 
-    spec/011 follow-up: minimal unit coverage for the pagination path.
-    The first execute() call resolves ``SELECT COUNT(*)`` and returns a
-    scalar; the second resolves ``SELECT users ORDER BY created_at DESC``
-    and returns a scalar list. We assert the tuple shape and call order.
+    spec/011 follow-up (2026-05-26): the rows query now LEFT JOINs
+    ``superusers`` and the result shape becomes
+    ``list[tuple[User, bool]]``. The first execute() call resolves
+    ``SELECT COUNT(*)`` (scalar); the second resolves
+    ``SELECT User, is_superuser`` and exposes rows via ``.all()``
+    (no ``.scalars()`` collapse — we need both columns).
     """
     user = _make_user()
 
@@ -121,16 +123,14 @@ async def test_list_users_returns_rows_and_total_without_search() -> None:
     count_result.scalar_one.return_value = 5
 
     rows_result = MagicMock()
-    scalars_obj = MagicMock()
-    scalars_obj.all.return_value = [user]
-    rows_result.scalars.return_value = scalars_obj
+    rows_result.all.return_value = [(user, True)]
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[count_result, rows_result])
 
     repo = UserRepository(db)
-    users, total = await repo.list_users(offset=0, limit=20)
-    assert users == [user]
+    rows, total = await repo.list_users(offset=0, limit=20)
+    assert rows == [(user, True)]
     assert total == 5
     assert db.execute.await_count == 2
 
@@ -146,14 +146,12 @@ async def test_list_users_search_filter_applied() -> None:
     count_result.scalar_one.return_value = 0
 
     rows_result = MagicMock()
-    scalars_obj = MagicMock()
-    scalars_obj.all.return_value = []
-    rows_result.scalars.return_value = scalars_obj
+    rows_result.all.return_value = []
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[count_result, rows_result])
 
     repo = UserRepository(db)
-    users, total = await repo.list_users(offset=10, limit=10, search="abc")
-    assert users == []
+    rows, total = await repo.list_users(offset=10, limit=10, search="abc")
+    assert rows == []
     assert total == 0

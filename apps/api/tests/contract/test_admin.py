@@ -247,6 +247,39 @@ class TestListUsers:
         assert data["limit"] == 1
         assert len(data["items"]) == 1
 
+    async def test_list_users_exposes_is_superuser_flag(
+        self,
+        client: AsyncClient,
+        superuser_headers: dict[str, str],
+        superuser: User,
+        regular_user: User,
+    ) -> None:
+        """``is_superuser`` is resolved server-side from the ``superusers`` table.
+
+        spec/011 follow-up (2026-05-26): the admin UI badge for
+        "Superuser" was missing because ``AdminUserListResponse.items``
+        only carried the spec/006 ``UserResponse`` shape (no
+        ``is_superuser`` field). The repository now LEFT JOINs
+        ``superusers`` filtered by ``revoked_at IS NULL`` so every row
+        carries the boolean. Verify both the True (entitlement row
+        exists, ``revoked_at`` is NULL) and False (no row at all)
+        branches.
+        """
+        response = await client.get(
+            "/api/v1/admin/users",
+            headers=superuser_headers,
+            params={"limit": 100},
+        )
+        assert response.status_code == 200
+        items = response.json()["items"]
+        by_id = {item["id"]: item for item in items}
+
+        # The superuser fixture inserts a matching ``superusers`` row
+        # with ``revoked_at=None`` → True.
+        assert by_id[str(superuser.id)]["is_superuser"] is True
+        # The regular_user fixture has no superusers entry → False.
+        assert by_id[str(regular_user.id)]["is_superuser"] is False
+
 
 class TestUpdateUser:
     """Tests for PATCH /admin/users/{userId} endpoint (spec/011 follow-up)."""
