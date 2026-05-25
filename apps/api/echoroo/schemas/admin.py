@@ -13,7 +13,6 @@ from echoroo.core.operator_pii_detector import (
     reject_if_pii,
 )
 from echoroo.models.enums import ProjectMemberRole
-from echoroo.schemas.auth import UserResponse
 
 
 def _validate_cidr_list(value: list[str]) -> list[str]:
@@ -41,10 +40,50 @@ def _validate_cidr_list(value: list[str]) -> list[str]:
     return validated
 
 
+class AdminUserItemResponse(BaseModel):
+    """Single row in the admin user list response.
+
+    Extends :class:`UserResponse` with the ``is_superuser`` boolean
+    derived from the ``superusers`` entitlement table (spec/006 FR-111).
+    The flag is **not** persisted on ``users`` — it is resolved at query
+    time via a LEFT JOIN on ``superusers`` filtered by
+    ``revoked_at IS NULL`` so revoked / hard-deleted superuser rows do
+    not light up the badge.
+
+    A dedicated schema (rather than extending :class:`UserResponse`) is
+    used because ``UserResponse`` is the canonical shape for *other*
+    endpoints (e.g. ``GET /web-api/v1/users/me``) where surfacing a
+    cross-user entitlement boolean would be inappropriate — the
+    ``is_superuser`` flag is admin-list-only context.
+    """
+
+    id: UUID = Field(..., description="User identifier")
+    email: str = Field(..., description="User email")
+    display_name: str | None = Field(
+        None, description="Display name (NULL if unset)"
+    )
+    created_at: datetime = Field(..., description="Account creation timestamp")
+    last_login_at: datetime | None = Field(
+        None, description="Last successful login timestamp (NULL if never)"
+    )
+    is_superuser: bool = Field(
+        ...,
+        description=(
+            "True iff the user has an active row in ``superusers`` "
+            "(``revoked_at IS NULL``). Resolved server-side via the "
+            "admin LEFT JOIN so the SPA does not need a second query."
+        ),
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class AdminUserListResponse(BaseModel):
     """Admin user list response with pagination."""
 
-    items: list[UserResponse] = Field(..., description="List of users")
+    items: list[AdminUserItemResponse] = Field(
+        ..., description="List of users with superuser flag resolved"
+    )
     total: int = Field(..., description="Total number of users matching the filters")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Number of items per page")

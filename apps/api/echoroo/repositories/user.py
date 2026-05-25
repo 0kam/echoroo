@@ -2,8 +2,10 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
+from sqlalchemy.sql import ColumnElement
 
+from echoroo.models.superuser import Superuser
 from echoroo.models.user import User
 from echoroo.repositories.base import BaseRepository
 
@@ -31,8 +33,8 @@ class UserRepository(BaseRepository[User]):
         offset: int,
         limit: int,
         search: str | None = None,
-    ) -> tuple[list[User], int]:
-        """List active (non-soft-deleted) users with pagination.
+    ) -> tuple[list[tuple[User, bool]], int]:
+        """List active (non-soft-deleted) users with the superuser flag resolved.
 
         Args:
             offset: Number of rows to skip (``(page - 1) * page_size``).
@@ -41,12 +43,23 @@ class UserRepository(BaseRepository[User]):
                 ``email`` OR ``display_name``.
 
         Returns:
-            Tuple of ``(users, total_count)`` where ``total_count`` is the
-            number of rows matching the filter (independent of pagination).
-            ``users`` is ordered by ``created_at`` descending so the admin
-            UI surfaces the newest accounts first.
+            Tuple of ``(rows, total_count)``:
+
+            * ``rows`` — list of ``(User, is_superuser)`` tuples ordered
+              by ``created_at`` descending. ``is_superuser`` is ``True``
+              iff the user has a matching row in ``superusers`` with
+              ``revoked_at IS NULL`` (FR-111 SOT for operator status).
+              Resolved via a single LEFT JOIN so there is no N+1.
+            * ``total_count`` — number of rows matching the filter,
+              independent of pagination.
+
+        spec/011 follow-up (2026-05-26): previously returned only
+        ``list[User]``; the schema layer now needs the ``is_superuser``
+        flag for the admin UI badge, so the join is moved into the
+        repository and the response shape upgraded to a tuple. Existing
+        callers update accordingly.
         """
-        filters = [User.deleted_at.is_(None)]
+        filters: list[ColumnElement[bool]] = [User.deleted_at.is_(None)]
         if search:
             pattern = f"%{search}%"
             filters.append(
@@ -59,14 +72,31 @@ class UserRepository(BaseRepository[User]):
         total_stmt = select(func.count()).select_from(User).where(*filters)
         total = int((await self.db.execute(total_stmt)).scalar_one())
 
+        # LEFT JOIN superusers with the ``revoked_at IS NULL`` predicate
+        # baked into the join clause so revoked rows are dropped during
+        # the join (rather than carried into the result set as falsy).
+        # ``case(...)`` collapses the NULL/UUID outer-join column into a
+        # boolean returned alongside the User row.
+        is_superuser_expr = case(
+            (Superuser.id.is_not(None), True),
+            else_=False,
+        ).label("is_superuser")
+
         rows_stmt = (
-            select(User)
+            select(User, is_superuser_expr)
+            .outerjoin(
+                Superuser,
+                (Superuser.user_id == User.id) & Superuser.revoked_at.is_(None),
+            )
             .where(*filters)
             .order_by(User.created_at.desc())
             .offset(offset)
             .limit(limit)
         )
-        rows = list((await self.db.execute(rows_stmt)).scalars().all())
+        result = await self.db.execute(rows_stmt)
+        rows: list[tuple[User, bool]] = [
+            (user, bool(is_superuser)) for user, is_superuser in result.all()
+        ]
         return rows, total
 
     async def get_by_email(self, email: str) -> User | None:

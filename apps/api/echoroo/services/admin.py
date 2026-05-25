@@ -12,6 +12,7 @@ from echoroo.models.user import User
 from echoroo.repositories.system import SystemSettingRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.admin import (
+    AdminUserItemResponse,
     AdminUserListResponse,
     AdminUserUpdateRequest,
     SystemSettingResponse,
@@ -81,9 +82,18 @@ class AdminService:
         rows, total = await self.user_repo.list_users(
             offset=offset, limit=limit, search=search,
         )
-        from echoroo.schemas.auth import UserResponse
         return AdminUserListResponse(
-            items=[UserResponse.model_validate(u) for u in rows],
+            items=[
+                AdminUserItemResponse(
+                    id=user.id,
+                    email=user.email,
+                    display_name=user.display_name,
+                    created_at=user.created_at,
+                    last_login_at=user.last_login_at,
+                    is_superuser=is_superuser,
+                )
+                for user, is_superuser in rows
+            ],
             total=total,
             page=page,
             limit=limit,
