@@ -6,11 +6,16 @@
  * `echoroo_csrf` cookie just like the rest of the web-auth router.
  *
  * Programmatic API keys are forbidden by the backend (FR-084): every call
- * is issued with `credentials: 'include'` so the user's session cookie
- * carries the authorization decision.
+ * is issued through the shared :data:`apiClient` so the request carries
+ * BOTH the user's session cookie (``credentials: 'include'``) AND the
+ * in-memory access token as ``Authorization: Bearer …``. The backend
+ * auth router's session fast-path requires both pieces together — a
+ * session cookie without a Bearer header 401s with
+ * ``auth_required / Access token required`` (Phase 17 follow-up: was
+ * regressed when this module shipped its own bare-fetch helper).
  */
 
-import { ApiError } from './client';
+import { ApiError, apiClient } from './client';
 import { getActiveStepUpToken } from '$lib/utils/webauthnGating';
 
 const BASE = '/web-api/v1/admin';
@@ -28,13 +33,6 @@ function isStepUpRequiredPath(path: string): boolean {
   // which are filtered by method). Listing endpoints stay on GET so the
   // method filter alone is sufficient.
   return path.startsWith('/superusers');
-}
-
-function resolveBaseUrl(): string {
-  if (typeof window !== 'undefined') {
-    return '';
-  }
-  return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
 }
 
 function getCsrfToken(): string | null {
@@ -81,29 +79,13 @@ function extractErrorCode(errorData: unknown): string | null {
   return null;
 }
 
-function extractMessage(errorData: unknown, fallback: string): string {
-  if (typeof errorData !== 'object' || errorData === null) return fallback;
-  const obj = errorData as Record<string, unknown>;
-  const detail = obj['detail'];
-  if (typeof detail === 'string') return detail;
-  if (typeof detail === 'object' && detail !== null) {
-    const detailObj = detail as Record<string, unknown>;
-    const m = detailObj['message'];
-    if (typeof m === 'string') return m;
-  }
-  if (typeof obj['message'] === 'string') return obj['message'] as string;
-  return fallback;
-}
-
 async function request<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const url = `${resolveBaseUrl()}${BASE}${path}`;
+  const endpoint = `${BASE}${path}`;
   const method = (init.method ?? 'GET').toUpperCase();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = {};
 
   // Attach CSRF for state-changing verbs.
   if (method !== 'GET' && method !== 'HEAD') {
@@ -119,6 +101,8 @@ async function request<T>(
     if (stepUp) headers[STEP_UP_HEADER_NAME] = stepUp;
   }
 
+  // Merge caller-provided headers (they win over our defaults so callers
+  // can override Content-Type for non-JSON payloads if ever needed).
   if (init.headers) {
     const provided = new Headers(init.headers);
     provided.forEach((value, key) => {
@@ -126,29 +110,35 @@ async function request<T>(
     });
   }
 
-  const response = await fetch(url, {
-    ...init,
-    credentials: 'include',
-    headers,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new ApiError(
-      extractMessage(errorData, 'Request failed'),
-      response.status,
-      extractMessage(errorData, 'Request failed'),
-      extractErrorCode(errorData),
-      errorData,
-    );
+  // Delegate the actual transport to the shared :data:`apiClient`. It
+  // attaches ``Authorization: Bearer <access_token>`` from its in-memory
+  // store, sets ``Content-Type: application/json`` + ``credentials:
+  // 'include'``, and on a 401 it transparently calls
+  // ``/web-api/v1/auth/refresh`` and retries once with the rotated token.
+  // Our custom CSRF + step-up headers ride along via ``options.headers``.
+  try {
+    return await apiClient.request<T>(endpoint, { ...init, headers });
+  } catch (err) {
+    // ``apiClient`` extracts ``code`` from ``{"error": "..."}`` and
+    // ``{"code": "..."}`` envelopes but does not look inside a nested
+    // ``detail`` object. Superuser endpoints sometimes return
+    // ``{"detail": {"error_code": "..."}}`` — re-extract from the raw
+    // body so UI branches like ``ERR_LAST_SUPERUSER_PROTECTION`` keep
+    // matching after the rotation through ``apiClient``.
+    if (err instanceof ApiError && !err.code && err.body !== null) {
+      const richerCode = extractErrorCode(err.body);
+      if (richerCode) {
+        throw new ApiError(
+          err.message,
+          err.status,
+          err.detail,
+          richerCode,
+          err.body,
+        );
+      }
+    }
+    throw err;
   }
-
-  if (response.status === 204) return undefined as T;
-  const ct = response.headers.get('content-type');
-  if (ct?.includes('application/json')) {
-    return (await response.json()) as T;
-  }
-  return {} as T;
 }
 
 // ---------- Types ----------
