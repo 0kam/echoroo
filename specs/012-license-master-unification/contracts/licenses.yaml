@@ -1,0 +1,90 @@
+openapi: 3.1.0
+info:
+  title: Echoroo Programmatic API — Licenses (read-only public list)
+  version: 0.1.0
+  description: >
+    Bearer-authenticated read endpoint that lists all licenses currently
+    present in the master `licenses` table. Parallel to
+    `/web-api/v1/licenses` (see web-licenses.yaml) but consumed by
+    programmatic callers (CLI tools, integrations) that hold an API key
+    rather than a cookie session. Reference: spec/012-license-master-unification.
+
+paths:
+  /api/v1/licenses:
+    get:
+      operationId: listLicenses
+      summary: List active licenses (Bearer)
+      description: >
+        Returns every row in the `licenses` master table, ordered by
+        `short_name` ascending. Same response shape and same data
+        source as `/web-api/v1/licenses`; this variant exists so
+        programmatic callers do not need to hold a cookie session.
+
+        FR-017 — accessible to any authenticated caller; not gated to
+        admins. The Bearer key need not carry any specific permission
+        beyond a valid identity.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: License list (possibly empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LicenseListResponse"
+        "401":
+          description: Bearer credentials missing, invalid, or revoked.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    LicenseListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/License"
+
+    License:
+      type: object
+      required: [id, short_name, name]
+      properties:
+        id:
+          type: string
+          maxLength: 50
+        short_name:
+          type: string
+          maxLength: 50
+        name:
+          type: string
+          maxLength: 200
+        url:
+          type: string
+          nullable: true
+          maxLength: 500
+          format: uri
+        description:
+          type: string
+          nullable: true
+
+    ErrorEnvelope:
+      type: object
+      required: [error_code, message]
+      properties:
+        error_code:
+          type: string
+          example: auth_required
+        message:
+          type: string
+          example: Bearer API key required for /api/v1/*
