@@ -63,10 +63,10 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 ### Tests (write FIRST, must FAIL before implementation)
 
 - [ ] T002 Write failing integration test for migration 0024 happy path in `apps/api/tests/integration/migrations/test_0024_license_unification.py` — mirror the testcontainers pattern from `test_0022_email_subsystem_removal.py`. Assert: (a) seed inserts the four canonical license rows with `ON CONFLICT (short_name) DO NOTHING` (admin-curated rows with same short_name are preserved); (b) every pre-existing `projects.license` enum value maps deterministically to the new `license_id`; (c) `projects.license` column is dropped; (d) `projects.license_id` has an FK constraint with `ON DELETE RESTRICT` AND an index `ix_projects_license_id`; (e) `datasets.license_id` FK constraint switches to `ON DELETE RESTRICT`; (f) `project_license_history.old_license` and `.new_license` are now `VARCHAR(50)`; (g) `alembic_version` advances to the new revision.
-- [ ] T003 [P] Write failing integration test for migration 0024 negative path (projects.license) in the same file — inject an unrecognized `projects.license` value before upgrade; assert `ValueError` (listing the offender) AND verify the schema is fully untouched (no new column, no FK changes, no type changes on history).
-- [ ] T004 [P] Write failing integration test for migration 0024 negative path (history columns) in the same file — inject an unrecognized `project_license_history.new_license` value before upgrade; assert `ValueError` (listing the offender from the history audit) AND schema untouched.
-- [ ] T005 [P] Write failing integration test for license history migration (R8 + FR-005a) in the same file — seed a row in `project_license_history` with `new_license='CC-BY'`, apply the migration, assert the row is preserved verbatim (`new_license` still reads `'CC-BY'` as VARCHAR string).
-- [ ] T006 [P] Write failing unit test for migration's `downgrade()` in `apps/api/tests/unit/test_migration_0024.py` — assert `NotImplementedError` (spec/011 step 11 precedent).
+- [ ] T003 Write failing integration test for migration 0024 negative path (projects.license) in the same file as T002 — inject an unrecognized `projects.license` value before upgrade; assert `ValueError` (listing the offender) AND verify the schema is fully untouched (no new column, no FK changes, no type changes on history). Sequential after T002 (same file).
+- [ ] T004 Write failing integration test for migration 0024 negative path (history columns) in the same file as T002 — inject an unrecognized `project_license_history.new_license` value before upgrade; assert `ValueError` (listing the offender from the history audit) AND schema untouched. Sequential after T003 (same file).
+- [ ] T005 Write failing integration test for license history migration (R8 + FR-005a) in the same file as T002 — seed a row in `project_license_history` with `new_license='CC-BY'`, apply the migration, assert the row is preserved verbatim (`new_license` still reads `'CC-BY'` as VARCHAR string). Sequential after T004 (same file).
+- [ ] T006 [P] Write failing unit test for migration's `downgrade()` in `apps/api/tests/unit/test_migration_0024.py` — assert `NotImplementedError` (spec/011 step 11 precedent). Parallel-safe with T002-T005 (different file).
 
 ### Implementation
 
@@ -88,8 +88,8 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T012 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_web_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session.
-- [ ] T013 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_api_public.py` (separate file so T012 + T013 are truly parallel) — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer.
+- [ ] T012 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_web_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session, **and explicitly: a non-admin authenticated user (e.g. `e2e-member`) receives 200 with the full list (FR-017 — read endpoint MUST NOT require admin privileges)**.
+- [ ] T013 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_api_public.py` (separate file so T012 + T013 are truly parallel) — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer, **and explicitly: a non-admin Bearer key (no admin scope) receives 200 (FR-017)**.
 - [ ] T014 [P] [US1] Unit test for `LicenseService.list_public()` in `apps/api/tests/unit/services/test_license_service.py` — covers: returns sorted list, empty master returns empty list.
 - [ ] T015 [P] [US1] Contract test for `POST /projects` `license_id` resolution in `apps/api/tests/contract/test_projects_create.py` (extend existing file) — covers: valid `license_id: "cc-by"` succeeds and project response reports `license: "CC-BY"`; unknown `license_id: "cc-by-nonsense"` returns 422 with `error_code: "license_not_found"`; missing `license_id` returns 422 (FR-005 — required at create); pre-existing project with `license_id IS NULL` (legacy row) still returns `license: null` on GET.
 
@@ -151,11 +151,11 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T037 [P] [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing) — 204 success when no dependents (covers BOTH `/api/v1/admin/licenses/{id}` AND `/web-api/v1/admin/licenses/{id}`).
-- [ ] T038 [P] [US3] Contract test — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`).
-- [ ] T039 [P] [US3] Contract test — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`).
-- [ ] T040 [P] [US3] Contract test — 409 `LicenseInUseError` with both dependencies.
-- [ ] T041 [P] [US3] Contract test — 404 when `license_id` doesn't exist (preserves existing behavior).
+- [ ] T037 [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing) — 204 success when no dependents (covers BOTH `/api/v1/admin/licenses/{id}` AND `/web-api/v1/admin/licenses/{id}`).
+- [ ] T038 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`). Sequential after T037 (same file).
+- [ ] T039 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`). Sequential after T038 (same file).
+- [ ] T040 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with both dependencies. Sequential after T039 (same file).
+- [ ] T041 [US3] Contract test in the same file as T037 — 404 when `license_id` doesn't exist (preserves existing behavior). Sequential after T040 (same file).
 - [ ] T042 [US3] Race-condition unit test in `apps/api/tests/unit/services/test_license_service.py` — mock the FK constraint to fire after the service-layer pre-query returns 0/0. Assert that `LicenseService.delete()` catches the `IntegrityError`, re-runs the dependency-count query, and raises `LicenseInUseError` with the freshly-recounted values (no sentinel).
 - [ ] T043 [P] [US3] Unit test for `LicenseService.delete()` happy refusal path — `count_dependents > 0` raises `LicenseInUseError` without touching the row.
 
@@ -238,18 +238,18 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 - Repository tasks before service tasks. Service tasks before endpoint tasks. Endpoint tasks before frontend tasks.
 - Schemas / types can run in parallel with their nearest non-conflicting siblings.
 
-### Parallel safety review (Codex review fix)
+### Parallel safety review (Codex review fix, re-verified by analyze)
 
-All `[P]` markers in this revised tasks.md were verified to touch **distinct files**:
+All `[P]` markers in this revised tasks.md were verified to touch **distinct files**. Tasks that share a file are explicitly sequential (no `[P]` marker), with a note pointing at the file lock predecessor:
 
-- Phase 2 tests T003 / T004 / T005 / T006 — T003+T004+T005 all extend the same file (`test_0024_license_unification.py`) so they are NOT parallel; **T003 is sequential, T004 and T005 wait for T003 to land, T006 is [P] (different file)**. Removed [P] markers from T003-T005.
-- Phase 2 implementation T008 / T009 / T010 — all in different files / classes; safe to mark [P]. T008 and T009 both touch `models/project.py` but different classes (`Project` vs `ProjectLicenseHistory`); merge conflict risk minimal but flagged.
-- Phase 3 tests T012 / T013 / T014 / T015 — each in a different file; [P] safe.
-- Phase 3 endpoint handlers T018 / T019 — different files; [P] safe.
-- Phase 3 frontend T025 / T026 / T029 / T030 — different files; [P] safe.
-- Phase 5 contract tests T037-T041 — **all in the same file** (`test_admin_licenses_delete.py`); marking them [P] is incorrect. **Revised**: T037 sequential, T038-T041 wait for T037 (file lock). Removed [P] markers.
-
-(Adjustments reflected in the task list above. Look for `[P]` markers only where files are truly disjoint.)
+- **Phase 2 tests** — T002, T003, T004, T005 all extend the same file (`test_0024_license_unification.py`); the body of each task explicitly says "in the same file as T002" and "Sequential after T_n_". `[P]` removed from T003/T004/T005. T006 has `[P]` because it targets a different file (`test_migration_0024.py`).
+- **Phase 2 implementation** — T008, T009, T010 each touch different model classes / files; safe with `[P]`. T008 and T009 both edit `models/project.py` but different classes (`Project` vs `ProjectLicenseHistory`) — merge-conflict risk is documented and accepted.
+- **Phase 3 contract / unit tests** — T012, T013, T014, T015 each in a different file; `[P]` safe.
+- **Phase 3 endpoint handlers** — T018, T019 different files; `[P]` safe.
+- **Phase 3 frontend** — T025, T026, T029, T030 different files; `[P]` safe.
+- **Phase 5 contract tests** — T037, T038, T039, T040, T041 all in the same file (`test_admin_licenses_delete.py`). `[P]` removed from T038-T041; each task body says "in the same file as T037" and "Sequential after T_n_".
+- **Phase 5 implementation** — T044, T045 touch different files; `[P]` safe.
+- **Phase 6 verification commands** — T053, T054, T057, T058 are read-only against different parts of the tree; `[P]` safe.
 
 ### Parallel opportunities (after the corrections)
 
