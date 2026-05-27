@@ -9,9 +9,11 @@ artifacts assume them as ground truth.
 
 ---
 
-## R1. API response shape for `project.license`
+## R1. API shape: response stays a short_name string; **submit moves to license_id**
 
-**Decision**: Keep the `license` field in project API responses as the existing **short-name string** (e.g. `"CC-BY"`). The internal column rename from `projects.license` (enum) to `projects.license_id` (FK to `licenses.id`) is a storage-only change and MUST NOT change the JSON shape that current consumers see.
+**Decision (revised after Codex review)**: Keep the `license` field in project API **responses** as the existing **short-name string** (e.g. `"CC-BY"`) — backward compatibility for read paths. The **request** body for `POST /projects` and `PATCH /projects/{id}` changes to accept a stable identifier (`license_id: str`, the `licenses.id` value) **rather than the short_name**, so that admin renames between dropdown render and form submit do not invalidate in-flight requests (FR-004 stable-identifier guarantee).
+
+The transitional accept-either compromise (read `short_name` from request, look it up at insert time) was REJECTED on Codex re-review: it does not actually satisfy FR-004 because an admin renaming `"CC-BY"` to `"CC-BY 4.0"` between the dropdown render and the user clicking submit would cause the submit to 422 with `license_not_found`, even though the underlying license row is unchanged.
 
 **Rationale**:
 - The user's expectation, framed in the spec, is "the inverse of intuitive ordering — admin master should drive the form" — not "introduce a richer license object everywhere." Tightening the contract to push a `{id, short_name, name, url}` object onto every project response would force coordinated frontend + downstream consumer updates with no offsetting benefit for this feature.
@@ -23,8 +25,11 @@ artifacts assume them as ground truth.
 - *Expose `license_id` directly in the API*: Cluttered for clients that only render a label; ids are opaque to most callers. Rejected.
 
 **Impact on plan**:
-- `schemas/project.py` keeps the `license: str | None` field, but its source switches from the enum column to a join-and-pluck on `licenses.short_name`. `ProjectResponse.license` is populated by the repository or service layer reading the joined value.
-- The `POST /projects` request body keeps `license: str | None` (the short_name). Backend resolves short_name → license_id by looking up the master before insert; an unknown short_name yields a 400 / 422 with a useful message.
+- `schemas/project.py` `ProjectResponse.license`: still a `str | None`, but its source switches from the enum column to a join-and-pluck on `licenses.short_name`. Populated by the repository / service layer reading the joined value.
+- `schemas/project.py` `ProjectCreateRequest` / `ProjectUpdateRequest`: replace `license: ProjectLicense` with `license_id: str` (FK identifier). Backend validates the id exists in the master before insert/update; an unknown id yields 422 with `error_code: "license_not_found"`. The legacy `license` request field is dropped entirely (spec/006 contract requires `license` at create time but the wire field is renamed to `license_id` since the *semantics* — required, references master — are unchanged; spec/006 contract is regenerated accordingly).
+- Frontend: dropdown `<option value="…">` carries `license.id`, the visible text is `license.short_name` (with `name` as `title` tooltip). The form's `license_id` state is submitted verbatim.
+- `services/detection_export.py:381-383` switches from `project.license.value` to `project.license` (the joined short_name string). CSV column wire shape unchanged (still a license short_name string).
+- `models/project.py::ProjectLicenseHistory`: see R8 below (history snapshot columns are converted to VARCHAR(50), no FK to licenses).
 
 ---
 
@@ -74,7 +79,9 @@ Both return the same response shape and read from the same service layer. No wri
 
 ## R4. Migration safety against unrecognized enum values
 
-**Decision**: The migration runs an **audit SELECT** as its first operation against `projects` rows: `SELECT DISTINCT license FROM projects WHERE license IS NOT NULL AND license NOT IN ('CC0','CC-BY','CC-BY-NC','CC-BY-SA')`. If the result is non-empty, raise `ValueError` with the list of offending values. Postgres rolls the migration transaction back; no schema changes are committed. The operator must manually clean up `projects.license` values (or extend the seed list) before re-running.
+**Decision**: The migration runs the **audit SELECT** as **step 1, before any schema or seed change**: `SELECT DISTINCT license FROM projects WHERE license IS NOT NULL AND license NOT IN ('CC0','CC-BY','CC-BY-NC','CC-BY-SA')` (plus the analogous query on `project_license_history.old_license` and `new_license` after R8). If either result is non-empty, raise `ValueError` listing the offending values. Postgres rolls the entire transaction back; no schema changes, no seed inserts, no constraint mutations are committed. The operator must clean up offending rows (or extend the migration's mapping table) before re-running.
+
+Doing this as step 1 means the safety belt fires on the earliest cheap signal — well before we touch the schema. This also makes the test fixture's "negative path" assertion stable: after a ValueError, the schema is verifiably untouched (no new column, no unique constraint, no FK changes).
 
 **Rationale**:
 - FR-010 explicitly forbids silent mapping or dropping. An abort with a clear error message gives the operator the information they need to act.
@@ -94,7 +101,9 @@ Both return the same response shape and read from the same service layer. No wri
 
 ## R5. Caching strategy
 
-**Decision**: **No caching layer** on launch. The frontend uses TanStack Query with `staleTime: 30s` so rapid revisits within a single user's session deduplicate the network call, but every cold form-open hits the backend fresh. No backend caching (Redis, in-memory) is added.
+**Decision (revised after Codex review)**: **No caching layer** on launch. The frontend uses TanStack Query with `staleTime: 0` and `refetchOnMount: 'always'` so every time the `/projects/new` form mounts, a fresh fetch fires (admin updates land within the SC-001 "5 second" budget without any cache-invalidation choreography). In-flight deduplication still works (concurrent mounts share one network call), so this is not a "no caching at all" stance — just no *stale* caching.
+
+The original 30-second `staleTime` would have violated SC-001 in a common scenario: admin opens admin tab → adds license → switches to user tab that already had the form open within the last 30s → user sees the stale dropdown. Cutting staleTime to zero closes that gap.
 
 **Rationale**:
 - Per A-004 in the spec, project creation traffic is low (pre-launch) and license master is a small table (~4–10 rows). A single indexed `SELECT * FROM licenses ORDER BY short_name` is ~1 ms inside the DB; the network roundtrip dominates and is well within the 200 ms p95 budget (SC-005).
@@ -128,6 +137,30 @@ Both return the same response shape and read from the same service layer. No wri
 
 ---
 
+## R8. `project_license_history` schema migration
+
+**Decision (added after Codex review)**: The existing `project_license_history.old_license` and `.new_license` columns are typed as the `ProjectLicense` enum and are tracked by the FR-086/FR-087 license-history surface. The migration converts both columns from the enum type to `VARCHAR(50)` and copies the existing enum string values verbatim. **The history columns are NOT FK-referenced** to `licenses(id)` — they are immutable historical snapshots and would silently lose meaning if a later admin rename rewrote their visible values.
+
+This decision is intentionally asymmetric with `projects.license_id` (which IS a FK with rename-survivable semantics, per FR-004). The two columns serve different roles: the live FK on `projects` must follow admin renames; the snapshot columns on `project_license_history` must NOT.
+
+**Rationale**:
+- FR-005a explicitly distinguishes the live value (FK-bound) from the history snapshot (string).
+- Treating history snapshots as FK references would mean a rename rewrites every audit-log entry showing the old name — equivalent to falsifying historical records. Unacceptable.
+- The CSV export consumed by FR-086 reads the live value (`project.license`) not the history value; the history surface is presented as-is to admins via FR-087.
+
+**Alternatives considered**:
+- *FK both `old_license` and `new_license`*: violates "history is immutable". Rejected.
+- *Delete `project_license_history` table outright as out-of-scope debt*: would silently drop the FR-086/FR-087 license-history surface. Rejected.
+- *Leave history columns as the legacy enum type*: blocks admin-added license values from ever appearing in history transitions (an admin adding `CC-BY-ND` and then changing a project to it would crash the history insert). Rejected.
+
+**Impact on plan**:
+- Migration includes two `ALTER COLUMN ... TYPE VARCHAR(50)` statements (`old_license` + `new_license`) using `USING old_license::text` to convert without data loss.
+- The legacy Postgres `projectlicense` enum type is **kept** in the DB schema after migration (the enum was originally created as a separate Postgres type and remains referenced only by potentially-future migrations; dropping it requires verifying nothing else references it and is deferred as cleanup debt).
+- `models/project.py::ProjectLicenseHistory.old_license` / `.new_license`: redeclared as `Mapped[str | None]` / `Mapped[str]` respectively.
+- Test scenarios include: insert a history row recording a transition from a seeded license to an admin-added license; verify the row survives and `GET /projects/{id}/license-history` returns it correctly.
+
+---
+
 ## R7. Existing schema / FR-013 detail — `datasets.license_id`
 
 **Decision**: In the same migration that introduces `projects.license_id`, drop and re-add the `datasets.license_id` FK constraint as `ON DELETE RESTRICT` (was `ON DELETE SET NULL`). No data migration on the dataset side is required — the column itself, its values, and the FK relationship are unchanged in shape.
@@ -152,12 +185,13 @@ Both return the same response shape and read from the same service layer. No wri
 
 | # | Topic | Decision | Notes |
 |---|---|---|---|
-| R1 | `project.license` API shape | Keep short-name string | No breaking change |
+| R1 | API shape | **Request: `license_id` (FK)**; response: still `short_name` string | FR-004 stable identifier requires this |
 | R2 | New endpoint location | Both `/web-api/v1/licenses` and `/api/v1/licenses` | Read-only |
-| R3 | Delete-protection | FK ON DELETE RESTRICT + service-layer 409 | Defense in depth |
-| R4 | Migration safety | Audit SELECT + ValueError on unknown values | Forward-only, transactional |
-| R5 | Caching | None on launch; TanStack staleTime only | A-004 |
+| R3 | Delete-protection | FK ON DELETE RESTRICT + service-layer 409 with re-count fallback on race | Defense in depth |
+| R4 | Migration safety | Audit SELECT **as step 1**, ValueError on unknown values | Forward-only, transactional |
+| R5 | Caching | TanStack `staleTime: 0` + `refetchOnMount: 'always'` | SC-001 (5 s) compliance |
 | R6 | Localization | Out of scope | A-002 |
 | R7 | Datasets FK | Drop+re-add as ON DELETE RESTRICT in same migration | FR-013 resolution |
+| R8 | History snapshot columns | Enum → VARCHAR(50); NOT FK-referenced | FR-005a + immutability of history |
 
 All Phase 0 unknowns are now resolved. Plan proceeds to Phase 1 (data-model.md + contracts + quickstart).

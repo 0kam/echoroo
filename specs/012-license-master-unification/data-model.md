@@ -45,12 +45,25 @@ Existing entity. This feature changes only the license relationship; all other f
 | Column | Type | Constraints | Change in this feature |
 |---|---|---|---|
 | `license` | `VARCHAR(...)` (enum string) | NULL | **DROPPED after data migration** |
-| `license_id` | `VARCHAR(50)` | NULL, **NEW FK to `licenses(id)` ON DELETE RESTRICT** | New column. Populated from the legacy `license` value via the deterministic map in the same migration. |
+| `license_id` | `VARCHAR(50)` | NULL, **NEW FK to `licenses(id)` ON DELETE RESTRICT** + **NEW index `ix_projects_license_id`** | New column. Populated from the legacy `license` value via the deterministic map in the same migration. |
 
 Behavior:
-- A project may have `license_id IS NULL` (FR-005). Today this means "no license assigned"; that semantic is preserved.
-- A project's `license_id` MUST reference an existing row in `licenses`. Enforced by the FK; the application also validates short_name → license_id at creation time so a 400 is surfaced earlier than the FK error.
-- The API response field `project.license` continues to exist with type `str | None`, populated by joining `licenses.short_name` (R1).
+- A project may have `license_id IS NULL` **only as a legacy state** preserved from pre-migration rows that had `license IS NULL`. New project creation requires a license (FR-005, aligning with spec/006); no application code path produces a NULL `license_id` after this feature ships.
+- A project's `license_id` MUST reference an existing row in `licenses`. Enforced by the FK; the application validates the submitted `license_id` exists in the master at create/update time so a 422 with `error_code: "license_not_found"` is surfaced before the FK error.
+- The API request field for create/update is `license_id: str` (the stable FK identifier). The API response field `project.license` continues to exist with type `str | None`, populated by joining `licenses.short_name` (R1, no breaking change on the response side).
+
+### ProjectLicenseHistory (modified — column type change only)
+
+Existing entity (Phase 7 / FR-086 + FR-087). Tracks every license transition on a project; rendered by the FR-087 license-history surface and reflected in the FR-086 CSV export. This feature converts the two enum-typed columns to plain VARCHAR strings so admin-added license values can flow through the history without crashing the insert path.
+
+| Column | Type | Constraints | Change in this feature |
+|---|---|---|---|
+| `old_license` | `ProjectLicense` enum | NULL | **TYPE CHANGED to VARCHAR(50)** via `ALTER COLUMN ... USING old_license::text`. Snapshot value preserved verbatim. |
+| `new_license` | `ProjectLicense` enum | NOT NULL | **TYPE CHANGED to VARCHAR(50)** via the same pattern. |
+
+Behavior:
+- History rows are immutable snapshots (FR-005a). Subsequent admin renames of `licenses.short_name` do NOT rewrite history; this is intentional and documented.
+- No FK relationship is added between `project_license_history` and `licenses` — see R8.
 
 ### Dataset (modified constraint only)
 
@@ -84,18 +97,33 @@ There is no direct project ↔ dataset license coupling. A project and a dataset
 
 ## Schema-change summary (one Alembic migration: 0024 unless other migrations land first)
 
+Reordered after Codex review to put the audit step **first** so that an abort happens before any irreversible structural change is committed (R4 revised).
+
 ```text
-1. Add UNIQUE constraint on licenses.short_name
-   (idempotent — the seeded ids are already unique by short_name)
+1. AUDIT — FR-010 safety belt (runs BEFORE any schema or seed change).
+   For each of (projects.license, project_license_history.old_license,
+   project_license_history.new_license):
+     SELECT DISTINCT <col> FROM <table>
+     WHERE <col> IS NOT NULL
+     AND <col> NOT IN ('CC0','CC-BY','CC-BY-NC','CC-BY-SA')
+   If any of the three queries returns rows, raise ValueError with the
+   offending values; Postgres rolls back the transaction immediately
+   (no schema mutation has occurred yet).
 
-2. INSERT ... ON CONFLICT (id) DO NOTHING for the four canonical seed rows
+2. Add UNIQUE constraint on licenses.short_name
+   (idempotent — the seeded short_names are already unique).
+   This MUST land before the seed (step 3) so that ON CONFLICT (short_name)
+   in step 3 has a constraint to honour.
 
-3. ADD COLUMN projects.license_id VARCHAR(50) NULL
-   (no FK constraint yet — separate step for safe transactional rollback)
+3. INSERT ... ON CONFLICT (short_name) DO NOTHING for the four canonical
+   seed rows. Using short_name (not id) as the conflict target honours
+   FR-007 "the seed must only fill in rows whose short_name is not
+   already present — never overwrite admin edits"; an admin-curated
+   "CC0" with id='public-domain' is preserved untouched.
 
-4. SELECT DISTINCT license FROM projects WHERE license IS NOT NULL
-   AND license NOT IN ('CC0','CC-BY','CC-BY-NC','CC-BY-SA')
-   → if any rows, raise ValueError with the offending list (FR-010)
+4. ADD COLUMN projects.license_id VARCHAR(50) NULL
+   (FK constraint added separately in step 6 for safe transactional
+   rollback; the index is created alongside the FK in step 6).
 
 5. UPDATE projects SET license_id = CASE license
      WHEN 'CC0'      THEN 'cc0'
@@ -103,22 +131,39 @@ There is no direct project ↔ dataset license coupling. A project and a dataset
      WHEN 'CC-BY-NC' THEN 'cc-by-nc'
      WHEN 'CC-BY-SA' THEN 'cc-by-sa'
    END
-   WHERE license IS NOT NULL
+   WHERE license IS NOT NULL.
+   Pre-existing rows with license IS NULL get license_id IS NULL
+   (FR-005 — preserved as legacy).
 
 6. ADD CONSTRAINT projects_license_id_fkey FOREIGN KEY (license_id)
-     REFERENCES licenses(id) ON DELETE RESTRICT
+     REFERENCES licenses(id) ON DELETE RESTRICT;
+   CREATE INDEX ix_projects_license_id ON projects(license_id);
 
-7. DROP COLUMN projects.license
+7. DROP COLUMN projects.license.
 
-8. DROP CONSTRAINT datasets_license_id_fkey
+8. ALTER project_license_history.old_license TYPE VARCHAR(50)
+     USING old_license::text;
+   ALTER project_license_history.new_license TYPE VARCHAR(50)
+     USING new_license::text.
+   (FR-005a + R8 — history columns become snapshot strings, NOT
+   FK-referenced.)
+
+9. DROP CONSTRAINT datasets_license_id_fkey;
    ADD CONSTRAINT datasets_license_id_fkey FOREIGN KEY (license_id)
-     REFERENCES licenses(id) ON DELETE RESTRICT
-   (constraint name pulled from actual schema; placeholder above)
+     REFERENCES licenses(id) ON DELETE RESTRICT.
+   (Constraint name to be pulled from actual schema at implementation
+   time; placeholder above.)
 
-9. downgrade(): raise NotImplementedError("forward-only migration; see spec/011 step 11 precedent")
+10. downgrade(): raise NotImplementedError("forward-only migration;
+    see spec/011 step 11 precedent").
+
+NOTE on the legacy ``projectlicense`` Postgres enum type: it is left
+in place after migration. Dropping it requires verifying no other
+column references it, which is deferred to a follow-up cleanup
+migration once spec/012 is in production.
 ```
 
-All nine steps run in a single transaction. Any failure (including the FR-010 abort at step 4) rolls back the entire migration; no partial state can be left behind.
+All schema-modifying steps (2–9) run in a single transaction; any failure (including the FR-010 abort at step 1) rolls back the entire migration. No partial state can be left behind.
 
 ---
 

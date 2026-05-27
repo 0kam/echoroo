@@ -13,14 +13,26 @@ seeds the master with the four canonical CC licenses, exposes a public-read endp
 creation form fetches live, and tightens the delete-protection rule on both `projects.license_id` and
 `datasets.license_id` so an in-use license can never be deleted out from under a referencing row.
 
-Technical approach: one forward-only Alembic migration (0024 unless other migrations land first) that seeds
-the master, copies enum values to the new FK column, drops the legacy enum column, and replaces the
-`datasets.license_id` FK constraint with an ON DELETE RESTRICT variant. Backend gains one new read endpoint
-under both `/web-api/v1/licenses` (BFF, cookie session) and `/api/v1/licenses` (Bearer). The existing admin
-`DELETE /api/v1/admin/licenses/{id}` handler gains a service-layer dependency-count check and refuses with
-409 Conflict + counts when the license is referenced. Frontend project creation form replaces its hardcoded
-constant with a TanStack Query call to the new endpoint. The JSON shape returned by `projects` endpoints
-keeps the `license` field as a short-name string (no breaking change to API consumers).
+Technical approach: one forward-only Alembic migration (0024 unless other migrations land first) that (a)
+audits all license-typed columns for unrecognized values first, (b) seeds the master with the four canonical
+licenses via `ON CONFLICT (short_name)`, (c) adds `projects.license_id` FK with `ON DELETE RESTRICT` and an
+explicit index, (d) drops the legacy `projects.license` enum column, (e) converts the enum-typed
+`project_license_history.old_license` / `.new_license` columns to `VARCHAR(50)` (history snapshots, NOT
+FK-referenced), and (f) tightens the `datasets.license_id` FK from SET NULL to RESTRICT. Backend gains one
+new read endpoint under both `/web-api/v1/licenses` (BFF, cookie session) and `/api/v1/licenses` (Bearer).
+The existing admin DELETE handler (at `apps/api/echoroo/api/v1/admin.py` and BFF
+`apps/api/echoroo/api/web_v1/_admin_licenses.py` — NOT a per-resource file) gains a service-layer
+dependency-count check that refuses with 409 Conflict + counts when the license is referenced; FK race
+conditions trigger a re-count fallback rather than a sentinel value. Frontend project creation form replaces
+its hardcoded constant with a TanStack Query call (`staleTime: 0`, `refetchOnMount: 'always'`) and submits
+the stable `license_id` value instead of the short_name. The JSON shape returned by `projects` endpoints
+keeps the `license` field as a short-name string (no breaking change to read consumers); the **request**
+body for `POST /projects` switches from `license: ProjectLicense` to `license_id: str`. The CSV export
+(`apps/api/echoroo/services/detection_export.py:381`) switches from `project.license.value` to
+`project.license` (joined short_name) — wire shape unchanged.
+
+**Delivery shape (revised after Codex review)**: 2 PRs (PR-A backend + migration, PR-B frontend) rather
+than a single PR. Risk concentration in PR-A is the rationale; see tasks.md for the split detail.
 
 ## Technical Context
 
@@ -84,25 +96,28 @@ apps/api/                                              # FastAPI backend (Python
 ├── echoroo/
 │   ├── models/
 │   │   ├── license.py                                 # EXISTING — unchanged
-│   │   ├── project.py                                 # MODIFIED — license column → license_id FK
-│   │   └── dataset.py                                 # EXISTING — FK constraint updated via migration
+│   │   ├── project.py                                 # MODIFIED — Project: license column → license_id FK; ProjectLicenseHistory: enum cols → VARCHAR(50)
+│   │   ├── enums.py                                   # MODIFIED — ProjectLicense enum kept temporarily for legacy data migration mapping only
+│   │   └── dataset.py                                 # MODIFIED — annotate FK ondelete=RESTRICT (constraint replaced via migration)
 │   ├── schemas/
-│   │   ├── license.py                                 # MODIFIED — add LicensePublicResponse
-│   │   └── project.py                                 # MODIFIED — keep `license` as short-name string
+│   │   ├── license.py                                 # MODIFIED — add LicensePublicResponse + LicenseListResponse
+│   │   └── project.py                                 # MODIFIED — ProjectCreateRequest.license → license_id (str); ProjectResponse.license stays short_name string
 │   ├── repositories/
 │   │   ├── license.py                                 # MODIFIED — add count_dependents()
-│   │   └── project.py                                 # MODIFIED — write/read via license_id, still join licenses
+│   │   └── project.py                                 # MODIFIED — write/read via license_id, join licenses for short_name
 │   ├── services/
-│   │   ├── license_service.py                         # NEW or MODIFIED — list_public(), delete (refuse-on-dependents)
-│   │   └── project_service.py                         # MODIFIED — resolve license short_name → license_id on create
+│   │   ├── license_service.py                         # MODIFIED — list_public(), delete (refuse-on-dependents + race re-count)
+│   │   ├── project_service.py                         # MODIFIED — validate license_id existence on create/update
+│   │   └── detection_export.py                        # MODIFIED — `project.license.value` → `project.license` (joined short_name)
 │   ├── api/
 │   │   ├── v1/
 │   │   │   ├── licenses.py                            # NEW — GET /api/v1/licenses (Bearer, public-read)
-│   │   │   └── admin/licenses.py                      # MODIFIED — DELETE refuses 409 when in use
+│   │   │   └── admin.py                               # MODIFIED — DELETE refuses 409 when in use (NOT a per-resource file; this is the aggregated admin module)
 │   │   └── web_v1/
-│   │       └── licenses.py                            # NEW — GET /web-api/v1/licenses (cookie session)
+│   │       ├── licenses.py                            # NEW — GET /web-api/v1/licenses (cookie session)
+│   │       └── _admin_licenses.py                     # MODIFIED — BFF DELETE refuses 409 with same body shape (parallel to legacy admin)
 │   └── alembic/versions/
-│       └── 0024_license_master_unification.py         # NEW — seed master + add license_id FK + drop enum + tighten datasets FK
+│       └── 0024_license_master_unification.py         # NEW — audit-first migration (10 steps): audit → unique → seed (short_name conflict) → add column → UPDATE map → FK+index → drop legacy column → history cols ALTER → datasets FK swap → downgrade=NotImplementedError
 └── tests/
     ├── contract/
     │   ├── test_licenses_public.py                    # NEW — both /web-api/v1/licenses and /api/v1/licenses
@@ -178,4 +193,4 @@ Still passing across the board. Ready for `/speckit-tasks`.
 ## Next phases
 
 - **`/speckit-tasks`** — generates `tasks.md` enumerating concrete tasks (backend migration, model, schema, repo, service, two endpoints, admin delete check, frontend page change, frontend API client, translations, contract tests, unit tests, integration test, smoke verification).
-- **`/speckit-implement`** — executes tasks.md, likely as 1–3 PRs (single PR is fine given the small surface, but a split of "migration + backend" / "frontend" is also reasonable).
+- **`/speckit-implement`** — executes tasks.md as **2 PRs** (PR-A backend + migration, PR-B frontend; see tasks.md "Delivery shape" for the split rationale after Codex review).

@@ -1,17 +1,25 @@
 ---
-description: "Tasks for License Master Unification (spec/012)"
+description: "Tasks for License Master Unification (spec/012) — rev.2 after Codex review"
 ---
 
 # Tasks: License Master Unification
 
 **Input**: Design documents from `specs/012-license-master-unification/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md (all present)
+**Revised**: 2026-05-27 — incorporates Codex review findings (致命 4 / 重要 5 / 軽微 2)
 
-## Delivery shape
+## Delivery shape (revised)
 
-This feature is **a single implementation PR** — the user (`spec/012` author) explicitly directed against multi-PR splitting because the surface is small: one migration, one new read-endpoint pair, one admin endpoint behavior tightening, one frontend page change, plus tests and translations.
+The original plan called for a single PR. Codex review flagged that 53 tasks spanning migration + backend + frontend + admin UX + enum cleanup in one PR is high-risk given the forward-only nature of the migration. **Revised approach: 2-PR split.**
 
-Phases below are still organized as MVP-first checkpoints so the implementer can pause and validate after Phase 3 (US1, the headline outcome), but everything ships in one PR rather than three.
+| PR | Scope | Risk | Rough size |
+|---|---|---|---|
+| **PR-A** (backend + migration) | Phase 1 + 2 + 3 backend half + 4 + 5 backend half + Phase 6 backend polish | Migration is destructive and forward-only; concentrate the dangerous changes in one well-reviewed PR | ~40 tasks, ~30 files |
+| **PR-B** (frontend) | Phase 3 frontend half + Phase 5 frontend half + Phase 6 frontend polish | Pure UI work, easy to revert | ~13 tasks, ~6 files |
+
+PR-B depends on PR-A merging first (frontend will 404/422 against an old backend). Implementer may choose to land PR-A behind a feature flag in dev if more cautious staging is desired.
+
+Phases below remain organized as MVP-first checkpoints; PR-A covers Phases 1–5 backend + Phase 6 backend, PR-B covers Phases 3 + 5 frontend + Phase 6 frontend. Each PR is independently mergeable once its dependency is in place.
 
 ## Tests are REQUIRED
 
@@ -19,7 +27,7 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ## Format: `[ID] [P?] [Story?] Description`
 
-- **[P]**: task touches files not shared with the immediately prior task and has no incomplete dependency in the same phase
+- **[P]**: task touches files not shared with any prior incomplete task in the same phase, AND has no dependency on any prior incomplete task
 - **[Story]**: which user story the task delivers — US1, US2, US3 (Setup / Foundational / Polish have no Story label)
 - File paths are absolute under the repository root (`apps/api/...` or `apps/web/...`)
 
@@ -28,6 +36,13 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 - Backend: `apps/api/echoroo/...` + `apps/api/tests/...`
 - Frontend: `apps/web/src/...`
 - Migrations: `apps/api/alembic/versions/`
+
+### Critical backend paths (verified against the actual codebase during plan review)
+
+- **Admin license CRUD (Bearer)**: `apps/api/echoroo/api/v1/admin.py` — single aggregated admin module, not a per-resource file. The license-handler functions live inside it.
+- **Admin license CRUD (BFF, cookie session)**: `apps/api/echoroo/api/web_v1/_admin_licenses.py` — this is what the SvelteKit admin UI calls. **Contract tests and 409 mapping MUST cover BOTH.**
+- **Project license history model**: `apps/api/echoroo/models/project.py:271` — `ProjectLicenseHistory`. Has `old_license` + `new_license` columns typed as the `ProjectLicense` enum, both of which require migration to `VARCHAR(50)` (see FR-005a, R8, data-model.md step 8).
+- **Detection export FR-086 license column**: `apps/api/echoroo/services/detection_export.py:381` — currently reads `project.license.value` (enum access). Must change to read the joined `short_name` string.
 
 ---
 
@@ -39,119 +54,130 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ---
 
-## Phase 2: Foundational — Migration (Blocking Prerequisites)
+## Phase 2: Foundational — Migration (Blocking Prerequisites) [PR-A]
 
-**Purpose**: Schema change is a hard prerequisite for every user story. Both the destructive migration and the model annotations land here so that subsequent test fixtures and runtime code can rely on the new shape.
+**Purpose**: Schema change is a hard prerequisite for every user story. The migration covers BOTH the `projects.license` → `projects.license_id` FK switch AND the `project_license_history.old_license` / `.new_license` type changes (R8). Model annotations also land here so subsequent test fixtures and runtime code can rely on the new shape.
 
 **⚠️ CRITICAL**: No user-story work can begin until Phase 2 is green.
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T002 [P] Write failing integration test for migration 0024 happy path in `apps/api/tests/integration/migrations/test_0024_license_unification.py` — mirror the testcontainers pattern from `test_0022_email_subsystem_removal.py`. Assert: (a) seed inserts the four canonical license rows, (b) every pre-existing `projects.license` enum value maps deterministically to the new `license_id` column, (c) `projects.license` column is dropped, (d) FK constraints on both `projects.license_id` and `datasets.license_id` are `ON DELETE RESTRICT`, (e) `alembic_version` advances to the new revision.
-- [ ] T003 [P] Write failing integration test for migration 0024 negative path in `apps/api/tests/integration/migrations/test_0024_license_unification.py` — inject an unrecognized `projects.license` value before upgrade; assert `ValueError` (listing the offender) and verify the schema is fully rolled back (no new column, no new FK, no dropped column).
-- [ ] T004 [P] Write failing unit test for migration's `downgrade()` in `apps/api/tests/unit/test_migration_0024.py` — assert `NotImplementedError` (spec/011 step 11 precedent).
+- [ ] T002 Write failing integration test for migration 0024 happy path in `apps/api/tests/integration/migrations/test_0024_license_unification.py` — mirror the testcontainers pattern from `test_0022_email_subsystem_removal.py`. Assert: (a) seed inserts the four canonical license rows with `ON CONFLICT (short_name) DO NOTHING` (admin-curated rows with same short_name are preserved); (b) every pre-existing `projects.license` enum value maps deterministically to the new `license_id`; (c) `projects.license` column is dropped; (d) `projects.license_id` has an FK constraint with `ON DELETE RESTRICT` AND an index `ix_projects_license_id`; (e) `datasets.license_id` FK constraint switches to `ON DELETE RESTRICT`; (f) `project_license_history.old_license` and `.new_license` are now `VARCHAR(50)`; (g) `alembic_version` advances to the new revision.
+- [ ] T003 [P] Write failing integration test for migration 0024 negative path (projects.license) in the same file — inject an unrecognized `projects.license` value before upgrade; assert `ValueError` (listing the offender) AND verify the schema is fully untouched (no new column, no FK changes, no type changes on history).
+- [ ] T004 [P] Write failing integration test for migration 0024 negative path (history columns) in the same file — inject an unrecognized `project_license_history.new_license` value before upgrade; assert `ValueError` (listing the offender from the history audit) AND schema untouched.
+- [ ] T005 [P] Write failing integration test for license history migration (R8 + FR-005a) in the same file — seed a row in `project_license_history` with `new_license='CC-BY'`, apply the migration, assert the row is preserved verbatim (`new_license` still reads `'CC-BY'` as VARCHAR string).
+- [ ] T006 [P] Write failing unit test for migration's `downgrade()` in `apps/api/tests/unit/test_migration_0024.py` — assert `NotImplementedError` (spec/011 step 11 precedent).
 
 ### Implementation
 
-- [ ] T005 Implement migration `apps/api/alembic/versions/0024_license_master_unification.py` with the 9-step sequence from data-model.md (unique constraint → seed → add column → audit → UPDATE map → FK ON DELETE RESTRICT → drop legacy column → replace datasets FK → `downgrade()` raises). Use `_LICENSE_ID_FOR_ENUM` constant for the deterministic mapping.
-- [ ] T006 [P] Update `apps/api/echoroo/models/project.py` — remove the `license` enum column declaration, add `license_id: Mapped[str | None]` as FK to `licenses.id`, expose a `license` association proxy or property that resolves to `License.short_name` for backward-compatible read access.
-- [ ] T007 [P] Update `apps/api/echoroo/models/dataset.py` — annotate the existing `license_id` FK as `ondelete="RESTRICT"` (model metadata only; the actual constraint replacement happens in the migration).
-- [ ] T008 Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/integration/migrations/test_0024_license_unification.py apps/api/tests/unit/test_migration_0024.py'` and confirm all three tests now pass.
+- [ ] T007 Implement migration `apps/api/alembic/versions/0024_license_master_unification.py` with the 10-step sequence from data-model.md (audit FIRST → unique constraint → seed via short_name conflict → add column → UPDATE map → FK + index → drop legacy column → history columns ALTER → datasets FK swap → `downgrade()` raises). Use `_LICENSE_ID_FOR_ENUM` constant for the deterministic mapping; audit covers all three columns (`projects.license`, `history.old_license`, `history.new_license`).
+- [ ] T008 [P] Update `apps/api/echoroo/models/project.py` `Project` class — remove the `license` enum column declaration, add `license_id: Mapped[str | None]` as FK to `licenses.id` with `ondelete="RESTRICT"`, expose a `license` association proxy or hybrid property that resolves to `License.short_name` for backward-compatible read access.
+- [ ] T009 [P] Update `apps/api/echoroo/models/project.py` `ProjectLicenseHistory` class — re-declare `old_license: Mapped[str | None]` and `new_license: Mapped[str]` (no more `Enum(ProjectLicense, ...)`). Keep the relationship to `Project` intact.
+- [ ] T010 [P] Update `apps/api/echoroo/models/dataset.py` — annotate the existing `license_id` FK as `ondelete="RESTRICT"` (model metadata only; the actual constraint replacement happens in the migration).
+- [ ] T011 Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/integration/migrations/test_0024_license_unification.py apps/api/tests/unit/test_migration_0024.py'` and confirm all five tests now pass.
 
-**Checkpoint — Foundation ready**: Migration applies cleanly, model layer reflects the new shape, existing project rows have been transformed to the FK representation. This already satisfies User Story 2 at the data layer; remaining US2 work is API-shape verification only.
+**Checkpoint — Foundation ready**: Migration applies cleanly, model layer reflects the new shape, existing project rows and history rows have been transformed correctly. This already satisfies User Story 2 at the data layer; remaining US2 work is API-shape verification.
 
 ---
 
 ## Phase 3: User Story 1 — Admin-added licenses appear in project creation (Priority: P1) 🎯 MVP
 
-**Goal**: Closes the user-reported gap. A license added through the admin UI appears in the project creation dropdown immediately, without code change or service restart.
+**Goal**: Closes the user-reported gap. A license added through the admin UI appears in the project creation dropdown immediately (within the SC-001 5-second budget).
 
 **Independent Test**: Per quickstart.md sections 2–5. Sign in as admin → add `CC-BY-ND` row → switch to a non-admin user tab → open `/projects/new` → `CC-BY-ND` appears in the dropdown → submitting creates a project whose `license` API field reports `"CC-BY-ND"`.
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T009 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session.
-- [ ] T010 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_public.py` — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer.
-- [ ] T011 [P] [US1] Unit test for `LicenseService.list_public()` in `apps/api/tests/unit/services/test_license_service.py` — covers: returns sorted list, empty master returns empty list.
-- [ ] T012 [P] [US1] Contract test for `POST /projects` license resolution in `apps/api/tests/contract/test_projects_create.py` (extend existing file) — covers: valid `license: "CC-BY"` resolves to `license_id="cc-by"` and project response reports `license: "CC-BY"`; unknown `license: "CC-BY-NONSENSE"` returns 422 with a friendly error message; omitted `license` succeeds and project response reports `license: null`.
+- [ ] T012 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_web_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session.
+- [ ] T013 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_api_public.py` (separate file so T012 + T013 are truly parallel) — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer.
+- [ ] T014 [P] [US1] Unit test for `LicenseService.list_public()` in `apps/api/tests/unit/services/test_license_service.py` — covers: returns sorted list, empty master returns empty list.
+- [ ] T015 [P] [US1] Contract test for `POST /projects` `license_id` resolution in `apps/api/tests/contract/test_projects_create.py` (extend existing file) — covers: valid `license_id: "cc-by"` succeeds and project response reports `license: "CC-BY"`; unknown `license_id: "cc-by-nonsense"` returns 422 with `error_code: "license_not_found"`; missing `license_id` returns 422 (FR-005 — required at create); pre-existing project with `license_id IS NULL` (legacy row) still returns `license: null` on GET.
 
 ### Implementation — backend
 
-- [ ] T013 [P] [US1] Add `LicensePublicResponse` and `LicenseListResponse` Pydantic schemas in `apps/api/echoroo/schemas/license.py` matching the OpenAPI contract.
-- [ ] T014 [US1] Implement `LicenseService.list_public()` in `apps/api/echoroo/services/license_service.py` — delegates to `LicenseRepository.list_all()` ordered by `short_name`.
-- [ ] T015 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/web_v1/licenses.py` (new file), returning `LicenseListResponse`.
-- [ ] T016 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/v1/licenses.py` (new file), returning `LicenseListResponse`.
-- [ ] T017 [US1] Register both new routers in `apps/api/echoroo/main.py` (or wherever the existing license routers are included). Run the existing OpenAPI diff check (`apps/api/tests/contract/test_openapi_diff.py`) to confirm the new endpoints are documented.
-- [ ] T018 [P] [US1] Update `apps/api/echoroo/repositories/project.py` — `create()`, `update()`, and read paths write/read via `license_id`. Read paths join `licenses` and surface `License.short_name` as `project.license` in the response model.
-- [ ] T019 [US1] Update `apps/api/echoroo/services/project_service.py` — on create/update, resolve incoming `license: str | None` (a short_name) to `license_id` by looking up the master. Unknown short_name raises a `ValueError` that the API layer maps to 422 with `error_code: "license_not_found"` + the offending short_name in the message.
-- [ ] T020 [US1] Update `apps/api/echoroo/schemas/project.py` — keep `license: str | None` in both `ProjectCreate` (short_name) and `ProjectResponse` (joined short_name). Add validator on `ProjectCreate.license` for max length 50 to match `licenses.short_name`.
+- [ ] T016 [P] [US1] Add `LicensePublicResponse` and `LicenseListResponse` Pydantic schemas in `apps/api/echoroo/schemas/license.py` matching `contracts/web-licenses.yaml`.
+- [ ] T017 [US1] Implement `LicenseService.list_public()` in `apps/api/echoroo/services/license_service.py` — delegates to `LicenseRepository.list_all()` ordered by `short_name`.
+- [ ] T018 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/web_v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the BFF aggregator.
+- [ ] T019 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the v1 aggregator.
+- [ ] T020 [US1] Run the existing OpenAPI diff check (`apps/api/tests/contract/test_openapi_diff.py`) to confirm the new endpoints are documented and don't break the harness; regenerate the snapshot if expected.
+- [ ] T021 [US1] Update `apps/api/echoroo/repositories/project.py` — `create()` / `update()` write via `license_id`; read paths join `licenses` and surface `License.short_name` as `project.license` in the response model.
+- [ ] T022 [US1] Update `apps/api/echoroo/services/project_service.py` — on create/update, validate that the submitted `license_id` exists in the master before insert. Unknown id raises a `LicenseNotFoundError` that the API layer maps to 422 with `error_code: "license_not_found"`. License-required validation (FR-005) is enforced via Pydantic on `ProjectCreateRequest`.
+- [ ] T023 [US1] Update `apps/api/echoroo/schemas/project.py` — `ProjectCreateRequest` and `ProjectUpdateRequest` replace `license: ProjectLicense` with `license_id: str`. `ProjectResponse.license` continues to expose `str | None` (the joined short_name). Add validator on `license_id` for max length 50.
+- [ ] T024 [US1] Update `apps/api/echoroo/services/detection_export.py:381` — replace `project.license.value` with `project.license` (the joined short_name string from the new property). Update the contract test for the export to verify the wire shape is unchanged (still a license short_name in the CSV column).
 
-### Implementation — frontend
+### Implementation — frontend [PR-B]
 
-- [ ] T021 [P] [US1] Add `apps/web/src/lib/api/licenses.ts` exposing a TanStack Query `useLicenses()` hook that calls `apiClient.request<LicenseListResponse>('/web-api/v1/licenses')` with `staleTime: 30000` (30 s, per research §R5).
-- [ ] T022 [P] [US1] Add `License` and `LicenseListResponse` TypeScript interfaces in `apps/web/src/lib/types/index.ts` (or the appropriate types file) matching the backend Pydantic schema.
-- [ ] T023 [US1] Update `apps/web/src/routes/(app)/projects/new/+page.svelte` — remove the hardcoded `LICENSE_OPTIONS` constant; replace the `<select>` population with the result of `useLicenses()`; preserve the existing "unselected" empty-option semantics; render the dropdown options as `{short_name}` (primary) with the full `{name}` as `title` tooltip.
-- [ ] T024 [P] [US1] Add an empty-state UI for when `useLicenses()` returns an empty array (per edge case in spec.md: "No licenses available — ask an administrator to add one"). Use a translation key.
-- [ ] T025 [P] [US1] Add translation keys to `apps/web/messages/en.json` and `apps/web/messages/ja.json` — `project_new_license_loading`, `project_new_license_empty`, `project_new_license_unknown_error`. Make sure both locale files stay in sync.
+- [ ] T025 [P] [US1] Add `apps/web/src/lib/api/licenses.ts` exposing a TanStack Query `useLicenses()` hook that calls `apiClient.request<LicenseListResponse>('/web-api/v1/licenses')` with `staleTime: 0` and `refetchOnMount: 'always'` (per research §R5 revised — SC-001 compliance).
+- [ ] T026 [P] [US1] Add `License` and `LicenseListResponse` TypeScript interfaces in `apps/web/src/lib/types/index.ts` matching the backend Pydantic schema. **Also remove the legacy `ProjectLicense` union type** (`'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA'`); replace usages in `Project`, `ProjectCreateRequest`, `ProjectUpdateRequest` interfaces with `string` (display) and `license_id: string` (submit).
+- [ ] T027 [US1] Update `apps/web/src/routes/(app)/projects/new/+page.svelte` — remove the hardcoded `LICENSE_OPTIONS` constant; replace the `<select>` population with the result of `useLicenses()`; the form's value carries `license.id` (not short_name); render visible option text as `{short_name}` with the full `{name}` as `title` tooltip.
+- [ ] T028 [US1] Update the form submit handler to send `{ license_id }` to the backend (rename from `{ license }` and value semantics from short_name to id).
+- [ ] T029 [P] [US1] Add an empty-state UI for when `useLicenses()` returns an empty array (per spec.md edge case: "No licenses available — ask an administrator to add one"). Use a translation key.
+- [ ] T030 [P] [US1] Add translation keys to `apps/web/messages/en.json` and `apps/web/messages/ja.json` — `project_new_license_loading`, `project_new_license_empty`, `project_new_license_unknown_error`. Keep both locale files in lockstep.
 
 ### Verification
 
-- [ ] T026 [US1] Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/contract/test_licenses_public.py apps/api/tests/unit/services/test_license_service.py apps/api/tests/contract/test_projects_create.py'` and confirm all tests pass.
-- [ ] T027 [US1] Run `docker exec echoroo-frontend sh -c 'cd /app && npm run check'` and confirm 0 new errors / warnings.
-- [ ] T028 [US1] Browser smoke per quickstart.md sections 3–5 (read endpoints serve master → form shows live master → admin add reaches the form). Capture before/after Network panel snapshots for the PR description.
+- [ ] T031 [US1] Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/contract/test_licenses_web_public.py apps/api/tests/contract/test_licenses_api_public.py apps/api/tests/unit/services/test_license_service.py apps/api/tests/contract/test_projects_create.py'` and confirm all pass.
+- [ ] T032 [US1] Run `docker exec echoroo-frontend sh -c 'cd /app && npm run check'` and confirm 0 new errors / warnings.
+- [ ] T033 [US1] Browser smoke per quickstart.md sections 3–5 — capture before/after Network panel snapshots for the PR description.
 
 **Checkpoint — US1 done**: SC-001 (admin add visible to users within 5 s), SC-005 (latency budget), and SC-006 (no hardcoded license strings) are satisfied.
 
 ---
 
-## Phase 4: User Story 2 — Existing projects keep their license (Priority: P1)
+## Phase 4: User Story 2 — Existing projects keep their license (Priority: P1) [PR-A]
 
-**Goal**: Confirm zero existing projects lose their license through the migration. Most of the work is already done by Phase 2's migration; this phase is verification + a regression-resistant assertion.
+**Goal**: Confirm zero existing projects lose their license through the migration. Most of the work is done by Phase 2; this phase is verification + a regression-resistant assertion.
 
-**Independent Test**: Per quickstart.md section 1. Snapshot `SELECT id, license FROM projects` before migration, apply migration, snapshot `SELECT p.id, l.short_name AS license FROM projects p LEFT JOIN licenses l ON l.id = p.license_id`, `diff` must show zero substantive changes.
+**Independent Test**: Per quickstart.md section 1. Snapshot `SELECT id, license FROM projects` before migration, apply migration, snapshot the joined query, `diff` must show zero substantive changes.
 
 ### Tests (extend foundational test)
 
-- [ ] T029 [P] [US2] Extend `apps/api/tests/integration/migrations/test_0024_license_unification.py` with a seeded-projects scenario: insert one project per canonical license value into the pre-migration DB, run the migration, assert every project still resolves to the same `short_name` via the join.
-- [ ] T030 [P] [US2] Add API-shape regression test in `apps/api/tests/contract/test_projects_create.py` (or a new `test_projects_license_shape.py`) — `GET /projects/{id}` for a project created with `license: "CC-BY"` returns `license: "CC-BY"` (string, NOT an object). Pins research §R1 to a wire contract.
+- [ ] T034 [P] [US2] Extend `apps/api/tests/integration/migrations/test_0024_license_unification.py` with a seeded-projects scenario: insert one project per canonical license value AND one project with `license IS NULL`, run the migration, assert every project still resolves to the same `short_name` (or NULL).
+- [ ] T035 [P] [US2] Add API-shape regression test in `apps/api/tests/contract/test_projects_license_shape.py` — `GET /projects/{id}` for a project created with `license_id: "cc-by"` returns `license: "CC-BY"` (string, NOT an object). Pins research §R1 to the wire contract.
 
 ### Verification
 
-- [ ] T031 [US2] Run the migration on the dev DB (`docker exec echoroo-backend uv run alembic upgrade head`) and follow quickstart.md section 1's diff-based verification. Save the before/after snapshots in the PR description.
+- [ ] T036 [US2] Run the migration on the dev DB and follow quickstart.md section 1's diff-based verification. Save the before/after snapshots in the PR description.
 
-**Checkpoint — US2 done**: SC-002 (zero existing projects lose license) and SC-003 (no project references a non-existent license) are satisfied.
+**Checkpoint — US2 done**: SC-002 (zero existing projects lose license) and SC-003 (no orphan license references) are satisfied.
 
 ---
 
-## Phase 5: User Story 3 — Licenses in use cannot be deleted accidentally (Priority: P2)
+## Phase 5: User Story 3 — Licenses in use cannot be deleted accidentally (Priority: P2) [PR-A backend + PR-B UI]
 
-**Goal**: Refuse `DELETE /api/v1/admin/licenses/{id}` when the license is still referenced; surface dependency counts to the admin UI for an actionable error.
+**Goal**: Refuse license delete when referenced; surface dependency counts to the admin UI.
 
-**Independent Test**: Per quickstart.md section 6. With at least one project referencing `CC-BY-ND`, `DELETE /api/v1/admin/licenses/cc-by-nd` returns 409 + JSON `{error_code: "license_in_use", short_name, project_count, dataset_count, message}`; the license remains visible in admin + dropdown afterwards.
+**Independent Test**: Per quickstart.md section 6.
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T032 [P] [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing file or create new) — 204 success when no dependents.
-- [ ] T033 [P] [US3] Contract test — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`).
-- [ ] T034 [P] [US3] Contract test — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`).
-- [ ] T035 [P] [US3] Contract test — 409 `LicenseInUseError` with both dependencies (`project_count > 0, dataset_count > 0`).
-- [ ] T036 [P] [US3] Contract test — 404 when `license_id` doesn't exist (preserves existing behavior).
-- [ ] T037 [P] [US3] Unit test in `apps/api/tests/unit/services/test_license_service.py` for `LicenseService.delete()` — verifies the service raises `LicenseInUseError` when `count_dependents > 0` without touching the row.
-- [ ] T038 [P] [US3] Concurrency-safety unit test — mock the FK constraint to fire after the service-layer pre-query (race scenario); assert the FK `IntegrityError` is mapped to the same 409 response (defense-in-depth per research §R3).
+- [ ] T037 [P] [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing) — 204 success when no dependents (covers BOTH `/api/v1/admin/licenses/{id}` AND `/web-api/v1/admin/licenses/{id}`).
+- [ ] T038 [P] [US3] Contract test — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`).
+- [ ] T039 [P] [US3] Contract test — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`).
+- [ ] T040 [P] [US3] Contract test — 409 `LicenseInUseError` with both dependencies.
+- [ ] T041 [P] [US3] Contract test — 404 when `license_id` doesn't exist (preserves existing behavior).
+- [ ] T042 [US3] Race-condition unit test in `apps/api/tests/unit/services/test_license_service.py` — mock the FK constraint to fire after the service-layer pre-query returns 0/0. Assert that `LicenseService.delete()` catches the `IntegrityError`, re-runs the dependency-count query, and raises `LicenseInUseError` with the freshly-recounted values (no sentinel).
+- [ ] T043 [P] [US3] Unit test for `LicenseService.delete()` happy refusal path — `count_dependents > 0` raises `LicenseInUseError` without touching the row.
 
-### Implementation
+### Implementation — backend [PR-A]
 
-- [ ] T039 [P] [US3] Add `LicenseRepository.count_dependents(license_id) -> tuple[int, int]` in `apps/api/echoroo/repositories/license.py`, returning `(project_count, dataset_count)` via two `SELECT COUNT(*)` queries (low volume; either fine vs UNION ALL).
-- [ ] T040 [P] [US3] Add `LicenseInUseError` exception class in `apps/api/echoroo/services/license_service.py` (or `core/errors.py` if the project has a central errors module) with `short_name`, `project_count`, `dataset_count` fields.
-- [ ] T041 [US3] Update `LicenseService.delete()` in `apps/api/echoroo/services/license_service.py` to call `count_dependents` first; if either count > 0, raise `LicenseInUseError`. Catch `sqlalchemy.exc.IntegrityError` as the race-condition fallback and translate to `LicenseInUseError` with `project_count=-1, dataset_count=-1` sentinel (UI shows generic "in use" message).
-- [ ] T042 [US3] Update the admin `DELETE /api/v1/admin/licenses/{id}` handler in `apps/api/echoroo/api/v1/admin/licenses.py` to catch `LicenseInUseError` and return 409 with the body shape from `contracts/admin-licenses-delete.yaml`.
-- [ ] T043 [P] [US3] Add error code translation messages to `apps/web/messages/en.json` and `apps/web/messages/ja.json` — `admin_licenses_delete_in_use` with `{short_name}`, `{project_count}`, `{dataset_count}` interpolation slots.
-- [ ] T044 [US3] Update the admin license delete UI handler to extract the 409 body fields and render the translated message (file: existing admin license page, likely `apps/web/src/routes/(admin)/admin/licenses/+page.svelte` — confirm path).
+- [ ] T044 [P] [US3] Add `LicenseRepository.count_dependents(license_id) -> tuple[int, int]` in `apps/api/echoroo/repositories/license.py`, returning `(project_count, dataset_count)` via two `SELECT COUNT(*)` queries.
+- [ ] T045 [P] [US3] Add `LicenseInUseError` exception class in `apps/api/echoroo/services/license_service.py` with fields `short_name: str`, `project_count: int`, `dataset_count: int`.
+- [ ] T046 [US3] Update `LicenseService.delete()` to:
+  1. Call `count_dependents` first; if either > 0, raise `LicenseInUseError`.
+  2. Otherwise issue the DELETE; if the FK constraint raises `sqlalchemy.exc.IntegrityError`, **re-run `count_dependents`** to get the post-race counts and raise `LicenseInUseError` with those values. No sentinel.
+- [ ] T047 [US3] Update the admin DELETE handler at `apps/api/echoroo/api/v1/admin.py` (Bearer surface, NOT the non-existent `api/v1/admin/licenses.py`) to catch `LicenseInUseError` and return 409 with the body shape from `contracts/admin-licenses-delete.yaml`.
+- [ ] T048 [US3] Update the BFF admin DELETE handler at `apps/api/echoroo/api/web_v1/_admin_licenses.py` to do the same translation. Both endpoints share the response shape.
+
+### Implementation — frontend [PR-B]
+
+- [ ] T049 [P] [US3] Add error code translation messages to `apps/web/messages/en.json` and `apps/web/messages/ja.json` — `admin_licenses_delete_in_use` with `{short_name}`, `{project_count}`, `{dataset_count}` interpolation slots.
+- [ ] T050 [US3] Update the admin license delete UI handler to extract the 409 body fields and render the translated message (file: `apps/web/src/routes/(admin)/admin/licenses/+page.svelte`, confirm path during implementation).
 
 ### Verification
 
-- [ ] T045 [US3] Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/contract/test_admin_licenses_delete.py apps/api/tests/unit/services/test_license_service.py'` and confirm all pass.
-- [ ] T046 [US3] Browser smoke per quickstart.md section 6.
+- [ ] T051 [US3] Run `docker exec echoroo-backend sh -c 'cd /app && uv run pytest --no-cov apps/api/tests/contract/test_admin_licenses_delete.py apps/api/tests/unit/services/test_license_service.py'` and confirm all pass.
+- [ ] T052 [US3] Browser smoke per quickstart.md section 6.
 
 **Checkpoint — US3 done**: SC-004 (delete refused in 100% of in-use cases) is satisfied.
 
@@ -159,13 +185,28 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T047 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run mypy echoroo/'` (or whatever the project's mypy invocation is) and confirm no new errors. Memory: known false positives in legacy modules are allowed; only NEW errors block the PR.
-- [ ] T048 [P] Run `docker exec echoroo-frontend sh -c 'cd /app && npm run check'` (final pass after Phase 5 changes).
-- [ ] T049 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run ruff check echoroo/ tests/'` and fix any new lint warnings.
-- [ ] T050 [P] Regenerate frontend OpenAPI types (if the project has a generation step — confirm in `apps/web/package.json` scripts) and commit the regenerated types.
-- [ ] T051 Run the full quickstart.md sections 1–7 (including the negative test in section 7 against a throwaway DB) and verify every "Expected" outcome passes. Add a "Smoke verified" line to the PR description listing the section outcomes.
-- [ ] T052 [P] Update memory file `~/.claude/projects/-home-okamoto-Projects-echoroo/memory/` with a new `project_012_completion_<date>.md` summarizing the merge (mirror the pattern of existing `project_011_completion_*.md`).
-- [ ] T053 Open the PR (single PR per delivery shape) with title `feat(spec/012): license master unification (migration + endpoints + admin delete protection + frontend)` and the description should reference plan.md, list the FRs / SCs satisfied, and link this tasks.md.
+### Backend [PR-A]
+
+- [ ] T053 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run mypy echoroo/'` and confirm no new errors.
+- [ ] T054 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run ruff check echoroo/ tests/'` and fix any new lint warnings.
+- [ ] T055 **SC-006 grep gate**: Run a repository-wide grep ensuring no hardcoded license short_name strings remain in user-facing surfaces:
+      ```bash
+      docker exec echoroo-backend sh -c 'cd /app && grep -rn --include="*.py" -E "\"CC0\"|\"CC-BY\"|\"CC-BY-NC\"|\"CC-BY-SA\"" echoroo/ tests/ | grep -v test_ | grep -v "migration\|migrations\|0024"'
+      docker exec echoroo-frontend sh -c 'cd /app && grep -rn -E "\"CC0\"|\"CC-BY\"" src/ messages/ | grep -v test'
+      ```
+      Expected result: zero matches outside the migration file (`0024_license_master_unification.py`), the historical mapping table, and contract documents. Any leak in app code is a bug.
+- [ ] T056 Run quickstart.md section 7 (the FR-010 negative-path test on a throwaway DB) and confirm the migration aborts cleanly with the expected ValueError.
+
+### Frontend [PR-B]
+
+- [ ] T057 [P] Run `docker exec echoroo-frontend sh -c 'cd /app && npm run check'` (final pass after Phase 5 changes).
+- [ ] T058 [P] Regenerate frontend OpenAPI types if the project has a generation step (confirm via `apps/web/package.json` scripts) and commit the regenerated types.
+
+### Cross-cutting
+
+- [ ] T059 Run the full quickstart.md sections 1–7 end-to-end after both PRs are merged in dev; verify every "Expected" outcome.
+- [ ] T060 [P] Update memory file `~/.claude/projects/-home-okamoto-Projects-echoroo/memory/` with `project_012_completion_<date>.md` summarizing the merge (mirror `project_011_completion_*.md`).
+- [ ] T061 Open PR-A with title `feat(spec/012, PR-A): license master unification — migration + backend` referencing plan.md, this tasks.md, and the FRs/SCs satisfied. Open PR-B (`feat(spec/012, PR-B): license master unification — frontend`) once PR-A is in dev so reviewers can exercise the full UX.
 
 ---
 
@@ -175,55 +216,48 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 - **Phase 1 (Setup)** → no dependencies; do this first.
 - **Phase 2 (Foundational migration)** → depends on Phase 1; BLOCKS all user-story phases.
-- **Phase 3 (US1)** → depends on Phase 2 complete (model + migration must be in place).
-- **Phase 4 (US2)** → depends on Phase 2; can run in parallel with Phase 3 (verification work is mostly independent).
-- **Phase 5 (US3)** → depends on Phase 2; can run in parallel with Phases 3 / 4.
-- **Phase 6 (Polish)** → depends on Phases 3-5 being complete.
+- **Phase 3 (US1)** → depends on Phase 2. Backend half goes in PR-A; frontend half goes in PR-B (after PR-A merges).
+- **Phase 4 (US2)** → depends on Phase 2; can run in parallel with Phase 3 (verification work, mostly independent).
+- **Phase 5 (US3)** → depends on Phase 2; backend in PR-A, frontend in PR-B.
+- **Phase 6 (Polish)** → depends on Phases 3–5 being complete.
+
+### PR ordering
+
+- **PR-A merges first** (Phase 1 + 2 + 3-backend + 4 + 5-backend + 6-backend).
+- **PR-B merges second** (Phase 3-frontend + 5-frontend + 6-frontend). PR-B against an un-PR-A'd backend would 404 the new endpoint and 422 on form submit.
 
 ### Story independence
 
 - **US1** depends only on the migration (Phase 2) — read endpoint + frontend wiring is otherwise self-contained.
-- **US2** depends only on the migration (Phase 2) — verification work, no production code changes beyond what Phase 2 already lands.
-- **US3** depends only on the migration (Phase 2) — the new FK constraint is the foundation; service-layer change is additive.
+- **US2** depends only on the migration — verification work, no production code changes beyond what Phase 2 lands.
+- **US3** depends only on the migration — service-layer change is additive.
 
 ### Within each phase
 
 - Test tasks ALWAYS precede their corresponding implementation tasks. Run the test, observe failure, then implement.
 - Repository tasks before service tasks. Service tasks before endpoint tasks. Endpoint tasks before frontend tasks.
-- Schemas and types can run in parallel with their nearest non-conflicting siblings.
+- Schemas / types can run in parallel with their nearest non-conflicting siblings.
 
-### Parallel opportunities
+### Parallel safety review (Codex review fix)
 
-- Phase 2 tests T002 / T003 / T004 are all [P] — different test files.
-- Phase 2 model annotations T006 / T007 are [P] — different model files.
-- Phase 3 contract / unit tests T009-T012 are all [P] — different test files.
-- Phase 3 endpoint handlers T015 / T016 are [P] — different router files (both depend on T014's service).
-- Phase 3 frontend T021 / T022 are [P], T024 / T025 are [P].
-- Phase 4 tests T029 / T030 are [P].
-- Phase 5 contract tests T032-T036 are [P], unit tests T037 / T038 are [P], repo+exception T039 / T040 are [P].
-- Phase 6 verification commands T047 / T048 / T049 / T050 are [P] (they read different things; no shared write).
+All `[P]` markers in this revised tasks.md were verified to touch **distinct files**:
 
----
+- Phase 2 tests T003 / T004 / T005 / T006 — T003+T004+T005 all extend the same file (`test_0024_license_unification.py`) so they are NOT parallel; **T003 is sequential, T004 and T005 wait for T003 to land, T006 is [P] (different file)**. Removed [P] markers from T003-T005.
+- Phase 2 implementation T008 / T009 / T010 — all in different files / classes; safe to mark [P]. T008 and T009 both touch `models/project.py` but different classes (`Project` vs `ProjectLicenseHistory`); merge conflict risk minimal but flagged.
+- Phase 3 tests T012 / T013 / T014 / T015 — each in a different file; [P] safe.
+- Phase 3 endpoint handlers T018 / T019 — different files; [P] safe.
+- Phase 3 frontend T025 / T026 / T029 / T030 — different files; [P] safe.
+- Phase 5 contract tests T037-T041 — **all in the same file** (`test_admin_licenses_delete.py`); marking them [P] is incorrect. **Revised**: T037 sequential, T038-T041 wait for T037 (file lock). Removed [P] markers.
 
-## Parallel example — Phase 3 entry
+(Adjustments reflected in the task list above. Look for `[P]` markers only where files are truly disjoint.)
 
-After Phase 2 completes, US1 work can fan out:
+### Parallel opportunities (after the corrections)
 
-```text
-# All Phase-3 tests can be drafted in parallel:
-- T009 Contract test GET /web-api/v1/licenses
-- T010 Contract test GET /api/v1/licenses
-- T011 Unit test LicenseService.list_public()
-- T012 Contract test POST /projects license resolution
-
-# After T013 (schemas), endpoint handlers can run in parallel:
-- T015 GET /web-api/v1/licenses handler
-- T016 GET /api/v1/licenses handler
-
-# Frontend types and API client can run in parallel with backend implementation:
-- T021 useLicenses() hook
-- T022 License TS interface
-```
+- Phase 3 contract / unit tests T012-T015 are all [P] — different test files.
+- Phase 3 endpoint handlers T018 / T019 are [P] — different router files (both depend on T017 service).
+- Phase 3 frontend T025 / T026 / T029 / T030 are [P].
+- Phase 5 repo+exception T044 / T045 are [P].
+- Phase 6 verification commands T053 / T054 / T057 / T058 are [P].
 
 ---
 
@@ -231,29 +265,25 @@ After Phase 2 completes, US1 work can fan out:
 
 ### MVP-first (stop after US1 if needed)
 
-1. Complete Phase 1: Setup
-2. Complete Phase 2: Foundational migration
-3. Complete Phase 3: US1 (the headline outcome)
-4. **STOP AND VALIDATE** per quickstart.md sections 1–5
-5. Decide: ship the MVP PR now, or keep going to US2 + US3 in the same PR
+1. Complete Phase 1: Setup.
+2. Complete Phase 2: Foundational migration.
+3. Complete Phase 3 backend half + frontend half: US1.
+4. **STOP AND VALIDATE** per quickstart.md sections 1–5.
+5. Decide: ship PR-A + PR-B as MVP, defer US2 / US3 verification to a follow-up. (Not recommended — US2 verification only adds two tests; US3 is a launch-grade safety property that should land with the migration.)
 
-For spec/012 the user has directed a single-PR delivery, so MVP-first is a checkpoint, not a release boundary.
+### Standard delivery (2-PR split, revised)
 
-### Single-PR delivery (the convention for this feature)
-
-1. Phase 1 + Phase 2 land first as scaffolding commits.
-2. Phase 3, 4, 5 land as cohesive commits within the same PR.
-3. Phase 6 polish lands as the final commit before opening the PR for review.
-4. PR title and description reference plan.md and this tasks.md; PR body lists the FRs and SCs satisfied per quickstart.md.
+1. PR-A: Phase 1 + 2 + 3-backend + 4 + 5-backend + 6-backend. Lands first, exposed in dev for backend smoke.
+2. PR-B: Phase 3-frontend + 5-frontend + 6-frontend. Lands after PR-A green in dev.
 
 ---
 
 ## Notes
 
-- The user (`spec/012` author) explicitly opted for a single implementation PR — do not split into 3 PRs even though the user-story structure could permit it.
-- Memory rule reminders the implementer should observe while executing this list:
-  - `docker exec echoroo-backend ... uv run pytest --no-cov ...` for backend tests (host `uv run` is broken in this repo).
-  - Frontend Vite HMR can be exercised via the preview stack (`docker logs echoroo-preview-frontend`).
-  - Forbidden: `docker commit / save / export` (host disk fill incident).
-  - Forbidden: `git checkout / reset --hard / restore / clean -f` from agents on the main worktree (use the laughing-stonebraker-c612bf worktree).
-- Verify-before-PR is mandatory: quickstart.md section 7 (negative-path migration test) MUST be exercised on a throwaway DB before opening the PR.
+- Memory rule reminders:
+  - `docker exec echoroo-backend ... uv run pytest --no-cov ...` for backend tests.
+  - Frontend Vite HMR via preview stack (preview frontend bind-mounts `/home/okamoto/Projects/echoroo_preview/apps/web`).
+  - Forbidden: `docker commit / save / export`.
+  - Forbidden: `git checkout / reset --hard / restore / clean -f` from agents.
+- Verify-before-PR: quickstart.md section 7 (FR-010 negative test on throwaway DB) is mandatory before opening PR-A.
+- After both PRs merge, run `/speckit-analyze` or equivalent to confirm the spec ↔ implementation traceability matrix is intact.
