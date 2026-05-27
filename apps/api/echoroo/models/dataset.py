@@ -69,7 +69,7 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
     )
     license_id: Mapped[str | None] = mapped_column(
         String(50),
-        ForeignKey("licenses.id", ondelete="SET NULL"),
+        ForeignKey("licenses.id", ondelete="RESTRICT"),
         nullable=True,
         doc="Content license ID",
     )

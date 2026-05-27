@@ -27,13 +27,13 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,
 )
 
 if TYPE_CHECKING:
+    from echoroo.models.license import License
     from echoroo.models.user import User
 
 
@@ -69,15 +69,11 @@ class Project(UUIDMixin, TimestampMixin, Base):
         index=True,
         doc="Project visibility level",
     )
-    license: Mapped[ProjectLicense] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
-        nullable=False,
-        doc="Project data license",
+    license_id: Mapped[str | None] = mapped_column(
+        String(50),
+        ForeignKey("licenses.id", ondelete="RESTRICT"),
+        nullable=True,
+        doc="Project data license ID",
     )
     restricted_config: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -140,6 +136,10 @@ class Project(UUIDMixin, TimestampMixin, Base):
         back_populates="owned_projects",
         lazy="joined",
     )
+    license_record: Mapped[License | None] = relationship(
+        "License",
+        lazy="joined",
+    )
     members: Mapped[list[ProjectMember]] = relationship(
         "ProjectMember",
         back_populates="project",
@@ -173,6 +173,13 @@ class Project(UUIDMixin, TimestampMixin, Base):
     def __repr__(self) -> str:
         """String representation of Project."""
         return f"<Project(id={self.id}, name={self.name})>"
+
+    @property
+    def license(self) -> str | None:
+        """Backward-compatible read access to the license short name."""
+        if self.license_record is None:
+            return None
+        return self.license_record.short_name
 
 
 class ProjectMember(UUIDMixin, TimestampMixin, Base):
@@ -279,23 +286,13 @@ class ProjectLicenseHistory(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Project ID",
     )
-    old_license: Mapped[ProjectLicense | None] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
+    old_license: Mapped[str | None] = mapped_column(
+        String(50),
         nullable=True,
         doc="Previous project license",
     )
-    new_license: Mapped[ProjectLicense] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
+    new_license: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
         doc="New project license",
     )
