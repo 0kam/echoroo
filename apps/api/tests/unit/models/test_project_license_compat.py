@@ -1,44 +1,48 @@
-"""Project license compatibility facade tests."""
+"""Project license read compatibility facade tests."""
 
 from __future__ import annotations
 
 from uuid import uuid4
 
-import pytest
-
-from echoroo.models.enums import ProjectLicense, ProjectVisibility
+from echoroo.models.enums import ProjectVisibility
+from echoroo.models.license import License
 from echoroo.models.project import Project
 
 
-def test_project_license_setter_accepts_legacy_enum_and_string() -> None:
+def test_project_license_returns_attached_license_short_name() -> None:
+    license_record = License(
+        id="custom-arbitrary",
+        name="Custom Arbitrary",
+        short_name="CUSTOM-ARBITRARY",
+    )
     project = Project(
         name="Compat",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id=license_record.id,
+        license_record=license_record,
         owner_id=uuid4(),
     )
 
-    assert project.license_id == "cc-by"
-    assert project.license == "CC-BY"
-
-    project.license = "CC-BY-NC"
-
-    assert project.license_id == "cc-by-nc"
-    assert project.license == "CC-BY-NC"
+    assert project.license == "CUSTOM-ARBITRARY"
 
 
-def test_project_license_setter_accepts_none_and_rejects_unknown_string() -> None:
+def test_project_license_returns_none_when_license_id_is_none() -> None:
     project = Project(
         name="Compat",
         visibility=ProjectVisibility.PUBLIC,
-        license="CC0",
+        license_id=None,
         owner_id=uuid4(),
     )
 
-    project.license = None
-
-    assert project.license_id is None
     assert project.license is None
 
-    with pytest.raises(ValueError):
-        project.license = "MIT"
+
+def test_project_license_returns_none_when_license_record_is_not_attached() -> None:
+    project = Project(
+        name="Compat",
+        visibility=ProjectVisibility.PUBLIC,
+        license_id="cc-by",
+        owner_id=uuid4(),
+    )
+
+    assert project.license is None

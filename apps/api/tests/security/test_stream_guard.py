@@ -59,6 +59,7 @@ from echoroo.models.enums import (
     ProjectMemberRole,
     ProjectVisibility,
 )
+from echoroo.models.license import License
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -91,7 +92,7 @@ async def _make_project(db: AsyncSession, *, owner: User) -> Project:
         name="Stream Guard Project",
         description="A-5 stream guard test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": True,
@@ -938,10 +939,37 @@ async def test_export_csv_back_compat_signature_preserved(
 
 
 @pytest.mark.asyncio
-async def test_export_csv_writes_project_license_short_name(
+@pytest.mark.parametrize(
+    ("license_id", "license_record", "expected_license"),
+    [
+        (None, None, ""),
+        (
+            "cc-by",
+            License(
+                id="cc-by",
+                name="Creative Commons Attribution",
+                short_name="CC-BY",
+            ),
+            "CC-BY",
+        ),
+        (
+            "custom-arbitrary",
+            License(
+                id="custom-arbitrary",
+                name="Custom Arbitrary",
+                short_name="CUSTOM-ARBITRARY",
+            ),
+            "CUSTOM-ARBITRARY",
+        ),
+    ],
+)
+async def test_export_csv_writes_project_license_column_from_license_record(
     monkeypatch: pytest.MonkeyPatch,
+    license_id: str | None,
+    license_record: License | None,
+    expected_license: str,
 ) -> None:
-    """CSV exports use the project license short_name string."""
+    """CSV exports use Project.license, including NULL and custom licenses."""
     from echoroo.services import detection_export as export_module
 
     service = export_module.DetectionExportService.__new__(  # type: ignore[call-arg]
@@ -972,8 +1000,11 @@ async def test_export_csv_writes_project_license_short_name(
         ]
 
     async def _fake_load_project(*_a: Any, **_k: Any) -> Any:
-        return SimpleNamespace(
-            license="CC-BY",
+        return Project(
+            name="Stream Guard Export License Project",
+            owner_id=uuid.uuid4(),
+            license_id=license_id,
+            license_record=license_record,
             visibility=ProjectVisibility.PUBLIC,
             restricted_config={},
         )
@@ -987,7 +1018,26 @@ async def test_export_csv_writes_project_license_short_name(
 
     csv_text = await service.export_csv(project_id)
     rows = list(csv.DictReader(io.StringIO(csv_text)))
-    assert rows[0]["license"] == "CC-BY"
+    assert rows[0]["license"] == expected_license
+
+    class _Req:
+        state = type("S", (), {})()
+        client = type("C", (), {"host": ""})()
+        headers: dict[str, str] = {}
+
+    stream_body = b"".join(
+        [
+            chunk
+            async for chunk in service.export_csv_stream(
+                project_id=project_id,
+                action=DETECTION_EXPORT_CSV_ACTION,
+                current_user=None,
+                request=_Req(),  # type: ignore[arg-type]
+            )
+        ]
+    ).decode("utf-8")
+    stream_rows = list(csv.DictReader(io.StringIO(stream_body)))
+    assert stream_rows[0]["license"] == expected_license
 
 
 # ---------------------------------------------------------------------------
