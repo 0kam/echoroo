@@ -263,6 +263,9 @@
   "project_new_license_cc_by_hint": "表示すれば商用利用も可能です。",
   "project_new_license_cc_by_nc_hint": "表示が必要、非営利目的のみ再利用可能です。",
   "project_new_license_cc_by_sa_hint": "表示が必要、二次利用は同じライセンスで公開してください。",
+  "project_new_license_loading": "ライセンスを読み込み中...",
+  "project_new_license_empty": "利用可能なライセンスがありません。管理者に追加を依頼してください。",
+  "project_new_license_unknown_error": "ライセンス一覧を取得できませんでした。ページを再読み込みしてください。",
 
   "project_detail_back_to_projects": "プロジェクト一覧に戻る",
   "project_detail_description_heading": "説明",

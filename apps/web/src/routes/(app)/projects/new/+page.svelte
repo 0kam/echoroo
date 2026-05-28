@@ -6,19 +6,31 @@
   import { goto } from '$app/navigation';
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
+  import { useLicenses } from '$lib/api/public-licenses';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import type { ProjectLicense } from '$lib/types';
+  import type { License, ProjectLicense } from '$lib/types';
 
-  // License options (FR-085 — must match contracts/projects.yaml enum).
-  // The label and hint are pulled from i18n at render time so locale switches
-  // pick up the translated copy without re-mounting the component.
-  const LICENSE_OPTIONS: ReadonlyArray<{ value: ProjectLicense }> = [
-    { value: 'CC0' },
-    { value: 'CC-BY' },
-    { value: 'CC-BY-NC' },
-    { value: 'CC-BY-SA' },
-  ];
+  // License options are now sourced live from the operator-curated `licenses`
+  // master via `useLicenses()` (spec/012 / FR-001 / FR-002 / T027). The four
+  // canonical CC values seeded by migration 0024 still appear, plus any
+  // additional admin-added rows (e.g. CC-BY-ND). Phase 2 keeps the wire
+  // contract carrying `short_name` (research §R1 revised); Phase 3 will
+  // rename the field to `license_id`.
+  //
+  // TanStack Query store from `useLicenses()` — wrapped in `$derived(...)`
+  // to match the project-wide pattern (see
+  // `routes/(app)/projects/[id]/+layout.svelte`). Read `$licenseQuery.data /
+  // .isLoading / .error` in the template. Configured with `staleTime: 0` and
+  // `refetchOnMount: 'always'` so admin additions land within the SC-001
+  // 5 s budget without explicit cache invalidation.
+  const licenseQuery = $derived(useLicenses());
+  const licenseOptions = $derived<License[]>($licenseQuery.data?.items ?? []);
+  const licensesLoading = $derived($licenseQuery.isLoading);
+  const licensesError = $derived($licenseQuery.error);
+  const licensesEmpty = $derived(
+    !licensesLoading && !licensesError && licenseOptions.length === 0,
+  );
 
   const TARGET_TAXA_OPTIONS = [
     { value: 'Birds', label: m.project_target_taxa_option_birds },
@@ -37,9 +49,12 @@
   const targetTaxa = $derived(selectedTaxa.join(', '));
   let visibility = $state<'public' | 'restricted'>('restricted');
   // License is required (FR-085). Empty string is the "unselected" sentinel
-  // that disables the submit button until the user picks one of the four
-  // CC options. We narrow to ProjectLicense before sending to the API.
-  let license = $state<'' | ProjectLicense>('');
+  // that disables the submit button until the user picks an option from the
+  // live master fetch. Widened from `'' | ProjectLicense` to `string` because
+  // spec/012 (T027) lets operators add licenses beyond the legacy four-value
+  // enum (e.g. CC-BY-ND) — `licenseLabel()` / `licenseHintText()` fall back
+  // to generic copy for non-canonical short_names.
+  let license = $state<string>('');
 
   // Form validity guards (FR-085: license required, name required).
   // Submit button is disabled until BOTH name and license are filled in.
@@ -164,16 +179,10 @@
       return;
     }
 
-    // After validation, license is guaranteed to be a ProjectLicense.
-    // Narrow the type so the API call is type-safe.
-    if (license === '') {
-      // This branch is unreachable because validateForm() already returned
-      // false above, but the explicit guard satisfies the TypeScript type
-      // narrowing for projectsApi.create().
-      return;
-    }
-    const selectedLicense: ProjectLicense = license;
-
+    // After validation, `license` is guaranteed to be a non-empty string
+    // sourced from the live master. Phase 2 wire contract (research §R1
+    // revised) keeps the field name `license` carrying the `short_name`;
+    // Phase 3 will rename it to `license_id`.
     isSubmitting = true;
 
     try {
@@ -182,7 +191,7 @@
         description: description.trim() || undefined,
         target_taxa: targetTaxa || undefined,
         visibility,
-        license: selectedLicense,
+        license,
       });
 
       // Redirect to project detail page
@@ -199,10 +208,13 @@
   }
 
   /**
-   * Resolve the localized human label for a license enum value.
+   * Resolve the localized "[short_name] ([friendly description])" dropdown
+   * label for one of the four legacy CC values. Returns `null` for any
+   * other short_name so the template can fall back to rendering the raw
+   * `short_name` (admin-added licenses don't have curated copy).
    */
-  function licenseLabel(value: ProjectLicense): string {
-    switch (value) {
+  function canonicalLicenseLabel(value: string): string | null {
+    switch (value as ProjectLicense) {
       case 'CC0':
         return m.project_new_license_cc0();
       case 'CC-BY':
@@ -211,14 +223,19 @@
         return m.project_new_license_cc_by_nc();
       case 'CC-BY-SA':
         return m.project_new_license_cc_by_sa();
+      default:
+        return null;
     }
   }
 
   /**
-   * Resolve the localized hint copy for a license enum value.
+   * Resolve the localized hint copy below the dropdown. Falls back to the
+   * generic "pick a CC license" help text when the user has either not
+   * selected anything yet or picked an admin-added value the spec does not
+   * carry curated copy for (FR-001 / FR-002).
    */
-  function licenseHintText(value: '' | ProjectLicense): string {
-    switch (value) {
+  function licenseHintText(value: string): string {
+    switch (value as '' | ProjectLicense) {
       case 'CC0':
         return m.project_new_license_cc0_hint();
       case 'CC-BY':
@@ -228,6 +245,10 @@
       case 'CC-BY-SA':
         return m.project_new_license_cc_by_sa_hint();
       case '':
+        return m.project_new_license_help();
+      default:
+        // Admin-added license with no curated copy — still surface the
+        // generic CC help so the field has a non-empty hint slot.
         return m.project_new_license_help();
     }
   }
@@ -381,7 +402,11 @@
           </div>
         </div>
 
-        <!-- License (FR-085: required, no default selection) -->
+        <!-- License (FR-085: required, no default selection)
+             spec/012 T027: dropdown is populated live from the operator-curated
+             licenses master via `useLicenses()` (FR-001 / FR-002). The wire
+             value is `short_name` (Phase 2 backward-compat, research §R1
+             revised); Phase 3 will rename to `license_id`. -->
         <div>
           <label for="license" class="block text-sm font-medium text-stone-700">
             {m.project_new_license_label()} <span class="text-danger">*</span>
@@ -395,7 +420,7 @@
             aria-invalid={licenseFieldError !== null}
             aria-describedby={licenseFieldError ? 'license-hint license-error' : 'license-hint'}
             bind:value={license}
-            disabled={isSubmitting}
+            disabled={isSubmitting || licensesLoading || licensesEmpty || licensesError !== null}
             onchange={() => {
               // Clear field-level error as soon as the user picks a valid
               // option so the inline message does not linger.
@@ -405,13 +430,32 @@
             }}
             class="mt-1 block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
           >
-            <option value="" disabled>{m.project_new_license_placeholder()}</option>
-            {#each LICENSE_OPTIONS as option (option.value)}
-              <option value={option.value}>{licenseLabel(option.value)}</option>
+            <option value="" disabled>
+              {#if licensesLoading}
+                {m.project_new_license_loading()}
+              {:else if licensesEmpty}
+                {m.project_new_license_empty()}
+              {:else}
+                {m.project_new_license_placeholder()}
+              {/if}
+            </option>
+            {#each licenseOptions as option (option.id)}
+              {@const friendlyLabel = canonicalLicenseLabel(option.short_name)}
+              <option value={option.short_name} title={option.name}>
+                {friendlyLabel ?? option.short_name}
+              </option>
             {/each}
           </select>
           <p id="license-hint" class="mt-1 text-xs text-stone-500">
-            {licenseHintText(license)}
+            {#if licensesError}
+              <span class="text-danger" data-testid="license-fetch-error">
+                {m.project_new_license_unknown_error()}
+              </span>
+            {:else if licensesEmpty}
+              <span data-testid="license-empty-hint">{m.project_new_license_empty()}</span>
+            {:else}
+              {licenseHintText(license)}
+            {/if}
           </p>
           {#if licenseFieldError}
             <p id="license-error" class="mt-1 text-xs text-danger" role="alert">

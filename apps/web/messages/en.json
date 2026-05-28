@@ -263,6 +263,9 @@
   "project_new_license_cc_by_hint": "Reuse with attribution; commercial use allowed.",
   "project_new_license_cc_by_nc_hint": "Reuse with attribution; non-commercial only.",
   "project_new_license_cc_by_sa_hint": "Reuse with attribution; derivatives must use the same license.",
+  "project_new_license_loading": "Loading licenses...",
+  "project_new_license_empty": "No licenses available — ask an administrator to add one.",
+  "project_new_license_unknown_error": "Could not load the license list. Please refresh the page.",
 
   "project_detail_back_to_projects": "Back to Projects",
   "project_detail_description_heading": "Description",
