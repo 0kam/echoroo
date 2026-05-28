@@ -449,6 +449,7 @@ def license_in_use_response(error: LicenseInUseError) -> JSONResponse:
 @router.delete(
     "/licenses/{license_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
     summary="Delete license (superuser only)",
     description=(
         "Delete a content license type. spec/012 FR-006 / FR-012 / FR-015: "

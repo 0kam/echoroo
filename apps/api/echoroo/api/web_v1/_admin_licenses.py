@@ -151,6 +151,7 @@ async def update_license(
 @router.delete(
     "/licenses/{license_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
     summary="Delete license (admin)",
     description=(
         "BFF adapter for the admin license delete endpoint. spec/012 "
