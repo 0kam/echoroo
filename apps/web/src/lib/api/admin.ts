@@ -11,7 +11,7 @@
  */
 
 import type {
-  AdminUserResponse,
+  AdminUserListItem,
   AdminUserListResponse,
   SystemSetting,
   AdminUserUpdateRequest,
@@ -50,19 +50,22 @@ function csrfHeaders(): Record<string, string> {
 
 export const adminApi = {
   /**
-   * List all users (superuser only)
+   * List all users (superuser only).
+   *
+   * spec/006 + spec/011: the ``is_active`` query parameter was removed
+   * along with the persisted ``users.is_active`` column. Filtering is
+   * limited to the free-text ``search`` term against email + display
+   * name.
    */
   listUsers: async (params?: {
     page?: number;
     limit?: number;
     search?: string;
-    is_active?: boolean;
   }): Promise<AdminUserListResponse> => {
     const queryParams = new URLSearchParams();
     if (params?.page) queryParams.set('page', params.page.toString());
     if (params?.limit) queryParams.set('limit', params.limit.toString());
     if (params?.search) queryParams.set('search', params.search);
-    if (params?.is_active !== undefined) queryParams.set('is_active', params.is_active.toString());
 
     const query = queryParams.toString();
     const endpoint = `${WEB_API_BASE}/admin/users${query ? `?${query}` : ''}`;
@@ -71,10 +74,19 @@ export const adminApi = {
   },
 
   /**
-   * Update user (superuser only)
+   * Update user (superuser only).
+   *
+   * The backend currently only honours ``display_name``; legacy
+   * ``is_active`` / ``is_superuser`` / ``is_verified`` payload fields
+   * are accepted but silently ignored (see
+   * :type:`AdminUserUpdateRequest`). Superuser promotion lives in the
+   * ``/admin/superusers`` M-of-N flow.
    */
-  updateUser: async (userId: string, data: AdminUserUpdateRequest): Promise<AdminUserResponse> => {
-    return apiClient.patch<AdminUserResponse>(
+  updateUser: async (
+    userId: string,
+    data: AdminUserUpdateRequest
+  ): Promise<AdminUserListItem> => {
+    return apiClient.patch<AdminUserListItem>(
       `${WEB_API_BASE}/admin/users/${userId}`,
       data,
       { headers: csrfHeaders() }

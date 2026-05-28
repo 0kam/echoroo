@@ -796,19 +796,46 @@ export interface AdminUserUpdateRequest {
 }
 
 /**
- * Admin user response keeps the legacy verification flag exposed by the
- * legacy admin API surface.
+ * Admin user list item — mirrors backend ``AdminUserListItem``
+ * (``apps/api/echoroo/schemas/admin.py``).
+ *
+ * Used exclusively by ``GET /web-api/v1/admin/users``. The shape
+ * deliberately omits the legacy ``is_active`` / ``is_verified`` /
+ * ``organization`` fields (dropped by spec/006 + spec/011) and exposes
+ * ``is_superuser`` as a JOIN-derived flag from the ``superusers``
+ * entitlement table (FR-111). Per-user PATCH responses still reuse the
+ * richer :type:`User` shape; this list-only type prevents callers from
+ * relying on fields the backend no longer returns for the list surface.
  */
-export interface AdminUserResponse extends User {
-  is_verified?: boolean;
+export interface AdminUserListItem {
+  id: string;
+  email: string;
+  display_name: string | null;
+  created_at: string;
+  last_login_at: string | null;
+  is_superuser: boolean;
 }
 
 /**
- * Admin user list response with pagination
+ * Admin user list response with pagination — mirrors backend
+ * ``AdminUserListResponse``.
  */
 export interface AdminUserListResponse extends PaginationMeta {
-  items: AdminUserResponse[];
+  items: AdminUserListItem[];
 }
+
+/**
+ * @deprecated Use :type:`AdminUserListItem` for the list view, or the
+ * generic :type:`User` type for the per-user PATCH response.
+ *
+ * The pre-spec/006 admin surface returned a ``User`` row plus an extra
+ * ``is_verified`` flag; both ``is_verified`` and the embedded
+ * ``is_active`` / ``organization`` columns were dropped by the
+ * Permissions Redesign + zero-email migration. The alias is preserved
+ * only as a compatibility shim for any in-tree caller that still
+ * imports it; new code MUST use :type:`AdminUserListItem`.
+ */
+export type AdminUserResponse = AdminUserListItem;
 
 /**
  * System setting value type

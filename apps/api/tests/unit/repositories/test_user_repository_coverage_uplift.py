@@ -112,8 +112,12 @@ async def test_list_users_returns_rows_and_total_without_search() -> None:
 
     spec/011 follow-up: minimal unit coverage for the pagination path.
     The first execute() call resolves ``SELECT COUNT(*)`` and returns a
-    scalar; the second resolves ``SELECT users ORDER BY created_at DESC``
-    and returns a scalar list. We assert the tuple shape and call order.
+    scalar; the second resolves
+    ``SELECT users, (su.id IS NOT NULL AND su.revoked_at IS NULL) AS is_superuser
+    LEFT OUTER JOIN superusers ON superusers.user_id = users.id
+    ORDER BY users.created_at DESC`` and returns a list of two-column
+    rows. The second execute is consumed via ``.all()`` rather than
+    ``.scalars().all()`` so the ``is_superuser`` boolean column survives.
     """
     user = _make_user()
 
@@ -121,16 +125,17 @@ async def test_list_users_returns_rows_and_total_without_search() -> None:
     count_result.scalar_one.return_value = 5
 
     rows_result = MagicMock()
-    scalars_obj = MagicMock()
-    scalars_obj.all.return_value = [user]
-    rows_result.scalars.return_value = scalars_obj
+    # spec/009 follow-up: the production query returns (User, bool) row
+    # objects; unit test mimics the underlying ``.all()`` shape with a
+    # simple tuple so the repo can unpack ``row[0]`` / ``row[1]``.
+    rows_result.all.return_value = [(user, True)]
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[count_result, rows_result])
 
     repo = UserRepository(db)
-    users, total = await repo.list_users(offset=0, limit=20)
-    assert users == [user]
+    rows, total = await repo.list_users(offset=0, limit=20)
+    assert rows == [(user, True)]
     assert total == 5
     assert db.execute.await_count == 2
 
@@ -146,14 +151,12 @@ async def test_list_users_search_filter_applied() -> None:
     count_result.scalar_one.return_value = 0
 
     rows_result = MagicMock()
-    scalars_obj = MagicMock()
-    scalars_obj.all.return_value = []
-    rows_result.scalars.return_value = scalars_obj
+    rows_result.all.return_value = []
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=[count_result, rows_result])
 
     repo = UserRepository(db)
-    users, total = await repo.list_users(offset=10, limit=10, search="abc")
-    assert users == []
+    rows, total = await repo.list_users(offset=10, limit=10, search="abc")
+    assert rows == []
     assert total == 0

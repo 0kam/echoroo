@@ -247,6 +247,49 @@ class TestListUsers:
         assert data["limit"] == 1
         assert len(data["items"]) == 1
 
+    async def test_list_users_includes_is_superuser(
+        self,
+        client: AsyncClient,
+        superuser_headers: dict[str, str],
+        superuser: User,
+        regular_user: User,
+    ) -> None:
+        """``is_superuser`` reflects the ``superusers`` entitlement row.
+
+        spec/009 follow-up: the admin user list previously returned
+        :class:`~echoroo.schemas.auth.UserResponse` rows, which dropped
+        the ``is_superuser`` field after spec/006 moved the flag into
+        the ``superusers`` table. The admin UI showed every account as
+        "Role: User" as a result. The list now uses
+        :class:`AdminUserListItem`, which carries the JOIN-derived flag
+        per row.
+        """
+        response = await client.get(
+            "/api/v1/admin/users",
+            headers=superuser_headers,
+            params={"limit": 100},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        items_by_id = {item["id"]: item for item in data["items"]}
+
+        assert str(superuser.id) in items_by_id, (
+            "superuser fixture missing from admin list response"
+        )
+        assert str(regular_user.id) in items_by_id, (
+            "regular_user fixture missing from admin list response"
+        )
+
+        su_item = items_by_id[str(superuser.id)]
+        regular_item = items_by_id[str(regular_user.id)]
+
+        assert "is_superuser" in su_item, (
+            "AdminUserListItem schema must surface is_superuser per row"
+        )
+        assert su_item["is_superuser"] is True
+        assert regular_item["is_superuser"] is False
+
 
 class TestUpdateUser:
     """Tests for PATCH /admin/users/{userId} endpoint (spec/011 follow-up)."""

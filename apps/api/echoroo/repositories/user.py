@@ -2,8 +2,9 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 
+from echoroo.models.superuser import Superuser
 from echoroo.models.user import User
 from echoroo.repositories.base import BaseRepository
 
@@ -31,7 +32,7 @@ class UserRepository(BaseRepository[User]):
         offset: int,
         limit: int,
         search: str | None = None,
-    ) -> tuple[list[User], int]:
+    ) -> tuple[list[tuple[User, bool]], int]:
         """List active (non-soft-deleted) users with pagination.
 
         Args:
@@ -41,10 +42,20 @@ class UserRepository(BaseRepository[User]):
                 ``email`` OR ``display_name``.
 
         Returns:
-            Tuple of ``(users, total_count)`` where ``total_count`` is the
-            number of rows matching the filter (independent of pagination).
-            ``users`` is ordered by ``created_at`` descending so the admin
-            UI surfaces the newest accounts first.
+            Tuple of ``(rows, total_count)`` where ``total_count`` is the
+            number of rows matching the filter (independent of pagination)
+            and ``rows`` is a list of ``(User, is_superuser)`` tuples.
+            ``is_superuser`` is true iff the user has an active
+            (``revoked_at IS NULL``) row in ``superusers`` (spec/006
+            FR-111). ``rows`` is ordered by ``created_at`` descending so
+            the admin UI surfaces the newest accounts first.
+
+        The single ``LEFT OUTER JOIN superusers`` does not duplicate User
+        rows because ``superusers.user_id`` carries a UNIQUE constraint
+        (FR-111 — at most one superuser entitlement per user). Filtering
+        active rows via ``revoked_at IS NULL`` inside the CASE expression
+        keeps the join inclusive (revoked rows still suppress
+        ``is_superuser`` to false).
         """
         filters = [User.deleted_at.is_(None)]
         if search:
@@ -59,14 +70,26 @@ class UserRepository(BaseRepository[User]):
         total_stmt = select(func.count()).select_from(User).where(*filters)
         total = int((await self.db.execute(total_stmt)).scalar_one())
 
+        is_superuser_expr = case(
+            (
+                (Superuser.id.is_not(None)) & (Superuser.revoked_at.is_(None)),
+                True,
+            ),
+            else_=False,
+        ).label("is_superuser")
+
         rows_stmt = (
-            select(User)
+            select(User, is_superuser_expr)
+            .outerjoin(Superuser, Superuser.user_id == User.id)
             .where(*filters)
             .order_by(User.created_at.desc())
             .offset(offset)
             .limit(limit)
         )
-        rows = list((await self.db.execute(rows_stmt)).scalars().all())
+        result = await self.db.execute(rows_stmt)
+        rows: list[tuple[User, bool]] = [
+            (row[0], bool(row[1])) for row in result.all()
+        ]
         return rows, total
 
     async def get_by_email(self, email: str) -> User | None:
