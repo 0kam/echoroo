@@ -11,6 +11,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StringConstraints,
     model_serializer,
 )
 
@@ -20,6 +21,15 @@ from echoroo.models.enums import (
     ProjectVisibility,
 )
 from echoroo.schemas.auth import UserResponse
+
+RequiredProjectLicenseInput = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+]
+ProjectLicenseInput = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=50),
+]
 
 
 class PublicOwnerResponse(BaseModel):
@@ -157,9 +167,8 @@ class ProjectCreateRequest(BaseModel):
     # OpenAPI shape.
     visibility: ProjectVisibility = Field(..., description="Project visibility level")
     # Phase 3 will rename this request field to ``license_id``.
-    license: str = Field(
+    license: RequiredProjectLicenseInput = Field(
         ...,
-        max_length=50,
         description=(
             "Project data license — required at creation (FR-085). "
             "One of CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
@@ -211,7 +220,10 @@ class ProjectUpdateRequest(BaseModel):
     )
     visibility: ProjectVisibility | None = Field(None, description="Project visibility level")
     # Phase 3 will rename this request field to ``license_id``.
-    license: str | None = Field(None, max_length=50, description="Project data license")
+    license: ProjectLicenseInput | None = Field(
+        None,
+        description="Project data license",
+    )
     restricted_config: dict[str, Any] | None = Field(
         None,
         description="Restricted visibility capability toggles",
@@ -512,9 +524,8 @@ class ProjectLicenseUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Phase 3 will rename this request field to ``license_id``.
-    license: str = Field(
+    license: ProjectLicenseInput = Field(
         ...,
-        max_length=50,
         description=(
             "Target license — required (FR-085). One of "
             "CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
