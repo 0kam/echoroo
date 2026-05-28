@@ -84,7 +84,7 @@ async def _create_project(session: AsyncSession, *, owner: User) -> Project:
         name="Replay Actor Binding Project",
         description="R3 Major #1 regression",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": False,

@@ -98,7 +98,7 @@ async def _create_project(
         name=name or f"Dormancy Test Project {uuid4().hex[:6]}",
         description="Phase 12 R1 M5 dormancy integration test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": False,

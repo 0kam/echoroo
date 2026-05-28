@@ -58,6 +58,37 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://echoroo:echoroo@localhost:5432/echoroo_test",
 )
 
+CANONICAL_TEST_LICENSES = (
+    {
+        "id": "cc0",
+        "name": "Creative Commons Zero",
+        "short_name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "description": "Public domain dedication.",
+    },
+    {
+        "id": "cc-by",
+        "name": "Creative Commons Attribution",
+        "short_name": "CC-BY",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "description": "Attribution required.",
+    },
+    {
+        "id": "cc-by-nc",
+        "name": "Creative Commons Attribution NonCommercial",
+        "short_name": "CC-BY-NC",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+        "description": "Attribution required; non-commercial use only.",
+    },
+    {
+        "id": "cc-by-sa",
+        "name": "Creative Commons Attribution ShareAlike",
+        "short_name": "CC-BY-SA",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "description": "Attribution required; derivatives share alike.",
+    },
+)
+
 
 def _make_create_enum_sql(type_name: str, values: list[str]) -> str:
     """Build idempotent DO-block SQL for creating a Postgres enum type.
@@ -943,6 +974,42 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def seed_canonical_test_licenses(session: AsyncSession) -> None:
+    """Ensure canonical Creative Commons license rows exist for FK-backed tests."""
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO licenses (
+                id,
+                name,
+                short_name,
+                url,
+                description,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :id,
+                :name,
+                :short_name,
+                :url,
+                :description,
+                now(),
+                now()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                short_name = EXCLUDED.short_name,
+                url = EXCLUDED.url,
+                description = EXCLUDED.description,
+                updated_at = now()
+            """
+        ),
+        list(CANONICAL_TEST_LICENSES),
+    )
+    await session.commit()
+
+
 def ensure_test_database_schema_sync() -> None:
     """Synchronously ensure the test DB schema is current.
 
@@ -1022,6 +1089,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with session_maker() as session:
         # Clean up any leftover data from previous tests
         await cleanup_test_data(session)
+        await seed_canonical_test_licenses(session)
         yield session
 
     await engine.dispose()

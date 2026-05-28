@@ -281,7 +281,7 @@ async def _seed_project(
     project = Project(
         name=f"T532HTTP {uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_id,
         restricted_config={
             "allow_media_playback": allow_media_playback,

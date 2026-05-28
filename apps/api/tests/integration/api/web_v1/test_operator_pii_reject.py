@@ -102,7 +102,7 @@ async def _create_active_project(
         name=name,
         description="A-13 PII-reject regression fixture",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         restricted_config=dict(_RESTRICTED_CONFIG),
         status=ProjectStatus.ACTIVE,
         owner_id=owner_id,

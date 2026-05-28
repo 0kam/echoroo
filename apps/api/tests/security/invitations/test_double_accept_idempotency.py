@@ -157,7 +157,7 @@ async def _seed_project(db: AsyncSession, owner_id: Any) -> Any:
     project = Project(
         name=f"T531 {uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_id,
         restricted_config={
             "allow_media_playback": True,

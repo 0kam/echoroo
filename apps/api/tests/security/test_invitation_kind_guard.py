@@ -126,7 +126,7 @@ async def restricted_project(
     project = Project(
         name=f"R5 {uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=issuer_user.id,
         restricted_config={
             "allow_media_playback": True,

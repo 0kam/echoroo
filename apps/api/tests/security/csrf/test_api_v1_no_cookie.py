@@ -178,7 +178,7 @@ async def _seed_user_and_project(db_session: AsyncSession) -> tuple[User, Projec
         name="T972 Test Project",
         description="api/v1 cookie-isolation test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
     )
     db_session.add(project)

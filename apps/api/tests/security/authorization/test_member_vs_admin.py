@@ -99,7 +99,7 @@ async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
         name="T132 Test Project",
         description="Member vs Admin boundary test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_user.id,
         restricted_config={
             "allow_media_playback": True,

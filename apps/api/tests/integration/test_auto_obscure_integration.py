@@ -166,7 +166,7 @@ async def t653_public_project(db_session: AsyncSession, t653_owner: User) -> Pro
         name="T653 Auto-Obscure Integration Project",
         description="Integration test for auto-obscure lat/lng absence",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t653_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config={},

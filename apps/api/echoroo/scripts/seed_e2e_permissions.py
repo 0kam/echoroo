@@ -54,7 +54,6 @@ from echoroo.models.enums import (
     DetectionStatus,
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectTrustedStatus,
@@ -566,7 +565,7 @@ async def _upsert_project(
             description=f"{kind.title()} browser E2E permission fixture.",
             owner_id=owner.id,
             visibility=visibility,
-            license=ProjectLicense.CC_BY,
+            license_id="cc-by",
             status=ProjectStatus.ACTIVE,
             restricted_config=dict(restricted_config),
             restricted_config_version=1,
@@ -576,7 +575,7 @@ async def _upsert_project(
         project.description = f"{kind.title()} browser E2E permission fixture."
         project.owner_id = owner.id
         project.visibility = visibility
-        project.license = ProjectLicense.CC_BY
+        project.license_id = "cc-by"
         project.status = ProjectStatus.ACTIVE
         project.dormant_since = None
         project.archived_since = None

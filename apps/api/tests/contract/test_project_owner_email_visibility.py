@@ -122,7 +122,7 @@ async def public_project(
         description="Public visibility test project",
         visibility=ProjectVisibility.PUBLIC,
         status=ProjectStatus.ACTIVE,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=email_owner_user.id,
     )
     db_session.add(project)
@@ -159,7 +159,7 @@ async def restricted_project(
         description="Restricted visibility test project",
         visibility=ProjectVisibility.RESTRICTED,
         status=ProjectStatus.ACTIVE,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         restricted_config=dict(_RESTRICTED_DEFAULT_CONFIG),
         owner_id=email_owner_user.id,
     )

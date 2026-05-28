@@ -110,7 +110,7 @@ async def _create_project(
         name=name,
         description="spec/009 PR A smoke project",
         visibility=visibility,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=user.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=(

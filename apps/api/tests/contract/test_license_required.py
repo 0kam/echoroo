@@ -443,7 +443,7 @@ class TestChangeLicenseAppendsHistory:
         project = Project(
             name="T320 Change License",
             visibility="public",
-            license=ProjectLicense.CC_BY,
+            license_id="cc-by",
             owner_id=t320_owner.id,
             restricted_config={},
         )
@@ -500,7 +500,7 @@ class TestChangeLicenseAppendsHistory:
         project = Project(
             name="T320 Same License Twice",
             visibility="public",
-            license=ProjectLicense.CC0,
+            license_id="cc0",
             owner_id=t320_owner.id,
             restricted_config={},
         )

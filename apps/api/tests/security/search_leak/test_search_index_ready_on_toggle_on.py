@@ -108,7 +108,7 @@ async def t981b_project_off(
         name="T981b Restricted Project (OFF seed)",
         description="FR-025b search index gate coverage",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t981b_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=_restricted_config_off(),

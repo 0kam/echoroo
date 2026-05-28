@@ -196,7 +196,7 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
         name="Test Project",
         description="A test project",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=test_user.id,
         # Phase 11 ck_projects_restricted_config_shape requires the eight
         # canonical toggle keys whenever ``visibility='restricted'``.

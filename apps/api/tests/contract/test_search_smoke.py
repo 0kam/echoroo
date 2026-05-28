@@ -312,7 +312,7 @@ async def test_search_session_other_project(
         name="Other Project",
         description="Cross-tenant isolation project",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=other_user.id,
     )
     db_session.add(other_project)

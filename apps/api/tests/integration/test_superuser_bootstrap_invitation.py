@@ -893,7 +893,7 @@ async def test_r5_defence_in_depth(
             id=project_id,
             name=f"r5-{uuid4().hex[:6]}",
             visibility=ProjectVisibility.PUBLIC,
-            license=ProjectLicense.CC_BY,
+            license_id="cc-by",
             owner_id=issuer.id,
         )
     )

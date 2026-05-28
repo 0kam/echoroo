@@ -163,7 +163,7 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
         name="Janitor Test Project",
         description="For janitor tests",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=test_user.id,
         restricted_config={
             "allow_media_playback": False,

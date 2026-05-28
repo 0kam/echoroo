@@ -104,7 +104,7 @@ async def _create_project(session: AsyncSession, *, owner: User) -> Project:
         name="Race Test Project",
         description="Ownership transfer race test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": False,

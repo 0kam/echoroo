@@ -77,7 +77,7 @@ async def t992_project(
         name="T992 Auth Perf Project",
         description="NFR-001 auth+permission p95 test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t992_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config={},

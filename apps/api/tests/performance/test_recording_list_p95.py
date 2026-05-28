@@ -77,7 +77,7 @@ async def t991_project(
         name="T991 Recording List Performance Project",
         description="NFR-004 p95 budget test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t991_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config={},

@@ -184,7 +184,7 @@ async def t313_public_project(
         name="T313 Public Project",
         description="Phase 6 voter_id masking contract",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t313_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=_PUBLIC_RESTRICTED_CONFIG,

@@ -167,7 +167,7 @@ async def _create_project(db: AsyncSession, owner: User) -> Project:
     project = Project(
         name=f"T291 {uuid.uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config=dict(_RESTRICTED_CONFIG),
     )

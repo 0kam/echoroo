@@ -149,7 +149,7 @@ async def t310_public_project(
         name="T310 Public Project",
         description="Phase 6 Guest-authenticated vote contract",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t310_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=_PUBLIC_RESTRICTED_CONFIG,

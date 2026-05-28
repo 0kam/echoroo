@@ -125,7 +125,7 @@ async def _seed_user_and_public_project(
         name="T982 Public Project",
         description="transport separation test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
     )
     session.add(project)
