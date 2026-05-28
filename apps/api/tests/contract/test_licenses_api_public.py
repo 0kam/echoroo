@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
 from echoroo.models.user import User
+from tests.conftest import seed_canonical_test_licenses
 
 API_LICENSES_ENDPOINT = "/api/v1/licenses"
 
@@ -61,9 +62,12 @@ class TestApiPublicLicenseList:
     async def test_returns_200_with_canonical_licenses(
         self,
         client: AsyncClient,
+        db_session: AsyncSession,
         t012_api_user_headers: dict[str, str],
     ) -> None:
         """Default seed populates the four canonical CC rows."""
+        await seed_canonical_test_licenses(db_session)
+
         response = await client.get(
             API_LICENSES_ENDPOINT, headers=t012_api_user_headers
         )
@@ -75,7 +79,7 @@ class TestApiPublicLicenseList:
         assert len(items) == 4
 
         short_names = [row["short_name"] for row in items]
-        assert short_names == sorted(short_names), (
+        assert short_names == ["CC0", "CC-BY", "CC-BY-NC", "CC-BY-SA"], (
             f"Items MUST be ordered by short_name ASC; got {short_names}"
         )
         assert set(short_names) == {"CC0", "CC-BY", "CC-BY-NC", "CC-BY-SA"}
@@ -110,6 +114,7 @@ class TestApiPublicLicenseList:
     async def test_non_admin_bearer_receives_full_list(
         self,
         client: AsyncClient,
+        db_session: AsyncSession,
         t012_api_user_headers: dict[str, str],
     ) -> None:
         """FR-017: a non-admin Bearer caller still receives every row.
@@ -119,6 +124,8 @@ class TestApiPublicLicenseList:
         for JWT-based auth, but the principal is NOT a superuser. If the
         endpoint accidentally gated to admins we would 403 here.
         """
+        await seed_canonical_test_licenses(db_session)
+
         response = await client.get(
             API_LICENSES_ENDPOINT, headers=t012_api_user_headers
         )

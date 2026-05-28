@@ -459,6 +459,9 @@ def license_in_use_response(error: LicenseInUseError) -> JSONResponse:
         "admin UI can render an actionable refusal."
     ),
     responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "License id does not exist.",
+        },
         status.HTTP_409_CONFLICT: {
             "description": "License is still referenced by projects/datasets.",
             "content": {

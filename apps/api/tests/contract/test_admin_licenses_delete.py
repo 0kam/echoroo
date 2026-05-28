@@ -27,7 +27,10 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.auth import issue_access_token
 from echoroo.core.jwt import create_access_token
+from echoroo.core.settings import get_settings
+from echoroo.middleware.csrf import issue_csrf_token
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     ProjectStatus,
@@ -103,6 +106,40 @@ def t044_superuser_headers(t044_superuser: User) -> dict[str, str]:
         "Authorization": (
             f"Bearer {create_access_token({'sub': str(t044_superuser.id)})}"
         )
+    }
+
+
+@pytest.fixture
+async def t044_superuser_session_auth(
+    db_session: AsyncSession,
+    t044_superuser: User,
+) -> dict[str, dict[str, str]]:
+    """Cookie session + CSRF header for BFF DELETE requests."""
+    settings = get_settings()
+    session_id = uuid4()
+    await db_session.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, NOW())"
+        ),
+        {"family_id": session_id, "user_id": t044_superuser.id},
+    )
+    await db_session.commit()
+
+    access_token = issue_access_token(
+        user_id=t044_superuser.id,
+        security_stamp=t044_superuser.security_stamp,
+    )
+    csrf_token = issue_csrf_token(
+        str(session_id),
+        session_secret=settings.web_session_secret,
+    )
+    return {
+        "headers": {
+            "Authorization": f"Bearer {access_token}",
+            "X-CSRF-Token": csrf_token,
+        },
+        "cookies": {settings.web_session_cookie_name: str(session_id)},
     }
 
 
@@ -228,7 +265,7 @@ class TestDeleteLicenseSucceedsWhenNoDependents:
         self,
         client: AsyncClient,
         db_session: AsyncSession,
-        t044_superuser_headers: dict[str, str],
+        t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
         # Re-seed a fresh row — the Bearer-surface test above may have
         # consumed the shared ``deletable_license`` fixture in another
@@ -246,7 +283,7 @@ class TestDeleteLicenseSucceedsWhenNoDependents:
 
         response = await client.delete(
             f"{BFF_PATH}/t044-bff-204",
-            headers=t044_superuser_headers,
+            **t044_superuser_session_auth,
         )
         assert response.status_code == 204, response.text
 
@@ -297,7 +334,7 @@ class TestDeleteLicenseRefuses409:
         client: AsyncClient,
         db_session: AsyncSession,
         t044_superuser: User,
-        t044_superuser_headers: dict[str, str],
+        t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
         # Project uses a different license; dataset references the
         # license-under-test so only the dataset count is non-zero.
@@ -329,7 +366,7 @@ class TestDeleteLicenseRefuses409:
         )
 
         response = await client.delete(
-            f"{BFF_PATH}/{target_license.id}", headers=t044_superuser_headers
+            f"{BFF_PATH}/{target_license.id}", **t044_superuser_session_auth
         )
         assert response.status_code == 409, response.text
         body = response.json()
@@ -383,7 +420,7 @@ class TestDeleteLicenseRefuses409:
         client: AsyncClient,
         db_session: AsyncSession,
         t044_superuser: User,
-        t044_superuser_headers: dict[str, str],
+        t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
         """Same as above on the BFF surface — the response shape is identical."""
         lic = License(
@@ -409,7 +446,7 @@ class TestDeleteLicenseRefuses409:
         )
 
         response = await client.delete(
-            f"{BFF_PATH}/{lic.id}", headers=t044_superuser_headers
+            f"{BFF_PATH}/{lic.id}", **t044_superuser_session_auth
         )
         assert response.status_code == 409, response.text
         body = response.json()
@@ -441,9 +478,9 @@ class TestDeleteLicense404:
     async def test_unknown_id_bff_returns_404(
         self,
         client: AsyncClient,
-        t044_superuser_headers: dict[str, str],
+        t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
         response = await client.delete(
-            f"{BFF_PATH}/does-not-exist", headers=t044_superuser_headers
+            f"{BFF_PATH}/does-not-exist", **t044_superuser_session_auth
         )
         assert response.status_code == 404, response.text

@@ -161,6 +161,9 @@ async def update_license(
         "``DELETE /api/v1/admin/licenses/{id}``."
     ),
     responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "License id does not exist.",
+        },
         status.HTTP_409_CONFLICT: {
             "description": "License is still referenced by projects/datasets.",
             "content": {

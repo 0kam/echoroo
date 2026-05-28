@@ -12,7 +12,7 @@ the wire contract this module implements.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -35,6 +35,11 @@ router = APIRouter(prefix="/licenses", tags=["licenses"])
         "consumes this endpoint to populate the license dropdown live "
         "from admin-curated data."
     ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Bearer token is missing or invalid.",
+        },
+    },
 )
 async def list_public_licenses(
     db: DbSession,

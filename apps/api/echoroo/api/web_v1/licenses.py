@@ -13,7 +13,7 @@ for the wire contract.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -35,6 +35,11 @@ router = APIRouter(prefix="/licenses", tags=["licenses"])
         "state). FR-017: any authenticated caller may read; not gated to "
         "admins."
     ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Session is missing or invalid.",
+        },
+    },
 )
 async def list_public_licenses(
     db: DbSession,
