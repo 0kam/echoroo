@@ -61,7 +61,6 @@ from echoroo.models.enums import (
     DatasetVisibility,
     DetectionSource,
     DetectionStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,

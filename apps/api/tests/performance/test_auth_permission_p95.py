@@ -38,7 +38,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )

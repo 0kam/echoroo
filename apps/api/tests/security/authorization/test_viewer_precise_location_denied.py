@@ -54,7 +54,6 @@ from echoroo.core.permissions import (
     compute_effective_resolution,
 )
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
 )

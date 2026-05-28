@@ -18,7 +18,6 @@ from echoroo.models.enums import (
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )

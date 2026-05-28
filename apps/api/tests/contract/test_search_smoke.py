@@ -305,7 +305,7 @@ async def test_search_session_other_project(
     # NOT NULL (FR-085). Use ``PUBLIC`` so ``restricted_config`` does not
     # need to satisfy the eight-toggle ``ck_projects_restricted_config_shape``
     # CHECK.
-    from echoroo.models.enums import ProjectLicense, ProjectVisibility
+    from echoroo.models.enums import ProjectVisibility
     from echoroo.models.project import Project
 
     other_project = Project(

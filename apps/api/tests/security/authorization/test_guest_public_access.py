@@ -35,7 +35,6 @@ from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
     DatasetVisibility,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )

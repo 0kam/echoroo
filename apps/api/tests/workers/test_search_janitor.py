@@ -155,7 +155,6 @@ async def test_project(db_session: AsyncSession, test_user: User) -> Project:
     ``visibility='restricted'``.
     """
     from echoroo.models.enums import (
-        ProjectLicense,
         ProjectVisibility,
     )
 

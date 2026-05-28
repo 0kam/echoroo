@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
+from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 from echoroo.services.ownership_service import (

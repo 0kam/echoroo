@@ -47,7 +47,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from echoroo.core.jwt import create_access_token as _create_jwt
-from echoroo.models.enums import ProjectLicense, ProjectVisibility
+from echoroo.models.enums import ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.user import User
 

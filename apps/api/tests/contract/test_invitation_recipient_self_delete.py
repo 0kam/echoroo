@@ -240,7 +240,7 @@ async def _purge(db: AsyncSession) -> None:
 
 
 async def _seed_project(db: AsyncSession, owner_id: Any) -> Any:
-    from echoroo.models.enums import ProjectLicense, ProjectVisibility
+    from echoroo.models.enums import ProjectVisibility
     from echoroo.models.project import Project
 
     project = Project(

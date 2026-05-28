@@ -45,7 +45,6 @@ from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
     DatasetStatus,
     DatetimeParseStatus,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )

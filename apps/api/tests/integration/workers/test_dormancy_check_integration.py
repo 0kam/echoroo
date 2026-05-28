@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 import echoroo.workers.dormancy_check as dormancy_mod
-from echoroo.models.enums import ProjectLicense, ProjectVisibility
+from echoroo.models.enums import ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.user import User
 from echoroo.workers.dormancy_check import (

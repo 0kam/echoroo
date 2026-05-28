@@ -29,7 +29,6 @@ from echoroo.models.enums import (
     DatetimeParseStatus,
     DetectionSource,
     DetectionStatus,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )

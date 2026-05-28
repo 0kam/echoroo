@@ -48,7 +48,6 @@ from sqlalchemy.pool import NullPool
 from echoroo.core.jwt import create_access_token
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,

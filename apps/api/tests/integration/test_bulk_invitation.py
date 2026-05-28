@@ -39,7 +39,6 @@ from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )

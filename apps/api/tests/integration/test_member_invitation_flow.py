@@ -47,7 +47,6 @@ from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )

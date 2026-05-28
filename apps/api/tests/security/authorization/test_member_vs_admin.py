@@ -23,7 +23,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
+from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 

@@ -98,7 +98,7 @@ async def _purge(db: AsyncSession) -> None:
 
 async def _seed_project(db: AsyncSession, owner_id: Any) -> Any:
     """Insert a minimal Project row (parent FK for invitation/overlay)."""
-    from echoroo.models.enums import ProjectLicense, ProjectVisibility
+    from echoroo.models.enums import ProjectVisibility
     from echoroo.models.project import Project
 
     project = Project(
