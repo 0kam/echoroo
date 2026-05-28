@@ -60,17 +60,14 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
+from echoroo.schemas.web_v1.step_up import (
+    StepUpBeginRequest,
+    StepUpBeginResponse,
+    StepUpCompleteRequest,
+    StepUpCompleteResponse,
+)
 from echoroo.services import invitation_service
 from echoroo.services.audit_service import AuditLogService
-from echoroo.services.invitation_service import (
-    InvitationAlreadyMemberError,
-    InvitationConflictError,
-    InvitationEmailMismatchError,
-    InvitationTokenInvalidError,
-    InvitationValidationError,
-    accept_invitation_via_public_token,
-    resolve_invitation_for_public_token,
-)
 from echoroo.services.auth_service import (
     DEFAULT_RATE_LIMIT_POLICY,
     AccountLockedError,
@@ -82,10 +79,31 @@ from echoroo.services.auth_service import (
     authenticate,
     enforce_password_policy,
 )
+from echoroo.services.invitation_service import (
+    InvitationAlreadyMemberError,
+    InvitationConflictError,
+    InvitationEmailMismatchError,
+    InvitationTokenInvalidError,
+    InvitationValidationError,
+    accept_invitation_via_public_token,
+)
 from echoroo.services.login_notification_service import LoginNotificationService
+from echoroo.services.step_up_challenge_service import (
+    STEP_UP_CHALLENGE_TTL_SECONDS,
+    StepUpChallengeMismatchError,
+    StepUpChallengeNotFoundError,
+)
+from echoroo.services.step_up_challenge_service import (
+    consume_challenge as consume_step_up_challenge,
+)
+from echoroo.services.step_up_challenge_service import (
+    create_challenge as create_step_up_challenge,
+)
 from echoroo.services.step_up_token_service import (
     SCOPE_ADMIN_DESTRUCTIVE,
+    SCOPE_ADMIN_RECOVERY,
     STEP_UP_TOKEN_TTL_SECONDS,
+    issue_admin_recovery_step_up_token,
     issue_step_up_token,
 )
 from echoroo.services.trusted_device_service import TrustedDeviceService
@@ -1458,6 +1476,364 @@ async def webauthn_challenge(
         step_up_token=step_up_token,
         step_up_expires_at=step_up_expires_at.isoformat(),
         step_up_scope=SCOPE_ADMIN_DESTRUCTIVE,
+    )
+
+
+# ---------------------------------------------------------------------------
+# spec/011 T300 / T301 — admin_recovery step-up begin / complete.
+#
+# The destructive admin-recovery endpoints
+# (``POST /web-api/v1/admin/users/{user_id}/reset-password`` and
+# future admin 2FA disable) are gated by
+# :func:`echoroo.middleware.step_up.require_step_up_token` configured
+# with :data:`SCOPE_ADMIN_RECOVERY`. The verifier demands an
+# AND-condition (password re-entry + 2FA challenge) recorded on the
+# JWT's ``factors`` claim (FR-011-206).
+#
+# These two endpoints are the issuance path for that token. They are
+# the only authenticated-self route in the auth surface that does NOT
+# go through the interim-token ceremony: the caller already holds a
+# valid first-party session cookie, and the begin / complete pair only
+# re-verifies the password + a fresh 2FA code so the resulting step-up
+# token represents a freshly satisfied AND-condition. The session
+# cookie alone is intentionally NOT sufficient — a stolen session
+# without the user's TOTP secret cannot satisfy ``complete``.
+# ---------------------------------------------------------------------------
+
+
+def _step_up_no_store_headers(response: Response) -> None:
+    """Apply contract-mandated response headers to a step-up response.
+
+    Both step-up endpoints carry security-sensitive material in their
+    response bodies (a fresh challenge token / a 5-minute privileged
+    JWT). The contract YAML mandates
+    ``Cache-Control: no-store, no-cache, must-revalidate, private`` and
+    a strict ``Referrer-Policy: no-referrer`` so intermediaries and
+    proxies cannot retain the payload.
+    """
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Referrer-Policy"] = "no-referrer"
+
+
+def _resolve_step_up_factors_required(user: User) -> list[str]:
+    """Derive ``factors_required`` from the authenticated user's 2FA state.
+
+    spec/011 FR-011-206 demands an AND-condition (password + 2FA). The
+    current implementation supports the TOTP path only — a user whose
+    only second factor is WebAuthn is refused with a 409 by the begin
+    handler (a separate flow under spec/006 Phase 17 A-11 covers the
+    WebAuthn-only recovery path).
+
+    Returns:
+        ``["password", "totp"]`` when the user has TOTP enrolled.
+
+    Raises:
+        HTTPException: 409 when the user has no compatible 2FA enrollment.
+    """
+    if user.two_factor_enabled and user.two_factor_secret_encrypted is not None:
+        return ["password", "totp"]
+    # TODO(spec/011 follow-up): once T301 grows a WebAuthn branch, return
+    # ["password", "webauthn"] here when the user has registered
+    # credentials but no TOTP. Until then, refuse so the frontend can
+    # redirect to the WebAuthn-only recovery flow (spec/006 A-11).
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error_code": "step_up_2fa_not_enrolled",
+            "message": (
+                "Step-up requires a TOTP enrollment. Enable TOTP from "
+                "the security settings before retrying the admin "
+                "recovery flow."
+            ),
+        },
+    )
+
+
+@router.post(
+    "/step-up/begin",
+    response_model=StepUpBeginResponse,
+    summary="Begin a step-up authentication challenge (spec/011 T300)",
+    responses={
+        401: {"description": "Caller is not authenticated"},
+        409: {"description": "User has no compatible 2FA enrollment"},
+    },
+)
+async def step_up_begin(
+    payload: StepUpBeginRequest,
+    request: Request,
+    response: Response,
+    current_user: OptionalCurrentUser,
+) -> StepUpBeginResponse:
+    """Issue a step-up challenge_id + factors_required for the session user.
+
+    The challenge state is persisted in Redis under
+    ``step_up_challenge:{user_id}:{scope}`` with a 5-minute TTL. A
+    fresh ``begin`` call OVERWRITES any previous in-flight challenge
+    for the same scope so the caller cannot pin a stale slot.
+
+    Authentication boundary: requires a first-party session cookie
+    (resolved via :data:`OptionalCurrentUser`). Anonymous callers
+    receive a uniform 401 envelope with ``error_code=auth_required``.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "auth_required",
+                "message": "Step-up requires an authenticated session.",
+            },
+        )
+
+    factors_required = _resolve_step_up_factors_required(current_user)
+
+    redis = await get_redis_connection()
+    challenge_id, _issued_at = await create_step_up_challenge(
+        redis,
+        user_id=current_user.id,
+        scope=payload.scope,
+        factors_required=factors_required,
+        ttl_seconds=STEP_UP_CHALLENGE_TTL_SECONDS,
+    )
+
+    await _write_platform_audit(
+        actor_user_id=current_user.id,
+        action="auth.step_up_challenge_started",
+        request=request,
+        detail={
+            "scope": payload.scope,
+            "factors_required": factors_required,
+            # ``challenge_id`` is intentionally NOT logged — the field
+            # is a short-lived correlator and the audit row's
+            # ``actor_user_id`` + ``request_id`` are sufficient for
+            # forensics.
+        },
+    )
+
+    _step_up_no_store_headers(response)
+    return StepUpBeginResponse(
+        challenge_id=challenge_id,
+        factors_required=factors_required,
+    )
+
+
+@router.post(
+    "/step-up/complete",
+    response_model=StepUpCompleteResponse,
+    summary="Complete a step-up challenge and obtain an admin_recovery token (spec/011 T301)",
+    responses={
+        401: {"description": "Authentication failed (wrong password / TOTP / challenge)"},
+        423: {"description": "Account is in forced-change (must_change_password=true)"},
+    },
+)
+async def step_up_complete(
+    payload: StepUpCompleteRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    current_user: OptionalCurrentUser,
+) -> StepUpCompleteResponse:
+    """Verify factors and mint an ``admin_recovery``-scoped step-up token.
+
+    Server-side invariants (security review M-1, FR-011-206):
+
+    1. The caller's session is re-validated (``current_user`` not None).
+    2. The supplied ``password`` is verified against the user's stored
+       hash via :func:`echoroo.core.security.verify_password` BEFORE
+       any factor flag is set in the issued JWT.
+    3. The supplied ``totp_code`` is verified via
+       :meth:`TwoFactorService.verify_totp` — Redis-backed rate
+       limiting + lockout already applies.
+    4. The matching challenge record (created by ``begin``) is consumed
+       atomically: any mismatch in ``challenge_id`` or factor set fails
+       closed.
+
+    Only when ALL invariants hold is
+    :func:`issue_admin_recovery_step_up_token` invoked with
+    ``password_verified=True`` and ``second_factor="totp"``. The
+    verifier middleware checks ``factors.password is True`` and
+    ``factors.second_factor in {"totp","webauthn"}`` before honouring
+    the token at the destructive endpoint.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "auth_required",
+                "message": "Step-up requires an authenticated session.",
+            },
+        )
+
+    # spec/011 FR-011-204: a user inside the forced-change window MUST
+    # change their password before issuing any privileged token — the
+    # admin-mediated reset endpoint is the upstream of this flow and
+    # the step-up token must not extend the user's reach until the
+    # forced change clears.
+    if getattr(current_user, "must_change_password", False):
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail={
+                "error_code": "must_change_password",
+                "message": (
+                    "Complete the forced password change before "
+                    "requesting a step-up token."
+                ),
+            },
+        )
+
+    redis = await get_redis_connection()
+    try:
+        factors_required = await consume_step_up_challenge(
+            redis,
+            user_id=current_user.id,
+            scope=SCOPE_ADMIN_RECOVERY,
+            challenge_id=payload.challenge_id,
+        )
+    except StepUpChallengeNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "step_up_challenge_not_found",
+                "message": (
+                    "No active step-up challenge for this session; "
+                    "restart from begin."
+                ),
+            },
+        ) from exc
+    except StepUpChallengeMismatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "step_up_challenge_mismatch",
+                "message": (
+                    "Step-up challenge_id does not match the active "
+                    "challenge; restart from begin."
+                ),
+            },
+        ) from exc
+
+    # Defence-in-depth: refuse a completion that tries to satisfy a
+    # different factor set than the one negotiated at begin time. This
+    # blocks a (currently impossible) future where the client picks the
+    # factor shape based on local state and races a 2FA disable on
+    # another session.
+    expected_factor_set = {"password", "totp"}
+    if set(factors_required) != expected_factor_set:
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_factor_mismatch",
+            request=request,
+            detail={"expected": sorted(expected_factor_set), "got": factors_required},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "step_up_factor_set_changed",
+                "message": (
+                    "Step-up factor set changed between begin and "
+                    "complete; restart from begin."
+                ),
+            },
+        )
+
+    # M-1: password MUST be verified server-side before encoding
+    # ``factors.password=True`` into the JWT.
+    if not verify_password(payload.factors.password, current_user.password_hash):
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_password_failed",
+            request=request,
+            detail={"scope": SCOPE_ADMIN_RECOVERY},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "invalid_credentials",
+                "message": "Password verification failed.",
+            },
+        )
+
+    # M-1: TOTP MUST be verified before encoding ``factors.second_factor``.
+    two_factor = TwoFactorService(db, await get_redis_connection())
+    try:
+        totp_verified = await two_factor.verify_totp(
+            current_user, payload.factors.totp_code
+        )
+    except TwoFactorNotEnabledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "step_up_2fa_not_enrolled",
+                "message": "2FA was disabled mid-flow; restart from begin.",
+            },
+        ) from exc
+    except TwoFactorLockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail={
+                "error_code": "two_factor_locked",
+                "message": "Too many TOTP failures; try again later.",
+            },
+            headers={"Retry-After": str(TOTP_LOCK_SECONDS)},
+        ) from exc
+    except TwoFactorRateLimitedError as exc:
+        raise _rate_limit_response(TOTP_FAIL_WINDOW_SECONDS) from exc
+    except TwoFactorInvalidCodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "invalid_totp_code",
+                "message": "Invalid TOTP code.",
+            },
+        ) from exc
+
+    if not totp_verified:
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_totp_failed",
+            request=request,
+            detail={"scope": SCOPE_ADMIN_RECOVERY},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "invalid_totp_code",
+                "message": "Invalid TOTP code.",
+            },
+        )
+
+    # All invariants satisfied — mint the token. The ``assertion_id``
+    # carried by the WebAuthn path is replaced here by a UUID4 because
+    # the TOTP variant has no comparable ceremony id; the security
+    # stamp binding still pins the token to the current session.
+    step_up_token, step_up_expires_at = issue_admin_recovery_step_up_token(
+        user_id=current_user.id,
+        security_stamp=current_user.security_stamp,
+        assertion_id=str(uuid.uuid4()),
+        password_verified=True,
+        second_factor="totp",
+        ttl_seconds=STEP_UP_TOKEN_TTL_SECONDS,
+    )
+
+    await _write_platform_audit(
+        actor_user_id=current_user.id,
+        action="auth.step_up_challenge_completed",
+        request=request,
+        detail={
+            "scope": SCOPE_ADMIN_RECOVERY,
+            "second_factor": "totp",
+            # ``step_up_token`` is intentionally NOT logged — it is the
+            # credential the response carries.
+        },
+    )
+
+    _step_up_no_store_headers(response)
+    return StepUpCompleteResponse(
+        step_up_token=step_up_token,
+        expires_at=step_up_expires_at.isoformat(),
+        scope_set=[SCOPE_ADMIN_RECOVERY],
     )
 
 
