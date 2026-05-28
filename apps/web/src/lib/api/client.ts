@@ -49,21 +49,50 @@ export class ApiError extends Error {
  *
  * Backend (Phase 7+) returns `{ "error": "ERR_LICENSE_REQUIRED", "message": "...", "detail": "..." }`
  * envelopes for structured failures. Older endpoints return just
- * `{ "detail": "..." }`. We accept either `error` or `code` as the source
- * field name to stay forward-compatible.
+ * `{ "detail": "..." }`. Phase 15 superuser endpoints raise via
+ * `HTTPException(detail={"error": "...", "message": "..."})`, which FastAPI
+ * serialises as `{ "detail": { "error": "...", ... } }`. We accept any of
+ * `error` / `error_code` / `code` at the top level OR nested under `detail`
+ * to stay forward-compatible with both shapes.
  */
 function extractErrorCode(errorData: unknown): string | null {
   if (typeof errorData !== 'object' || errorData === null) {
     return null;
   }
   const obj = errorData as Record<string, unknown>;
-  if (typeof obj.error === 'string' && obj.error.length > 0) {
-    return obj.error;
+  for (const key of ['error', 'error_code', 'code'] as const) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.length > 0) return value;
   }
-  if (typeof obj.code === 'string' && obj.code.length > 0) {
-    return obj.code;
+  const detail = obj.detail;
+  if (typeof detail === 'object' && detail !== null) {
+    const detailObj = detail as Record<string, unknown>;
+    for (const key of ['error', 'error_code', 'code'] as const) {
+      const value = detailObj[key];
+      if (typeof value === 'string' && value.length > 0) return value;
+    }
   }
   return null;
+}
+
+/**
+ * Extract the human-readable error message from a JSON error body.
+ *
+ * Handles both flat (`{"detail": "..."}` / `{"message": "..."}`) and nested
+ * (`{"detail": {"message": "..."}}`) envelopes used across the backend.
+ * Returns `undefined` when no message-like field is present so callers can
+ * supply their own fallback.
+ */
+function extractErrorMessage(errorData: unknown): string | undefined {
+  if (typeof errorData !== 'object' || errorData === null) return undefined;
+  const obj = errorData as Record<string, unknown>;
+  if (typeof obj.detail === 'string') return obj.detail;
+  if (typeof obj.detail === 'object' && obj.detail !== null) {
+    const detailObj = obj.detail as Record<string, unknown>;
+    if (typeof detailObj.message === 'string') return detailObj.message;
+  }
+  if (typeof obj.message === 'string') return obj.message;
+  return undefined;
 }
 
 /**
@@ -354,56 +383,76 @@ export class ApiClient {
     // would only trigger a useless legacy auth refresh round-trip and
     // potentially a refresh-loop when the refresh cookie itself is also
     // expired.
+    //
+    // Step-up token 401s (``step_up_token_required`` /
+    // ``step_up_token_expired`` / ``step_up_token_invalid`` from
+    // ``middleware/step_up.py``) also short-circuit: refreshing the
+    // access token cannot add a missing WebAuthn assertion, and
+    // refresh failure tears the session down via ``onRefreshFailed``.
+    // Letting these 401s fall through to the ``!response.ok`` branch
+    // surfaces the structured ``error_code`` to the WebAuthn step-up
+    // gate, which knows how to re-prompt for the ceremony.
     if (response.status === 401 && retry && !isPublic) {
+      // Clone before reading the body so the original response stream
+      // remains available to the ``!response.ok`` branch below for the
+      // structured ApiError envelope. Wrapped in try/catch so an
+      // environment without a ``.clone()`` shim (e.g. minimal fetch
+      // mocks in unit tests) falls back to the refresh path rather
+      // than throwing.
+      let earlyErrorData: unknown = null;
       try {
-        await this.refreshAccessToken();
-
-        // Retry request with new token
-        const retryHeaders: Record<string, string> = {
-          'Content-Type': 'application/json',
-        };
-
-        if (this.accessToken) {
-          retryHeaders['Authorization'] = `Bearer ${this.accessToken}`;
-        }
-
-        // Merge with provided headers
-        if (options.headers) {
-          const providedHeaders = new Headers(options.headers);
-          providedHeaders.forEach((value, key) => {
-            retryHeaders[key] = value;
-          });
-        }
-
-        response = await fetch(url, {
-          ...config,
-          headers: retryHeaders,
-        });
+        earlyErrorData = await response.clone().json();
       } catch {
-        // Refresh failed, throw original 401 error.
-        //
-        // Phase 15 Batch 5b R3 (Codex Minor 4): expose the parsed body
-        // through ``ApiError.body`` so call sites can inspect FastAPI
-        // 422-style ``detail`` arrays (or future structured envelopes)
-        // without re-fetching the response.  Falls back to ``null``
-        // when the response is non-JSON.
-        const errorData: unknown = await response
-          .json()
-          .catch(() => null);
-        const detailField =
-          errorData && typeof errorData === 'object'
-            ? (errorData as { detail?: unknown; message?: unknown }).detail ??
-              (errorData as { detail?: unknown; message?: unknown }).message
-            : null;
-        const detailString =
-          typeof detailField === 'string' ? detailField : undefined;
-        throw new ApiError(
-          detailString ?? 'Unauthorized',
-          401,
-          detailString,
-          extractErrorCode(errorData),
-          errorData
-        );
+        earlyErrorData = null;
+      }
+      const earlyCode = extractErrorCode(earlyErrorData);
+      const isStepUpFailure =
+        typeof earlyCode === 'string' && earlyCode.startsWith('step_up_token_');
+      if (!isStepUpFailure) {
+        try {
+          await this.refreshAccessToken();
+
+          // Retry request with new token
+          const retryHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+
+          if (this.accessToken) {
+            retryHeaders['Authorization'] = `Bearer ${this.accessToken}`;
+          }
+
+          // Merge with provided headers
+          if (options.headers) {
+            const providedHeaders = new Headers(options.headers);
+            providedHeaders.forEach((value, key) => {
+              retryHeaders[key] = value;
+            });
+          }
+
+          response = await fetch(url, {
+            ...config,
+            headers: retryHeaders,
+          });
+        } catch {
+          // Refresh failed, throw original 401 error.
+          //
+          // Phase 15 Batch 5b R3 (Codex Minor 4): expose the parsed body
+          // through ``ApiError.body`` so call sites can inspect FastAPI
+          // 422-style ``detail`` arrays (or future structured envelopes)
+          // without re-fetching the response.  Falls back to ``null``
+          // when the response is non-JSON.
+          const errorData: unknown = await response
+            .json()
+            .catch(() => null);
+          const detailString = extractErrorMessage(errorData);
+          throw new ApiError(
+            detailString ?? 'Unauthorized',
+            401,
+            detailString,
+            extractErrorCode(errorData),
+            errorData
+          );
+        }
       }
     }
 
@@ -416,13 +465,7 @@ export class ApiClient {
       // surface as ``body=null`` and the legacy ``"Request failed"``
       // message stays in place.
       const errorData: unknown = await response.json().catch(() => null);
-      const detailField =
-        errorData && typeof errorData === 'object'
-          ? (errorData as { detail?: unknown; message?: unknown }).detail ??
-            (errorData as { detail?: unknown; message?: unknown }).message
-          : null;
-      const detailString =
-        typeof detailField === 'string' ? detailField : undefined;
+      const detailString = extractErrorMessage(errorData);
       throw new ApiError(
         detailString ?? 'Request failed',
         response.status,
@@ -552,6 +595,24 @@ export class ApiClient {
     }
 
     if (response.status === 401 && retry && !isPublic) {
+      // Mirror ``request()``: a 401 carrying a ``step_up_token_*``
+      // ``error_code`` is a WebAuthn step-up failure, not an access
+      // token expiry. Refreshing here cannot heal it and a stale
+      // refresh cookie would punish the caller with a forced logout.
+      // ``response.clone()`` access is guarded for test environments
+      // that ship a thin fetch mock without the shim.
+      let earlyErrorData: unknown = null;
+      try {
+        earlyErrorData = await response.clone().json();
+      } catch {
+        earlyErrorData = null;
+      }
+      const earlyCode = extractErrorCode(earlyErrorData);
+      const isStepUpFailure =
+        typeof earlyCode === 'string' && earlyCode.startsWith('step_up_token_');
+      if (isStepUpFailure) {
+        return response;
+      }
       try {
         await this.refreshAccessToken();
 
