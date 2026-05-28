@@ -14,6 +14,8 @@ in the FastAPI-generated openapi.json. Contract directories live under
   file** — it loads YAML on each run and compares directly to the live
   ``app.openapi()`` output. Future contributors should not add
   snapshot-regeneration logic; instead, update the YAML and re-run.
+* ``specs/012-license-master-unification/contracts/`` — the license
+  master read/delete contracts landed by spec/012 PR-A.
 
 Design notes
 ------------
@@ -67,6 +69,7 @@ _CONTRACTS_DIRS: tuple[Path, ...] = (
     (
         _REPO_ROOT / "specs" / "006-permissions-redesign" / "contracts",
         _REPO_ROOT / "specs" / "011-zero-email-deployment" / "contracts",
+        _REPO_ROOT / "specs" / "012-license-master-unification" / "contracts",
     )
     if _REPO_ROOT
     else ()
@@ -108,6 +111,15 @@ _SPEC_011_PENDING_STEMS: frozenset[str] = frozenset(
     {
         "admin-password-reset",
         "me-banners-activity",
+    }
+)
+
+# spec/012 PR-A contracts whose endpoints are live in the backend.
+_SPEC_012_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
+    {
+        "admin-licenses-delete",
+        "licenses",
+        "web-licenses",
     }
 )
 
@@ -464,6 +476,64 @@ class TestSpec011LiveContracts:
             if contract is None:  # pragma: no cover - guarded above
                 pytest.fail(f"spec/011 contract {stem!r} not loaded")
             _assert_methods_present(contract, live_paths_normalised, stem)
+
+
+class TestSpec012LiveContracts:
+    """Subset-assert the live spec/012 license contracts."""
+
+    def test_spec_012_live_yamls_path_exists(
+        self,
+        contracts: dict[str, dict[str, Any]],
+        live_paths_normalised: dict[str, dict[str, Any]],
+    ) -> None:
+        """Each spec/012 yaml's paths exist in the live OpenAPI schema."""
+        missing_by_stem: dict[str, list[str]] = {}
+        for stem in sorted(_SPEC_012_LIVE_CONTRACT_STEMS):
+            contract = contracts.get(stem)
+            if contract is None:
+                pytest.fail(
+                    f"spec/012 live contract {stem!r} missing from loaded "
+                    "contracts — expected one of "
+                    f"{sorted(contracts.keys())}"
+                )
+            missing: list[str] = []
+            for contract_path in (contract.get("paths") or {}):
+                if _live_item_for_contract_path(
+                    stem, contract_path, live_paths_normalised
+                ) is None:
+                    missing.append(contract_path)
+            if missing:
+                missing_by_stem[stem] = missing
+        assert not missing_by_stem, (
+            "spec/012 live contracts missing paths in live OpenAPI:\n"
+            + "\n".join(
+                f"  {stem}: {paths}" for stem, paths in missing_by_stem.items()
+            )
+        )
+
+    def test_spec_012_live_yamls_methods_exist(
+        self,
+        contracts: dict[str, dict[str, Any]],
+        live_paths_normalised: dict[str, dict[str, Any]],
+    ) -> None:
+        """HTTP methods in spec/012 live yamls are registered in the app."""
+        for stem in sorted(_SPEC_012_LIVE_CONTRACT_STEMS):
+            contract = contracts.get(stem)
+            if contract is None:  # pragma: no cover - guarded above
+                pytest.fail(f"spec/012 contract {stem!r} not loaded")
+            _assert_methods_present(contract, live_paths_normalised, stem)
+
+    def test_spec_012_live_yamls_response_codes_exist(
+        self,
+        contracts: dict[str, dict[str, Any]],
+        live_paths_normalised: dict[str, dict[str, Any]],
+    ) -> None:
+        """Response codes in spec/012 live yamls are present in the app."""
+        for stem in sorted(_SPEC_012_LIVE_CONTRACT_STEMS):
+            contract = contracts.get(stem)
+            if contract is None:  # pragma: no cover - guarded above
+                pytest.fail(f"spec/012 contract {stem!r} not loaded")
+            _assert_response_codes_present(contract, live_paths_normalised, stem)
 
 
 def _assert_paths_present(

@@ -2,16 +2,17 @@
 
 spec/011 NFR-011-009 widens
 ``apps/api/tests/contract/test_openapi_diff.py`` so the contract subset
-assertion runs against TWO directories: the spec/006 baseline AND the
-spec/011 zero-email contracts. This meta-test pins the refactor itself:
+assertion runs against multiple directories: the spec/006 baseline,
+spec/011 zero-email contracts, and spec/012 license-master contracts.
+This meta-test pins the refactor itself:
 
 * ``_CONTRACTS_DIRS`` is a tuple (multi-dir support active).
-* Both expected directories are members of the tuple.
+* All expected directories are members of the tuple.
 * Every yaml under each directory loads cleanly (catches parse errors
   introduced by future PRs that touch the contract YAMLs without
   re-running the harness locally).
 * The union of yamls matches the documented count
-  (8 spec/006 + 6 spec/011 = 14 at Step 6) — a regression guard that
+  (8 spec/006 + 6 spec/011 + 3 spec/012 = 17) — a regression guard that
   catches a yaml being silently deleted or duplicated.
 
 The harness has NO snapshot file (NFR-011-009). When a future step adds
@@ -60,8 +61,18 @@ _SPEC_006_EXPECTED_STEMS: frozenset[str] = frozenset(
     }
 )
 
+_SPEC_012_EXPECTED_STEMS: frozenset[str] = frozenset(
+    {
+        "admin-licenses-delete",
+        "licenses",
+        "web-licenses",
+    }
+)
+
 _EXPECTED_TOTAL_YAML_COUNT: int = (
-    len(_SPEC_006_EXPECTED_STEMS) + len(_SPEC_011_EXPECTED_STEMS)
+    len(_SPEC_006_EXPECTED_STEMS)
+    + len(_SPEC_011_EXPECTED_STEMS)
+    + len(_SPEC_012_EXPECTED_STEMS)
 )
 
 
@@ -87,8 +98,8 @@ class TestContractsDirsTuple:
             f"_CONTRACTS_DIRS must be a tuple, got {type(_CONTRACTS_DIRS)!r}"
         )
 
-    def test_contracts_dirs_contains_both_specs(self) -> None:
-        """Both spec/006 and spec/011 directories are tuple members."""
+    def test_contracts_dirs_contains_expected_specs(self) -> None:
+        """spec/006, spec/011, and spec/012 directories are tuple members."""
         _skip_if_no_spec_tree()
         names = {p.name for p in _CONTRACTS_DIRS}
         assert "contracts" in names, (
@@ -103,6 +114,10 @@ class TestContractsDirsTuple:
         )
         assert "011-zero-email-deployment" in parents, (
             "spec/011 contracts directory missing from _CONTRACTS_DIRS "
+            f"— parents={parents}"
+        )
+        assert "012-license-master-unification" in parents, (
+            "spec/012 contracts directory missing from _CONTRACTS_DIRS "
             f"— parents={parents}"
         )
 
@@ -145,6 +160,43 @@ class TestSpec011YamlInventory:
         )
 
 
+class TestSpec012YamlInventory:
+    """Pin the spec/012 yaml inventory."""
+
+    def test_all_spec_012_yamls_load(self) -> None:
+        """Every yaml under specs/012-license-master-unification/contracts/ loads."""
+        _skip_if_no_spec_tree()
+        spec_012_dir: Path | None = None
+        for directory in _CONTRACTS_DIRS:
+            if directory.parent.name == "012-license-master-unification":
+                spec_012_dir = directory
+                break
+        if spec_012_dir is None or not spec_012_dir.exists():
+            pytest.skip("spec/012 contracts directory not present")
+        found: set[str] = set()
+        parse_errors: list[str] = []
+        for yaml_path in sorted(spec_012_dir.glob("*.yaml")):
+            try:
+                _load_contract(yaml_path)
+            except Exception as exc:  # noqa: BLE001 — parse / shape error
+                parse_errors.append(f"{yaml_path.name}: {exc!r}")
+                continue
+            found.add(yaml_path.stem)
+        assert not parse_errors, (
+            "spec/012 contract yaml load errors:\n" + "\n".join(parse_errors)
+        )
+        missing = _SPEC_012_EXPECTED_STEMS - found
+        unexpected = found - _SPEC_012_EXPECTED_STEMS
+        assert not missing, (
+            f"spec/012 expected yaml(s) missing: {sorted(missing)} "
+            f"(found {sorted(found)})"
+        )
+        assert not unexpected, (
+            f"spec/012 unexpected yaml(s) found: {sorted(unexpected)} "
+            "— update _SPEC_012_EXPECTED_STEMS in the same PR"
+        )
+
+
 class TestUnionInventory:
     """Pin the union of yamls across both contract directories."""
 
@@ -160,6 +212,6 @@ class TestUnionInventory:
             f"Expected {_EXPECTED_TOTAL_YAML_COUNT} yaml files across "
             f"{[p.name for p in _CONTRACTS_DIRS]}, found {total}. "
             "When you add/remove a contract yaml, update "
-            "_SPEC_006_EXPECTED_STEMS or _SPEC_011_EXPECTED_STEMS in "
-            "this file in the same PR."
+            "_SPEC_006_EXPECTED_STEMS, _SPEC_011_EXPECTED_STEMS, or "
+            "_SPEC_012_EXPECTED_STEMS in this file in the same PR."
         )

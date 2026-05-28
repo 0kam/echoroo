@@ -88,18 +88,18 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T012 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_web_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session, **and explicitly: a non-admin authenticated user (e.g. `e2e-member`) receives 200 with the full list (FR-017 — read endpoint MUST NOT require admin privileges)**.
-- [ ] T013 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_api_public.py` (separate file so T012 + T013 are truly parallel) — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer, **and explicitly: a non-admin Bearer key (no admin scope) receives 200 (FR-017)**.
-- [ ] T014 [P] [US1] Unit test for `LicenseService.list_public()` in `apps/api/tests/unit/services/test_license_service.py` — covers: returns sorted list, empty master returns empty list.
-- [ ] T015 [P] [US1] Contract test for `POST /projects` `license_id` resolution in `apps/api/tests/contract/test_projects_create.py` (extend existing file) — covers: valid `license_id: "cc-by"` succeeds and project response reports `license: "CC-BY"`; unknown `license_id: "cc-by-nonsense"` returns 422 with `error_code: "license_not_found"`; missing `license_id` returns 422 (FR-005 — required at create); pre-existing project with `license_id IS NULL` (legacy row) still returns `license: null` on GET.
+- [X] T012 [P] [US1] Contract test for `GET /web-api/v1/licenses` in `apps/api/tests/contract/test_licenses_web_public.py` — covers: 200 response shape matches `contracts/web-licenses.yaml`, items sorted by `short_name` ascending, empty `items: []` when master is empty, 401 when called without session, **and explicitly: a non-admin authenticated user (e.g. `e2e-member`) receives 200 with the full list (FR-017 — read endpoint MUST NOT require admin privileges)**.
+- [X] T013 [P] [US1] Contract test for `GET /api/v1/licenses` in `apps/api/tests/contract/test_licenses_api_public.py` (separate file so T012 + T013 are truly parallel) — covers: 200 response shape matches `contracts/licenses.yaml`, 401 when called without Bearer, **and explicitly: a non-admin Bearer key (no admin scope) receives 200 (FR-017)**.
+- [X] T014 [P] [US1] Unit test for `LicenseService.list_public()` in `apps/api/tests/unit/services/test_license_service.py` — covers: returns sorted list, empty master returns empty list.
+- [X] T015 [P] [US1] Contract test for `POST /projects` `license_id` resolution in `apps/api/tests/contract/test_projects_create.py` (extend existing file) — covers: valid `license_id: "cc-by"` succeeds and project response reports `license: "CC-BY"`; unknown `license_id: "cc-by-nonsense"` returns 422 with `error_code: "license_not_found"`; missing `license_id` returns 422 (FR-005 — required at create); pre-existing project with `license_id IS NULL` (legacy row) still returns `license: null` on GET.
 
 ### Implementation — backend
 
-- [ ] T016 [P] [US1] Add `LicensePublicResponse` and `LicenseListResponse` Pydantic schemas in `apps/api/echoroo/schemas/license.py` matching `contracts/web-licenses.yaml`.
-- [ ] T017 [US1] Implement `LicenseService.list_public()` in `apps/api/echoroo/services/license_service.py` — delegates to `LicenseRepository.list_all()` ordered by `short_name`.
-- [ ] T018 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/web_v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the BFF aggregator.
-- [ ] T019 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the v1 aggregator.
-- [ ] T020 [US1] Run the existing OpenAPI diff check (`apps/api/tests/contract/test_openapi_diff.py`) to confirm the new endpoints are documented and don't break the harness; regenerate the snapshot if expected.
+- [X] T016 [P] [US1] Add `LicensePublicResponse` and `LicenseListResponse` Pydantic schemas in `apps/api/echoroo/schemas/license.py` matching `contracts/web-licenses.yaml`.
+- [X] T017 [US1] Implement `LicenseService.list_public()` in `apps/api/echoroo/services/license_service.py` — delegates to `LicenseRepository.list_all()` ordered by `short_name`.
+- [X] T018 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/web_v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the BFF aggregator.
+- [X] T019 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the v1 aggregator.
+- [X] T020 [US1] Run the existing OpenAPI diff check (`apps/api/tests/contract/test_openapi_diff.py`) to confirm the new endpoints are documented and don't break the harness; regenerate the snapshot if expected.
 - [ ] T021 [US1] Update `apps/api/echoroo/repositories/project.py` — `create()` / `update()` write via `license_id`; read paths join `licenses` and surface `License.short_name` as `project.license` in the response model.
 - [ ] T022 [US1] Update `apps/api/echoroo/services/project_service.py` — on create/update, validate that the submitted `license_id` exists in the master before insert. Unknown id raises a `LicenseNotFoundError` that the API layer maps to 422 with `error_code: "license_not_found"`. License-required validation (FR-005) is enforced via Pydantic on `ProjectCreateRequest`.
 - [ ] T023 [US1] Update `apps/api/echoroo/schemas/project.py` — `ProjectCreateRequest` and `ProjectUpdateRequest` replace `license: ProjectLicense` with `license_id: str`. `ProjectResponse.license` continues to expose `str | None` (the joined short_name). Add validator on `license_id` for max length 50.
@@ -151,23 +151,23 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 ### Tests (write FIRST, must FAIL before implementation)
 
-- [ ] T037 [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing) — 204 success when no dependents (covers BOTH `/api/v1/admin/licenses/{id}` AND `/web-api/v1/admin/licenses/{id}`).
-- [ ] T038 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`). Sequential after T037 (same file).
-- [ ] T039 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`). Sequential after T038 (same file).
-- [ ] T040 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with both dependencies. Sequential after T039 (same file).
-- [ ] T041 [US3] Contract test in the same file as T037 — 404 when `license_id` doesn't exist (preserves existing behavior). Sequential after T040 (same file).
-- [ ] T042 [US3] Race-condition unit test in `apps/api/tests/unit/services/test_license_service.py` — mock the FK constraint to fire after the service-layer pre-query returns 0/0. Assert that `LicenseService.delete()` catches the `IntegrityError`, re-runs the dependency-count query, and raises `LicenseInUseError` with the freshly-recounted values (no sentinel).
-- [ ] T043 [P] [US3] Unit test for `LicenseService.delete()` happy refusal path — `count_dependents > 0` raises `LicenseInUseError` without touching the row.
+- [X] T037 [US3] Contract test in `apps/api/tests/contract/test_admin_licenses_delete.py` (extend existing) — 204 success when no dependents (covers BOTH `/api/v1/admin/licenses/{id}` AND `/web-api/v1/admin/licenses/{id}`).
+- [X] T038 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with project-only dependency (`project_count > 0, dataset_count = 0`). Sequential after T037 (same file).
+- [X] T039 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with dataset-only dependency (`project_count = 0, dataset_count > 0`). Sequential after T038 (same file).
+- [X] T040 [US3] Contract test in the same file as T037 — 409 `LicenseInUseError` with both dependencies. Sequential after T039 (same file).
+- [X] T041 [US3] Contract test in the same file as T037 — 404 when `license_id` doesn't exist (preserves existing behavior). Sequential after T040 (same file).
+- [X] T042 [US3] Race-condition unit test in `apps/api/tests/unit/services/test_license_service.py` — mock the FK constraint to fire after the service-layer pre-query returns 0/0. Assert that `LicenseService.delete()` catches the `IntegrityError`, re-runs the dependency-count query, and raises `LicenseInUseError` with the freshly-recounted values (no sentinel).
+- [X] T043 [P] [US3] Unit test for `LicenseService.delete()` happy refusal path — `count_dependents > 0` raises `LicenseInUseError` without touching the row.
 
 ### Implementation — backend [PR-A]
 
-- [ ] T044 [P] [US3] Add `LicenseRepository.count_dependents(license_id) -> tuple[int, int]` in `apps/api/echoroo/repositories/license.py`, returning `(project_count, dataset_count)` via two `SELECT COUNT(*)` queries.
-- [ ] T045 [P] [US3] Add `LicenseInUseError` exception class in `apps/api/echoroo/services/license_service.py` with fields `short_name: str`, `project_count: int`, `dataset_count: int`.
-- [ ] T046 [US3] Update `LicenseService.delete()` to:
+- [X] T044 [P] [US3] Add `LicenseRepository.count_dependents(license_id) -> tuple[int, int]` in `apps/api/echoroo/repositories/license.py`, returning `(project_count, dataset_count)` via two `SELECT COUNT(*)` queries.
+- [X] T045 [P] [US3] Add `LicenseInUseError` exception class in `apps/api/echoroo/services/license_service.py` with fields `short_name: str`, `project_count: int`, `dataset_count: int`.
+- [X] T046 [US3] Update `LicenseService.delete()` to:
   1. Call `count_dependents` first; if either > 0, raise `LicenseInUseError`.
   2. Otherwise issue the DELETE; if the FK constraint raises `sqlalchemy.exc.IntegrityError`, **re-run `count_dependents`** to get the post-race counts and raise `LicenseInUseError` with those values. No sentinel.
-- [ ] T047 [US3] Update the admin DELETE handler at `apps/api/echoroo/api/v1/admin.py` (Bearer surface, NOT the non-existent `api/v1/admin/licenses.py`) to catch `LicenseInUseError` and return 409 with the body shape from `contracts/admin-licenses-delete.yaml`.
-- [ ] T048 [US3] Update the BFF admin DELETE handler at `apps/api/echoroo/api/web_v1/_admin_licenses.py` to do the same translation. Both endpoints share the response shape.
+- [X] T047 [US3] Update the admin DELETE handler at `apps/api/echoroo/api/v1/admin.py` (Bearer surface, NOT the non-existent `api/v1/admin/licenses.py`) to catch `LicenseInUseError` and return 409 with the body shape from `contracts/admin-licenses-delete.yaml`.
+- [X] T048 [US3] Update the BFF admin DELETE handler at `apps/api/echoroo/api/web_v1/_admin_licenses.py` to do the same translation. Both endpoints share the response shape.
 
 ### Implementation — frontend [PR-B]
 
