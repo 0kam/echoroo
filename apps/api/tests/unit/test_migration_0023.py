@@ -1,4 +1,4 @@
-"""Focused tests for Alembic revision 0024 (spec/012 Phase 2)."""
+"""Focused tests for Alembic revision 0023 (spec/012 Phase 2)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ from types import ModuleType
 import pytest
 
 _MIGRATION_RELATIVE_PATH = (
-    Path("alembic") / "versions" / "0024_license_master_unification.py"
+    Path("alembic") / "versions" / "0023_license_master_unification.py"
 )
+MIGRATION_REVISION = "0023"
+PREVIOUS_REVISION = "0022"
 
 
 def _resolve_migration_path() -> Path:
@@ -26,12 +28,21 @@ MIGRATION_PATH = _resolve_migration_path()
 
 
 def _load_migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("migration_0024", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location(
+        f"migration_{MIGRATION_REVISION}", MIGRATION_PATH
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_revision_identifiers() -> None:
+    module = _load_migration()
+
+    assert module.revision == MIGRATION_REVISION
+    assert module.down_revision == PREVIOUS_REVISION
 
 
 def test_downgrade_raises_not_implemented() -> None:

@@ -1,7 +1,7 @@
 """License master unification — foundational migration (spec/012 Phase 2).
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0023
+Revises: 0022
 Create Date: 2026-05-28
 
 This forward-only migration promotes ``licenses`` to the single source of
@@ -24,6 +24,9 @@ truth for project license assignment:
 The audit runs first per research R4 so unknown values abort before any
 structural change is attempted. The legacy PostgreSQL ``projectlicense`` enum
 type is intentionally left in place for a later cleanup migration.
+
+Operator note: if PR #116 merges first, this migration must be renamed and
+rebased to revision 0024.
 """
 
 from __future__ import annotations
@@ -31,8 +34,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0024"
-down_revision: str | None = "0023"
+revision: str = "0023"
+down_revision: str | None = "0022"
 branch_labels: str | tuple[str, ...] | None = None
 depends_on: str | tuple[str, ...] | None = None
 
@@ -112,7 +115,7 @@ def _audit_legacy_license_values() -> None:
             f"{target}={values!r}" for target, values in offenders.items()
         )
         raise ValueError(
-            "Migration 0024 cannot map unknown legacy license values: "
+            "Migration 0023 cannot map unknown legacy license values: "
             f"{details}. Clean the data or extend _LICENSE_ID_FOR_ENUM before retrying."
         )
 
@@ -177,7 +180,7 @@ def _backfill_project_license_ids() -> None:
     ).scalar_one()
     if unmapped_count:
         raise ValueError(
-            "Migration 0024 failed to backfill projects.license_id for "
+            "Migration 0023 failed to backfill projects.license_id for "
             f"{unmapped_count} project(s) with non-null legacy license."
         )
 
@@ -188,7 +191,23 @@ def _replace_datasets_license_fk() -> None:
         DO $$
         DECLARE
             constraint_name text;
+            id_attnum smallint;
+            license_id_attnum smallint;
         BEGIN
+            SELECT a.attnum
+            INTO license_id_attnum
+            FROM pg_attribute a
+            WHERE a.attrelid = 'datasets'::regclass
+            AND a.attname = 'license_id'
+            AND NOT a.attisdropped;
+
+            SELECT a.attnum
+            INTO id_attnum
+            FROM pg_attribute a
+            WHERE a.attrelid = 'licenses'::regclass
+            AND a.attname = 'id'
+            AND NOT a.attisdropped;
+
             IF EXISTS (
                 SELECT 1
                 FROM pg_constraint c
@@ -196,14 +215,8 @@ def _replace_datasets_license_fk() -> None:
                 AND c.conrelid = 'datasets'::regclass
                 AND c.confrelid = 'licenses'::regclass
                 AND c.contype = 'f'
-                AND c.conkey @> ARRAY[
-                    (
-                        SELECT a.attnum
-                        FROM pg_attribute a
-                        WHERE a.attrelid = 'datasets'::regclass
-                        AND a.attname = 'license_id'
-                    )
-                ]::smallint[]
+                AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                AND c.confkey = ARRAY[id_attnum]::smallint[]
             ) THEN
                 FOR constraint_name IN
                     SELECT c.conname
@@ -212,14 +225,8 @@ def _replace_datasets_license_fk() -> None:
                     AND c.conrelid = 'datasets'::regclass
                     AND c.confrelid = 'licenses'::regclass
                     AND c.contype = 'f'
-                    AND c.conkey @> ARRAY[
-                        (
-                            SELECT a.attnum
-                            FROM pg_attribute a
-                            WHERE a.attrelid = 'datasets'::regclass
-                            AND a.attname = 'license_id'
-                        )
-                    ]::smallint[]
+                    AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                    AND c.confkey = ARRAY[id_attnum]::smallint[]
                 LOOP
                     EXECUTE format('ALTER TABLE datasets DROP CONSTRAINT %I', constraint_name);
                 END LOOP;
@@ -232,22 +239,8 @@ def _replace_datasets_license_fk() -> None:
                 AND c.conrelid = 'datasets'::regclass
                 AND c.confrelid = 'licenses'::regclass
                 AND c.contype = 'f'
-                AND c.conkey @> ARRAY[
-                    (
-                        SELECT a.attnum
-                        FROM pg_attribute a
-                        WHERE a.attrelid = 'datasets'::regclass
-                        AND a.attname = 'license_id'
-                    )
-                ]::smallint[]
-                AND c.confkey @> ARRAY[
-                    (
-                        SELECT a.attnum
-                        FROM pg_attribute a
-                        WHERE a.attrelid = 'licenses'::regclass
-                        AND a.attname = 'id'
-                    )
-                ]::smallint[]
+                AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                AND c.confkey = ARRAY[id_attnum]::smallint[]
             ) THEN
                 ALTER TABLE datasets
                     ADD CONSTRAINT fk_datasets_license_id
@@ -309,7 +302,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Forward-only per spec/012 A-005 and spec/011 step 11 precedent."""
     raise NotImplementedError(
-        "Migration 0024 is forward-only per spec/012 A-005. "
+        "Migration 0023 is forward-only per spec/012 A-005. "
         "License master unification rewrites live project license storage; "
         "restore from backup if rollback is required."
     )

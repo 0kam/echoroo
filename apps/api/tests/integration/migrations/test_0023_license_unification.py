@@ -1,4 +1,4 @@
-"""Integration tests for Alembic revision 0024 (spec/012 Phase 2).
+"""Integration tests for Alembic revision 0023 (spec/012 Phase 2).
 
 The migration promotes the project license field from the legacy
 ``projects.license`` enum string to ``projects.license_id`` referencing the
@@ -33,8 +33,8 @@ except ImportError:  # pragma: no cover - dep declared in pyproject dev extras
 
 API_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = API_ROOT / "alembic.ini"
-PREVIOUS_REVISION = "0023"
-TARGET_REVISION = "0024"
+PREVIOUS_REVISION = "0022"
+MIGRATION_REVISION = "0023"
 
 OWNER_ID = "00000000-0000-0000-0000-000000000101"
 PROJECT_IDS = {
@@ -613,7 +613,7 @@ def _project_license_ids(url: str) -> dict[str, str | None]:
         engine.dispose()
 
 
-def _assert_pre_0024_schema_invariants(
+def _assert_pre_0023_schema_invariants(
     url: str, canonical_id_counts_before: dict[str, int]
 ) -> None:
     assert _alembic_version(url) == PREVIOUS_REVISION
@@ -636,14 +636,14 @@ def _assert_pre_0024_schema_invariants(
     assert dataset_fk["confdeltype"] == "n"
 
 
-def test_0024_happy_path_seeds_maps_and_rewrites_schema(
+def test_0023_happy_path_seeds_maps_and_rewrites_schema(
     pg_container: PostgresContainer,
 ) -> None:
     url = _admin_sync_url(pg_container)
     _alembic_upgrade(url, PREVIOUS_REVISION)
     _seed_projects_and_history(url)
 
-    _alembic_upgrade(url, TARGET_REVISION)
+    _alembic_upgrade(url, MIGRATION_REVISION)
 
     license_rows = _license_rows(url)
     assert license_rows["CC0"] == (CUSTOM_CC0_ID, "Admin Curated CC0")
@@ -688,10 +688,10 @@ def test_0024_happy_path_seeds_maps_and_rewrites_schema(
 
     assert _column_type(url, "project_license_history", "old_license") == "character varying"
     assert _column_type(url, "project_license_history", "new_license") == "character varying"
-    assert _alembic_version(url) == TARGET_REVISION
+    assert _alembic_version(url) == MIGRATION_REVISION
 
 
-def test_0024_rejects_unknown_project_license_without_schema_changes(
+def test_0023_rejects_unknown_project_license_without_schema_changes(
     pg_container: PostgresContainer,
 ) -> None:
     url = _admin_sync_url(pg_container)
@@ -700,14 +700,14 @@ def test_0024_rejects_unknown_project_license_without_schema_changes(
     _inject_unknown_project_license(url, "PUBLIC-DOMAIN")
     canonical_id_counts_before = _canonical_license_id_counts(url)
 
-    error = _alembic_upgrade_expect_failure(url, TARGET_REVISION)
+    error = _alembic_upgrade_expect_failure(url, MIGRATION_REVISION)
 
     assert "projects.license" in error
     assert "PUBLIC-DOMAIN" in error
-    _assert_pre_0024_schema_invariants(url, canonical_id_counts_before)
+    _assert_pre_0023_schema_invariants(url, canonical_id_counts_before)
 
 
-def test_0024_rejects_unknown_history_license_without_schema_changes(
+def test_0023_rejects_unknown_history_license_without_schema_changes(
     pg_container: PostgresContainer,
 ) -> None:
     url = _admin_sync_url(pg_container)
@@ -716,21 +716,21 @@ def test_0024_rejects_unknown_history_license_without_schema_changes(
     _inject_unknown_history_license(url, "CC-BY-ND")
     canonical_id_counts_before = _canonical_license_id_counts(url)
 
-    error = _alembic_upgrade_expect_failure(url, TARGET_REVISION)
+    error = _alembic_upgrade_expect_failure(url, MIGRATION_REVISION)
 
     assert "project_license_history.new_license" in error
     assert "CC-BY-ND" in error
-    _assert_pre_0024_schema_invariants(url, canonical_id_counts_before)
+    _assert_pre_0023_schema_invariants(url, canonical_id_counts_before)
 
 
-def test_0024_preserves_license_history_snapshot_values(
+def test_0023_preserves_license_history_snapshot_values(
     pg_container: PostgresContainer,
 ) -> None:
     url = _admin_sync_url(pg_container)
     _alembic_upgrade(url, PREVIOUS_REVISION)
     _seed_projects_and_history(url)
 
-    _alembic_upgrade(url, TARGET_REVISION)
+    _alembic_upgrade(url, MIGRATION_REVISION)
 
     engine = _engine(url)
     try:
