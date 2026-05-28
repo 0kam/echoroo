@@ -322,17 +322,14 @@ async def _sync_0023_license_schema(engine: AsyncEngine) -> None:
                         SELECT c.conname
                         FROM pg_constraint c
                         WHERE c.conrelid = 'datasets'::regclass
+                        AND c.confrelid = 'licenses'::regclass
                         AND c.contype = 'f'
-                        AND (
-                            c.conname IN (
-                                'fk_datasets_license_id',
-                                'datasets_license_id_fkey'
-                            )
-                            OR (
-                                c.confrelid = 'licenses'::regclass
-                                AND c.conkey = ARRAY[license_id_attnum]::smallint[]
-                            )
+                        AND c.conname IN (
+                            'fk_datasets_license_id',
+                            'datasets_license_id_fkey'
                         )
+                        AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                        AND c.confkey = ARRAY[id_attnum]::smallint[]
                     LOOP
                         EXECUTE format(
                             'ALTER TABLE datasets DROP CONSTRAINT %I',
@@ -610,6 +607,48 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                                 AND NOT a.attisdropped
                             )
                         ]::smallint[]
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_constraint c
+                        WHERE c.conname = 'projects_license_id_fkey'
+                        AND c.conrelid = to_regclass('projects')
+                        AND c.confrelid = to_regclass('licenses')
+                        AND c.contype = 'f'
+                        AND c.confdeltype = 'r'
+                        AND c.conkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('projects')
+                                AND a.attname = 'license_id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                        AND c.confkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('licenses')
+                                AND a.attname = 'id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_class i
+                        JOIN pg_index ix ON ix.indexrelid = i.oid
+                        JOIN pg_attribute a
+                            ON a.attrelid = ix.indrelid
+                            AND a.attname = 'license_id'
+                            AND NOT a.attisdropped
+                        WHERE i.relname = 'ix_projects_license_id'
+                        AND ix.indrelid = to_regclass('projects')
+                        AND ix.indisvalid
+                        AND ix.indisready
+                        AND ix.indnatts = 1
+                        AND ix.indkey[0] = a.attnum
                     )
                     AND EXISTS (
                         SELECT 1
