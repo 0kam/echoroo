@@ -169,7 +169,47 @@
   }
 
   /**
+   * Extract the spec/012 FR-015 "license_in_use" 409 envelope from an
+   * `ApiError.body`. Returns `null` when the body does not match the
+   * expected `{ error_code: "license_in_use", short_name, project_count,
+   * dataset_count }` shape so the caller can fall through to the generic
+   * error path.
+   *
+   * The backend (apps/api/echoroo/api/web_v1/_admin_licenses.py) returns
+   * the four fields at the top level of the JSON body — NOT nested under
+   * `detail` — so we read them directly. `error_code` is also surfaced
+   * through `ApiError.code` by `client.ts::extractErrorCode`, which we use
+   * as the primary branch signal before pattern-matching the body.
+   */
+  function extractLicenseInUseBody(err: ApiError): {
+    short_name: string;
+    project_count: number;
+    dataset_count: number;
+  } | null {
+    if (err.status !== 409) return null;
+    const body = err.body;
+    if (typeof body !== 'object' || body === null) return null;
+    const obj = body as Record<string, unknown>;
+    const code = err.code ?? (typeof obj.error_code === 'string' ? obj.error_code : null);
+    if (code !== 'license_in_use') return null;
+    const short_name = typeof obj.short_name === 'string' ? obj.short_name : null;
+    const project_count = typeof obj.project_count === 'number' ? obj.project_count : null;
+    const dataset_count = typeof obj.dataset_count === 'number' ? obj.dataset_count : null;
+    if (short_name === null || project_count === null || dataset_count === null) {
+      return null;
+    }
+    return { short_name, project_count, dataset_count };
+  }
+
+  /**
    * Handle delete license
+   *
+   * spec/012 T050: when the backend refuses with 409 + `error_code:
+   * license_in_use`, render the actionable translated message including
+   * the offending short_name and dependency counts so the operator knows
+   * exactly which projects/datasets to reassign first (FR-015). For any
+   * other failure mode (404, 500, network), fall back to the existing
+   * generic error path so we don't regress the legacy UX.
    */
   async function handleDelete() {
     if (!currentLicense) return;
@@ -188,6 +228,19 @@
       }, 3000);
     } catch (err) {
       if (err instanceof ApiError) {
+        const inUse = extractLicenseInUseBody(err);
+        if (inUse) {
+          error = m.admin_licenses_delete_in_use({
+            short_name: inUse.short_name,
+            project_count: inUse.project_count,
+            dataset_count: inUse.dataset_count,
+          });
+          // Close the modal so the page-level alert (which lists the
+          // dependency counts) is visible — the modal overlay would
+          // otherwise sit on top of it.
+          closeModals();
+          return;
+        }
         error = err.detail || err.message;
       } else {
         error = m.admin_licenses_error_delete();

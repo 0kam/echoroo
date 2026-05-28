@@ -1336,6 +1336,7 @@
   "admin_licenses_error_create": "Failed to create license",
   "admin_licenses_error_update": "Failed to update license",
   "admin_licenses_error_delete": "Failed to delete license",
+  "admin_licenses_delete_in_use": "License '{short_name}' is still in use ({project_count} projects, {dataset_count} datasets). Reassign or remove dependents first.",
   "admin_licenses_success_created": "License created successfully",
   "admin_licenses_success_updated": "License updated successfully",
   "admin_licenses_success_deleted": "License deleted successfully",

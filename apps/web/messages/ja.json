@@ -1336,6 +1336,7 @@
   "admin_licenses_error_create": "ライセンスの作成に失敗しました",
   "admin_licenses_error_update": "ライセンスの更新に失敗しました",
   "admin_licenses_error_delete": "ライセンスの削除に失敗しました",
+  "admin_licenses_delete_in_use": "ライセンス '{short_name}' はまだ使用中です（プロジェクト {project_count} 件、データセット {dataset_count} 件）。先に依存先を再割り当てまたは削除してください。",
   "admin_licenses_success_created": "ライセンスを作成しました",
   "admin_licenses_success_updated": "ライセンスを更新しました",
   "admin_licenses_success_deleted": "ライセンスを削除しました",
