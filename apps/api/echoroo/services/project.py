@@ -28,7 +28,11 @@ from echoroo.schemas.project import (
     ProjectUpdateRequest,
     RecordingCalendarEntry,
 )
-from echoroo.services.license_service import record_initial_license
+from echoroo.services.license_service import (
+    license_required_http_exception,
+    record_initial_license,
+    resolve_license_id_for_short_name,
+)
 
 ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
 
@@ -90,6 +94,14 @@ _ROLE_ENUM_TO_LITERAL: dict[ProjectMemberRole, ProjectRoleLiteral] = {
     ProjectMemberRole.MEMBER: "member",
     ProjectMemberRole.VIEWER: "viewer",
 }
+
+
+async def _resolve_license_id_or_422(db: AsyncSession, license: str) -> str:
+    """Resolve a request license value or raise the FR-085 422 envelope."""
+    try:
+        return await resolve_license_id_for_short_name(db, license)
+    except ValueError as exc:
+        raise license_required_http_exception() from exc
 
 
 async def resolve_current_user_role(
@@ -329,18 +341,24 @@ class ProjectService:
         else:
             final_restricted_config = request.restricted_config or {}
 
+        license_id = await _resolve_license_id_or_422(
+            self.project_repo.db,
+            request.license,
+        )
+
         # Create project
         project = Project(
             name=request.name,
             description=request.description,
             target_taxa=request.target_taxa,
             visibility=request.visibility,
-            license=request.license,
+            license_id=license_id,
             restricted_config=final_restricted_config,
             owner_id=user_id,
         )
 
         created_project = await self.project_repo.create(project)
+        await self.project_repo.db.refresh(created_project, ["license_record"])
 
         # T320 (FR-085 + FR-087): record the initial license selection in
         # the same transaction as the project insert so a rollback keeps
@@ -349,7 +367,7 @@ class ProjectService:
         await record_initial_license(
             session=self.project_repo.db,
             project_id=created_project.id,
-            license=created_project.license,
+            license=request.license,
             actor_user_id=user_id,
         )
 
@@ -471,6 +489,13 @@ class ProjectService:
                 detail="Not project admin",
             )
 
+        resolved_license_id: str | None = None
+        if request.license is not None:
+            resolved_license_id = await _resolve_license_id_or_422(
+                self.project_repo.db,
+                request.license,
+            )
+
         # Update fields
         if request.name is not None:
             project.name = request.name
@@ -480,14 +505,16 @@ class ProjectService:
             project.target_taxa = request.target_taxa
         if request.visibility is not None:
             project.visibility = request.visibility
-        if request.license is not None:
-            project.license = request.license
+        if resolved_license_id is not None:
+            project.license_id = resolved_license_id
         if request.restricted_config is not None:
             project.restricted_config = request.restricted_config
         if request.status is not None:
             project.status = request.status
 
         updated_project = await self.project_repo.update(project)
+        if resolved_license_id is not None:
+            await self.project_repo.db.refresh(updated_project, ["license_record"])
         response = ProjectResponse.model_validate(updated_project)
         # Phase 9 polish round 2 致命 1 + Major 2: scrub owner.email +
         # resolve caller role so the contract holds for mutation

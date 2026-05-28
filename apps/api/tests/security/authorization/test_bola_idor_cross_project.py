@@ -64,7 +64,6 @@ from echoroo.models.enums import (
     DatasetVisibility,
     DetectionSource,
     DetectionStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -133,7 +132,7 @@ async def project_a(db_session: AsyncSession, owner_a: User) -> Project:
         name="T134 Project A",
         description="BOLA test project A",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_a.id,
         restricted_config={
             "allow_media_playback": True,
@@ -159,7 +158,7 @@ async def project_b(db_session: AsyncSession, owner_b: User) -> Project:
         name="T134 Project B",
         description="BOLA test project B",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_b.id,
         restricted_config={
             "allow_media_playback": True,

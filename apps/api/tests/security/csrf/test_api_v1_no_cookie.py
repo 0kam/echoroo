@@ -52,7 +52,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from echoroo.core.jwt import create_access_token as _create_jwt_token
-from echoroo.models.enums import ProjectLicense, ProjectVisibility
+from echoroo.models.enums import ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.user import User
 
@@ -178,7 +178,7 @@ async def _seed_user_and_project(db_session: AsyncSession) -> tuple[User, Projec
         name="T972 Test Project",
         description="api/v1 cookie-isolation test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
     )
     db_session.add(project)

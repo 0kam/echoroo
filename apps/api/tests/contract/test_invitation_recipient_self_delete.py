@@ -240,13 +240,13 @@ async def _purge(db: AsyncSession) -> None:
 
 
 async def _seed_project(db: AsyncSession, owner_id: Any) -> Any:
-    from echoroo.models.enums import ProjectLicense, ProjectVisibility
+    from echoroo.models.enums import ProjectVisibility
     from echoroo.models.project import Project
 
     project = Project(
         name=f"T513B {uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_id,
         restricted_config={
             "allow_media_playback": True,

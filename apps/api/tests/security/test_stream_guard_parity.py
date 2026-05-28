@@ -42,7 +42,6 @@ from echoroo.core.actions import DETECTION_EXPORT_CSV_ACTION
 from echoroo.core.permissions import gate_action
 from echoroo.models.api_key import ApiKey
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -78,7 +77,7 @@ async def _make_project(db: AsyncSession, *, owner: User) -> Project:
         name="Parity Project",
         description="A-5 R1-I1 parity",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": True,

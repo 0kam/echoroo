@@ -213,9 +213,11 @@ def migration_state(pg_container: PostgresContainer) -> dict[str, object]:
     pre_tables = _tables(url)
     pre_user_columns = _user_columns(url)
 
-    # Step 2: drive the DB up to head (which advances by exactly one
-    # revision to 0022 — this is the migration under test).
-    _alembic_upgrade(url, "head")
+    # Step 2: drive the DB up to 0022 (the migration under test).
+    # Use an explicit target rather than ``head`` so subsequent
+    # migrations (e.g. 0023 recorder seed) don't sweep this test into
+    # asserting their post-state — this test is scoped to 0022 only.
+    _alembic_upgrade(url, "0022")
     post_version = _alembic_version(url)
     post_tables = _tables(url)
     post_user_columns = _user_columns(url)

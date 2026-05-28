@@ -188,9 +188,10 @@ async def _create_user(session: AsyncSession, *, email: str) -> uuid.UUID:
 async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid.UUID:
     """Insert a minimal ``projects`` row and return its id.
 
-    The baseline schema marks ``visibility`` and ``license`` as
-    ``NOT NULL`` enums; we set them to legitimate values that the
-    permissions code does not touch in this test.
+    The baseline schema marks ``visibility`` as a NOT NULL enum and,
+    since spec/012 Phase 2, stores project license state through the
+    ``licenses.id`` foreign key. We set both to legitimate values that
+    the permissions code does not touch in this test.
     """
     project_id = uuid.uuid4()
     # ck_projects_restricted_config_shape (apps/api/echoroo/models/project.py)
@@ -210,10 +211,19 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
     await session.execute(
         sa.text(
             """
+            INSERT INTO licenses (id, name, short_name, created_at, updated_at)
+            VALUES ('cc-by', 'Creative Commons Attribution', 'CC-BY', now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
             INSERT INTO projects (id, name, description, visibility,
-                                 license, owner_id, status,
+                                 license_id, owner_id, status,
                                  restricted_config, created_at, updated_at)
-            VALUES (:id, :name, :desc, 'restricted', 'CC-BY', :owner_id,
+            VALUES (:id, :name, :desc, 'restricted', 'cc-by', :owner_id,
                     'active', CAST(:cfg AS JSONB), NOW(), NOW())
             """
         ),

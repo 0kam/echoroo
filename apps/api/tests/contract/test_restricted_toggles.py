@@ -48,7 +48,6 @@ from sqlalchemy.pool import NullPool
 from echoroo.core.jwt import create_access_token
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,
@@ -253,7 +252,7 @@ async def t400_restricted_project(
         name="T400 Restricted Project",
         description="Phase 8 toggle PATCH coverage",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t400_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=_initial_restricted_config(),
@@ -273,7 +272,7 @@ async def t400_public_project(
         name="T400 Public Project",
         description="Visibility precondition foil",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t400_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config={},

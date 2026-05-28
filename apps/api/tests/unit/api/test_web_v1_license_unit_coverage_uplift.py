@@ -124,8 +124,7 @@ async def test_update_project_license_happy_path() -> None:
     (lines 150, 158-166, 178-179, 191-192, 203, 208, 211, 214)."""
     project = MagicMock()
     project.id = uuid4()
-    project.license = MagicMock()
-    project.license.value = "CC-BY"
+    project.license = "CC-BY"
 
     user = MagicMock()
     user.id = uuid4()
@@ -136,8 +135,7 @@ async def test_update_project_license_happy_path() -> None:
     request = _request_with({"x-request-id": "req-2"})
 
     payload = MagicMock()
-    payload.license = MagicMock()
-    payload.license.value = "CC-BY-NC"
+    payload.license = "CC-BY-NC"
 
     history_row = MagicMock()
     history_row.id = uuid4()
@@ -179,8 +177,7 @@ async def test_update_project_license_swallows_audit_failure(caplog: pytest.LogC
     request = _request_with()
 
     payload = MagicMock()
-    payload.license = MagicMock()
-    payload.license.value = "CC0"
+    payload.license = "CC0"
 
     history_row = MagicMock()
     history_row.id = uuid4()

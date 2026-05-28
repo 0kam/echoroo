@@ -20,6 +20,7 @@ the broader rationale.
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, status
+from fastapi.responses import JSONResponse
 
 from echoroo.api.v1 import admin as legacy_admin
 from echoroo.api.web_v1._admin_recorders import _gate_admin_platform_action
@@ -150,22 +151,61 @@ async def update_license(
 @router.delete(
     "/licenses/{license_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
     summary="Delete license (admin)",
-    description="BFF adapter for the legacy admin license delete endpoint.",
+    description=(
+        "BFF adapter for the admin license delete endpoint. spec/012 "
+        "FR-006 / FR-012 / FR-015: refused with 409 + dependency-count "
+        "envelope when at least one project or dataset still references "
+        "the license. The response shape is identical to "
+        "``DELETE /api/v1/admin/licenses/{id}``."
+    ),
+    responses={
+        status.HTTP_404_NOT_FOUND: {
+            "description": "License id does not exist.",
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "License is still referenced by projects/datasets.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error_code": "license_in_use",
+                        "message": (
+                            "License 'CC-BY' is still in use; reassign or "
+                            "remove dependents first"
+                        ),
+                        "short_name": "CC-BY",
+                        "project_count": 3,
+                        "dataset_count": 7,
+                    }
+                }
+            },
+        }
+    },
 )
 async def delete_license(
     license_id: str,
     request: Request,
     db: DbSession,
     current_user: CurrentSuperuser,
-) -> None:
-    """Delegate admin license delete to the legacy handler."""
+) -> JSONResponse | None:
+    """Delegate admin license delete to the legacy handler.
+
+    spec/012: the legacy Bearer handler now returns either ``None`` (204
+    path) OR a :class:`JSONResponse` carrying the 409 envelope when the
+    license is still in use. We propagate that return value verbatim so
+    the BFF and the Bearer surface share the same wire shape at every
+    customer touch-point. Continuing to call ``legacy_admin.delete_license``
+    (rather than re-implementing the service call here) preserves the
+    spec/009 PR 5 delegation pattern so :mod:`tests.integration.api.web_v1
+    .admin.test_admin_licenses_smoke` keeps working.
+    """
     _gate_admin_platform_action(
         action=ADMIN_LICENSE_DELETE_ACTION,
         current_user=current_user,
         request=request,
     )
-    await legacy_admin.delete_license(
+    return await legacy_admin.delete_license(
         license_id=license_id,
         request=request,
         db=db,

@@ -58,6 +58,37 @@ TEST_DATABASE_URL = os.environ.get(
     "postgresql+asyncpg://echoroo:echoroo@localhost:5432/echoroo_test",
 )
 
+CANONICAL_TEST_LICENSES = (
+    {
+        "id": "cc0",
+        "name": "Creative Commons Zero",
+        "short_name": "CC0",
+        "url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "description": "Public domain dedication.",
+    },
+    {
+        "id": "cc-by",
+        "name": "Creative Commons Attribution",
+        "short_name": "CC-BY",
+        "url": "https://creativecommons.org/licenses/by/4.0/",
+        "description": "Attribution required.",
+    },
+    {
+        "id": "cc-by-nc",
+        "name": "Creative Commons Attribution NonCommercial",
+        "short_name": "CC-BY-NC",
+        "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+        "description": "Attribution required; non-commercial use only.",
+    },
+    {
+        "id": "cc-by-sa",
+        "name": "Creative Commons Attribution ShareAlike",
+        "short_name": "CC-BY-SA",
+        "url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "description": "Attribution required; derivatives share alike.",
+    },
+)
+
 
 def _make_create_enum_sql(type_name: str, values: list[str]) -> str:
     """Build idempotent DO-block SQL for creating a Postgres enum type.
@@ -81,6 +112,242 @@ def _make_create_enum_sql(type_name: str, values: list[str]) -> str:
         f"END IF; "
         f"END $$"
     )
+
+
+async def _sync_0023_license_schema(engine: AsyncEngine) -> None:
+    """Apply the spec/012 Phase 2 license schema changes to the test DB."""
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1
+                        FROM pg_constraint c
+                        WHERE c.conrelid = 'licenses'::regclass
+                        AND c.contype = 'u'
+                        AND c.conkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = 'licenses'::regclass
+                                AND a.attname = 'short_name'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                    ) THEN
+                        ALTER TABLE licenses
+                            ADD CONSTRAINT uq_licenses_short_name UNIQUE (short_name);
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                INSERT INTO licenses (
+                    id, name, short_name, url, description, created_at, updated_at
+                )
+                VALUES (
+                    :id, :name, :short_name, :url, :description, now(), now()
+                )
+                ON CONFLICT (short_name) DO NOTHING
+                """
+            ),
+            list(CANONICAL_TEST_LICENSES),
+        )
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS license_id VARCHAR(50) NULL"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$
+                DECLARE
+                    unmapped_count integer;
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'projects'
+                        AND column_name = 'license'
+                    ) THEN
+                        UPDATE projects
+                        SET license_id = licenses.id
+                        FROM licenses
+                        WHERE projects.license IS NOT NULL
+                        AND projects.license_id IS NULL
+                        AND licenses.short_name = projects.license::text;
+
+                        SELECT count(*)
+                        INTO unmapped_count
+                        FROM projects
+                        WHERE license IS NOT NULL
+                        AND license_id IS NULL;
+
+                        IF unmapped_count > 0 THEN
+                            RAISE EXCEPTION
+                                '0023 test schema sync could not map % project license value(s)',
+                                unmapped_count;
+                        END IF;
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$
+                DECLARE
+                    constraint_name text;
+                    license_id_attnum smallint;
+                    id_attnum smallint;
+                BEGIN
+                    SELECT a.attnum
+                    INTO license_id_attnum
+                    FROM pg_attribute a
+                    WHERE a.attrelid = 'projects'::regclass
+                    AND a.attname = 'license_id'
+                    AND NOT a.attisdropped;
+
+                    SELECT a.attnum
+                    INTO id_attnum
+                    FROM pg_attribute a
+                    WHERE a.attrelid = 'licenses'::regclass
+                    AND a.attname = 'id'
+                    AND NOT a.attisdropped;
+
+                    FOR constraint_name IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        WHERE c.conrelid = 'projects'::regclass
+                        AND c.contype = 'f'
+                        AND (
+                            c.conname = 'projects_license_id_fkey'
+                            OR (
+                                c.confrelid = 'licenses'::regclass
+                                AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                            )
+                        )
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE projects DROP CONSTRAINT %I',
+                            constraint_name
+                        );
+                    END LOOP;
+
+                    IF license_id_attnum IS NOT NULL AND id_attnum IS NOT NULL THEN
+                        ALTER TABLE projects
+                            ADD CONSTRAINT projects_license_id_fkey
+                            FOREIGN KEY (license_id) REFERENCES licenses(id)
+                            ON DELETE RESTRICT;
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_projects_license_id "
+                "ON projects (license_id)"
+            )
+        )
+        await conn.execute(sa.text("ALTER TABLE projects DROP COLUMN IF EXISTS license"))
+        await conn.execute(
+            sa.text(
+                """
+                DO $$
+                BEGIN
+                    IF to_regclass('project_license_history') IS NOT NULL THEN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'project_license_history'
+                            AND column_name = 'old_license'
+                        ) THEN
+                            ALTER TABLE project_license_history
+                                ALTER COLUMN old_license TYPE VARCHAR(50)
+                                USING old_license::text;
+                        END IF;
+
+                        IF EXISTS (
+                            SELECT 1
+                            FROM information_schema.columns
+                            WHERE table_name = 'project_license_history'
+                            AND column_name = 'new_license'
+                        ) THEN
+                            ALTER TABLE project_license_history
+                                ALTER COLUMN new_license TYPE VARCHAR(50)
+                                USING new_license::text;
+                        END IF;
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
+        await conn.execute(
+            sa.text(
+                """
+                DO $$
+                DECLARE
+                    constraint_name text;
+                    license_id_attnum smallint;
+                    id_attnum smallint;
+                BEGIN
+                    SELECT a.attnum
+                    INTO license_id_attnum
+                    FROM pg_attribute a
+                    WHERE a.attrelid = 'datasets'::regclass
+                    AND a.attname = 'license_id'
+                    AND NOT a.attisdropped;
+
+                    SELECT a.attnum
+                    INTO id_attnum
+                    FROM pg_attribute a
+                    WHERE a.attrelid = 'licenses'::regclass
+                    AND a.attname = 'id'
+                    AND NOT a.attisdropped;
+
+                    FOR constraint_name IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        WHERE c.conrelid = 'datasets'::regclass
+                        AND c.confrelid = 'licenses'::regclass
+                        AND c.contype = 'f'
+                        AND c.conname IN (
+                            'fk_datasets_license_id',
+                            'datasets_license_id_fkey'
+                        )
+                        AND c.conkey = ARRAY[license_id_attnum]::smallint[]
+                        AND c.confkey = ARRAY[id_attnum]::smallint[]
+                    LOOP
+                        EXECUTE format(
+                            'ALTER TABLE datasets DROP CONSTRAINT %I',
+                            constraint_name
+                        );
+                    END LOOP;
+
+                    IF license_id_attnum IS NOT NULL AND id_attnum IS NOT NULL THEN
+                        ALTER TABLE datasets
+                            ADD CONSTRAINT fk_datasets_license_id
+                            FOREIGN KEY (license_id) REFERENCES licenses(id)
+                            ON DELETE RESTRICT;
+                    END IF;
+                END
+                $$;
+                """
+            )
+        )
 
 
 async def setup_test_database(engine: AsyncEngine) -> None:
@@ -298,6 +565,121 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         # Existing test DBs may still carry the pre-0017 project_id FK. We
         # drop it below before any early return so hard-deleted projects do
         # not require rewriting append-only audit rows during cleanup.
+        license_schema_current_result = await conn.execute(
+            sa.text(
+                """
+                SELECT
+                    EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'projects'
+                        AND column_name = 'license_id'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'projects'
+                        AND column_name = 'license'
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'project_license_history'
+                        AND column_name = 'old_license'
+                        AND data_type = 'character varying'
+                        AND character_maximum_length = 50
+                    )
+                    AND EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'project_license_history'
+                        AND column_name = 'new_license'
+                        AND data_type = 'character varying'
+                        AND character_maximum_length = 50
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_constraint c
+                        WHERE c.conrelid = to_regclass('licenses')
+                        AND c.contype = 'u'
+                        AND c.conkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('licenses')
+                                AND a.attname = 'short_name'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_constraint c
+                        WHERE c.conname = 'projects_license_id_fkey'
+                        AND c.conrelid = to_regclass('projects')
+                        AND c.confrelid = to_regclass('licenses')
+                        AND c.contype = 'f'
+                        AND c.confdeltype = 'r'
+                        AND c.conkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('projects')
+                                AND a.attname = 'license_id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                        AND c.confkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('licenses')
+                                AND a.attname = 'id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_class i
+                        JOIN pg_index ix ON ix.indexrelid = i.oid
+                        JOIN pg_attribute a
+                            ON a.attrelid = ix.indrelid
+                            AND a.attname = 'license_id'
+                            AND NOT a.attisdropped
+                        WHERE i.relname = 'ix_projects_license_id'
+                        AND ix.indrelid = to_regclass('projects')
+                        AND ix.indisvalid
+                        AND ix.indisready
+                        AND ix.indnatts = 1
+                        AND ix.indkey[0] = a.attnum
+                    )
+                    AND EXISTS (
+                        SELECT 1
+                        FROM pg_constraint c
+                        WHERE c.conrelid = to_regclass('datasets')
+                        AND c.confrelid = to_regclass('licenses')
+                        AND c.contype = 'f'
+                        AND c.confdeltype = 'r'
+                        AND c.conkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('datasets')
+                                AND a.attname = 'license_id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                        AND c.confkey = ARRAY[
+                            (
+                                SELECT a.attnum
+                                FROM pg_attribute a
+                                WHERE a.attrelid = to_regclass('licenses')
+                                AND a.attname = 'id'
+                                AND NOT a.attisdropped
+                            )
+                        ]::smallint[]
+                    ) AS current
+                """
+            )
+        )
+        license_schema_current = bool(license_schema_current_result.scalar())
 
     if project_audit_log_exists and project_audit_log_fk_exists:
         async with engine.begin() as conn:
@@ -309,7 +691,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         project_audit_log_fk_exists = False
 
-    if (
+    non_license_schema_current = (
         core_exists
         and search_exists
         and taxon_sensitivity_exists
@@ -327,7 +709,12 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and invitation_v2_col_exists
         and audit_v2_col_exists
         and token_families_exists
-    ):
+    )
+    if non_license_schema_current and not license_schema_current:
+        await _sync_0023_license_schema(engine)
+        return
+
+    if non_license_schema_current and license_schema_current:
         # Schema is fully up to date — nothing to do.
         return
 
@@ -827,6 +1214,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         )
 
+    await _sync_0023_license_schema(engine)
     return
 
 
@@ -943,6 +1331,42 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.commit()
 
 
+async def seed_canonical_test_licenses(session: AsyncSession) -> None:
+    """Ensure canonical Creative Commons license rows exist for FK-backed tests."""
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO licenses (
+                id,
+                name,
+                short_name,
+                url,
+                description,
+                created_at,
+                updated_at
+            )
+            VALUES (
+                :id,
+                :name,
+                :short_name,
+                :url,
+                :description,
+                now(),
+                now()
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                short_name = EXCLUDED.short_name,
+                url = EXCLUDED.url,
+                description = EXCLUDED.description,
+                updated_at = now()
+            """
+        ),
+        list(CANONICAL_TEST_LICENSES),
+    )
+    await session.commit()
+
+
 def ensure_test_database_schema_sync() -> None:
     """Synchronously ensure the test DB schema is current.
 
@@ -1022,6 +1446,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     async with session_maker() as session:
         # Clean up any leftover data from previous tests
         await cleanup_test_data(session)
+        await seed_canonical_test_licenses(session)
         yield session
 
     await engine.dispose()

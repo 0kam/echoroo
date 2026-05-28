@@ -27,13 +27,13 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,
 )
 
 if TYPE_CHECKING:
+    from echoroo.models.license import License
     from echoroo.models.user import User
 
 
@@ -69,15 +69,11 @@ class Project(UUIDMixin, TimestampMixin, Base):
         index=True,
         doc="Project visibility level",
     )
-    license: Mapped[ProjectLicense] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
-        nullable=False,
-        doc="Project data license",
+    license_id: Mapped[str | None] = mapped_column(
+        String(50),
+        ForeignKey("licenses.id", ondelete="RESTRICT"),
+        nullable=True,
+        doc="Project data license ID",
     )
     restricted_config: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
@@ -140,6 +136,28 @@ class Project(UUIDMixin, TimestampMixin, Base):
         back_populates="owned_projects",
         lazy="joined",
     )
+    license_record: Mapped[License | None] = relationship(
+        "License",
+        # spec/012 Codex review fix — ``lazy="joined"`` forced a LEFT
+        # OUTER JOIN on EVERY Project query. The security suite uses
+        # ``SELECT ... FOR UPDATE`` against ``projects`` (e.g.
+        # ``services.ownership_service.transfer_ownership`` +
+        # ``services.license_service.change_license``) and PostgreSQL
+        # refuses ``FOR UPDATE`` on the nullable side of an outer join
+        # ("FOR UPDATE cannot be applied to the nullable side of an
+        # outer join"). The pre-spec/012 ``services.ownership_service``
+        # already worked around the ``owner`` LEFT OUTER JOIN via
+        # ``lazyload(Project.owner)`` — adding a second eagerly-joined
+        # relationship would force every call site to learn the same
+        # trick. ``selectin`` issues a second IN(...) query keyed on
+        # the parent ids so each Project still surfaces ``license`` via
+        # the hybrid property without dragging the lockable SELECT into
+        # an outer join, AND avoids N+1 on list endpoints. This restores
+        # 17+ security tests that started failing on this PR
+        # (``tests/security/authorization/test_replay_actor_binding.py``
+        # + ``tests/security/race_conditions/test_ownership_transfer_race.py``).
+        lazy="selectin",
+    )
     members: Mapped[list[ProjectMember]] = relationship(
         "ProjectMember",
         back_populates="project",
@@ -173,6 +191,13 @@ class Project(UUIDMixin, TimestampMixin, Base):
     def __repr__(self) -> str:
         """String representation of Project."""
         return f"<Project(id={self.id}, name={self.name})>"
+
+    @property
+    def license(self) -> str | None:
+        """Read-only access to the attached license short name."""
+        if self.license_record is not None:
+            return self.license_record.short_name
+        return None
 
 
 class ProjectMember(UUIDMixin, TimestampMixin, Base):
@@ -279,23 +304,13 @@ class ProjectLicenseHistory(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Project ID",
     )
-    old_license: Mapped[ProjectLicense | None] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
+    old_license: Mapped[str | None] = mapped_column(
+        String(50),
         nullable=True,
         doc="Previous project license",
     )
-    new_license: Mapped[ProjectLicense] = mapped_column(
-        Enum(
-            ProjectLicense,
-            name="projectlicense",
-            create_type=False,
-            values_callable=lambda x: [e.value for e in x],
-        ),
+    new_license: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
         doc="New project license",
     )

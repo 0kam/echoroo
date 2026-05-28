@@ -29,7 +29,6 @@ from echoroo.models.enums import (
     DatetimeParseStatus,
     DetectionSource,
     DetectionStatus,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
 )
@@ -71,7 +70,7 @@ async def t992a_project(
         name="T992a Detection List Performance Project",
         description="NFR-004 detection list p95 test",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=t992a_owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config={},

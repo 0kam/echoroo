@@ -47,7 +47,6 @@ from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -246,7 +245,7 @@ async def _create_project(
     project = Project(
         name=f"T243 {uuid.uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config=dict(_RESTRICTED_CONFIG),
     )

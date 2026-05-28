@@ -276,12 +276,12 @@ async def _seed_project(
     """Seed a Restricted project (the FR-014 / 致命 2 happy path needs
     ``allow_media_playback=False`` so VIEW_MEDIA can only come from the
     Trusted overlay)."""
-    from echoroo.models.enums import ProjectLicense, ProjectVisibility
+    from echoroo.models.enums import ProjectVisibility
 
     project = Project(
         name=f"T532HTTP {uuid4().hex[:8]}",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_id,
         restricted_config={
             "allow_media_playback": allow_media_playback,

@@ -80,6 +80,15 @@ async def _ensure_project(session: AsyncSession) -> UUID:
         ),
         {"id": str(owner_id), "email": f"owner-{owner_id}@example.com", "stamp": "s" * 64},
     )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO licenses (id, name, short_name, created_at, updated_at)
+            VALUES ('cc-by', 'Creative Commons Attribution', 'CC-BY', now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
     # ``projects.restricted_config`` has a CHECK that requires the full
     # set of restricted keys when visibility = 'restricted'. We side-step
     # the check by inserting with visibility = 'public' (the CHECK only
@@ -88,8 +97,8 @@ async def _ensure_project(session: AsyncSession) -> UUID:
     await session.execute(
         sa.text(
             """
-            INSERT INTO projects (id, name, visibility, license, status, owner_id)
-            VALUES (:id, :name, 'public', 'CC-BY', 'active', :owner_id)
+            INSERT INTO projects (id, name, visibility, license_id, status, owner_id)
+            VALUES (:id, :name, 'public', 'cc-by', 'active', :owner_id)
             """
         ),
         {

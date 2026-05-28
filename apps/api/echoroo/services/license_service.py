@@ -16,7 +16,7 @@ Public surface:
 
 * :func:`record_initial_license` — append a single ``(old=None, new=L)``
   history row at project creation (FR-085 + FR-087).
-* :func:`change_license` — atomically update ``Project.license`` *and*
+* :func:`change_license` — atomically update ``Project.license_id`` *and*
   append an ``(old=current, new=L)`` row, returning the new history row.
   The service ALWAYS appends a row, even when ``new_license`` matches the
   current value — Phase 7 polish round 2 (Major 5) deliberately removed
@@ -40,17 +40,57 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import ProjectLicense
+from echoroo.models.license import License
 from echoroo.models.project import Project, ProjectLicenseHistory
+
+
+def _license_short_name(license: ProjectLicense | str) -> str:
+    if isinstance(license, ProjectLicense):
+        return license.value
+    return license.strip()
+
+
+def license_required_http_exception() -> HTTPException:
+    """Return the FR-085 project-license 422 envelope."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "ERR_LICENSE_REQUIRED",
+            "message": "Project license is required (FR-085)",
+        },
+    )
+
+
+async def resolve_license_id_for_short_name(
+    db: AsyncSession,
+    short_name: str | ProjectLicense,
+) -> str:
+    """Resolve a project license short name to the canonical ``licenses.id``."""
+    license_short_name = _license_short_name(short_name)
+    if not license_short_name:
+        raise ValueError("Project license short_name is required")
+
+    result = await db.execute(
+        select(License.id)
+        .where(License.short_name == license_short_name)
+        .limit(1)
+    )
+    license_id = result.scalar_one_or_none()
+    if license_id is None:
+        raise ValueError(f"Unknown project license short_name: {license_short_name}")
+
+    return license_id
 
 
 async def record_initial_license(
     session: AsyncSession,
     project_id: UUID,
-    license: ProjectLicense,
+    license: ProjectLicense | str,
     actor_user_id: UUID,
 ) -> ProjectLicenseHistory:
     """Append the initial ``ProjectLicenseHistory`` row for a new project.
@@ -75,7 +115,7 @@ async def record_initial_license(
     history = ProjectLicenseHistory(
         project_id=project_id,
         old_license=None,
-        new_license=license,
+        new_license=_license_short_name(license),
         changed_at=datetime.now(UTC),
         changed_by_id=actor_user_id,
     )
@@ -86,10 +126,10 @@ async def record_initial_license(
 async def change_license(
     session: AsyncSession,
     project_id: UUID,
-    new_license: ProjectLicense,
+    new_license: ProjectLicense | str | None,
     actor_user_id: UUID,
 ) -> ProjectLicenseHistory:
-    """Update ``Project.license`` and unconditionally append a history row.
+    """Update ``Project.license_id`` and unconditionally append a history row.
 
     FR-087: every license PATCH is observable in
     :class:`ProjectLicenseHistory` — including same-license calls. Phase 7
@@ -97,8 +137,8 @@ async def change_license(
     because audit consumers need a row per request, not per logical
     transition.
 
-    The mutation order (``project.license =`` first, ``add(history)``
-    second) is intentional: SQLAlchemy will flush both in the same
+    The mutation order (``project.license_id =`` first, ``add(history)``
+    second) is intentional: SQLAlchemy flushes both in the same
     transaction so a rollback on either step keeps the rows consistent.
 
     Concurrency:
@@ -141,17 +181,28 @@ async def change_license(
     if project is None:
         raise ValueError(f"Project {project_id} not found")
 
+    if new_license is None:
+        raise ValueError("Project license history requires a new license")
+
     old_license = project.license
-    project.license = new_license
+    try:
+        new_license_id = await resolve_license_id_for_short_name(session, new_license)
+    except ValueError as exc:
+        raise license_required_http_exception() from exc
+
+    project.license_id = new_license_id
+    new_license_short_name = _license_short_name(new_license)
 
     history = ProjectLicenseHistory(
         project_id=project_id,
         old_license=old_license,
-        new_license=new_license,
+        new_license=new_license_short_name,
         changed_at=datetime.now(UTC),
         changed_by_id=actor_user_id,
     )
     session.add(history)
+    await session.flush()
+    await session.refresh(project, ["license_record"])
     return history
 
 
@@ -188,6 +239,8 @@ async def list_license_history(
 
 __all__ = [
     "change_license",
+    "license_required_http_exception",
     "list_license_history",
     "record_initial_license",
+    "resolve_license_id_for_short_name",
 ]

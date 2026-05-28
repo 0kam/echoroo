@@ -54,7 +54,6 @@ from echoroo.core.permissions import (
     compute_effective_resolution,
 )
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
 )
@@ -276,7 +275,7 @@ async def _seed_restricted_project_with_viewer(
         ),
         description="FR-022 viewer precise-location coverage",
         visibility=DBProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         status=ProjectStatus.ACTIVE,
         restricted_config=_viewer_restricted_config(allow_precise=allow_precise),

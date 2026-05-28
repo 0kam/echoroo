@@ -25,13 +25,16 @@ which uses module-level monkeypatching.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import inspect
+import io
 import os
 import secrets
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -56,6 +59,7 @@ from echoroo.models.enums import (
     ProjectMemberRole,
     ProjectVisibility,
 )
+from echoroo.models.license import License
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -88,7 +92,7 @@ async def _make_project(db: AsyncSession, *, owner: User) -> Project:
         name="Stream Guard Project",
         description="A-5 stream guard test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": True,
@@ -932,6 +936,108 @@ async def test_export_csv_back_compat_signature_preserved(
     assert isinstance(csv_text, str)
     assert "observationID" in csv_text
     assert stream_guard.SENTINEL_BYTES.decode("utf-8", errors="ignore") not in csv_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("license_id", "license_record", "expected_license"),
+    [
+        (None, None, ""),
+        (
+            "cc-by",
+            License(
+                id="cc-by",
+                name="Creative Commons Attribution",
+                short_name="CC-BY",
+            ),
+            "CC-BY",
+        ),
+        (
+            "custom-arbitrary",
+            License(
+                id="custom-arbitrary",
+                name="Custom Arbitrary",
+                short_name="CUSTOM-ARBITRARY",
+            ),
+            "CUSTOM-ARBITRARY",
+        ),
+    ],
+)
+async def test_export_csv_writes_project_license_column_from_license_record(
+    monkeypatch: pytest.MonkeyPatch,
+    license_id: str | None,
+    license_record: License | None,
+    expected_license: str,
+) -> None:
+    """CSV exports use Project.license, including NULL and custom licenses."""
+    from echoroo.services import detection_export as export_module
+
+    service = export_module.DetectionExportService.__new__(  # type: ignore[call-arg]
+        export_module.DetectionExportService
+    )
+    service.db = AsyncMock()  # type: ignore[attr-defined]
+    project_id = uuid.uuid4()
+    annotation_id = uuid.uuid4()
+
+    async def _fake_fetch(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return [
+            SimpleNamespace(
+                id=annotation_id,
+                recording=None,
+                recording_id=None,
+                tag=None,
+                detection_run=None,
+                reviewed_by=None,
+                reviewed_at=None,
+                created_at=None,
+                source=None,
+                start_time=0.0,
+                end_time=1.0,
+                freq_low=None,
+                freq_high=None,
+                confidence=None,
+            )
+        ]
+
+    async def _fake_load_project(*_a: Any, **_k: Any) -> Any:
+        return Project(
+            name="Stream Guard Export License Project",
+            owner_id=uuid.uuid4(),
+            license_id=license_id,
+            license_record=license_record,
+            visibility=ProjectVisibility.PUBLIC,
+            restricted_config={},
+        )
+
+    async def _fake_h3_map(*_a: Any, **_k: Any) -> dict[Any, Any]:
+        return {}
+
+    monkeypatch.setattr(service, "_fetch_annotations_for_export", _fake_fetch)
+    monkeypatch.setattr(service, "_load_project", _fake_load_project)
+    monkeypatch.setattr(service, "_build_recording_h3_resolution_map", _fake_h3_map)
+
+    csv_text = await service.export_csv(project_id)
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert rows[0]["license"] == expected_license
+
+    class _Req:
+        state = type("S", (), {})()
+        client = type("C", (), {"host": ""})()
+        headers: dict[str, str] = {}
+
+    stream_body = b"".join(
+        [
+            chunk
+            async for chunk in service.export_csv_stream(
+                project_id=project_id,
+                action=DETECTION_EXPORT_CSV_ACTION,
+                current_user=None,
+                request=_Req(),  # type: ignore[arg-type]
+            )
+        ]
+    ).decode("utf-8")
+    stream_rows = list(csv.DictReader(io.StringIO(stream_body)))
+    assert stream_rows[0]["license"] == expected_license
 
 
 # ---------------------------------------------------------------------------

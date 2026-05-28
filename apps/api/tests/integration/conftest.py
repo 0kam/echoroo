@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -221,7 +220,7 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
         description="Test project for integration tests",
         owner_id=test_user.id,
         # Phase 16 Batch 6e drift fix: Phase 7 made license NOT NULL.
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         visibility=ProjectVisibility.RESTRICTED,
         restricted_config=dict(_DEFAULT_RESTRICTED_CONFIG),
     )

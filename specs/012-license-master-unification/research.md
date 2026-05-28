@@ -9,11 +9,11 @@ artifacts assume them as ground truth.
 
 ---
 
-## R1. API shape: response stays a short_name string; **submit moves to license_id**
+## R1. API shape: response stays a short_name string; **submit stays backward-compatible in Phase 2**
 
-**Decision (revised after Codex review)**: Keep the `license` field in project API **responses** as the existing **short-name string** (e.g. `"CC-BY"`) — backward compatibility for read paths. The **request** body for `POST /projects` and `PATCH /projects/{id}` changes to accept a stable identifier (`license_id: str`, the `licenses.id` value) **rather than the short_name**, so that admin renames between dropdown render and form submit do not invalidate in-flight requests (FR-004 stable-identifier guarantee).
+**Decision (revised after Codex review)**: Keep the `license` field in project API **responses** as the existing **short-name string** (e.g. `"CC-BY"`) — backward compatibility for read paths. For Phase 2, the **request** body for `POST /projects` and `PATCH /projects/{id}` also remains backward-compatible with the existing `license: str` short_name wire shape. The rename to a stable identifier field (`license_id: str`, the `licenses.id` value) is deferred to Phase 3, so that admin renames between dropdown render and form submit do not invalidate in-flight requests once the wire contract is migrated (FR-004 stable-identifier guarantee).
 
-The transitional accept-either compromise (read `short_name` from request, look it up at insert time) was REJECTED on Codex re-review: it does not actually satisfy FR-004 because an admin renaming `"CC-BY"` to `"CC-BY 4.0"` between the dropdown render and the user clicking submit would cause the submit to 422 with `license_not_found`, even though the underlying license row is unchanged.
+Phase 2 pending item: the transitional short_name request shape (read `license` from request, look it up at insert time) does not fully satisfy FR-004 because an admin renaming `"CC-BY"` to `"CC-BY 4.0"` between the dropdown render and the user clicking submit can cause the submit to 422 with `license_not_found`, even though the underlying license row is unchanged. Phase 3 resolves this by renaming the request field to `license_id`.
 
 **Rationale**:
 - The user's expectation, framed in the spec, is "the inverse of intuitive ordering — admin master should drive the form" — not "introduce a richer license object everywhere." Tightening the contract to push a `{id, short_name, name, url}` object onto every project response would force coordinated frontend + downstream consumer updates with no offsetting benefit for this feature.
@@ -26,8 +26,8 @@ The transitional accept-either compromise (read `short_name` from request, look 
 
 **Impact on plan**:
 - `schemas/project.py` `ProjectResponse.license`: still a `str | None`, but its source switches from the enum column to a join-and-pluck on `licenses.short_name`. Populated by the repository / service layer reading the joined value.
-- `schemas/project.py` `ProjectCreateRequest` / `ProjectUpdateRequest`: replace `license: ProjectLicense` with `license_id: str` (FK identifier). Backend validates the id exists in the master before insert/update; an unknown id yields 422 with `error_code: "license_not_found"`. The legacy `license` request field is dropped entirely (spec/006 contract requires `license` at create time but the wire field is renamed to `license_id` since the *semantics* — required, references master — are unchanged; spec/006 contract is regenerated accordingly).
-- Frontend: dropdown `<option value="…">` carries `license.id`, the visible text is `license.short_name` (with `name` as `title` tooltip). The form's `license_id` state is submitted verbatim.
+- `schemas/project.py` `ProjectCreateRequest` / `ProjectUpdateRequest`: Phase 2 keeps accepting `license: str` / short_name for backward compatibility and validates the resolved license exists in the master before insert/update; an unknown short_name yields 422 with `error_code: "license_not_found"`. Phase 3 renames the wire field to `license_id: str` (FK identifier) and drops the legacy `license` request field.
+- Frontend: Phase 2 dropdown `<option value="…">` still submits `license.short_name`, with `license.id` available for the Phase 3 request rename; the visible text is `license.short_name` (with `name` as `title` tooltip).
 - `services/detection_export.py:381-383` switches from `project.license.value` to `project.license` (the joined short_name string). CSV column wire shape unchanged (still a license short_name string).
 - `models/project.py::ProjectLicenseHistory`: see R8 below (history snapshot columns are converted to VARCHAR(50), no FK to licenses).
 
@@ -185,7 +185,7 @@ This decision is intentionally asymmetric with `projects.license_id` (which IS a
 
 | # | Topic | Decision | Notes |
 |---|---|---|---|
-| R1 | API shape | **Request: `license_id` (FK)**; response: still `short_name` string | FR-004 stable identifier requires this |
+| R1 | API shape | Phase 2 request remains `license` short_name; Phase 3 renames to `license_id` (FK); response still `short_name` string | Phase 2 pending item for FR-004 |
 | R2 | New endpoint location | Both `/web-api/v1/licenses` and `/api/v1/licenses` | Read-only |
 | R3 | Delete-protection | FK ON DELETE RESTRICT + service-layer 409 with re-count fallback on race | Defense in depth |
 | R4 | Migration safety | Audit SELECT **as step 1**, ValueError on unknown values | Forward-only, transactional |

@@ -23,7 +23,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.enums import ProjectLicense, ProjectMemberRole, ProjectVisibility
+from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
 
@@ -69,7 +69,7 @@ async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
         name="T131 Test Project",
         description="Viewer boundary test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner_user.id,
         restricted_config={
             "allow_media_playback": True,

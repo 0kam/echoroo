@@ -59,7 +59,6 @@ from sqlalchemy.pool import NullPool
 
 from echoroo.core.jwt import create_access_token as _create_jwt_token
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -178,7 +177,7 @@ async def _make_project(db: AsyncSession, *, owner: User) -> Project:
         name="T973 Stream Project",
         description="streaming permission race test",
         visibility=ProjectVisibility.RESTRICTED,
-        license=ProjectLicense.CC_BY,
+        license_id="cc-by",
         owner_id=owner.id,
         restricted_config={
             "allow_media_playback": True,
