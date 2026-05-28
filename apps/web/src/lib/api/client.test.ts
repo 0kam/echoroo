@@ -114,6 +114,96 @@ describe('ApiClient', () => {
     expect(captured!.body).toBeNull();
     expect(captured!.message).toBe('Request failed');
   });
+
+  it('extracts ApiError.code and .detail from a nested ``detail`` envelope', async () => {
+    // Phase 15 superuser endpoints raise via
+    // ``HTTPException(detail={"error": "...", "message": "..."})``.
+    // The extractor must traverse the nested object so the page-level
+    // ``err.code === 'ERR_LAST_SUPERUSER_PROTECTION'`` branch fires.
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        detail: {
+          error: 'ERR_LAST_SUPERUSER_PROTECTION',
+          message: 'Cannot revoke the last active superuser.',
+        },
+      }),
+    });
+    let captured: ApiError | null = null;
+    try {
+      await apiClient.post('/api/v1/test', {});
+    } catch (err) {
+      captured = err as ApiError;
+    }
+    expect(captured!.code).toBe('ERR_LAST_SUPERUSER_PROTECTION');
+    expect(captured!.detail).toBe('Cannot revoke the last active superuser.');
+    expect(captured!.message).toBe('Cannot revoke the last active superuser.');
+  });
+
+  it('extracts ApiError.code from a nested ``detail.error_code`` envelope', async () => {
+    // The step-up middleware uses ``error_code`` (not ``error``); the
+    // extractor must accept both spellings under ``detail``.
+    const body = {
+      detail: {
+        error_code: 'step_up_token_expired',
+        message: 'Re-run the WebAuthn ceremony and retry.',
+      },
+    };
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      clone: () => ({ json: async () => body }),
+      json: async () => body,
+    });
+    let captured: ApiError | null = null;
+    try {
+      await apiClient.post('/api/v1/test', {});
+    } catch (err) {
+      captured = err as ApiError;
+    }
+    expect(captured!.code).toBe('step_up_token_expired');
+    expect(captured!.detail).toBe('Re-run the WebAuthn ceremony and retry.');
+  });
+
+  it('does not refresh on 401 carrying a ``step_up_token_*`` error_code', async () => {
+    // Refreshing the access token cannot heal a missing/expired
+    // WebAuthn assertion; on a stale refresh cookie the refresh failure
+    // tear-down would log the user out for what is just a "click the
+    // gate again" UX. The 401 must surface unchanged so the gate can
+    // re-prompt.
+    const refreshSpy = vi.spyOn(apiClient, 'refreshToken');
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      clone: function () {
+        return {
+          json: async () => ({
+            detail: {
+              error_code: 'step_up_token_required',
+              message: 'Step-up token is required for destructive admin actions.',
+            },
+          }),
+        };
+      },
+      json: async () => ({
+        detail: {
+          error_code: 'step_up_token_required',
+          message: 'Step-up token is required for destructive admin actions.',
+        },
+      }),
+    });
+    let captured: ApiError | null = null;
+    try {
+      await apiClient.post('/web-api/v1/admin/superusers', { target_user_id: 'x' });
+    } catch (err) {
+      captured = err as ApiError;
+    }
+    expect(refreshSpy).not.toHaveBeenCalled();
+    expect(captured!.status).toBe(401);
+    expect(captured!.code).toBe('step_up_token_required');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('isPublicReadablePath', () => {

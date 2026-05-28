@@ -6,36 +6,20 @@
  * `echoroo_csrf` cookie just like the rest of the web-auth router.
  *
  * Programmatic API keys are forbidden by the backend (FR-084): every call
- * is issued with `credentials: 'include'` so the user's session cookie
- * carries the authorization decision.
+ * is issued via the shared :data:`apiClient` so the user's session cookie
+ * + Bearer access token carry the authorization decision, and stale tokens
+ * trigger the same auto-refresh-on-401 flow the rest of the BFF surface
+ * uses. Without auto-refresh, a stale access cookie produced a 401 on
+ * every superuser page load and surfaced as "Access token required" in
+ * the UI banner.
  */
 
-import { ApiError } from './client';
+import { ApiError, apiClient } from './client';
 import { getActiveStepUpToken } from '$lib/utils/webauthnGating';
 
 const BASE = '/web-api/v1/admin';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 const STEP_UP_HEADER_NAME = 'X-Step-Up-Token';
-
-// Phase 16 Batch 6g-3: which destructive admin paths require a
-// ``X-Step-Up-Token`` header. The backend gate
-// (``require_step_up_token``) is the source of truth — this list
-// mirrors it so callers without a cached token can be redirected to
-// the WebAuthn ceremony before issuing the request.
-const STEP_UP_REQUIRED_METHODS = new Set(['POST', 'PATCH']);
-function isStepUpRequiredPath(path: string): boolean {
-  // Destructive endpoints all live under /superusers/* (excluding GETs
-  // which are filtered by method). Listing endpoints stay on GET so the
-  // method filter alone is sufficient.
-  return path.startsWith('/superusers');
-}
-
-function resolveBaseUrl(): string {
-  if (typeof window !== 'undefined') {
-    return '';
-  }
-  return import.meta.env.PUBLIC_API_URL || 'http://localhost:8002';
-}
 
 function getCsrfToken(): string | null {
   if (typeof document === 'undefined') return null;
@@ -54,101 +38,21 @@ function getCsrfToken(): string | null {
 }
 
 /**
- * Extract a structured `error` / `error_code` value from a JSON error body.
+ * Build the header bag for a destructive ``/superusers/*`` mutation.
  *
- * Backend admin endpoints return either:
- *   - `{ "error": "ERR_LAST_SUPERUSER_PROTECTION", "message": "..." }`
- *   - `{ "detail": { "error": "...", "error_code": "...", "message": "..." } }`
+ * Phase 16 Batch 6g-3 wires a WebAuthn step-up gate in front of every
+ * destructive admin endpoint; the cached token is attached here so the
+ * backend ``require_step_up_token`` dependency clears. Missing token →
+ * backend 401 ``step_up_token_required`` which the UI translates into a
+ * re-prompt for the ceremony.
  */
-function extractErrorCode(errorData: unknown): string | null {
-  if (typeof errorData !== 'object' || errorData === null) {
-    return null;
-  }
-  const obj = errorData as Record<string, unknown>;
-  for (const key of ['error', 'error_code', 'code']) {
-    const value = obj[key];
-    if (typeof value === 'string' && value.length > 0) return value;
-  }
-  // Nested under `detail`
-  const detail = obj['detail'];
-  if (typeof detail === 'object' && detail !== null) {
-    const detailObj = detail as Record<string, unknown>;
-    for (const key of ['error', 'error_code', 'code']) {
-      const value = detailObj[key];
-      if (typeof value === 'string' && value.length > 0) return value;
-    }
-  }
-  return null;
-}
-
-function extractMessage(errorData: unknown, fallback: string): string {
-  if (typeof errorData !== 'object' || errorData === null) return fallback;
-  const obj = errorData as Record<string, unknown>;
-  const detail = obj['detail'];
-  if (typeof detail === 'string') return detail;
-  if (typeof detail === 'object' && detail !== null) {
-    const detailObj = detail as Record<string, unknown>;
-    const m = detailObj['message'];
-    if (typeof m === 'string') return m;
-  }
-  if (typeof obj['message'] === 'string') return obj['message'] as string;
-  return fallback;
-}
-
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
-  const url = `${resolveBaseUrl()}${BASE}${path}`;
-  const method = (init.method ?? 'GET').toUpperCase();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  // Attach CSRF for state-changing verbs.
-  if (method !== 'GET' && method !== 'HEAD') {
-    const csrf = getCsrfToken();
-    if (csrf) headers['X-CSRF-Token'] = csrf;
-  }
-
-  // Phase 16 Batch 6g-3: attach a fresh step-up token for destructive
-  // admin endpoints. Missing token → backend returns
-  // 401 ``step_up_token_required`` so the UI can prompt for WebAuthn.
-  if (STEP_UP_REQUIRED_METHODS.has(method) && isStepUpRequiredPath(path)) {
-    const stepUp = getActiveStepUpToken();
-    if (stepUp) headers[STEP_UP_HEADER_NAME] = stepUp;
-  }
-
-  if (init.headers) {
-    const provided = new Headers(init.headers);
-    provided.forEach((value, key) => {
-      headers[key] = value;
-    });
-  }
-
-  const response = await fetch(url, {
-    ...init,
-    credentials: 'include',
-    headers,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new ApiError(
-      extractMessage(errorData, 'Request failed'),
-      response.status,
-      extractMessage(errorData, 'Request failed'),
-      extractErrorCode(errorData),
-      errorData,
-    );
-  }
-
-  if (response.status === 204) return undefined as T;
-  const ct = response.headers.get('content-type');
-  if (ct?.includes('application/json')) {
-    return (await response.json()) as T;
-  }
-  return {} as T;
+function mutationHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
+  const stepUp = getActiveStepUpToken();
+  if (stepUp) headers[STEP_UP_HEADER_NAME] = stepUp;
+  return headers;
 }
 
 // ---------- Types ----------
@@ -221,13 +125,18 @@ export interface SuperuserIpAllowlistResponse {
   updated_at: string;
 }
 
+// Re-export ApiError so existing call sites can keep their
+// ``import { ApiError } from '$lib/api/superusers'`` shorthand if any.
+export { ApiError };
+
 // ---------- Endpoints ----------
 
 export const superuserApi = {
   /**
    * GET /web-api/v1/admin/superusers — list all rows + counts.
    */
-  list: (): Promise<SuperuserListResponse> => request('/superusers'),
+  list: (): Promise<SuperuserListResponse> =>
+    apiClient.get<SuperuserListResponse>(`${BASE}/superusers`),
 
   /**
    * POST /web-api/v1/admin/superusers — request promotion.
@@ -235,7 +144,11 @@ export const superuserApi = {
    * `status: 'pending'` with a `approval_request_id`.
    */
   add: (payload: SuperuserAddRequest): Promise<SuperuserActionResponse> =>
-    request('/superusers', { method: 'POST', body: JSON.stringify(payload) }),
+    apiClient.post<SuperuserActionResponse>(
+      `${BASE}/superusers`,
+      payload,
+      { headers: mutationHeaders() }
+    ),
 
   /**
    * POST /web-api/v1/admin/superusers/{id}/revoke — open M-of-N revoke
@@ -243,7 +156,11 @@ export const superuserApi = {
    * apply step when revoking the last row (FR-111a).
    */
   revoke: (superuserId: string): Promise<SuperuserActionResponse> =>
-    request(`/superusers/${superuserId}/revoke`, { method: 'POST' }),
+    apiClient.post<SuperuserActionResponse>(
+      `${BASE}/superusers/${superuserId}/revoke`,
+      undefined,
+      { headers: mutationHeaders() }
+    ),
 
   /**
    * GET /web-api/v1/admin/superusers/approval-requests — pending M-of-N
@@ -253,16 +170,20 @@ export const superuserApi = {
     statusFilter?: 'pending' | 'applied' | 'rejected',
   ): Promise<SuperuserApprovalRequestListResponse> => {
     const qs = statusFilter ? `?status_filter=${statusFilter}` : '';
-    return request(`/superusers/approval-requests${qs}`);
+    return apiClient.get<SuperuserApprovalRequestListResponse>(
+      `${BASE}/superusers/approval-requests${qs}`,
+    );
   },
 
   /**
    * POST /web-api/v1/admin/superusers/approval-requests/{id}/approve.
    */
   approve: (approvalRequestId: string): Promise<SuperuserActionResponse> =>
-    request(`/superusers/approval-requests/${approvalRequestId}/approve`, {
-      method: 'POST',
-    }),
+    apiClient.post<SuperuserActionResponse>(
+      `${BASE}/superusers/approval-requests/${approvalRequestId}/approve`,
+      undefined,
+      { headers: mutationHeaders() },
+    ),
 
   /**
    * POST /web-api/v1/admin/superusers/approval-requests/{id}/reject.
@@ -272,10 +193,11 @@ export const superuserApi = {
     approvalRequestId: string,
     reason: string,
   ): Promise<SuperuserActionResponse> =>
-    request(`/superusers/approval-requests/${approvalRequestId}/reject`, {
-      method: 'POST',
-      body: JSON.stringify({ reason }),
-    }),
+    apiClient.post<SuperuserActionResponse>(
+      `${BASE}/superusers/approval-requests/${approvalRequestId}/reject`,
+      { reason },
+      { headers: mutationHeaders() },
+    ),
 
   /**
    * POST /web-api/v1/admin/superusers/break-glass/enter — start a 72h
@@ -284,16 +206,19 @@ export const superuserApi = {
   enterBreakGlass: (
     reason: string,
   ): Promise<SuperuserBreakGlassStatusResponse> =>
-    request('/superusers/break-glass/enter', {
-      method: 'POST',
-      body: JSON.stringify({ reason }),
-    }),
+    apiClient.post<SuperuserBreakGlassStatusResponse>(
+      `${BASE}/superusers/break-glass/enter`,
+      { reason },
+      { headers: mutationHeaders() },
+    ),
 
   /**
    * GET /web-api/v1/admin/superusers/break-glass/status.
    */
   breakGlassStatus: (): Promise<SuperuserBreakGlassStatusResponse> =>
-    request('/superusers/break-glass/status'),
+    apiClient.get<SuperuserBreakGlassStatusResponse>(
+      `${BASE}/superusers/break-glass/status`,
+    ),
 
   /**
    * PATCH /web-api/v1/admin/superusers/{id}/ip-allowlist — replace the
@@ -304,8 +229,9 @@ export const superuserApi = {
     superuserId: string,
     allowedIpCidrs: string[],
   ): Promise<SuperuserIpAllowlistResponse> =>
-    request(`/superusers/${superuserId}/ip-allowlist`, {
-      method: 'PATCH',
-      body: JSON.stringify({ allowed_ip_cidrs: allowedIpCidrs }),
-    }),
+    apiClient.patch<SuperuserIpAllowlistResponse>(
+      `${BASE}/superusers/${superuserId}/ip-allowlist`,
+      { allowed_ip_cidrs: allowedIpCidrs },
+      { headers: mutationHeaders() },
+    ),
 };
