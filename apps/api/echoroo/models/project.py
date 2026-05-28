@@ -138,6 +138,24 @@ class Project(UUIDMixin, TimestampMixin, Base):
     )
     license_record: Mapped[License | None] = relationship(
         "License",
+        # spec/012 Codex review fix — ``lazy="joined"`` forced a LEFT
+        # OUTER JOIN on EVERY Project query. The security suite uses
+        # ``SELECT ... FOR UPDATE`` against ``projects`` (e.g.
+        # ``services.ownership_service.transfer_ownership`` +
+        # ``services.license_service.change_license``) and PostgreSQL
+        # refuses ``FOR UPDATE`` on the nullable side of an outer join
+        # ("FOR UPDATE cannot be applied to the nullable side of an
+        # outer join"). The pre-spec/012 ``services.ownership_service``
+        # already worked around the ``owner`` LEFT OUTER JOIN via
+        # ``lazyload(Project.owner)`` — adding a second eagerly-joined
+        # relationship would force every call site to learn the same
+        # trick. ``selectin`` issues a second IN(...) query keyed on
+        # the parent ids so each Project still surfaces ``license`` via
+        # the hybrid property without dragging the lockable SELECT into
+        # an outer join, AND avoids N+1 on list endpoints. This restores
+        # 17+ security tests that started failing on this PR
+        # (``tests/security/authorization/test_replay_actor_binding.py``
+        # + ``tests/security/race_conditions/test_ownership_transfer_race.py``).
         lazy="selectin",
     )
     members: Mapped[list[ProjectMember]] = relationship(
