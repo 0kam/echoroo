@@ -155,7 +155,7 @@ async def update_project_license(
         db=db,
     )
 
-    before_license = project.license.value if project.license else None
+    before_license = project.license
     history_row = await change_license(
         session=db,
         project_id=project.id,
@@ -183,10 +183,10 @@ async def update_project_license(
             detail={
                 "history_id": str(history_row.id),
                 "old_license": before_license,
-                "new_license": payload.license.value,
+                "new_license": payload.license,
             },
             before={"license": before_license},
-            after={"license": payload.license.value},
+            after={"license": payload.license},
         )
     except Exception as exc:  # noqa: BLE001 — audit must never block license mutation
         logger.warning(
@@ -195,7 +195,7 @@ async def update_project_license(
             project.id,
             history_row.id,
             before_license,
-            payload.license.value,
+            payload.license,
             current_user.id,
             exc,
         )

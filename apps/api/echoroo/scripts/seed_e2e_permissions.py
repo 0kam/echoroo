@@ -1250,7 +1250,7 @@ def _project_payload(project: Project, content: ContentFixture) -> dict[str, Any
         "name": project.name,
         "visibility": project.visibility.value,
         "owner_id": str(project.owner_id),
-        "license": project.license.value,
+        "license": project.license,
         "status": project.status.value,
         "site_id": str(content.site.id),
         "dataset_id": str(content.dataset.id),

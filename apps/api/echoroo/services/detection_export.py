@@ -379,7 +379,7 @@ class DetectionExportService:
         # FR-086 metadata loaded once per export.
         project = await self._load_project(project_id)
         license_value = (
-            project.license.value
+            project.license
             if project is not None and project.license is not None
             else ""
         )
@@ -451,7 +451,7 @@ class DetectionExportService:
         )
         project = await self._load_project(project_id)
         license_value = (
-            project.license.value
+            project.license
             if project is not None and project.license is not None
             else ""
         )

@@ -15,7 +15,6 @@ from pydantic import (
 )
 
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,
@@ -157,8 +156,10 @@ class ProjectCreateRequest(BaseModel):
     # default to match ``additionalProperties: false`` + ``required`` in the
     # OpenAPI shape.
     visibility: ProjectVisibility = Field(..., description="Project visibility level")
-    license: ProjectLicense = Field(
+    # Phase 3 will rename this request field to ``license_id``.
+    license: str = Field(
         ...,
+        max_length=50,
         description=(
             "Project data license — required at creation (FR-085). "
             "One of CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
@@ -209,7 +210,8 @@ class ProjectUpdateRequest(BaseModel):
         description="Operator-typed comma-separated focus taxa (optional).",
     )
     visibility: ProjectVisibility | None = Field(None, description="Project visibility level")
-    license: ProjectLicense | None = Field(None, description="Project data license")
+    # Phase 3 will rename this request field to ``license_id``.
+    license: str | None = Field(None, max_length=50, description="Project data license")
     restricted_config: dict[str, Any] | None = Field(
         None,
         description="Restricted visibility capability toggles",
@@ -249,7 +251,7 @@ class ProjectResponse(BaseModel):
         description="Operator-typed comma-separated focus taxa.",
     )
     visibility: ProjectVisibility
-    license: ProjectLicense
+    license: str | None
     restricted_config: dict[str, Any]
     restricted_config_version: int
     status: ProjectStatus
@@ -358,7 +360,7 @@ class ProjectSummary(BaseModel):
     description: str | None
     visibility: ProjectVisibility
     status: ProjectStatus
-    license: ProjectLicense
+    license: str | None
     owner_display_name: str = Field(
         ...,
         description=(
@@ -509,8 +511,10 @@ class ProjectLicenseUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    license: ProjectLicense = Field(
+    # Phase 3 will rename this request field to ``license_id``.
+    license: str = Field(
         ...,
+        max_length=50,
         description=(
             "Target license — required (FR-085). One of "
             "CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
@@ -523,8 +527,8 @@ class ProjectLicenseHistoryEntry(BaseModel):
 
     id: UUID
     project_id: UUID
-    old_license: ProjectLicense | None
-    new_license: ProjectLicense
+    old_license: str | None
+    new_license: str
     changed_at: datetime
     changed_by_id: UUID | None
 

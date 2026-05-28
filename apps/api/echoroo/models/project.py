@@ -27,6 +27,7 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
+    ProjectLicense,
     ProjectMemberRole,
     ProjectStatus,
     ProjectVisibility,
@@ -35,6 +36,18 @@ from echoroo.models.enums import (
 if TYPE_CHECKING:
     from echoroo.models.license import License
     from echoroo.models.user import User
+
+
+LEGACY_LICENSE_SHORT_NAME_TO_ID: dict[str, str] = {
+    ProjectLicense.CC0.value: "cc0",
+    ProjectLicense.CC_BY.value: "cc-by",
+    ProjectLicense.CC_BY_NC.value: "cc-by-nc",
+    ProjectLicense.CC_BY_SA.value: "cc-by-sa",
+}
+LEGACY_LICENSE_ID_TO_SHORT_NAME: dict[str, str] = {
+    license_id: short_name
+    for short_name, license_id in LEGACY_LICENSE_SHORT_NAME_TO_ID.items()
+}
 
 
 class Project(UUIDMixin, TimestampMixin, Base):
@@ -177,9 +190,29 @@ class Project(UUIDMixin, TimestampMixin, Base):
     @property
     def license(self) -> str | None:
         """Backward-compatible read access to the license short name."""
-        if self.license_record is None:
+        if self.license_id is None:
             return None
-        return self.license_record.short_name
+        if (
+            self.license_record is not None
+            and self.license_record.id == self.license_id
+        ):
+            return self.license_record.short_name
+        return LEGACY_LICENSE_ID_TO_SHORT_NAME.get(self.license_id)
+
+    @license.setter
+    def license(self, value: ProjectLicense | str | None) -> None:
+        """Backward-compatible write access for legacy license callers."""
+        if value is None:
+            self.license_id = None
+            return
+
+        short_name = value.value if isinstance(value, ProjectLicense) else value
+        try:
+            license_id = LEGACY_LICENSE_SHORT_NAME_TO_ID[short_name]
+        except KeyError as exc:
+            raise ValueError(f"Unknown project license short_name: {short_name}") from exc
+
+        self.license_id = license_id
 
 
 class ProjectMember(UUIDMixin, TimestampMixin, Base):

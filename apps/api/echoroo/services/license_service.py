@@ -47,10 +47,14 @@ from echoroo.models.enums import ProjectLicense
 from echoroo.models.project import Project, ProjectLicenseHistory
 
 
+def _license_short_name(license: ProjectLicense | str) -> str:
+    return license.value if isinstance(license, ProjectLicense) else license
+
+
 async def record_initial_license(
     session: AsyncSession,
     project_id: UUID,
-    license: ProjectLicense,
+    license: ProjectLicense | str,
     actor_user_id: UUID,
 ) -> ProjectLicenseHistory:
     """Append the initial ``ProjectLicenseHistory`` row for a new project.
@@ -75,7 +79,7 @@ async def record_initial_license(
     history = ProjectLicenseHistory(
         project_id=project_id,
         old_license=None,
-        new_license=license,
+        new_license=_license_short_name(license),
         changed_at=datetime.now(UTC),
         changed_by_id=actor_user_id,
     )
@@ -86,7 +90,7 @@ async def record_initial_license(
 async def change_license(
     session: AsyncSession,
     project_id: UUID,
-    new_license: ProjectLicense,
+    new_license: ProjectLicense | str | None,
     actor_user_id: UUID,
 ) -> ProjectLicenseHistory:
     """Update ``Project.license`` and unconditionally append a history row.
@@ -141,13 +145,17 @@ async def change_license(
     if project is None:
         raise ValueError(f"Project {project_id} not found")
 
+    if new_license is None:
+        raise ValueError("Project license history requires a new license")
+
     old_license = project.license
     project.license = new_license
+    new_license_short_name = _license_short_name(new_license)
 
     history = ProjectLicenseHistory(
         project_id=project_id,
         old_license=old_license,
-        new_license=new_license,
+        new_license=new_license_short_name,
         changed_at=datetime.now(UTC),
         changed_by_id=actor_user_id,
     )
