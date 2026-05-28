@@ -479,13 +479,23 @@ export type ProjectResponse = Project;
  * `visibility` and `license` are both required by the contract
  * (`specs/006-permissions-redesign/contracts/projects.yaml`,
  * `ProjectCreateRequest.required = [name, visibility, license]`).
+ *
+ * spec/012 PR-B (T026): `license` is widened from the legacy
+ * `ProjectLicense` enum to `ProjectLicense | string` because the
+ * project creation form now reads the live `licenses` master and may
+ * surface admin-added licenses (e.g. `CC-BY-ND`) that the enum did not
+ * anticipate. Phase 2 (research §R1 revised) keeps the wire field
+ * `license` carrying the `short_name`; Phase 3 will rename it to
+ * `license_id` (the stable FK identifier). Until that rename lands the
+ * enum union is kept for backwards-compatible call sites that still
+ * narrow on the four canonical values.
  */
 export interface ProjectCreateRequest {
   name: string;
   description?: string;
   target_taxa?: string;
   visibility: ProjectVisibility;
-  license: ProjectLicense;
+  license: ProjectLicense | string;
 }
 
 /**
@@ -496,7 +506,7 @@ export interface ProjectUpdateRequest {
   description?: string;
   target_taxa?: string;
   visibility?: ProjectVisibility;
-  license?: ProjectLicense;
+  license?: ProjectLicense | string;
 }
 
 /**
@@ -527,7 +537,9 @@ export interface ProjectSummary {
   description: string | null;
   visibility: ProjectVisibility;
   status: ProjectStatus;
-  license: ProjectLicense;
+  // spec/012 PR-B: master-driven licenses may include admin-added short_names
+  // (e.g. CC-BY-ND) outside the legacy enum. Match `Project.license` shape.
+  license: ProjectLicense | string;
   /**
    * Public-safe display string for the owner. Falls back to the
    * local-part of the email on the backend so this is **never** the
@@ -964,7 +976,19 @@ export type SetupStatus = SetupStatusResponse;
 // ============================================
 
 /**
- * License entity
+ * License entity.
+ *
+ * Used by BOTH the admin CRUD surface
+ * (`/web-api/v1/admin/licenses/*`, which returns `created_at` /
+ * `updated_at`) AND the public read surface
+ * (`/web-api/v1/licenses` from spec/012 / FR-001 / FR-017, which omits
+ * timestamps because callers populating the project creation dropdown
+ * have no reason to render them).
+ *
+ * Timestamps are therefore declared optional so a single type covers
+ * both responses without forcing the public hook to fabricate
+ * placeholder dates. Admin pages that need the timestamps fall back
+ * gracefully via the `??` operator or by branching on presence.
  */
 export interface License {
   id: string;
@@ -972,8 +996,10 @@ export interface License {
   short_name: string;
   url?: string;
   description?: string;
-  created_at: string;
-  updated_at: string;
+  /** Admin-only — present on `/admin/licenses/*` responses, absent on the public list. */
+  created_at?: string;
+  /** Admin-only — present on `/admin/licenses/*` responses, absent on the public list. */
+  updated_at?: string;
 }
 
 /**
