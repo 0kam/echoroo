@@ -14,7 +14,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Final, cast
+from typing import Any, Final, Literal, cast
 from uuid import UUID
 
 import httpx
@@ -1518,7 +1518,9 @@ def _step_up_no_store_headers(response: Response) -> None:
     response.headers["Referrer-Policy"] = "no-referrer"
 
 
-def _resolve_step_up_factors_required(user: User) -> list[str]:
+def _resolve_step_up_factors_required(
+    user: User,
+) -> list[Literal["password", "totp", "webauthn"]]:
     """Derive ``factors_required`` from the authenticated user's 2FA state.
 
     spec/011 FR-011-206 demands an AND-condition (password + 2FA). The

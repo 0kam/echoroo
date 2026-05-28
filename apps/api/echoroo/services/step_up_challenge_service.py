@@ -45,6 +45,7 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
+from collections.abc import Sequence
 from typing import Final
 from uuid import UUID
 
@@ -91,7 +92,7 @@ async def create_challenge(
     *,
     user_id: UUID,
     scope: str,
-    factors_required: list[str],
+    factors_required: Sequence[str],
     ttl_seconds: int = STEP_UP_CHALLENGE_TTL_SECONDS,
 ) -> tuple[str, datetime]:
     """Mint a fresh challenge record and persist it under the user/scope key.
