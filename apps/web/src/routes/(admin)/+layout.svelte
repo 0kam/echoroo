@@ -105,7 +105,7 @@
       <!-- Left: Logo / brand and navigation links -->
       <div class="flex items-center gap-6">
         <a
-          href={localizeHref('/admin/users')}
+          href={localizeHref('/dashboard')}
           class="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-primary-500 hover:text-primary-600"
         >
           <img src="/echoroo.png" alt="Echoroo" class="h-6 w-auto" />
