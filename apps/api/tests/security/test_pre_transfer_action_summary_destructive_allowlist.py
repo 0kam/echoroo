@@ -98,8 +98,17 @@ async def _ensure_project(session: AsyncSession) -> UUID:
     await session.execute(
         sa.text(
             """
-            INSERT INTO projects (id, name, visibility, license, status, owner_id)
-            VALUES (:id, :name, 'public', 'CC-BY', 'active', :owner_id)
+            INSERT INTO licenses (id, name, short_name, created_at, updated_at)
+            VALUES ('cc-by', 'Creative Commons Attribution', 'CC-BY', now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO projects (id, name, visibility, license_id, status, owner_id)
+            VALUES (:id, :name, 'public', 'cc-by', 'active', :owner_id)
             """
         ),
         {

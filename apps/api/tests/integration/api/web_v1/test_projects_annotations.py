@@ -73,12 +73,21 @@ async def _seed_restricted_project_raw(db: AsyncSession, owner_id: object) -> ob
     await db.execute(
         sa.text(
             """
+            INSERT INTO licenses (id, name, short_name, created_at, updated_at)
+            VALUES ('cc-by', 'Creative Commons Attribution', 'CC-BY', now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
+    await db.execute(
+        sa.text(
+            """
             INSERT INTO projects (
                 id,
                 name,
                 description,
                 visibility,
-                license,
+                license_id,
                 owner_id,
                 status,
                 restricted_config,
@@ -90,7 +99,7 @@ async def _seed_restricted_project_raw(db: AsyncSession, owner_id: object) -> ob
                 :name,
                 :description,
                 'restricted',
-                'CC-BY',
+                'cc-by',
                 :owner_id,
                 'active',
                 CAST(:restricted_config AS jsonb),

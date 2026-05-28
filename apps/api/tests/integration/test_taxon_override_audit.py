@@ -210,10 +210,19 @@ async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid
     await session.execute(
         sa.text(
             """
+            INSERT INTO licenses (id, name, short_name, created_at, updated_at)
+            VALUES ('cc-by', 'Creative Commons Attribution', 'CC-BY', now(), now())
+            ON CONFLICT (id) DO NOTHING
+            """
+        )
+    )
+    await session.execute(
+        sa.text(
+            """
             INSERT INTO projects (id, name, description, visibility,
-                                 license, owner_id, status,
+                                 license_id, owner_id, status,
                                  restricted_config, created_at, updated_at)
-            VALUES (:id, :name, :desc, 'restricted', 'CC-BY', :owner_id,
+            VALUES (:id, :name, :desc, 'restricted', 'cc-by', :owner_id,
                     'active', CAST(:cfg AS JSONB), NOW(), NOW())
             """
         ),
