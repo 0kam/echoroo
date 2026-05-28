@@ -12,14 +12,35 @@ the wire contract this module implements.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
+from echoroo.models.user import User
 from echoroo.schemas.license import LicensePublicListResponse
 from echoroo.services.license import LicenseService
 
 router = APIRouter(prefix="/licenses", tags=["licenses"])
+
+
+def _require_authenticated(current_user: User | None) -> User:
+    """Return the authenticated caller or raise 401.
+
+    spec/012 FR-017 / spec/007 guard contract: the lint
+    (``scripts/lint_permission_guard.py``) requires every non-allowlisted
+    path operation to invoke a canonical guard helper inside its body.
+    ``_require_authenticated`` is the spec/007-sanctioned helper for
+    surfaces whose semantics collapse to "any authenticated caller"
+    (no project context exists). Mirrors the pattern used by
+    ``apps/api/echoroo/api/web_v1/taxa.py`` and
+    ``apps/api/echoroo/api/web_v1/account/dsr.py``.
+    """
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+        )
+    return current_user
 
 
 @router.get(
@@ -43,9 +64,10 @@ router = APIRouter(prefix="/licenses", tags=["licenses"])
 )
 async def list_public_licenses(
     db: DbSession,
-    current_user: CurrentUser,  # noqa: ARG001 — auth enforced by dependency
+    current_user: CurrentUser,
 ) -> LicensePublicListResponse:
     """Return the public license list."""
+    _require_authenticated(current_user)
     service = LicenseService(db)
     return await service.list_public()
 
