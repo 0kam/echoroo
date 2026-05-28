@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 
 try:
     from testcontainers.postgres import PostgresContainer
@@ -43,6 +44,11 @@ PROJECT_IDS = {
     "CC-BY-SA": "00000000-0000-0000-0000-000000000204",
 }
 HISTORY_ID = "00000000-0000-0000-0000-000000000301"
+HISTORY_CHANGE_ID = "00000000-0000-0000-0000-000000000302"
+SITE_ID = "00000000-0000-0000-0000-000000000401"
+CUSTOM_CC0_ID = "public-domain-custom"
+DATASET_ONLY_LICENSE_ID = "dataset-only-license"
+CANONICAL_LICENSE_IDS = ("cc0", "cc-by", "cc-by-nc", "cc-by-sa")
 
 
 @pytest.fixture()
@@ -167,6 +173,40 @@ def _column_type(url: str, table_name: str, column_name: str) -> str:
         engine.dispose()
 
 
+def _column_udt_name(url: str, table_name: str, column_name: str) -> str:
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            return conn.execute(
+                sa.text(
+                    "SELECT udt_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' "
+                    "AND table_name = :table_name "
+                    "AND column_name = :column_name"
+                ),
+                {"table_name": table_name, "column_name": column_name},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def _constraint_exists(url: str, constraint_name: str) -> bool:
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            return (
+                conn.execute(
+                    sa.text(
+                        "SELECT 1 FROM pg_constraint WHERE conname = :constraint_name"
+                    ),
+                    {"constraint_name": constraint_name},
+                ).scalar()
+                is not None
+            )
+    finally:
+        engine.dispose()
+
+
 def _constraint_delete_action(url: str, constraint_name: str) -> str:
     engine = _engine(url)
     try:
@@ -178,6 +218,45 @@ def _constraint_delete_action(url: str, constraint_name: str) -> str:
                 ),
                 {"constraint_name": constraint_name},
             ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def _fk_details(url: str, constraint_name: str) -> dict[str, object]:
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                sa.text(
+                    """
+                    SELECT
+                        c.conname,
+                        c.conrelid::regclass::text AS conrelid,
+                        c.confrelid::regclass::text AS confrelid,
+                        c.confdeltype,
+                        ARRAY(
+                            SELECT a.attname
+                            FROM unnest(c.conkey) WITH ORDINALITY AS key(attnum, ord)
+                            JOIN pg_attribute a
+                              ON a.attrelid = c.conrelid
+                             AND a.attnum = key.attnum
+                            ORDER BY key.ord
+                        ) AS conkey,
+                        ARRAY(
+                            SELECT a.attname
+                            FROM unnest(c.confkey) WITH ORDINALITY AS key(attnum, ord)
+                            JOIN pg_attribute a
+                              ON a.attrelid = c.confrelid
+                             AND a.attnum = key.attnum
+                            ORDER BY key.ord
+                        ) AS confkey
+                    FROM pg_constraint c
+                    WHERE c.conname = :constraint_name
+                    """
+                ),
+                {"constraint_name": constraint_name},
+            ).mappings().one()
+            return dict(row)
     finally:
         engine.dispose()
 
@@ -196,6 +275,40 @@ def _index_exists(url: str, index_name: str) -> bool:
                 ).scalar()
                 is not None
             )
+    finally:
+        engine.dispose()
+
+
+def _license_row_count(url: str, short_name: str) -> int:
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            return conn.execute(
+                sa.text("SELECT count(*) FROM licenses WHERE short_name = :short_name"),
+                {"short_name": short_name},
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+
+def _canonical_license_id_counts(url: str) -> dict[str, int]:
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    """
+                    SELECT id, count(*) AS row_count
+                    FROM licenses
+                    WHERE id IN :license_ids
+                    GROUP BY id
+                    """
+                ).bindparams(sa.bindparam("license_ids", expanding=True)),
+                {"license_ids": CANONICAL_LICENSE_IDS},
+            )
+            counts = {license_id: 0 for license_id in CANONICAL_LICENSE_IDS}
+            counts.update({row.id: row.row_count for row in rows})
+            return counts
     finally:
         engine.dispose()
 
@@ -281,17 +394,69 @@ def _seed_projects_and_history(url: str) -> None:
             conn.execute(
                 sa.text(
                     """
+                    INSERT INTO project_license_history (
+                        id, project_id, old_license, new_license, changed_at,
+                        changed_by_id, created_at, updated_at
+                    )
+                    VALUES (
+                        :id, :project_id, CAST('CC0' AS projectlicense),
+                        CAST('CC-BY' AS projectlicense), now(), :changed_by_id,
+                        now(), now()
+                    )
+                    """
+                ),
+                {
+                    "id": HISTORY_CHANGE_ID,
+                    "project_id": PROJECT_IDS["CC0"],
+                    "changed_by_id": OWNER_ID,
+                },
+            )
+            conn.execute(
+                sa.text(
+                    """
                     INSERT INTO licenses (
                         id, name, short_name, url, description,
                         created_at, updated_at
                     )
                     VALUES (
-                        'cc0', 'Admin Curated CC0', 'CC0',
+                        :id, 'Admin Curated CC0', 'CC0',
                         'https://example.com/admin-cc0', 'Preserve me',
                         now(), now()
                     )
                     """
-                )
+                ),
+                {"id": CUSTOM_CC0_ID},
+            )
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO sites (
+                        id, project_id, name, h3_index_member,
+                        h3_index_member_resolution, created_at, updated_at
+                    )
+                    VALUES (
+                        :site_id, :project_id, 'Migration Site',
+                        '872830828ffffff', 7, now(), now()
+                    )
+                    """
+                ),
+                {"site_id": SITE_ID, "project_id": PROJECT_IDS["CC0"]},
+            )
+            conn.execute(
+                sa.text(
+                    """
+                    INSERT INTO licenses (
+                        id, name, short_name, url, description,
+                        created_at, updated_at
+                    )
+                    VALUES (
+                        :id, 'Dataset Only License', 'DATASET-ONLY',
+                        'https://example.com/dataset-only', 'Dataset FK target',
+                        now(), now()
+                    )
+                    """
+                ),
+                {"id": DATASET_ONLY_LICENSE_ID},
             )
             conn.execute(
                 sa.text(
@@ -302,13 +467,16 @@ def _seed_projects_and_history(url: str) -> None:
                         processed_files, created_at, updated_at
                     )
                     SELECT
-                        'Dataset with CC0', sites.id, :project_id, :owner_id,
-                        'cc0', 'private', 'pending', 0, 0, now(), now()
-                    FROM sites
-                    LIMIT 1
+                        'Dataset with CC0', :site_id, :project_id, :owner_id,
+                        :license_id, 'private', 'pending', 0, 0, now(), now()
                     """
                 ),
-                {"project_id": PROJECT_IDS["CC0"], "owner_id": OWNER_ID},
+                {
+                    "site_id": SITE_ID,
+                    "project_id": PROJECT_IDS["CC0"],
+                    "owner_id": OWNER_ID,
+                    "license_id": DATASET_ONLY_LICENSE_ID,
+                },
             )
     finally:
         engine.dispose()
@@ -445,6 +613,29 @@ def _project_license_ids(url: str) -> dict[str, str | None]:
         engine.dispose()
 
 
+def _assert_pre_0024_schema_invariants(
+    url: str, canonical_id_counts_before: dict[str, int]
+) -> None:
+    assert _alembic_version(url) == PREVIOUS_REVISION
+    assert _constraint_exists(url, "uq_licenses_short_name") is False
+    assert _canonical_license_id_counts(url) == canonical_id_counts_before
+    assert "license" in _columns(url, "projects")
+    assert "license_id" not in _columns(url, "projects")
+    assert _index_exists(url, "ix_projects_license_id") is False
+    assert _constraint_exists(url, "projects_license_id_fkey") is False
+    assert _column_type(url, "project_license_history", "old_license") == "USER-DEFINED"
+    assert _column_type(url, "project_license_history", "new_license") == "USER-DEFINED"
+    assert _column_udt_name(url, "project_license_history", "old_license") == "projectlicense"
+    assert _column_udt_name(url, "project_license_history", "new_license") == "projectlicense"
+
+    dataset_fk = _fk_details(url, "fk_datasets_license_id")
+    assert dataset_fk["conrelid"] == "datasets"
+    assert dataset_fk["confrelid"] == "licenses"
+    assert dataset_fk["conkey"] == ["license_id"]
+    assert dataset_fk["confkey"] == ["id"]
+    assert dataset_fk["confdeltype"] == "n"
+
+
 def test_0024_happy_path_seeds_maps_and_rewrites_schema(
     pg_container: PostgresContainer,
 ) -> None:
@@ -455,13 +646,13 @@ def test_0024_happy_path_seeds_maps_and_rewrites_schema(
     _alembic_upgrade(url, TARGET_REVISION)
 
     license_rows = _license_rows(url)
-    assert license_rows["CC0"] == ("cc0", "Admin Curated CC0")
+    assert license_rows["CC0"] == (CUSTOM_CC0_ID, "Admin Curated CC0")
     assert license_rows["CC-BY"][0] == "cc-by"
     assert license_rows["CC-BY-NC"][0] == "cc-by-nc"
     assert license_rows["CC-BY-SA"][0] == "cc-by-sa"
 
     project_license_ids = _project_license_ids(url)
-    assert project_license_ids[PROJECT_IDS["CC0"]] == "cc0"
+    assert project_license_ids[PROJECT_IDS["CC0"]] == CUSTOM_CC0_ID
     assert project_license_ids[PROJECT_IDS["CC-BY"]] == "cc-by"
     assert project_license_ids[PROJECT_IDS["CC-BY-NC"]] == "cc-by-nc"
     assert project_license_ids[PROJECT_IDS["CC-BY-SA"]] == "cc-by-sa"
@@ -470,9 +661,30 @@ def test_0024_happy_path_seeds_maps_and_rewrites_schema(
     assert "license" not in project_columns
     assert "license_id" in project_columns
 
-    assert _constraint_delete_action(url, "projects_license_id_fkey") == "r"
+    project_fk = _fk_details(url, "projects_license_id_fkey")
+    assert project_fk["conrelid"] == "projects"
+    assert project_fk["confrelid"] == "licenses"
+    assert project_fk["conkey"] == ["license_id"]
+    assert project_fk["confkey"] == ["id"]
+    assert project_fk["confdeltype"] == "r"
     assert _index_exists(url, "ix_projects_license_id")
-    assert _constraint_delete_action(url, "fk_datasets_license_id") == "r"
+    dataset_fk = _fk_details(url, "fk_datasets_license_id")
+    assert dataset_fk["conrelid"] == "datasets"
+    assert dataset_fk["confrelid"] == "licenses"
+    assert dataset_fk["conkey"] == ["license_id"]
+    assert dataset_fk["confkey"] == ["id"]
+    assert dataset_fk["confdeltype"] == "r"
+
+    engine = _engine(url)
+    try:
+        with engine.connect() as conn:
+            with pytest.raises(IntegrityError):
+                conn.execute(
+                    sa.text("DELETE FROM licenses WHERE id = :license_id"),
+                    {"license_id": DATASET_ONLY_LICENSE_ID},
+                )
+    finally:
+        engine.dispose()
 
     assert _column_type(url, "project_license_history", "old_license") == "character varying"
     assert _column_type(url, "project_license_history", "new_license") == "character varying"
@@ -486,16 +698,13 @@ def test_0024_rejects_unknown_project_license_without_schema_changes(
     _alembic_upgrade(url, PREVIOUS_REVISION)
     _add_unknown_enum_value(url, "PUBLIC-DOMAIN")
     _inject_unknown_project_license(url, "PUBLIC-DOMAIN")
+    canonical_id_counts_before = _canonical_license_id_counts(url)
 
     error = _alembic_upgrade_expect_failure(url, TARGET_REVISION)
 
     assert "projects.license" in error
     assert "PUBLIC-DOMAIN" in error
-    assert _alembic_version(url) == PREVIOUS_REVISION
-    assert "license" in _columns(url, "projects")
-    assert "license_id" not in _columns(url, "projects")
-    assert _column_type(url, "project_license_history", "new_license") == "USER-DEFINED"
-    assert _constraint_delete_action(url, "fk_datasets_license_id") == "n"
+    _assert_pre_0024_schema_invariants(url, canonical_id_counts_before)
 
 
 def test_0024_rejects_unknown_history_license_without_schema_changes(
@@ -505,17 +714,13 @@ def test_0024_rejects_unknown_history_license_without_schema_changes(
     _alembic_upgrade(url, PREVIOUS_REVISION)
     _add_unknown_enum_value(url, "CC-BY-ND")
     _inject_unknown_history_license(url, "CC-BY-ND")
+    canonical_id_counts_before = _canonical_license_id_counts(url)
 
     error = _alembic_upgrade_expect_failure(url, TARGET_REVISION)
 
     assert "project_license_history.new_license" in error
     assert "CC-BY-ND" in error
-    assert _alembic_version(url) == PREVIOUS_REVISION
-    assert "license" in _columns(url, "projects")
-    assert "license_id" not in _columns(url, "projects")
-    assert _column_type(url, "project_license_history", "old_license") == "USER-DEFINED"
-    assert _column_type(url, "project_license_history", "new_license") == "USER-DEFINED"
-    assert _constraint_delete_action(url, "fk_datasets_license_id") == "n"
+    _assert_pre_0024_schema_invariants(url, canonical_id_counts_before)
 
 
 def test_0024_preserves_license_history_snapshot_values(
@@ -530,18 +735,24 @@ def test_0024_preserves_license_history_snapshot_values(
     engine = _engine(url)
     try:
         with engine.connect() as conn:
-            row = conn.execute(
-                sa.text(
-                    """
-                    SELECT old_license, new_license
-                    FROM project_license_history
-                    WHERE id = :history_id
-                    """
-                ),
-                {"history_id": HISTORY_ID},
-            ).one()
+            rows = {
+                str(row.id): (row.old_license, row.new_license)
+                for row in conn.execute(
+                    sa.text(
+                        """
+                        SELECT id, old_license, new_license
+                        FROM project_license_history
+                        WHERE id IN (:null_history_id, :change_history_id)
+                        """
+                    ),
+                    {
+                        "null_history_id": HISTORY_ID,
+                        "change_history_id": HISTORY_CHANGE_ID,
+                    },
+                )
+            }
     finally:
         engine.dispose()
 
-    assert row.old_license is None
-    assert row.new_license == "CC-BY"
+    assert rows[HISTORY_ID] == (None, "CC-BY")
+    assert rows[HISTORY_CHANGE_ID] == ("CC0", "CC-BY")

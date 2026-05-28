@@ -37,5 +37,12 @@ def _load_migration() -> ModuleType:
 def test_downgrade_raises_not_implemented() -> None:
     module = _load_migration()
 
-    with pytest.raises(NotImplementedError, match="forward-only"):
+    with pytest.raises(NotImplementedError, match="spec/012 A-005"):
+        module.downgrade()
+
+
+def test_downgrade_message_directs_restore_from_backup() -> None:
+    module = _load_migration()
+
+    with pytest.raises(NotImplementedError, match="restore from backup"):
         module.downgrade()

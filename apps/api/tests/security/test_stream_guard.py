@@ -25,13 +25,16 @@ which uses module-level monkeypatching.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import inspect
+import io
 import os
 import secrets
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -932,6 +935,59 @@ async def test_export_csv_back_compat_signature_preserved(
     assert isinstance(csv_text, str)
     assert "observationID" in csv_text
     assert stream_guard.SENTINEL_BYTES.decode("utf-8", errors="ignore") not in csv_text
+
+
+@pytest.mark.asyncio
+async def test_export_csv_writes_project_license_short_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CSV exports use the project license short_name string."""
+    from echoroo.services import detection_export as export_module
+
+    service = export_module.DetectionExportService.__new__(  # type: ignore[call-arg]
+        export_module.DetectionExportService
+    )
+    service.db = AsyncMock()  # type: ignore[attr-defined]
+    project_id = uuid.uuid4()
+    annotation_id = uuid.uuid4()
+
+    async def _fake_fetch(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return [
+            SimpleNamespace(
+                id=annotation_id,
+                recording=None,
+                recording_id=None,
+                tag=None,
+                detection_run=None,
+                reviewed_by=None,
+                reviewed_at=None,
+                created_at=None,
+                source=None,
+                start_time=0.0,
+                end_time=1.0,
+                freq_low=None,
+                freq_high=None,
+                confidence=None,
+            )
+        ]
+
+    async def _fake_load_project(*_a: Any, **_k: Any) -> Any:
+        return SimpleNamespace(
+            license="CC-BY",
+            visibility=ProjectVisibility.PUBLIC,
+            restricted_config={},
+        )
+
+    async def _fake_h3_map(*_a: Any, **_k: Any) -> dict[Any, Any]:
+        return {}
+
+    monkeypatch.setattr(service, "_fetch_annotations_for_export", _fake_fetch)
+    monkeypatch.setattr(service, "_load_project", _fake_load_project)
+    monkeypatch.setattr(service, "_build_recording_h3_resolution_map", _fake_h3_map)
+
+    csv_text = await service.export_csv(project_id)
+    rows = list(csv.DictReader(io.StringIO(csv_text)))
+    assert rows[0]["license"] == "CC-BY"
 
 
 # ---------------------------------------------------------------------------
