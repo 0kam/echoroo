@@ -249,9 +249,14 @@
   }
 
   /**
-   * Format date
+   * Format date. Accepts `undefined` because the shared `License` type
+   * (spec/012 T026) marks `created_at` / `updated_at` as optional so it
+   * covers BOTH the admin response (with timestamps) and the public list
+   * (without). The admin endpoint always returns timestamps, but the
+   * type widening means we need to handle the undefined case here.
    */
-  function formatDate(dateString: string): string {
+  function formatDate(dateString: string | undefined): string {
+    if (!dateString) return '-';
     return new Date(dateString).toLocaleString(getLocale());
   }
 
