@@ -12,6 +12,7 @@ from echoroo.api.web_v1 import audit as audit_module
 from echoroo.api.web_v1 import auth as auth_module
 from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_module
 from echoroo.api.web_v1 import detection_runs as detection_runs_module
+from echoroo.api.web_v1 import licenses as licenses_module
 from echoroo.api.web_v1 import taxa as taxa_module
 from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
@@ -68,5 +69,11 @@ web_v1_router.include_router(admin_users_module.router)
 web_v1_router.include_router(admin_settings_module.router)
 web_v1_router.include_router(admin_recorders_module.router)
 web_v1_router.include_router(admin_licenses_module.router)
+# spec/012 — public license list (FR-001/FR-002/FR-017). Cookie/CSRF
+# mirror of ``GET /api/v1/licenses`` consumed by the project-creation
+# form. Mounted AFTER ``admin_licenses_module`` so the
+# ``/admin/licenses`` paths declared on the admin router keep priority
+# over the bare ``/licenses`` prefix declared here.
+web_v1_router.include_router(licenses_module.router)
 
 __all__ = ["web_v1_router"]

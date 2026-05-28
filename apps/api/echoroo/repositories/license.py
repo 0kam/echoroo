@@ -39,6 +39,17 @@ class LicenseRepository:
         result = await self.db.execute(select(License).order_by(License.short_name))
         return list(result.scalars().all())
 
+    async def list_all(self) -> list[License]:
+        """Return every license ordered by ``short_name`` ascending.
+
+        spec/012 alias for :meth:`get_all`. The public list endpoint
+        (``GET /api/v1/licenses`` + ``GET /web-api/v1/licenses``)
+        depends on the ASC ordering so the UI dropdown is stable across
+        requests; see ``specs/012-license-master-unification/contracts/
+        web-licenses.yaml`` for the contract.
+        """
+        return await self.get_all()
+
     async def create(self, data: LicenseCreate) -> License:
         """Create a new license.
 

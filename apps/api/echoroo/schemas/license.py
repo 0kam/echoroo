@@ -43,3 +43,35 @@ class LicenseListResponse(BaseModel):
     """License list response schema."""
 
     items: list[LicenseResponse] = Field(..., description="List of licenses")
+
+
+# ---------------------------------------------------------------------------
+# spec/012 — public license list (FR-001 / FR-002 / FR-017)
+# ---------------------------------------------------------------------------
+#
+# The public read endpoints exposed at ``GET /api/v1/licenses`` and
+# ``GET /web-api/v1/licenses`` return only the operator-curated fields
+# any authenticated caller needs to populate the project creation form.
+# Timestamps (``created_at`` / ``updated_at``) are deliberately omitted so
+# this surface is a strict subset of the admin :class:`LicenseResponse` —
+# matching the contract YAML at ``specs/012-license-master-unification/
+# contracts/{web-,}licenses.yaml``.
+
+
+class LicensePublicResponse(LicenseBase):
+    """License row as seen by any authenticated caller (spec/012)."""
+
+    model_config = {"from_attributes": True}
+
+
+class LicensePublicListResponse(BaseModel):
+    """Public license list payload (spec/012 FR-001 / FR-002 / FR-017)."""
+
+    items: list[LicensePublicResponse] = Field(
+        ...,
+        description=(
+            "Licenses ordered by ``short_name`` ascending. Empty when the "
+            "operator has not created any rows yet — FR-017 callers MUST "
+            "render an actionable empty state."
+        ),
+    )

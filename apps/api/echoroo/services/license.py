@@ -8,6 +8,8 @@ from echoroo.repositories.license import LicenseRepository
 from echoroo.schemas.license import (
     LicenseCreate,
     LicenseListResponse,
+    LicensePublicListResponse,
+    LicensePublicResponse,
     LicenseResponse,
     LicenseUpdate,
 )
@@ -34,6 +36,20 @@ class LicenseService:
         licenses = await self.repo.get_all()
         items = [LicenseResponse.model_validate(license) for license in licenses]
         return LicenseListResponse(items=items)
+
+    async def list_public(self) -> LicensePublicListResponse:
+        """Return the public license list (spec/012 FR-001/FR-002/FR-017).
+
+        Delegates to :meth:`LicenseRepository.list_all` so the rows are
+        ordered by ``short_name`` ascending. The wire shape is the
+        :class:`LicensePublicResponse` subset (no timestamps) — see
+        ``specs/012-license-master-unification/contracts/web-licenses.yaml``.
+        FR-017 makes this readable by ANY authenticated caller (the
+        endpoint layer enforces the auth, not this method).
+        """
+        licenses = await self.repo.list_all()
+        items = [LicensePublicResponse.model_validate(lic) for lic in licenses]
+        return LicensePublicListResponse(items=items)
 
     async def get_license(self, license_id: str) -> LicenseResponse:
         """Get a license by ID.

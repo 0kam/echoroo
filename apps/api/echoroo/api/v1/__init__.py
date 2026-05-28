@@ -17,6 +17,7 @@ from echoroo.api.v1 import (
     detection_runs,
     detections,
     h3,
+    licenses,
     projects,
     recorders,
     recordings,
@@ -52,6 +53,12 @@ api_router.include_router(annotation_projects.router)
 api_router.include_router(annotation_tasks.router)
 api_router.include_router(annotations.router)
 api_router.include_router(admin.router)
+# spec/012 — public license list (FR-001/FR-002/FR-017). Bearer surface
+# mirroring ``echoroo.api.web_v1.licenses``. Any authenticated caller
+# may read; not gated to admins. Mounted AFTER ``admin.router`` so the
+# ``/admin/licenses`` paths defined inside admin.py keep priority over
+# the bare ``/licenses`` prefix declared here.
+api_router.include_router(licenses.router)
 # Detection review routers (003-detection-review)
 api_router.include_router(detections.router)
 api_router.include_router(confirmed_regions.router)
