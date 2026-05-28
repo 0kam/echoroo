@@ -11,8 +11,8 @@ truth for project license assignment:
 2. Add a unique constraint on ``licenses.short_name``.
 3. Seed the four canonical Creative Commons rows by ``short_name``.
 4. Add nullable ``projects.license_id``.
-5. Backfill it from the legacy ``projects.license`` enum via the documented
-   deterministic map ``_LICENSE_ID_FOR_ENUM``.
+5. Backfill it from the legacy ``projects.license`` enum by joining
+   ``licenses.short_name``.
 6. Add ``projects_license_id_fkey`` with ``ON DELETE RESTRICT`` and an
    explicit ``ix_projects_license_id`` index.
 7. Drop the legacy ``projects.license`` column.
@@ -37,6 +37,8 @@ branch_labels: str | tuple[str, ...] | None = None
 depends_on: str | tuple[str, ...] | None = None
 
 
+# Audit allow-list for legacy enum values. Do not use these ids for backfill:
+# admin-curated license rows may preserve a canonical short_name under a custom id.
 _LICENSE_ID_FOR_ENUM: dict[str, str] = {
     "CC0": "cc0",
     "CC-BY": "cc-by",
@@ -153,47 +155,99 @@ def _seed_canonical_licenses() -> None:
 
 
 def _backfill_project_license_ids() -> None:
+    bind = op.get_bind()
     op.execute(
         """
         UPDATE projects
-        SET license_id = CASE license::text
-            WHEN 'CC0' THEN 'cc0'
-            WHEN 'CC-BY' THEN 'cc-by'
-            WHEN 'CC-BY-NC' THEN 'cc-by-nc'
-            WHEN 'CC-BY-SA' THEN 'cc-by-sa'
-        END
-        WHERE license IS NOT NULL;
+        SET license_id = licenses.id
+        FROM licenses
+        WHERE projects.license IS NOT NULL
+        AND licenses.short_name = projects.license::text;
         """
     )
+    unmapped_count = bind.execute(
+        sa.text(
+            """
+            SELECT count(*)
+            FROM projects
+            WHERE license IS NOT NULL
+            AND license_id IS NULL
+            """
+        )
+    ).scalar_one()
+    if unmapped_count:
+        raise ValueError(
+            "Migration 0024 failed to backfill projects.license_id for "
+            f"{unmapped_count} project(s) with non-null legacy license."
+        )
 
 
 def _replace_datasets_license_fk() -> None:
     op.execute(
         """
         DO $$
+        DECLARE
+            constraint_name text;
         BEGIN
             IF EXISTS (
                 SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'fk_datasets_license_id'
+                FROM pg_constraint c
+                WHERE c.conname IN ('fk_datasets_license_id', 'datasets_license_id_fkey')
+                AND c.conrelid = 'datasets'::regclass
+                AND c.confrelid = 'licenses'::regclass
+                AND c.contype = 'f'
+                AND c.conkey @> ARRAY[
+                    (
+                        SELECT a.attnum
+                        FROM pg_attribute a
+                        WHERE a.attrelid = 'datasets'::regclass
+                        AND a.attname = 'license_id'
+                    )
+                ]::smallint[]
             ) THEN
-                ALTER TABLE datasets
-                    DROP CONSTRAINT fk_datasets_license_id;
-            END IF;
-
-            IF EXISTS (
-                SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'datasets_license_id_fkey'
-            ) THEN
-                ALTER TABLE datasets
-                    DROP CONSTRAINT datasets_license_id_fkey;
+                FOR constraint_name IN
+                    SELECT c.conname
+                    FROM pg_constraint c
+                    WHERE c.conname IN ('fk_datasets_license_id', 'datasets_license_id_fkey')
+                    AND c.conrelid = 'datasets'::regclass
+                    AND c.confrelid = 'licenses'::regclass
+                    AND c.contype = 'f'
+                    AND c.conkey @> ARRAY[
+                        (
+                            SELECT a.attnum
+                            FROM pg_attribute a
+                            WHERE a.attrelid = 'datasets'::regclass
+                            AND a.attname = 'license_id'
+                        )
+                    ]::smallint[]
+                LOOP
+                    EXECUTE format('ALTER TABLE datasets DROP CONSTRAINT %I', constraint_name);
+                END LOOP;
             END IF;
 
             IF NOT EXISTS (
                 SELECT 1
-                FROM pg_constraint
-                WHERE conname = 'fk_datasets_license_id'
+                FROM pg_constraint c
+                WHERE c.conname = 'fk_datasets_license_id'
+                AND c.conrelid = 'datasets'::regclass
+                AND c.confrelid = 'licenses'::regclass
+                AND c.contype = 'f'
+                AND c.conkey @> ARRAY[
+                    (
+                        SELECT a.attnum
+                        FROM pg_attribute a
+                        WHERE a.attrelid = 'datasets'::regclass
+                        AND a.attname = 'license_id'
+                    )
+                ]::smallint[]
+                AND c.confkey @> ARRAY[
+                    (
+                        SELECT a.attnum
+                        FROM pg_attribute a
+                        WHERE a.attrelid = 'licenses'::regclass
+                        AND a.attname = 'id'
+                    )
+                ]::smallint[]
             ) THEN
                 ALTER TABLE datasets
                     ADD CONSTRAINT fk_datasets_license_id
