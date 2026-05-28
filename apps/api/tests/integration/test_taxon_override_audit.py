@@ -188,9 +188,10 @@ async def _create_user(session: AsyncSession, *, email: str) -> uuid.UUID:
 async def _create_project(session: AsyncSession, *, owner_id: uuid.UUID) -> uuid.UUID:
     """Insert a minimal ``projects`` row and return its id.
 
-    The baseline schema marks ``visibility`` and ``license`` as
-    ``NOT NULL`` enums; we set them to legitimate values that the
-    permissions code does not touch in this test.
+    The baseline schema marks ``visibility`` as a NOT NULL enum and,
+    since spec/012 Phase 2, stores project license state through the
+    ``licenses.id`` foreign key. We set both to legitimate values that
+    the permissions code does not touch in this test.
     """
     project_id = uuid.uuid4()
     # ck_projects_restricted_config_shape (apps/api/echoroo/models/project.py)
