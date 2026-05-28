@@ -138,7 +138,7 @@ class Project(UUIDMixin, TimestampMixin, Base):
     )
     license_record: Mapped[License | None] = relationship(
         "License",
-        lazy="joined",
+        lazy="selectin",
     )
     members: Mapped[list[ProjectMember]] = relationship(
         "ProjectMember",
