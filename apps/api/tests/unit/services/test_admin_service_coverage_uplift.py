@@ -48,7 +48,13 @@ def test_raise_phase4_stub_raises_501() -> None:
 
 @pytest.mark.asyncio
 async def test_list_users_paginates_and_wraps_response() -> None:
-    """list_users() delegates pagination to UserRepository and wraps the response (PR 7 un-stub)."""
+    """list_users() delegates pagination to UserRepository and wraps the response.
+
+    spec/009 follow-up: the repo now returns ``(User, is_superuser)`` tuples
+    and the service surfaces ``is_superuser`` on every list item so the
+    admin UI can render the "Superuser" role badge without a second
+    round-trip per row.
+    """
     user_row = MagicMock()
     user_row.id = uuid4()
     user_row.email = "u@example.com"
@@ -58,11 +64,12 @@ async def test_list_users_paginates_and_wraps_response() -> None:
     user_row.last_login_at = None
     user_row.two_factor_enabled = False
     user_row.must_change_password = False
-    user_row.is_superuser = False
 
     db = MagicMock()
     service = AdminService(db)
-    service.user_repo.list_users = AsyncMock(return_value=([user_row], 1))  # type: ignore[method-assign]
+    service.user_repo.list_users = AsyncMock(  # type: ignore[method-assign]
+        return_value=([(user_row, True)], 1)
+    )
 
     out = await service.list_users(page=2, limit=10, search="abc", is_active=True)
 
@@ -73,6 +80,8 @@ async def test_list_users_paginates_and_wraps_response() -> None:
     assert out.page == 2
     assert out.limit == 10
     assert len(out.items) == 1
+    assert out.items[0].is_superuser is True
+    assert out.items[0].email == "u@example.com"
 
 
 @pytest.mark.asyncio

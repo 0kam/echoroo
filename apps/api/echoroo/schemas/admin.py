@@ -13,7 +13,6 @@ from echoroo.core.operator_pii_detector import (
     reject_if_pii,
 )
 from echoroo.models.enums import ProjectMemberRole
-from echoroo.schemas.auth import UserResponse
 
 
 def _validate_cidr_list(value: list[str]) -> list[str]:
@@ -41,10 +40,43 @@ def _validate_cidr_list(value: list[str]) -> list[str]:
     return validated
 
 
+class AdminUserListItem(BaseModel):
+    """Single row for the admin users list view (spec/006 + spec/011).
+
+    Mirrors :class:`echoroo.schemas.auth.UserResponse` and adds
+    ``is_superuser``, which lives in the ``superusers`` entitlement
+    table (FR-111) rather than on the ``users`` row. The flag is true
+    iff the user has an active (``revoked_at IS NULL``) superuser row.
+
+    This schema is deliberately admin-list-only — the generic
+    :class:`UserResponse` is reused by ``/users/me`` and the per-user
+    admin update response, neither of which should receive
+    ``is_superuser`` via this path (``/users/me`` already returns its
+    own derived flag via :class:`WebUserMeResponse`).
+    """
+
+    id: UUID
+    email: str
+    display_name: str | None
+    created_at: datetime
+    last_login_at: datetime | None
+    is_superuser: bool = Field(
+        ...,
+        description=(
+            "True iff the user has an active (non-revoked) row in "
+            "``superusers`` (FR-111). The legacy ``users.is_superuser`` "
+            "column was dropped in spec/006; this is the canonical SU "
+            "indicator for the admin list view."
+        ),
+    )
+
+    model_config = {"from_attributes": True}
+
+
 class AdminUserListResponse(BaseModel):
     """Admin user list response with pagination."""
 
-    items: list[UserResponse] = Field(..., description="List of users")
+    items: list[AdminUserListItem] = Field(..., description="List of users")
     total: int = Field(..., description="Total number of users matching the filters")
     page: int = Field(..., description="Current page number")
     limit: int = Field(..., description="Number of items per page")
