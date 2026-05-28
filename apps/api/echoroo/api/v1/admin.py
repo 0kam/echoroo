@@ -4,6 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 
 from echoroo.core.actions import (
     ADMIN_LICENSE_CREATE_ACTION,
@@ -45,7 +46,7 @@ from echoroo.schemas.recorder import (
     RecorderUpdate,
 )
 from echoroo.services.admin import AdminService
-from echoroo.services.license import LicenseService
+from echoroo.services.license import LicenseInUseError, LicenseService
 from echoroo.services.recorder import RecorderService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -418,18 +419,70 @@ async def update_license(
     return await license_service.update_license(license_id, request)
 
 
+def license_in_use_response(error: LicenseInUseError) -> JSONResponse:
+    """Map :class:`LicenseInUseError` to the spec/012 409 envelope.
+
+    Mirrors ``specs/012-license-master-unification/contracts/
+    admin-licenses-delete.yaml``. Used by BOTH the Bearer
+    (``/api/v1/admin/licenses/{id}``) and BFF
+    (``/web-api/v1/admin/licenses/{id}``) delete handlers — the helper
+    is intentionally module-public so the BFF surface in
+    :mod:`echoroo.api.web_v1._admin_licenses` can reuse the exact same
+    body shape (the wire contract is locked at every customer
+    touch-point).
+    """
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error_code": "license_in_use",
+            "message": (
+                f"License '{error.short_name}' is still in use; "
+                "reassign or remove dependents first"
+            ),
+            "short_name": error.short_name,
+            "project_count": error.project_count,
+            "dataset_count": error.dataset_count,
+        },
+    )
+
+
 @router.delete(
     "/licenses/{license_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete license (superuser only)",
-    description="Delete a content license type.",
+    description=(
+        "Delete a content license type. spec/012 FR-006 / FR-012 / FR-015: "
+        "the operation is refused with 409 when at least one project or "
+        "dataset still references the license; the response body includes "
+        "both dependency counts plus the offending ``short_name`` so the "
+        "admin UI can render an actionable refusal."
+    ),
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "description": "License is still referenced by projects/datasets.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error_code": "license_in_use",
+                        "message": (
+                            "License 'CC-BY' is still in use; reassign or "
+                            "remove dependents first"
+                        ),
+                        "short_name": "CC-BY",
+                        "project_count": 3,
+                        "dataset_count": 7,
+                    }
+                }
+            },
+        }
+    },
 )
 async def delete_license(
     license_id: str,
     request: Request,
     db: DbSession,
     current_user: CurrentSuperuser,
-) -> None:
+) -> JSONResponse | None:
     """Delete a license.
 
     Args:
@@ -441,7 +494,7 @@ async def delete_license(
         401: Not authenticated
         403: Not a superuser
         404: License not found
-        409: License is referenced by other records
+        409: License is referenced by other records (spec/012 FR-015 body).
     """
     _gate_admin_platform_action(
         action=ADMIN_LICENSE_DELETE_ACTION,
@@ -449,7 +502,12 @@ async def delete_license(
         request=request,
     )
     license_service = LicenseService(db)
-    await license_service.delete_license(license_id)
+    try:
+        await license_service.delete_license(license_id)
+    except LicenseInUseError as exc:
+        return license_in_use_response(exc)
+    # 204 (default for the route — FastAPI emits an empty body).
+    return None
 
 
 # Recorder endpoints

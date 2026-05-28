@@ -75,3 +75,44 @@ class LicensePublicListResponse(BaseModel):
             "render an actionable empty state."
         ),
     )
+
+
+class LicenseInUseErrorBody(BaseModel):
+    """409 response body for ``DELETE /admin/licenses/{id}`` (spec/012 FR-015).
+
+    Mirrors :class:`echoroo.services.license.LicenseInUseError` so admin
+    UI consumers receive the offending ``short_name`` plus a per-table
+    dependency count without a second round-trip. At least one of
+    ``project_count`` / ``dataset_count`` MUST be ``>= 1`` (otherwise the
+    DELETE would have succeeded).
+    """
+
+    error_code: str = Field(
+        "license_in_use",
+        description="Stable machine-readable code (always ``license_in_use``).",
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable summary suitable for direct rendering.",
+    )
+    short_name: str = Field(
+        ...,
+        max_length=50,
+        description="The ``short_name`` of the license being refused.",
+    )
+    project_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Projects still referencing the license. May be 0 when only "
+            "datasets depend on it."
+        ),
+    )
+    dataset_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Datasets still referencing the license. May be 0 when only "
+            "projects depend on it."
+        ),
+    )

@@ -1,9 +1,11 @@
 """License repository for database operations."""
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.models.dataset import Dataset
 from echoroo.models.license import License
+from echoroo.models.project import Project
 from echoroo.schemas.license import LicenseCreate, LicenseUpdate
 
 
@@ -49,6 +51,41 @@ class LicenseRepository:
         web-licenses.yaml`` for the contract.
         """
         return await self.get_all()
+
+    async def count_dependents(self, license_id: str) -> tuple[int, int]:
+        """Return ``(project_count, dataset_count)`` for a license.
+
+        spec/012 FR-006 / FR-012 / FR-015 require the admin DELETE
+        handler to surface BOTH counts when refusing a deletion. The two
+        queries are intentionally separate ``SELECT COUNT(*)`` rather
+        than a single UNION / JOIN so each table can use its own
+        ``ix_*_license_id`` index without the query planner falling back
+        to a sequential scan on the larger join shape. The two counts
+        are returned as a tuple to keep the call site noise-free.
+
+        The pair is computed in a single transaction context but two
+        separate statements — concurrent INSERTs between the two
+        ``COUNT(*)`` calls can therefore appear "skewed" by one row in
+        a worst-case race. Callers MUST treat the pair as advisory and
+        rely on the FK ``ON DELETE RESTRICT`` as the authoritative gate
+        (see :func:`echoroo.services.license.LicenseService.delete_license`
+        for the re-count fallback).
+        """
+        project_q = await self.db.execute(
+            select(func.count()).select_from(Project).where(
+                Project.license_id == license_id
+            )
+        )
+        project_count = int(project_q.scalar_one() or 0)
+
+        dataset_q = await self.db.execute(
+            select(func.count()).select_from(Dataset).where(
+                Dataset.license_id == license_id
+            )
+        )
+        dataset_count = int(dataset_q.scalar_one() or 0)
+
+        return project_count, dataset_count
 
     async def create(self, data: LicenseCreate) -> License:
         """Create a new license.
