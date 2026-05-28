@@ -22,13 +22,21 @@ of the same paths lives in ``tests/contract/test_admin_licenses_delete.py``).
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
+from echoroo.models.project import ProjectLicenseHistory
 from echoroo.services.license import LicenseInUseError, LicenseService
+from echoroo.services.license_service import (
+    change_license,
+    list_license_history,
+    record_initial_license,
+    resolve_license_id_for_short_name,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -52,6 +60,22 @@ def _license_row(*, license_id: str, short_name: str, name: str) -> SimpleNamesp
         url=None,
         description=None,
     )
+
+
+def _execute_result(value: object) -> MagicMock:
+    """Return a minimal SQLAlchemy Result-like object for scalar lookups."""
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=value)
+    return result
+
+
+def _scalars_result(values: list[object]) -> MagicMock:
+    """Return a minimal Result-like object for scalars().all() lookups."""
+    scalars = MagicMock()
+    scalars.all = MagicMock(return_value=values)
+    result = MagicMock()
+    result.scalars = MagicMock(return_value=scalars)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +113,133 @@ class TestListPublic:
         response = await service.list_public()
 
         assert response.items == []
+
+
+# ---------------------------------------------------------------------------
+# project license-history helpers in echoroo.services.license_service
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestResolveProjectLicenseId:
+    """Coverage-gate branches for ``resolve_license_id_for_short_name``."""
+
+    async def test_blank_short_name_raises_before_db_hit(self) -> None:
+        session = AsyncMock()
+
+        with pytest.raises(ValueError, match="Project license short_name is required"):
+            await resolve_license_id_for_short_name(session, "   ")
+
+        session.execute.assert_not_awaited()
+
+    async def test_unknown_short_name_raises_value_error(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_execute_result(None))
+
+        with pytest.raises(ValueError, match="Unknown project license short_name: MIT"):
+            await resolve_license_id_for_short_name(session, "MIT")
+
+        session.execute.assert_awaited_once()
+
+    async def test_known_short_name_returns_license_id(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_execute_result("cc-by"))
+
+        license_id = await resolve_license_id_for_short_name(session, "CC-BY")
+
+        assert license_id == "cc-by"
+
+
+@pytest.mark.asyncio
+class TestChangeProjectLicenseValidation:
+    """Coverage-gate validation branches for ``change_license``."""
+
+    async def test_none_new_license_raises_value_error(self) -> None:
+        session = AsyncMock()
+        project = SimpleNamespace(license="CC-BY", license_id="cc-by")
+        session.execute = AsyncMock(return_value=_execute_result(project))
+
+        with pytest.raises(ValueError, match="requires a new license"):
+            await change_license(session, uuid4(), None, uuid4())
+
+    async def test_unknown_new_license_raises_fr085_http_exception(self) -> None:
+        session = AsyncMock()
+        project = SimpleNamespace(license="CC-BY", license_id="cc-by")
+        session.execute = AsyncMock(
+            side_effect=[
+                _execute_result(project),
+                _execute_result(None),
+            ]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await change_license(session, uuid4(), "MIT", uuid4())
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail == {
+            "error": "ERR_LICENSE_REQUIRED",
+            "message": "Project license is required (FR-085)",
+        }
+
+    async def test_success_updates_project_and_appends_history(self) -> None:
+        session = AsyncMock()
+        session.add = MagicMock()
+        session.flush = AsyncMock()
+        session.refresh = AsyncMock()
+        project = SimpleNamespace(license="CC-BY", license_id="cc-by")
+        session.execute = AsyncMock(
+            side_effect=[
+                _execute_result(project),
+                _execute_result("cc-by-sa"),
+            ]
+        )
+        project_id = uuid4()
+        actor_id = uuid4()
+
+        row = await change_license(session, project_id, "CC-BY-SA", actor_id)
+
+        assert project.license_id == "cc-by-sa"
+        assert row.project_id == project_id
+        assert row.old_license == "CC-BY"
+        assert row.new_license == "CC-BY-SA"
+        assert row.changed_by_id == actor_id
+        session.add.assert_called_once_with(row)
+        session.flush.assert_awaited_once()
+        session.refresh.assert_awaited_once_with(project, ["license_record"])
+
+
+@pytest.mark.asyncio
+class TestProjectLicenseHistoryHelpers:
+    """Coverage-gate branches for history creation and listing."""
+
+    async def test_record_initial_license_accepts_string_input(self) -> None:
+        session = AsyncMock()
+        session.add = MagicMock()
+        project_id = uuid4()
+        actor_id = uuid4()
+
+        row = await record_initial_license(session, project_id, "CC0", actor_id)
+
+        assert isinstance(row, ProjectLicenseHistory)
+        assert row.project_id == project_id
+        assert row.old_license is None
+        assert row.new_license == "CC0"
+        assert row.changed_by_id == actor_id
+        session.add.assert_called_once_with(row)
+
+    async def test_list_license_history_returns_scalars_as_list(self) -> None:
+        session = AsyncMock()
+        rows = [
+            SimpleNamespace(new_license="CC0"),
+            SimpleNamespace(new_license="CC-BY"),
+        ]
+        session.execute = AsyncMock(return_value=_scalars_result(rows))
+
+        result = await list_license_history(session, uuid4())
+
+        assert result == rows
+        assert isinstance(result, list)
+        session.execute.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
