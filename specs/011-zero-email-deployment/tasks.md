@@ -316,8 +316,8 @@
 
 ### Backend — step-up endpoints
 
-- [ ] T300 [US4] Add `POST /web-api/v1/auth/step-up/begin` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{scope: "admin_recovery"}`. Returns challenge_id + factors_required. AUTHENTICATED_SELF_NO_GATE (T032)
-- [ ] T301 [US4] Add `POST /web-api/v1/auth/step-up/complete` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{challenge_id, factors: <oneOf TOTP+password OR WebAuthn+password>}`. Returns step_up_token (5min TTL). **Server-side MUST verify password against stored hash before setting factors.password=true** (security review M-1)
+- [ ] T300 [US4] Add `POST /web-api/v1/auth/step-up/begin` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{scope: "admin_recovery"}`. Returns challenge_id (UUID4) + factors_required. AUTHENTICATED_SELF_NO_GATE (T032). **TOTP-only initial release** (2026-05-29 closeout): factors_required advertises `["password", "totp"]`; WebAuthn-only users receive 409 (`step_up_2fa_not_enrolled`). WebAuthn step-up issuance is reserved for a follow-up task / spec.
+- [ ] T301 [US4] Add `POST /web-api/v1/auth/step-up/complete` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{challenge_id, factors: {password, totp_code}}`. Returns step_up_token (5min TTL). **Server-side MUST verify password against stored hash before setting factors.password=true** (security review M-1). **TOTP-only initial release**: the WebAuthn variant declared in earlier YAML revisions has been removed; the request schema is flat (no oneOf). The 401 envelope is uniform (`error_code = "step_up_factor_invalid"`) across password / TOTP / challenge mismatch / challenge expired to avoid a per-factor side channel; the internal failure reason is captured only on the platform audit log. The Redis challenge record is fetched-and-deleted via `GETDEL` in a single round-trip so concurrent completes cannot both succeed. **Round 2 timing-oracle defence (2026-05-29)**: the handler MUST verify password AND TOTP unconditionally on every request — short-circuiting on password failure surfaces an argon2-cost timing channel that lets a stolen-session attacker probe password correctness. The AND-condition collapses at the very end so only the single "any factor failed" bit leaks via the unified 401 envelope.
 - [ ] T302 [US4] [P] Add `apps/api/tests/security/test_step_up_complete_password_verify_invariant.py` (security review M-1): wrong password returns 401, correct password issues JWT with `factors.password=true`, invariant enforced even when payload claims `factors.password=true`
 
 ### Backend — admin reset
@@ -335,7 +335,7 @@
 
 - [ ] T340 [US4] [P] Create `apps/web/src/routes/(auth)/change-password/+page.svelte`: forced-change screen, current + new password fields, success redirects to dashboard
 - [ ] T341 [US4] [P] In `apps/web/src/lib/api/auth.ts` add `changePassword` client method
-- [ ] T342 [US4] [P] In `apps/web/src/routes/(app)/admin/users/+page.svelte` add "Reset password" button per user row; step-up modal (password + TOTP/WebAuthn); reveal dialog with copy + auto-clear timer
+- [ ] T342 [US4] [P] In `apps/web/src/routes/(app)/admin/users/+page.svelte` add "Reset password" button per user row; step-up modal (password + TOTP, **TOTP-only initial release** — the frontend MUST NOT render a WebAuthn branch; WebAuthn step-up is reserved for a follow-up spec); reveal dialog with copy + auto-clear timer
 - [ ] T343 [US4] [P] In `apps/web/src/lib/stores/auth.svelte.ts` use the `must_change_password` derived (added in T150) to enforce a route guard: redirect to `/change-password` for any non-allowlisted route
 
 ### Contracts + tests

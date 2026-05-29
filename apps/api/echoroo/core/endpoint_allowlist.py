@@ -252,6 +252,37 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # spec/011 T300 / T301 — admin_recovery step-up issuance.
+    # Both endpoints require a first-party session (re-checked inside the
+    # handler) and produce a privileged JWT for the *same* authenticated
+    # user — no project context, no cross-user side effect. They sit on
+    # the same trust boundary as ``/users/me/password`` (USER_SCOPED_ONLY).
+    AllowlistEntry(
+        path_pattern="/web-api/v1/auth/step-up/begin",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Step-up begin operates strictly on the authenticated "
+            "session user (spec/011 FR-011-206 / T300)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#step-up",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/auth/step-up/complete",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Step-up complete verifies password+TOTP for the "
+            "authenticated session user (spec/011 FR-011-206 / T301)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#step-up",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     AllowlistEntry(
         path_pattern="/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
         methods=frozenset({"POST"}),
