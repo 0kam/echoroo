@@ -1520,14 +1520,15 @@ def _step_up_no_store_headers(response: Response) -> None:
 
 def _resolve_step_up_factors_required(
     user: User,
-) -> list[Literal["password", "totp", "webauthn"]]:
+) -> list[Literal["password", "totp"]]:
     """Derive ``factors_required`` from the authenticated user's 2FA state.
 
     spec/011 FR-011-206 demands an AND-condition (password + 2FA). The
-    current implementation supports the TOTP path only — a user whose
-    only second factor is WebAuthn is refused with a 409 by the begin
-    handler (a separate flow under spec/006 Phase 17 A-11 covers the
-    WebAuthn-only recovery path).
+    initial release supports the TOTP path only — a user whose only
+    second factor is WebAuthn is refused with a 409 by the begin
+    handler (a separate follow-up spec covers the WebAuthn-only
+    recovery path); the return type therefore narrows to the TOTP
+    factor set the contract YAML now exposes.
 
     Returns:
         ``["password", "totp"]`` when the user has TOTP enrolled.
@@ -1546,9 +1547,10 @@ def _resolve_step_up_factors_required(
         detail={
             "error_code": "step_up_2fa_not_enrolled",
             "message": (
-                "Step-up requires a TOTP enrollment. Enable TOTP from "
-                "the security settings before retrying the admin "
-                "recovery flow."
+                "This release supports TOTP-based step-up only. "
+                "WebAuthn step-up is planned for a follow-up release; "
+                "if you need admin recovery now please enable TOTP "
+                "from security settings."
             ),
         },
     )
@@ -1649,8 +1651,10 @@ async def step_up_complete(
        :meth:`TwoFactorService.verify_totp` — Redis-backed rate
        limiting + lockout already applies.
     4. The matching challenge record (created by ``begin``) is consumed
-       atomically: any mismatch in ``challenge_id`` or factor set fails
-       closed.
+       atomically: the underlying store uses ``GETDEL`` so a concurrent
+       replay of the same ``challenge_id`` sees the record vanish
+       between read and verify. Any mismatch in ``challenge_id`` or
+       factor set fails closed.
 
     Only when ALL invariants hold is
     :func:`issue_admin_recovery_step_up_token` invoked with
@@ -1685,42 +1689,75 @@ async def step_up_complete(
             },
         )
 
+    # Uniform 401 envelope for every "your supplied step-up factor /
+    # challenge is not acceptable" outcome. The internal reason is still
+    # recorded on the platform audit trail (for forensics + lockout
+    # analytics), but the external response body is intentionally
+    # indistinguishable across password mismatch, TOTP mismatch,
+    # challenge not found, and challenge id mismatch so the caller
+    # cannot derive a side channel (e.g. password-correct + TOTP-wrong
+    # vs. password-wrong + TOTP-correct → which credential to retry).
+    # Exempt from this unification: anonymous caller (handled above as
+    # ``auth_required``), forced-change 423, missing 2FA enrollment 409
+    # (a configuration state, not a credential), TOTP lockout 423, rate
+    # limit 429 — each carries operator-meaningful semantics callers
+    # need to surface.
+    _UNIFIED_STEP_UP_401_DETAIL: dict[str, str] = {
+        "error_code": "step_up_factor_invalid",
+        "message": (
+            "Step-up authentication failed. Verify your password and "
+            "TOTP code, then restart from begin if the issue persists."
+        ),
+    }
+
     redis = await get_redis_connection()
     try:
         factors_required = await consume_step_up_challenge(
             redis,
             user_id=current_user.id,
             scope=SCOPE_ADMIN_RECOVERY,
-            challenge_id=payload.challenge_id,
+            # ``payload.challenge_id`` is a ``pydantic.UUID4`` instance —
+            # the challenge store keys + compares as ``str`` so we
+            # normalise here. ``str(uuid)`` yields the canonical
+            # lower-cased dashed form, matching what ``create_challenge``
+            # persisted.
+            challenge_id=str(payload.challenge_id),
         )
     except StepUpChallengeNotFoundError as exc:
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_challenge_not_found",
+            request=request,
+            detail={
+                "scope": SCOPE_ADMIN_RECOVERY,
+                "failure_reason": "challenge_not_found",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": "step_up_challenge_not_found",
-                "message": (
-                    "No active step-up challenge for this session; "
-                    "restart from begin."
-                ),
-            },
+            detail=_UNIFIED_STEP_UP_401_DETAIL,
         ) from exc
     except StepUpChallengeMismatchError as exc:
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_challenge_mismatch",
+            request=request,
+            detail={
+                "scope": SCOPE_ADMIN_RECOVERY,
+                "failure_reason": "challenge_mismatch",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": "step_up_challenge_mismatch",
-                "message": (
-                    "Step-up challenge_id does not match the active "
-                    "challenge; restart from begin."
-                ),
-            },
+            detail=_UNIFIED_STEP_UP_401_DETAIL,
         ) from exc
 
     # Defence-in-depth: refuse a completion that tries to satisfy a
     # different factor set than the one negotiated at begin time. This
     # blocks a (currently impossible) future where the client picks the
     # factor shape based on local state and races a 2FA disable on
-    # another session.
+    # another session. Carries a distinct 409 because the caller cannot
+    # repair this with credentials — they must run ``begin`` again.
     expected_factor_set = {"password", "totp"}
     if set(factors_required) != expected_factor_set:
         await _write_platform_audit(
@@ -1741,20 +1778,22 @@ async def step_up_complete(
         )
 
     # M-1: password MUST be verified server-side before encoding
-    # ``factors.password=True`` into the JWT.
+    # ``factors.password=True`` into the JWT. A mismatch collapses to
+    # the unified 401 envelope above so the response shape does not
+    # reveal which factor failed (password oracle avoidance).
     if not verify_password(payload.factors.password, current_user.password_hash):
         await _write_platform_audit(
             actor_user_id=current_user.id,
             action="auth.step_up_complete_password_failed",
             request=request,
-            detail={"scope": SCOPE_ADMIN_RECOVERY},
+            detail={
+                "scope": SCOPE_ADMIN_RECOVERY,
+                "failure_reason": "password_mismatch",
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": "invalid_credentials",
-                "message": "Password verification failed.",
-            },
+            detail=_UNIFIED_STEP_UP_401_DETAIL,
         )
 
     # M-1: TOTP MUST be verified before encoding ``factors.second_factor``.
@@ -1764,6 +1803,10 @@ async def step_up_complete(
             current_user, payload.factors.totp_code
         )
     except TwoFactorNotEnabledError as exc:
+        # Distinct 409: caller had TOTP at begin time but lost it before
+        # complete (e.g. concurrent 2FA disable). Surfaced separately so
+        # the frontend can route to the re-enrollment flow rather than
+        # ask the user to retry credentials they cannot fix.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1772,6 +1815,8 @@ async def step_up_complete(
             },
         ) from exc
     except TwoFactorLockedError as exc:
+        # Distinct 423 with Retry-After: lockout is operationally
+        # meaningful — caller must wait, not retry credentials.
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail={
@@ -1781,14 +1826,25 @@ async def step_up_complete(
             headers={"Retry-After": str(TOTP_LOCK_SECONDS)},
         ) from exc
     except TwoFactorRateLimitedError as exc:
+        # Distinct 429: caller needs the Retry-After to back off.
         raise _rate_limit_response(TOTP_FAIL_WINDOW_SECONDS) from exc
     except TwoFactorInvalidCodeError as exc:
+        # TOTP mismatch surfaced by the service. Collapse to the unified
+        # 401 envelope so it is indistinguishable from a password
+        # mismatch externally; the internal audit row preserves the
+        # actual reason for lockout analytics.
+        await _write_platform_audit(
+            actor_user_id=current_user.id,
+            action="auth.step_up_complete_totp_failed",
+            request=request,
+            detail={
+                "scope": SCOPE_ADMIN_RECOVERY,
+                "failure_reason": "totp_invalid_code_error",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": "invalid_totp_code",
-                "message": "Invalid TOTP code.",
-            },
+            detail=_UNIFIED_STEP_UP_401_DETAIL,
         ) from exc
 
     if not totp_verified:
@@ -1796,14 +1852,14 @@ async def step_up_complete(
             actor_user_id=current_user.id,
             action="auth.step_up_complete_totp_failed",
             request=request,
-            detail={"scope": SCOPE_ADMIN_RECOVERY},
+            detail={
+                "scope": SCOPE_ADMIN_RECOVERY,
+                "failure_reason": "totp_mismatch",
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error_code": "invalid_totp_code",
-                "message": "Invalid TOTP code.",
-            },
+            detail=_UNIFIED_STEP_UP_401_DETAIL,
         )
 
     # All invariants satisfied — mint the token. The ``assertion_id``

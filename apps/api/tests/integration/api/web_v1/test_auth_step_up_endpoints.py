@@ -21,11 +21,17 @@ Test surface
 
 * T301 complete:
     - Anonymous caller → 401.
-    - Missing / wrong / expired ``challenge_id`` → 401 with
-      ``step_up_challenge_not_found`` / ``step_up_challenge_mismatch``.
-    - Wrong password → 401 ``invalid_credentials`` (token NOT minted).
-    - Wrong TOTP → 401 ``invalid_totp_code`` (token NOT minted).
+    - Missing / wrong / expired ``challenge_id`` → 401 with the **uniform**
+      envelope ``step_up_factor_invalid`` (password-oracle avoidance —
+      every credential-shaped failure carries the same error_code +
+      message; the internal reason is recorded only on the platform
+      audit log).
+    - Wrong password → 401 ``step_up_factor_invalid``.
+    - Wrong TOTP → 401 ``step_up_factor_invalid``.
     - ``must_change_password=True`` → 423 ``must_change_password``.
+    - Malformed (non-UUID4) ``challenge_id`` → 422.
+    - Parallel replay of the same ``challenge_id`` → exactly one 200
+      and one 401 (GETDEL atomicity guarantee).
     - Happy path → 200, body carries ``step_up_token`` + ``expires_at``
       + ``scope_set=["admin_recovery"]``, response headers carry
       ``Cache-Control: no-store…``, and the issued JWT decodes with
@@ -350,12 +356,17 @@ async def test_step_up_complete_requires_authentication(
     step_up_app: FastAPI,
     step_up_client: AsyncClient,
 ) -> None:
-    """Anonymous caller → 401 (no token minted)."""
+    """Anonymous caller → 401 (no token minted).
+
+    Uses a syntactically valid UUID4 (variant nibble = 8/9/a/b, version
+    nibble = 4) so the schema-level validation does not 422 ahead of
+    the authentication check.
+    """
     _override_session_user(step_up_app, None)
     response = await step_up_client.post(
         "/web-api/v1/auth/step-up/complete",
         json={
-            "challenge_id": "deadbeef-dead-beef-dead-beefdeadbeef",
+            "challenge_id": "deadbeef-dead-4eef-bead-beefdeadbeef",
             "factors": {
                 "password": "correct horse battery staple",
                 "totp_code": "123456",
@@ -423,7 +434,12 @@ async def test_step_up_complete_rejects_wrong_password(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wrong password → 401 ``invalid_credentials`` (no token minted)."""
+    """Wrong password → 401 ``step_up_factor_invalid`` (no token minted).
+
+    Verifies the password-oracle-avoidance unification: a wrong-password
+    failure carries the same envelope as a wrong-TOTP / wrong-challenge
+    failure so the caller cannot determine which factor was rejected.
+    """
     user = await _create_user(
         db_session, email="t301_complete_wrongpw@example.com"
     )
@@ -443,7 +459,7 @@ async def test_step_up_complete_rejects_wrong_password(
     )
     assert response.status_code == 401, response.text
     detail = response.json().get("detail", {})
-    assert detail.get("error_code") == "invalid_credentials", detail
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
 
 @pytest.mark.asyncio
@@ -453,7 +469,11 @@ async def test_step_up_complete_rejects_wrong_totp(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Wrong TOTP → 401 ``invalid_totp_code`` (no token minted)."""
+    """Wrong TOTP → 401 ``step_up_factor_invalid`` (no token minted).
+
+    Same envelope as wrong-password and wrong-challenge — see docstring
+    on ``test_step_up_complete_rejects_wrong_password``.
+    """
     user = await _create_user(
         db_session, email="t301_complete_wrongtotp@example.com"
     )
@@ -473,7 +493,7 @@ async def test_step_up_complete_rejects_wrong_totp(
     )
     assert response.status_code == 401, response.text
     detail = response.json().get("detail", {})
-    assert detail.get("error_code") == "invalid_totp_code", detail
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
 
 @pytest.mark.asyncio
@@ -483,7 +503,11 @@ async def test_step_up_complete_without_active_challenge_returns_401(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bare complete (no preceding begin) → 401 ``step_up_challenge_not_found``."""
+    """Bare complete (no preceding begin) → 401 ``step_up_factor_invalid``.
+
+    Collapsed into the unified envelope so a probing caller cannot
+    distinguish "challenge expired" from "password wrong".
+    """
     user = await _create_user(
         db_session, email="t301_complete_no_begin@example.com"
     )
@@ -502,7 +526,7 @@ async def test_step_up_complete_without_active_challenge_returns_401(
     )
     assert response.status_code == 401, response.text
     detail = response.json().get("detail", {})
-    assert detail.get("error_code") == "step_up_challenge_not_found", detail
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
 
 @pytest.mark.asyncio
@@ -513,7 +537,11 @@ async def test_step_up_complete_with_mismatched_challenge_id_returns_401(
     fake_redis: fakeredis.aioredis.FakeRedis,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Begin issued challenge_id A; complete sends challenge_id B → 401 + record dropped."""
+    """Begin issued challenge_id A; complete sends challenge_id B → 401 + record dropped.
+
+    Uses the unified ``step_up_factor_invalid`` envelope (the previous
+    ``step_up_challenge_mismatch`` variant leaked which factor failed).
+    """
     user = await _create_user(
         db_session, email="t301_complete_mismatch@example.com"
     )
@@ -533,10 +561,11 @@ async def test_step_up_complete_with_mismatched_challenge_id_returns_401(
     )
     assert response.status_code == 401, response.text
     detail = response.json().get("detail", {})
-    assert detail.get("error_code") == "step_up_challenge_mismatch", detail
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
-    # Defence-in-depth: the record is DROPPED even on mismatch so a
-    # probing caller cannot brute-force the challenge_id space.
+    # Defence-in-depth: the record is DROPPED even on mismatch (the
+    # GETDEL atomic primitive removes the key before validation runs)
+    # so a probing caller cannot brute-force the challenge_id space.
     raw = await fake_redis.get(f"step_up_challenge:{user.id}:admin_recovery")
     assert raw is None
 
@@ -580,7 +609,9 @@ async def test_step_up_complete_is_single_use(
     )
     assert replay.status_code == 401, replay.text
     detail = replay.json().get("detail", {})
-    assert detail.get("error_code") == "step_up_challenge_not_found", detail
+    # Uniform envelope — caller cannot distinguish "already consumed"
+    # from "wrong credentials".
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
 
 @pytest.mark.asyncio
@@ -624,6 +655,156 @@ async def test_step_up_complete_blocks_must_change_password_user(
     assert response.status_code == 423, response.text
     detail = response.json().get("detail", {})
     assert detail.get("error_code") == "must_change_password", detail
+
+
+@pytest.mark.asyncio
+async def test_step_up_complete_rejects_malformed_challenge_id(
+    step_up_app: FastAPI,
+    step_up_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``challenge_id`` is a strict UUID4 — non-UUID inputs yield 422.
+
+    Defence in depth: the schema rejects probing values (free-form
+    strings, UUID1 / UUID3 / UUID5 timestamps, etc.) before they reach
+    the Redis lookup, so an attacker cannot spam the challenge store
+    with arbitrary keys to learn timing differences.
+    """
+    user = await _create_user(
+        db_session, email="t301_complete_bad_uuid@example.com"
+    )
+    _override_session_user(step_up_app, user)
+
+    response = await step_up_client.post(
+        "/web-api/v1/auth/step-up/complete",
+        json={
+            "challenge_id": "not-a-uuid-at-all",
+            "factors": {
+                "password": "correct horse battery staple",
+                "totp_code": "123456",
+            },
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_step_up_complete_parallel_replay_one_wins(
+    step_up_app: FastAPI,
+    step_up_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two parallel completes of the same challenge → exactly one 200.
+
+    Pins the Redis ``GETDEL`` atomicity guarantee in
+    ``services/step_up_challenge_service.consume_challenge``. Without
+    the atomic fetch-and-delete, two parallel completes could both
+    observe the record between ``GET`` and ``DELETE`` and both mint a
+    privileged step-up JWT — a high-severity privilege escalation in
+    the admin recovery surface.
+
+    Implementation note: the in-process fakeredis is single-threaded
+    per event-loop tick, but two ``await redis.getdel(key)`` coroutines
+    interleaved by ``asyncio.gather`` exercise the same code path the
+    production Redis would — the loser of the race observes ``None``
+    on the second ``GETDEL`` and falls into the unified 401 envelope.
+
+    If the atomic primitive is reverted to ``GET`` + ``DELETE``, both
+    branches will observe the record, both will mint a token, and this
+    test will fail with two 200 statuses.
+    """
+    import asyncio
+
+    user = await _create_user(
+        db_session, email="t301_complete_parallel_replay@example.com"
+    )
+    _override_session_user(step_up_app, user)
+    _patch_totp_verifier(monkeypatch, accept_code="123456")
+
+    challenge_id = await _begin_challenge(step_up_client)
+
+    body = {
+        "challenge_id": challenge_id,
+        "factors": {
+            "password": "correct horse battery staple",
+            "totp_code": "123456",
+        },
+    }
+
+    first, second = await asyncio.gather(
+        step_up_client.post("/web-api/v1/auth/step-up/complete", json=body),
+        step_up_client.post("/web-api/v1/auth/step-up/complete", json=body),
+    )
+
+    statuses = sorted([first.status_code, second.status_code])
+    assert statuses == [200, 401], (
+        f"Expected exactly one 200 and one 401 — got {statuses}. "
+        f"first={first.text!r} second={second.text!r}"
+    )
+
+    # The loser's 401 carries the unified envelope (challenge_not_found
+    # collapsed into ``step_up_factor_invalid``).
+    loser = first if first.status_code == 401 else second
+    detail = loser.json().get("detail", {})
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
+
+
+@pytest.mark.asyncio
+async def test_step_up_complete_after_ttl_expiry_returns_unified_401(
+    step_up_app: FastAPI,
+    step_up_client: AsyncClient,
+    db_session: AsyncSession,
+    fake_redis: fakeredis.aioredis.FakeRedis,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A challenge older than ``STEP_UP_CHALLENGE_TTL_SECONDS`` is gone.
+
+    The challenge store sets ``EX=300`` on the key. After the TTL
+    window elapses the key vanishes and the next complete observes
+    ``None`` → the unified ``step_up_factor_invalid`` envelope. This
+    test seeds the record directly with a 1-second TTL so we do not
+    need to manipulate the event-loop clock; ``asyncio.sleep`` then
+    advances real time past the TTL so fakeredis evicts the key.
+    """
+    import asyncio
+
+    user = await _create_user(
+        db_session, email="t301_complete_ttl_boundary@example.com"
+    )
+    _override_session_user(step_up_app, user)
+    _patch_totp_verifier(monkeypatch, accept_code="123456")
+
+    from echoroo.services.step_up_challenge_service import create_challenge
+
+    # 1-second TTL so the test does not need to wait the full 5 minutes
+    # the production code uses. This still exercises the
+    # ``consume_challenge`` → ``getdel returns None`` path.
+    challenge_id, _ = await create_challenge(
+        fake_redis,
+        user_id=user.id,
+        scope="admin_recovery",
+        factors_required=["password", "totp"],
+        ttl_seconds=1,
+    )
+
+    # Sleep past the TTL — fakeredis honours the EX window on real
+    # wall-clock time. 1.5s gives a comfortable margin for slow CI.
+    await asyncio.sleep(1.5)
+
+    response = await step_up_client.post(
+        "/web-api/v1/auth/step-up/complete",
+        json={
+            "challenge_id": challenge_id,
+            "factors": {
+                "password": "correct horse battery staple",
+                "totp_code": "123456",
+            },
+        },
+    )
+    assert response.status_code == 401, response.text
+    detail = response.json().get("detail", {})
+    assert detail.get("error_code") == "step_up_factor_invalid", detail
 
 
 @pytest.mark.asyncio

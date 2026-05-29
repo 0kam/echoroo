@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 #: ``scope`` values currently accepted by the begin endpoint. Mirrors
 #: :data:`echoroo.services.step_up_token_service.SCOPE_ADMIN_RECOVERY`
@@ -54,13 +54,15 @@ class StepUpBeginResponse(BaseModel):
             "the matching ``complete`` call."
         ),
     )
-    factors_required: list[Literal["password", "totp", "webauthn"]] = Field(
+    factors_required: list[Literal["password", "totp"]] = Field(
         ...,
         description=(
             "Ordered list of factors the caller must supply in the "
             "matching ``complete`` request. ``password`` is always "
-            "first; the second-factor value depends on the user's 2FA "
-            "enrollment (TOTP or WebAuthn)."
+            "first; the second factor is ``totp``. This release does "
+            "not advertise WebAuthn here — see the matching note on "
+            "the contract YAML — and the begin handler refuses "
+            "WebAuthn-only callers with a 409."
         ),
     )
 
@@ -68,11 +70,10 @@ class StepUpBeginResponse(BaseModel):
 class StepUpCompleteFactorsTotp(BaseModel):
     """Password + TOTP factor payload for ``complete``.
 
-    The contract YAML declares ``factors`` as a ``oneOf`` between the
-    TOTP and WebAuthn shapes; the live implementation currently only
-    wires the TOTP variant (spec/011 T300/T301). Submitting a
-    WebAuthn-shaped payload is rejected by the handler with a 422 to
-    keep the surface honest.
+    This release supports only the TOTP shape; the WebAuthn variant has
+    been removed from the contract YAML (initial release) and will be
+    re-introduced under a separate task / spec. Submitting unknown keys
+    is rejected with a 422 (``extra="forbid"``).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -86,18 +87,21 @@ class StepUpCompleteRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    challenge_id: str = Field(
+    challenge_id: UUID4 = Field(
         ...,
-        min_length=1,
-        max_length=200,
-        description="``challenge_id`` returned by the matching begin call.",
+        description=(
+            "``challenge_id`` (UUID4) returned by the matching begin "
+            "call. Strict UUID4 validation rejects malformed values "
+            "with 422 before the handler runs — defence in depth "
+            "against probing callers that could otherwise spam Redis "
+            "with arbitrary keys."
+        ),
     )
     factors: StepUpCompleteFactorsTotp = Field(
         ...,
         description=(
-            "Authentication factors. Currently the TOTP shape is the "
-            "only accepted variant — the WebAuthn variant declared in "
-            "the contract YAML is reserved for a later step."
+            "Authentication factors. TOTP-only for the initial release; "
+            "WebAuthn step-up is planned as a follow-up spec."
         ),
     )
 

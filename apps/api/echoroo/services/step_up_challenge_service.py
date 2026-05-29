@@ -27,16 +27,15 @@ TTL is :data:`STEP_UP_CHALLENGE_TTL_SECONDS` (5 min — matches
 
 Concurrency
 -----------
-:func:`consume_challenge` is *not* strictly atomic because Redis lacks a
-direct compare-and-delete primitive in our redis-py surface, but the
-non-atomic ``GET`` → in-process validation → ``DELETE`` window is bounded
-to a single asyncio task per user/scope (the caller has already cleared
-authentication on the cookie before reaching this code) and the deletion
-is unconditional, which means a concurrent retry observing the same
-record will fail validation by ``challenge_id`` mismatch after the first
-consumer wins. The race only meaningfully matters under intentional
-self-replay, which is the same caller and therefore not a privilege
-boundary.
+:func:`consume_challenge` fetches **and** deletes the record in a single
+Redis round-trip via ``GETDEL`` (redis-py >= 4.4, fakeredis >= 2.1).
+Two concurrent ``complete`` calls observing the same ``(user_id, scope)``
+slot therefore see exactly one ``GETDEL`` win the race: the loser
+receives ``None`` and is mapped to
+:class:`StepUpChallengeNotFoundError` → ``401`` at the API boundary.
+This closes the previous non-atomic ``GET`` → in-process validation →
+``DELETE`` window, where two parallel completions of the same
+challenge could both succeed before the deletion landed.
 """
 
 from __future__ import annotations
@@ -44,8 +43,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import UTC, datetime
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Final
 from uuid import UUID
 
@@ -134,7 +133,16 @@ async def consume_challenge(
     scope: str,
     challenge_id: str,
 ) -> list[str]:
-    """Validate the ``challenge_id`` against the persisted record and DELETE it.
+    """Fetch-and-delete the persisted record in a single Redis round-trip.
+
+    Uses Redis ``GETDEL`` so the read and the delete are atomic from the
+    server's perspective. Two concurrent ``complete`` calls targeting
+    the same ``(user_id, scope)`` slot therefore observe exactly one
+    winner — the loser sees ``None`` and is mapped to
+    :class:`StepUpChallengeNotFoundError`. This closes the race window
+    in the previous non-atomic ``GET`` then ``DELETE`` implementation,
+    where two parallel completions could both succeed before the
+    deletion landed.
 
     The record is removed regardless of ``challenge_id`` match — a wrong
     ``challenge_id`` strongly implies the caller is either retrying a
@@ -143,7 +151,10 @@ async def consume_challenge(
     one. The frontend may need to re-run ``begin`` after a mismatch.
 
     Args:
-        redis: Async Redis connection.
+        redis: Async Redis connection. Must support ``GETDEL`` —
+            redis-py >= 4.4 / fakeredis >= 2.1; verified at startup
+            because the production codebase pins ``redis>=5.2.0`` and
+            ``fakeredis>=2.23`` in ``pyproject.toml``.
         user_id: Authenticated session user — keyed into the slot.
         scope: Step-up scope (e.g. ``"admin_recovery"``).
         challenge_id: ``challenge_id`` returned by the matching
@@ -158,21 +169,21 @@ async def consume_challenge(
 
     Raises:
         StepUpChallengeNotFoundError: No record under the key (expired
-            TTL, already consumed, never issued).
+            TTL, already consumed by a parallel winner, never issued,
+            or the stored JSON / factor list is malformed).
         StepUpChallengeMismatchError: Record exists but ``challenge_id``
-            does not match. The record is still deleted before raising.
+            does not match. The record is already deleted by the
+            atomic ``GETDEL``.
     """
     key = _challenge_key(user_id, scope)
-    raw = await redis.get(key)
+    # Atomic fetch-and-delete. Redis ``GETDEL`` returns the value and
+    # removes the key in a single server-side operation, so concurrent
+    # completes targeting the same slot cannot both observe a record.
+    raw = await redis.getdel(key)
     if raw is None:
         raise StepUpChallengeNotFoundError(
             "Step-up challenge not found or expired; restart the begin flow."
         )
-
-    # Always remove the record so a probing caller cannot brute-force
-    # ``challenge_id`` values. We accept the (negligible) cost of an
-    # extra round-trip per failed completion.
-    await redis.delete(key)
 
     try:
         record = json.loads(raw)

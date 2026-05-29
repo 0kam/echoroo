@@ -316,8 +316,8 @@
 
 ### Backend — step-up endpoints
 
-- [ ] T300 [US4] Add `POST /web-api/v1/auth/step-up/begin` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{scope: "admin_recovery"}`. Returns challenge_id + factors_required. AUTHENTICATED_SELF_NO_GATE (T032)
-- [ ] T301 [US4] Add `POST /web-api/v1/auth/step-up/complete` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{challenge_id, factors: <oneOf TOTP+password OR WebAuthn+password>}`. Returns step_up_token (5min TTL). **Server-side MUST verify password against stored hash before setting factors.password=true** (security review M-1)
+- [ ] T300 [US4] Add `POST /web-api/v1/auth/step-up/begin` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{scope: "admin_recovery"}`. Returns challenge_id (UUID4) + factors_required. AUTHENTICATED_SELF_NO_GATE (T032). **TOTP-only initial release** (2026-05-29 closeout): factors_required advertises `["password", "totp"]`; WebAuthn-only users receive 409 (`step_up_2fa_not_enrolled`). WebAuthn step-up issuance is reserved for a follow-up task / spec.
+- [ ] T301 [US4] Add `POST /web-api/v1/auth/step-up/complete` to `apps/api/echoroo/api/web_v1/auth.py`. Body: `{challenge_id, factors: {password, totp_code}}`. Returns step_up_token (5min TTL). **Server-side MUST verify password against stored hash before setting factors.password=true** (security review M-1). **TOTP-only initial release**: the WebAuthn variant declared in earlier YAML revisions has been removed; the request schema is flat (no oneOf). The 401 envelope is uniform (`error_code = "step_up_factor_invalid"`) across password / TOTP / challenge mismatch / challenge expired to avoid a per-factor side channel; the internal failure reason is captured only on the platform audit log. The Redis challenge record is fetched-and-deleted via `GETDEL` in a single round-trip so concurrent completes cannot both succeed.
 - [ ] T302 [US4] [P] Add `apps/api/tests/security/test_step_up_complete_password_verify_invariant.py` (security review M-1): wrong password returns 401, correct password issues JWT with `factors.password=true`, invariant enforced even when payload claims `factors.password=true`
 
 ### Backend — admin reset
