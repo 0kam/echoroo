@@ -1777,36 +1777,55 @@ async def step_up_complete(
             },
         )
 
-    # M-1: password MUST be verified server-side before encoding
-    # ``factors.password=True`` into the JWT. A mismatch collapses to
-    # the unified 401 envelope above so the response shape does not
-    # reveal which factor failed (password oracle avoidance).
-    if not verify_password(payload.factors.password, current_user.password_hash):
-        await _write_platform_audit(
-            actor_user_id=current_user.id,
-            action="auth.step_up_complete_password_failed",
-            request=request,
-            detail={
-                "scope": SCOPE_ADMIN_RECOVERY,
-                "failure_reason": "password_mismatch",
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_UNIFIED_STEP_UP_401_DETAIL,
-        )
+    # Round 2 blocker C — timing-oracle defence. The previous control
+    # flow verified the password first and only ran TOTP verification
+    # when the password matched, so a stolen-session attacker could
+    # observe a ~argon2-hash-cost timing delta between
+    # (password_correct, totp_wrong) and (password_wrong, totp_wrong)
+    # and treat that delta as a password oracle. To remove the side
+    # channel, BOTH factors are now verified on every call regardless
+    # of whether the other factor succeeded; the AND-condition is
+    # collapsed at the very end so only a single bit ("any factor
+    # failed") leaks via the unified 401 envelope. Side effects
+    # specific to TOTP (failure counters, audit, lockout) intentionally
+    # still apply uniformly per attempt so the existing lockout
+    # threshold is honoured even when the caller never knew a valid
+    # password.
+    #
+    # M-1 invariant unchanged: ``factors.password=True`` is only encoded
+    # into the issued JWT when ``password_ok`` AND ``totp_ok`` are both
+    # true. The verify_password / verify_totp calls below cannot be
+    # short-circuited.
 
-    # M-1: TOTP MUST be verified before encoding ``factors.second_factor``.
+    # Always verify the password. Returns False on mismatch — no
+    # exception path, so no early branch is possible.
+    password_ok = verify_password(
+        payload.factors.password, current_user.password_hash
+    )
+
+    # Always verify the TOTP code. Operationally-meaningful exceptions
+    # (no-2FA / locked / rate-limited) are still surfaced with their
+    # distinct status codes per spec — they are configuration states the
+    # caller cannot fix by retrying credentials, and forcing them
+    # through the unified 401 envelope would hide the operator-
+    # actionable signal. ``TwoFactorInvalidCodeError`` and a plain
+    # ``False`` return both collapse into ``totp_ok = False`` so they
+    # cannot be distinguished externally from a wrong password.
     two_factor = TwoFactorService(db, await get_redis_connection())
+    totp_ok = False
     try:
-        totp_verified = await two_factor.verify_totp(
+        totp_ok = await two_factor.verify_totp(
             current_user, payload.factors.totp_code
         )
     except TwoFactorNotEnabledError as exc:
         # Distinct 409: caller had TOTP at begin time but lost it before
         # complete (e.g. concurrent 2FA disable). Surfaced separately so
         # the frontend can route to the re-enrollment flow rather than
-        # ask the user to retry credentials they cannot fix.
+        # ask the user to retry credentials they cannot fix. The
+        # operator-meaningful semantics dominate the timing-oracle
+        # concern here: a stolen-session attacker who reaches this
+        # branch has already learned the session user disabled 2FA from
+        # the public 2FA-status surface, so the 409 leaks nothing new.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -1828,33 +1847,29 @@ async def step_up_complete(
     except TwoFactorRateLimitedError as exc:
         # Distinct 429: caller needs the Retry-After to back off.
         raise _rate_limit_response(TOTP_FAIL_WINDOW_SECONDS) from exc
-    except TwoFactorInvalidCodeError as exc:
-        # TOTP mismatch surfaced by the service. Collapse to the unified
-        # 401 envelope so it is indistinguishable from a password
-        # mismatch externally; the internal audit row preserves the
-        # actual reason for lockout analytics.
-        await _write_platform_audit(
-            actor_user_id=current_user.id,
-            action="auth.step_up_complete_totp_failed",
-            request=request,
-            detail={
-                "scope": SCOPE_ADMIN_RECOVERY,
-                "failure_reason": "totp_invalid_code_error",
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=_UNIFIED_STEP_UP_401_DETAIL,
-        ) from exc
+    except TwoFactorInvalidCodeError:
+        # TOTP mismatch surfaced by the service. Fall through to the
+        # unified-401 gate below with ``totp_ok = False`` so it is
+        # indistinguishable from a password mismatch externally.
+        totp_ok = False
 
-    if not totp_verified:
+    if not (password_ok and totp_ok):
+        # Internal ``failure_reason`` captures BOTH factor outcomes so
+        # forensics / lockout analytics retain the full picture. The
+        # external response body is the unified envelope only.
+        if not password_ok and not totp_ok:
+            failure_reason = "both_fail"
+        elif not password_ok:
+            failure_reason = "password_mismatch"
+        else:
+            failure_reason = "totp_mismatch"
         await _write_platform_audit(
             actor_user_id=current_user.id,
-            action="auth.step_up_complete_totp_failed",
+            action="auth.step_up_complete_factors_failed",
             request=request,
             detail={
                 "scope": SCOPE_ADMIN_RECOVERY,
-                "failure_reason": "totp_mismatch",
+                "failure_reason": failure_reason,
             },
         )
         raise HTTPException(
