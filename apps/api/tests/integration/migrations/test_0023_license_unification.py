@@ -763,16 +763,15 @@ def test_0023_seeded_projects_preserve_license_after_migration(
     """T034 (spec/012 US2) — one project per canonical license survives migration.
 
     Seeds one project for each of the four canonical license values (CC0,
-    CC-BY, CC-BY-NC, CC-BY-SA) plus one project with ``license IS NULL``
-    (simulating a legacy row that pre-dates the license requirement). After
-    upgrading to revision 0023:
+    CC-BY, CC-BY-NC, CC-BY-SA). After upgrading to revision 0023 each project
+    maps to the corresponding ``licenses.id`` FK (deterministic short_name → id
+    mapping from the migration's ``_LICENSE_ID_FOR_ENUM`` table).
 
-    * Each project with a non-NULL ``license`` enum value maps to the
-      corresponding ``licenses.id`` FK (deterministic short_name → id
-      mapping from the migration's ``_LICENSE_ID_FOR_ENUM`` table).
-    * The NULL-license project keeps ``license_id IS NULL`` (no data loss
-      for rows that were created before the required-at-creation gate
-      was enforced).
+    A NULL-license row is NOT seeded here because the pre-0023
+    ``projects.license`` column is ``NOT NULL`` (see revision 0022 /
+    ``0001_baseline_permissions_redesign.py:392``), so such a row is
+    unreachable in production and would raise ``NotNullViolation`` at the
+    seed step.
 
     This is the regression-resistant assertion for SC-002 (zero existing
     projects lose their license) and SC-003 (no orphan license references).
@@ -785,12 +784,10 @@ def test_0023_seeded_projects_preserve_license_after_migration(
         "CC-BY-SA": "cc-by-sa",
     }
 
-    NULL_LICENSE_PROJECT_ID = "00000000-0000-0000-0000-000000000901"
-
     url = _admin_sync_url(pg_container)
     _alembic_upgrade(url, PREVIOUS_REVISION)
 
-    # Seed one project per canonical license value, plus one NULL-license project.
+    # Seed one project per canonical license value.
     engine = _engine(url)
     try:
         with engine.begin() as conn:
@@ -829,36 +826,6 @@ def test_0023_seeded_projects_preserve_license_after_migration(
                         "license": legacy_license,
                     },
                 )
-
-            # Seed a NULL-license project (legacy row pre-dating FR-085).
-            conn.execute(
-                sa.text(
-                    """
-                    INSERT INTO projects (
-                        id, name, owner_id, visibility, license,
-                        restricted_config, restricted_config_version,
-                        status, review_min_votes,
-                        review_consensus_threshold, created_at, updated_at
-                    )
-                    VALUES (
-                        :id, 'T034 Null License Project', :owner_id, 'restricted',
-                        NULL,
-                        '{
-                            "allow_media_playback": false,
-                            "allow_detection_view": false,
-                            "mask_species_in_detection": false,
-                            "allow_download": false,
-                            "allow_export": false,
-                            "allow_voting_and_comments": false,
-                            "public_location_precision_h3_res": 2,
-                            "allow_precise_location_to_viewer": false
-                        }'::jsonb,
-                        1, 'active', 2, 0.667, now(), now()
-                    )
-                    """
-                ),
-                {"id": NULL_LICENSE_PROJECT_ID, "owner_id": OWNER_ID},
-            )
     finally:
         engine.dispose()
 
@@ -883,34 +850,12 @@ def test_0023_seeded_projects_preserve_license_after_migration(
     for row in rows_named:
         project_license_ids_by_name[row.name] = row.license_id
 
-    # SC-003 guard: all 5 seeded T034 rows must survive the migration.
-    # A count < 5 means the migration silently deleted a project (e.g. the
-    # NULL-license row), which would be a false-pass for the .get() == None
-    # assertion below.
-    assert len(rows_named) == 5, (
-        f"Expected 5 T034 rows after migration "
-        f"(4 canonical + 1 NULL-license); got {len(rows_named)}. "
-        "Migration may have dropped the NULL-license project."
-    )
-
-    # SC-002 / SC-003 guard: the NULL-license project must still exist by id.
-    # Querying by name alone cannot distinguish a deleted row from a row whose
-    # license_id became NULL — both produce .get() == None.
-    engine2 = _engine(url)
-    try:
-        with engine2.connect() as conn:
-            null_row = conn.execute(
-                sa.text(
-                    "SELECT id FROM projects WHERE id = :id"
-                ),
-                {"id": NULL_LICENSE_PROJECT_ID},
-            ).fetchone()
-    finally:
-        engine2.dispose()
-
-    assert null_row is not None, (
-        f"NULL-license project (id={NULL_LICENSE_PROJECT_ID!r}) was deleted "
-        "by the migration — SC-002 / SC-003 violated."
+    # SC-003 guard: all 4 seeded T034 rows must survive the migration.
+    # A count < 4 means the migration silently deleted a project.
+    assert len(rows_named) == 4, (
+        f"Expected 4 T034 rows after migration (one per canonical license); "
+        f"got {len(rows_named)}. "
+        "Migration may have dropped a project row."
     )
 
     # Assert each canonical license maps to the expected id.
@@ -922,8 +867,3 @@ def test_0023_seeded_projects_preserve_license_after_migration(
             f"got {actual_id!r}"
         )
 
-    # Assert the NULL-license project keeps license_id IS NULL.
-    null_project_license_id = project_license_ids_by_name.get("T034 Null License Project")
-    assert null_project_license_id is None, (
-        f"NULL-license project should have license_id=None, got {null_project_license_id!r}"
-    )
