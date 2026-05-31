@@ -3,7 +3,7 @@
  */
 
 import type { User } from '$lib/types';
-import { apiClient } from '$lib/api/client';
+import { ApiError, apiClient } from '$lib/api/client';
 import { logoutUser as webLogoutUser } from '$lib/api/web-auth';
 import { goto } from '$app/navigation';
 import { localizeHref } from '$lib/paraglide/runtime';
@@ -160,6 +160,33 @@ function createAuthStore() {
         state.user = normalizeCurrentUser(user);
         state.isAuthenticated = true;
       } catch (error) {
+        // spec/011 US4 forced-change routing fix (bootstrap path): when an
+        // admin has reset a user's password the forced-change middleware locks
+        // `/users/me` with ``423 ERR_PASSWORD_CHANGE_REQUIRED``. This fires on
+        // a page reload / deep-link into an (app) route, where refresh
+        // succeeds (the session is valid — only `/users/me` is locked) but the
+        // user hydration fails. Without special handling `state.user` stays
+        // null and `isAuthenticated` stays false, so the (app) layout guard
+        // bounces the user to `/login` instead of the change-password flow.
+        // Keep the access token intact and route to `/change-password` so the
+        // user can complete the forced change. Skip the redirect when already
+        // on that screen to avoid a navigation loop.
+        const isPasswordChangeRequired =
+          error instanceof ApiError &&
+          (error.status === 423 || error.code === 'ERR_PASSWORD_CHANGE_REQUIRED');
+        if (isPasswordChangeRequired) {
+          state.user = null;
+          state.isAuthenticated = false;
+          if (
+            !silent &&
+            typeof window !== 'undefined' &&
+            !window.location.pathname.includes('/change-password')
+          ) {
+            await goto(localizeHref('/change-password'), { replaceState: true });
+          }
+          return;
+        }
+
         // Clear client-side session state
         state.user = null;
         state.isAuthenticated = false;
@@ -321,6 +348,9 @@ const NO_REDIRECT_PATH_SEGMENTS = [
   '/reset-password',
   '/verify-email',
   '/2fa',
+  // spec/011 US4: a forced-change user sitting on the change-password
+  // screen must not be bounced to /login when a background refresh fails.
+  '/change-password',
 ];
 
 function isOnNoRedirectPath(): boolean {

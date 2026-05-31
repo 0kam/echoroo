@@ -283,6 +283,41 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # spec/011 T320 — self-service change-password (BFF + v1 mirror).
+    # Both endpoints rotate the password of the *authenticated session
+    # user only* (resolved via ``CurrentUser``); there is no project
+    # context and no cross-user side effect, so they correctly carry NO
+    # ``gate_action`` project-permission guard. Session cookie + CSRF and
+    # the forced-password-change request-bypass list are enforced
+    # elsewhere (FR-011-204/205). Same trust boundary as the step-up and
+    # ``/users/me/password`` (USER_SCOPED_ONLY) entries above.
+    AllowlistEntry(
+        path_pattern="/web-api/v1/auth/change-password",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Self-service change-password operates strictly on the "
+            "authenticated session user (spec/011 FR-011-204/205 / T320)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#change-password",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/api/v1/auth/change-password",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "v1 mirror of the self-service change-password endpoint; "
+            "rotates the authenticated user's own password only "
+            "(spec/011 FR-011-204/205 / T320)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#change-password",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     AllowlistEntry(
         path_pattern="/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
         methods=frozenset({"POST"}),

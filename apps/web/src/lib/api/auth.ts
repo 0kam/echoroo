@@ -21,7 +21,7 @@ import type {
   UserRegisterRequest,
   TokenResponse,
 } from '$lib/types';
-import { ApiError } from './client';
+import { ApiError, apiClient } from './client';
 
 /**
  * Login response with user data
@@ -43,6 +43,42 @@ export interface RegisterResponse {
  */
 export interface MessageResponse {
   message: string;
+}
+
+/**
+ * spec/011 US4 — step-up ceremony response shapes (admin recovery flow).
+ *
+ * The two-step ceremony (`begin` → `complete`) issues a short-lived
+ * scoped JWT that destructive admin endpoints accept via the
+ * `X-Step-Up-Token` header. The flow is TOTP-only: WebAuthn-only users
+ * receive a 409 `step_up_2fa_not_enrolled` from `begin`.
+ */
+export type StepUpScope = 'admin_recovery';
+
+export interface StepUpBeginResponse {
+  challenge_id: string;
+  factors_required: string[];
+}
+
+export interface StepUpCompleteResponse {
+  step_up_token: string;
+  expires_at: string;
+  scope_set: string[];
+}
+
+/**
+ * spec/011 US4 — change-password response shape.
+ *
+ * The backend rotates the caller's `security_stamp` on a successful
+ * change, which invalidates the OLD in-memory access token. It returns
+ * a freshly-minted `access_token` (plus `expires_in`) so the client can
+ * swap in the new credential before issuing any further session-gated
+ * calls. Both fields are optional to stay tolerant of older backends
+ * that only returned `{ message }`.
+ */
+export interface ChangePasswordResponse extends MessageResponse {
+  access_token?: string;
+  expires_in?: number;
 }
 
 /**
@@ -94,11 +130,22 @@ function extractErrorCode(errorData: unknown): string | null {
     return null;
   }
   const obj = errorData as Record<string, unknown>;
-  if (typeof obj.error === 'string' && obj.error.length > 0) {
-    return obj.error;
+  for (const key of ['error', 'error_code', 'code'] as const) {
+    const value = obj[key];
+    if (typeof value === 'string' && value.length > 0) return value;
   }
-  if (typeof obj.code === 'string' && obj.code.length > 0) {
-    return obj.code;
+  // spec/011 step-up / change-password endpoints raise via
+  // `HTTPException(detail={"error_code": "...", "message": "..."})`,
+  // which FastAPI serialises as `{ "detail": { "error_code": ... } }`.
+  // Mirror the central client so `err.code` is populated for the
+  // nested-envelope shape too.
+  const detail = obj.detail;
+  if (typeof detail === 'object' && detail !== null) {
+    const detailObj = detail as Record<string, unknown>;
+    for (const key of ['error_code', 'error', 'code'] as const) {
+      const value = detailObj[key];
+      if (typeof value === 'string' && value.length > 0) return value;
+    }
   }
   return null;
 }
@@ -115,6 +162,19 @@ async function postAuth<T>(path: string, body?: unknown): Promise<T> {
   const csrfToken = getCsrfToken();
   if (csrfToken && !CSRF_EXEMPT_PATHS.has(path)) {
     headers['X-CSRF-Token'] = csrfToken;
+  }
+
+  // Attach the in-memory access token as a Bearer header WHEN one exists.
+  // Session-gated BFF endpoints (step-up begin/complete, change-password)
+  // are POST-auth and require `access_cookie OR Bearer`; there is no
+  // access-token cookie, so the Bearer is the only credential that
+  // satisfies the backend session middleware. Pre-auth flows (login,
+  // 2FA setup/verify) run before any token exists, so `getAccessToken()`
+  // returns null and nothing is attached — those flows are unchanged.
+  // Mirrors the token + header construction in `client.ts` (`request()`).
+  const accessToken = apiClient.getAccessToken();
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
   const response = await fetch(url, {
@@ -258,4 +318,57 @@ export async function getCurrentUser(): Promise<User> {
  */
 export async function resendVerificationEmail(): Promise<MessageResponse> {
   return postAuth<MessageResponse>('/verify-email/resend');
+}
+
+/**
+ * spec/011 US4 — begin a step-up ceremony for the given scope.
+ *
+ * Returns a `challenge_id` plus the factors the caller must satisfy
+ * (`["password", "totp"]` for `admin_recovery`). A 409
+ * `step_up_2fa_not_enrolled` indicates the operator has no TOTP factor
+ * enrolled (WebAuthn-only) and therefore cannot complete this flow.
+ */
+export async function stepUpBegin(
+  scope: StepUpScope
+): Promise<StepUpBeginResponse> {
+  return postAuth<StepUpBeginResponse>('/step-up/begin', { scope });
+}
+
+/**
+ * spec/011 US4 — complete a step-up ceremony with the operator's
+ * password + TOTP code.
+ *
+ * On success returns a short-lived `step_up_token` plus its
+ * `expires_at` and granted `scope_set`. Any wrong / missing / expired
+ * factor returns a uniform 401 `step_up_factor_invalid`; a stale
+ * challenge therefore requires a fresh `stepUpBegin` before retrying.
+ */
+export async function stepUpComplete(
+  challengeId: string,
+  factors: { password: string; totpCode: string }
+): Promise<StepUpCompleteResponse> {
+  return postAuth<StepUpCompleteResponse>('/step-up/complete', {
+    challenge_id: challengeId,
+    factors: {
+      password: factors.password,
+      totp_code: factors.totpCode,
+    },
+  });
+}
+
+/**
+ * spec/011 US4 — change the current user's password (self-service).
+ *
+ * Used by the forced-change screen after an admin reset. Errors:
+ * 401 `current_password_invalid`, 400 `password_reused`,
+ * 422 `password_policy_violation` (message carries the policy reason).
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<ChangePasswordResponse> {
+  return postAuth<ChangePasswordResponse>('/change-password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
 }
