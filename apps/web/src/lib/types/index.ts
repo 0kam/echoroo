@@ -190,6 +190,12 @@ export interface User {
   email_verified_at: string | null;
   created_at: string;
   last_login_at?: string | null;
+  /**
+   * spec/011 US4: set when an admin has reset this user's password to a
+   * temporary credential. While true, the (app) guard forces the user to
+   * the `/change-password` screen before any other route renders.
+   */
+  must_change_password?: boolean;
 }
 
 /**

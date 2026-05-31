@@ -18,6 +18,10 @@ from echoroo.schemas.auth import (
     UserRegisterRequest,
     UserResponse,
 )
+from echoroo.schemas.web_v1.change_password import (
+    ChangePasswordRequest,
+    ChangePasswordResponse,
+)
 from echoroo.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -228,3 +232,56 @@ async def refresh(
 # admin-mediated reset flow exposed via ``/web-api/v1/admin/users/
 # {user_id}/password/reset``; email verification is removed wholesale
 # (FR-011-002).
+
+
+@router.post(
+    "/change-password",
+    response_model=ChangePasswordResponse,
+    summary="Change own password (v1 mirror of the BFF change-password endpoint)",
+    description=(
+        "spec/011 §FR-011-204 / T320. v1 mirror of "
+        "``POST /web-api/v1/auth/change-password``. Delegates to the "
+        "identical shared handler so both surfaces behave the same: "
+        "accepts the live password OR an in-window admin-issued "
+        "temporary password, clears ``must_change_password`` on success, "
+        "rotates the security stamp, invalidates other sessions, and "
+        "revokes trusted devices."
+    ),
+    responses={
+        400: {"description": "New password is identical to the current password"},
+        401: {"description": "Current password / temporary password mismatch"},
+        422: {"description": "New password fails the password policy"},
+    },
+)
+async def change_password(
+    payload: ChangePasswordRequest,
+    http_request: Request,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ChangePasswordResponse:
+    """v1 mirror of the BFF self-service change-password endpoint.
+
+    Reuses :func:`echoroo.api.web_v1.auth._handle_change_password` so the
+    credential verification, forced-change clearing, security-stamp
+    rotation, session invalidation, trusted-device revocation, audit
+    emission, and HTTP error envelopes are identical to the
+    ``/web-api/v1`` surface. Imported lazily to avoid a router-level
+    import cycle between the two ``auth`` modules.
+
+    Current-session survival (FR-011-205): the stamp rotation invalidates
+    the caller's existing access token, so the response carries a FRESH
+    ``access_token`` (+ ``expires_in``) bound to the new stamp — mirroring
+    the v1 login token body. Bearer clients MUST replace their stored
+    token with this value to keep the current session working; all OTHER
+    tokens for the user remain invalidated. This surface issues NO cookies
+    (``issue_session_cookies`` defaults to False) — it is the Bearer
+    parity path only.
+    """
+    from echoroo.api.web_v1.auth import _handle_change_password  # noqa: PLC0415
+
+    return await _handle_change_password(
+        payload=payload,
+        request=http_request,
+        db=db,
+        current_user=current_user,
+    )

@@ -66,10 +66,27 @@
     try {
       const user = await apiClient.get<User>('/web-api/v1/users/me');
       authStore.setUser(user);
-    } catch {
-      // The new web-auth backend may expose user data via a different
-      // endpoint. If /users/me fails we still consider login successful;
-      // the dashboard will retry via authStore.initialize().
+    } catch (err) {
+      // spec/011 US4 forced-change routing fix: when an admin has reset a
+      // user's password the forced-change middleware locks `/users/me` with
+      // ``423 ERR_PASSWORD_CHANGE_REQUIRED``. The login itself succeeded and
+      // the in-memory access token IS valid (only `/users/me` is locked), so
+      // we must NOT fall through to `/dashboard` — the (app) forced-change
+      // guard relies on `authStore.user.must_change_password`, but
+      // `authStore.user` is null here, so the guard never fires and the user
+      // is stranded on a blank dashboard shell. Route directly to
+      // `/change-password`, keeping the access token intact so that screen can
+      // call the authenticated change-password endpoint.
+      if (
+        err instanceof ApiError &&
+        (err.status === 423 || err.code === 'ERR_PASSWORD_CHANGE_REQUIRED')
+      ) {
+        await goto(localizeHref('/change-password'));
+        return;
+      }
+      // Any other failure: the new web-auth backend may expose user data via a
+      // different endpoint. We still consider login successful; the dashboard
+      // will retry via authStore.initialize().
     }
 
     const redirect = $page.url.searchParams.get('redirect');

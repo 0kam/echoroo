@@ -5,6 +5,7 @@
    */
 
   import { goto } from '$app/navigation';
+  import { page } from '$app/stores';
   import { authStore } from '$lib/stores/auth.svelte';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
@@ -23,6 +24,22 @@
   $effect(() => {
     if (!authStore.isLoading && !authStore.isAuthenticated) {
       goto(localizeHref('/login'));
+    }
+  });
+
+  /**
+   * Forced-change guard (spec/011 US4): an authenticated user whose
+   * password was reset by an admin (`must_change_password`) is bounced to
+   * the `/change-password` screen before any other authenticated route
+   * renders. The pathname check prevents a redirect loop once on the page.
+   */
+  $effect(() => {
+    if (
+      !authStore.isLoading &&
+      authStore.user?.must_change_password &&
+      !$page.url.pathname.includes('/change-password')
+    ) {
+      goto(localizeHref('/change-password'));
     }
   });
 

@@ -24,6 +24,19 @@ export type { SystemSetting, AdminUserUpdateRequest, SystemSettingsUpdateRequest
 
 const WEB_API_BASE = '/web-api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
+const STEP_UP_HEADER_NAME = 'X-Step-Up-Token';
+
+/**
+ * spec/011 US4 — admin password reset response.
+ *
+ * The temporary password is only ever returned once (Cache-Control:
+ * no-store on the backend); the caller must surface it immediately and
+ * never persist it. `expires_at` is 24h from issue.
+ */
+export interface AdminResetPasswordResponse {
+  temporary_password: string;
+  expires_at: string;
+}
 
 function getCsrfToken(): string | null {
   if (typeof document === 'undefined') return null;
@@ -108,6 +121,31 @@ export const adminApi = {
       `${WEB_API_BASE}/admin/settings`,
       data,
       { headers: csrfHeaders() }
+    );
+  },
+
+  /**
+   * spec/011 US4 — reset a user's password to a temporary credential
+   * (superuser only, step-up gated).
+   *
+   * Requires a fresh `admin_recovery`-scoped step-up token (obtained via
+   * `stepUpBegin` / `stepUpComplete`) attached as `X-Step-Up-Token`. The
+   * body is intentionally empty — the v1 contract omits the reason
+   * field. Returns the one-time temporary password + its 24h expiry.
+   */
+  resetUserPassword: async (
+    userId: string,
+    stepUpToken: string
+  ): Promise<AdminResetPasswordResponse> => {
+    return apiClient.post<AdminResetPasswordResponse>(
+      `${WEB_API_BASE}/admin/users/${userId}/reset-password`,
+      {},
+      {
+        headers: {
+          ...csrfHeaders(),
+          [STEP_UP_HEADER_NAME]: stepUpToken,
+        },
+      }
     );
   },
 };

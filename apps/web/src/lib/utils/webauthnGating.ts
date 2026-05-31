@@ -172,8 +172,21 @@ function persistStepUpToken(stored: StoredStepUpToken): void {
   sessionStorage.setItem(STEP_UP_STORAGE_KEY, JSON.stringify(stored));
 }
 
-export function clearStepUpToken(): void {
+/**
+ * Clear the cached step-up token.
+ *
+ * The optional ``scope`` argument lets callers express intent (e.g.
+ * ``clearStepUpToken('admin_recovery')`` after a one-shot recovery
+ * flow). Storage is a single slot, so when a scope is supplied we only
+ * clear it if the stored token matches that scope — otherwise an
+ * unrelated active token (different scope) is left intact.
+ */
+export function clearStepUpToken(scope?: string): void {
   if (typeof sessionStorage === 'undefined') return;
+  if (scope) {
+    const stored = loadStoredStepUpToken();
+    if (stored && stored.scope !== scope) return;
+  }
   sessionStorage.removeItem(STEP_UP_STORAGE_KEY);
 }
 

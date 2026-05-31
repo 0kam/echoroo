@@ -35,7 +35,7 @@ from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password, verify_password
 from echoroo.core.settings import get_settings
 from echoroo.core.text import has_control_chars
-from echoroo.middleware.auth import OptionalCurrentUser
+from echoroo.middleware.auth import CurrentUser, OptionalCurrentUser
 from echoroo.middleware.csrf import CSRF_HEADER_NAME, issue_csrf_token
 from echoroo.middleware.step_up import STEP_UP_HEADER_NAME
 from echoroo.models.user import User
@@ -60,13 +60,17 @@ from echoroo.schemas.web_v1.auth import (
     WebAuthnRegisterCompleteResponse,
     WebAuthnRegisterRequest,
 )
+from echoroo.schemas.web_v1.change_password import (
+    ChangePasswordRequest,
+    ChangePasswordResponse,
+)
 from echoroo.schemas.web_v1.step_up import (
     StepUpBeginRequest,
     StepUpBeginResponse,
     StepUpCompleteRequest,
     StepUpCompleteResponse,
 )
-from echoroo.services import invitation_service
+from echoroo.services import invitation_service, self_password_change
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.auth_service import (
     DEFAULT_RATE_LIMIT_POLICY,
@@ -1907,6 +1911,178 @@ async def step_up_complete(
         step_up_token=step_up_token,
         expires_at=step_up_expires_at.isoformat(),
         scope_set=[SCOPE_ADMIN_RECOVERY],
+    )
+
+
+async def _handle_change_password(
+    *,
+    payload: ChangePasswordRequest,
+    request: Request,
+    db: DbSession,
+    current_user: User,
+    response: Response | None = None,
+    issue_session_cookies: bool = False,
+) -> ChangePasswordResponse:
+    """Shared self-service change-password handler (spec/011 T320).
+
+    Invoked by BOTH ``POST /web-api/v1/auth/change-password`` and its v1
+    mirror ``POST /api/v1/auth/change-password`` so the two surfaces are
+    identical by construction. All credential handling is delegated to
+    :func:`echoroo.services.self_password_change.change_password`; this
+    helper only maps the service's typed exceptions onto the HTTP error
+    envelopes documented in the contract YAML.
+
+    Error mapping:
+      * wrong current password OR expired temp password → 401
+        ``current_password_invalid`` (the two are intentionally
+        indistinguishable so the response cannot be used as an oracle).
+      * reusing the current password → 400 ``password_reused``.
+      * new password fails the shared NIST/HIBP policy → 422
+        ``password_policy_violation`` (carries the policy reason).
+
+    Current-session survival (FR-011-205)
+    -------------------------------------
+    ``self_password_change.change_password`` rotates
+    ``users.security_stamp`` to invalidate every OTHER outstanding session
+    (refresh tokens, step-up tokens, trusted devices). That rotation also
+    invalidates the CALLER's own access token — whose ``ss`` claim now
+    mismatches the live stamp — so the very next request would 419
+    (``session_revoked``) and soft-lock the user who just changed their
+    own password. FR-011-205 requires the current session to be KEPT.
+
+    To satisfy that, on success we mint a FRESH access token carrying the
+    rotated stamp and return it in the response body so the caller swaps
+    its in-memory / Bearer token seamlessly. For the BFF surface
+    (``issue_session_cookies=True``) we ALSO re-issue the session /
+    refresh / CSRF cookies via :func:`_set_session_cookies` (new family,
+    new stamp) so the cookie surface stays coherent — the prior refresh
+    family carried the old stamp and would otherwise be unusable. Net
+    effect: the current session continues; all OTHER sessions remain
+    invalidated.
+    """
+    try:
+        await self_password_change.change_password(
+            db,
+            user=current_user,
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+            hibp=_hibp_checker,
+            request_id=_request_id(request),
+            ip=_client_ip(request),
+            user_agent=_user_agent(request),
+        )
+    except self_password_change.CurrentPasswordMismatchError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error_code": "current_password_invalid",
+                "message": (
+                    "Current password is incorrect, or the temporary "
+                    "password has expired."
+                ),
+            },
+        ) from exc
+    except self_password_change.NewPasswordReusedError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error_code": "password_reused",
+                "message": (
+                    "New password must be different from the current "
+                    "password."
+                ),
+            },
+        ) from exc
+    except PasswordPolicyError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error_code": "password_policy_violation",
+                "message": exc.reason,
+            },
+        ) from exc
+
+    # The service flushed the User update + trusted-device revocations
+    # into the caller's transaction (including the new ``security_stamp``);
+    # commit so they are durable. The audit row already committed in its
+    # own fresh session inside the service.
+    await db.commit()
+
+    # Re-issue the caller's CURRENT session with the rotated stamp
+    # (FR-011-205). ``current_user.security_stamp`` now holds the new
+    # value (the service mutated the live ORM instance before commit).
+    new_access_token = issue_access_token(
+        user_id=current_user.id,
+        security_stamp=current_user.security_stamp,
+        ttl=timedelta(seconds=settings.web_access_token_ttl_seconds),
+    )
+
+    if issue_session_cookies and response is not None:
+        # BFF cookie surface: start a brand-new refresh family bound to
+        # the rotated stamp so the caller's cookies keep authenticating.
+        # The OLD refresh family carried the old stamp and is now dead;
+        # we intentionally do NOT reuse it (the stamp mismatch would make
+        # ``/auth/refresh`` revoke it). Mirrors the login session-issue.
+        refresh_token, refresh_record = _issue_web_refresh_token(
+            user_id=current_user.id,
+            security_stamp=current_user.security_stamp,
+        )
+        await SqlTokenStore(AsyncSessionLocal).record_issued(refresh_record)
+        _set_session_cookies(
+            response,
+            refresh_token=refresh_token,
+            family_id=refresh_record.family_id,
+        )
+
+    return ChangePasswordResponse(
+        access_token=new_access_token,
+        expires_in=settings.web_access_token_ttl_seconds,
+    )
+
+
+@router.post(
+    "/change-password",
+    response_model=ChangePasswordResponse,
+    summary="Change own password and clear the forced-change flag (spec/011 T320)",
+    responses={
+        400: {"description": "New password is identical to the current password"},
+        401: {"description": "Current password / temporary password mismatch"},
+        422: {"description": "New password fails the password policy"},
+    },
+)
+async def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    response: Response,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> ChangePasswordResponse:
+    """Self-service password change (BFF cookie + CSRF surface).
+
+    Reachable while ``must_change_password = true`` because the
+    ``(POST, /web-api/v1/auth/change-password)`` tuple is on the
+    :data:`echoroo.middleware.forced_password_change.DEFAULT_ALLOWLIST_METHOD_PATHS`
+    request-bypass list (T321). It is NOT in
+    :data:`echoroo.core.auth_paths.PUBLIC_AUTH_PATHS`, so the
+    :class:`echoroo.middleware.csrf.CsrfMiddleware` and the session-cookie
+    auth guard both still apply — a live session + CSRF token are
+    required (security review M7).
+
+    On success the caller's CURRENT session is RE-ISSUED with the rotated
+    security stamp (FR-011-205): the session / refresh / CSRF cookies are
+    refreshed (Set-Cookie) and a fresh access token is returned in the
+    body so the frontend can swap its in-memory token without a 419.
+    """
+    return await _handle_change_password(
+        payload=payload,
+        request=request,
+        db=db,
+        current_user=current_user,
+        response=response,
+        issue_session_cookies=True,
     )
 
 
