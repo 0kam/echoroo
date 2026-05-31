@@ -47,10 +47,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.audit import contains_pii
 from echoroo.services import audit_service
+from echoroo.services.admin_password_reset import (
+    AUDIT_ACTION_PLATFORM_USER_PASSWORD_RESET_BY_SUPERUSER,
+    AUDIT_ACTION_PLATFORM_USER_PASSWORD_RESET_SELF,
+)
+from echoroo.services.api_key_lifecycle import (
+    AUDIT_ACTION_PLATFORM_API_KEY_REVOKE,
+)
 from echoroo.services.audit_service import (
     DESTRUCTIVE_ACTIONS,
     build_pre_transfer_action_summary,
 )
+from echoroo.services.auth import AUDIT_ACTION_AUTH_LOGIN_NEW_DEVICE
 from echoroo.services.invitation_service import (
     AUDIT_ACTION_INVITATION_REVOKE,
     AUDIT_ACTION_MEMBER_INVITE_ACCEPTED,
@@ -58,6 +66,13 @@ from echoroo.services.invitation_service import (
     AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER,
     AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED,
 )
+from echoroo.services.trusted_device_service import (
+    AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL,
+)
+from echoroo.services.two_factor_reset_service import (
+    AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER,
+)
+from echoroo.services.user import AUDIT_ACTION_PLATFORM_USER_EMAIL_CHANGED
 from echoroo.services.user_banner import BANNER_ELIGIBLE_ACTIONS
 
 # ``pytestmark`` is applied per-test below (only the async DB-touching
@@ -270,16 +285,32 @@ async def test_non_destructive_action_drops_target_id(
 # ---------------------------------------------------------------------------
 
 #: spec/011 audit-action constants that surface as service-private strings.
-#: The set MUST stay in sync with the constants declared in
-#: :mod:`echoroo.services.invitation_service` and the
-#: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS` registry.
+#: The set MUST stay in sync with the constants declared across the
+#: owning service modules (T020). T023 extends this from the original 5
+#: invitation/ownership entries to all 11 NFR-011-005 strings (plus the
+#: invitation-revoke string) so the A-13-detector registration check
+#: covers every new spec/011 audit-action string.
 _SPEC_011_AUDIT_ACTIONS: frozenset[str] = frozenset(
     {
+        # invitation_service.py
         AUDIT_ACTION_INVITATION_REVOKE,
         AUDIT_ACTION_MEMBER_INVITE_ACCEPTED,
         AUDIT_ACTION_MEMBER_INVITE_ACCEPTED_SIGNUP,
         AUDIT_ACTION_PROJECT_OWNERSHIP_BOOTSTRAP_TRANSFER,
         AUDIT_ACTION_TRUSTED_INVITE_ACCEPTED,
+        # admin_password_reset.py
+        AUDIT_ACTION_PLATFORM_USER_PASSWORD_RESET_BY_SUPERUSER,
+        AUDIT_ACTION_PLATFORM_USER_PASSWORD_RESET_SELF,
+        # auth.py
+        AUDIT_ACTION_AUTH_LOGIN_NEW_DEVICE,
+        # api_key_lifecycle.py
+        AUDIT_ACTION_PLATFORM_API_KEY_REVOKE,
+        # user.py
+        AUDIT_ACTION_PLATFORM_USER_EMAIL_CHANGED,
+        # two_factor_reset_service.py
+        AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER,
+        # trusted_device_service.py
+        AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL,
     }
 )
 

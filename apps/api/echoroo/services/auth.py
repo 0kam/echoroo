@@ -2,7 +2,7 @@
 
 import logging
 import time
-from typing import NoReturn
+from typing import Final, NoReturn
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -22,6 +22,18 @@ from echoroo.schemas.auth import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+#: spec/011 §NFR-011-005 / T020 — canonical platform-scope audit-action
+#: string for a successful login from a previously-unseen device (the
+#: new-device banner trigger). Declaring the constant here (the service
+#: that owns the login flow) is the foundational T020 step; the
+#: email->audit emit that consumes it (replacing the legacy
+#: ``send_login_notification`` email) lands with the US7
+#: ``services/email.py`` rewrite (T610). The detail carries a device
+#: *fingerprint hash* only — no IP / UA plaintext (NFR-011-005 / A-13).
+#: The string is banner-eligible (see
+#: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`).
+AUDIT_ACTION_AUTH_LOGIN_NEW_DEVICE: Final[str] = "auth.login.new_device"
 
 _PHASE4_STUB_DETAIL = (
     "This endpoint is being rewritten in Phase 4 T150a-d / T155. "

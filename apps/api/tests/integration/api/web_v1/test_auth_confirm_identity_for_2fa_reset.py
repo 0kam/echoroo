@@ -370,8 +370,7 @@ async def test_redeem_returns_confirmation_token_valid_for_admin_endpoint(
     from echoroo.api.web_v1.admin import router as admin_router
     from echoroo.middleware.auth import get_current_user_optional
     from echoroo.services.step_up_token_service import (
-        SCOPE_ADMIN_DESTRUCTIVE,
-        issue_step_up_token,
+        issue_admin_recovery_step_up_token,
     )
 
     # spec/011 Step 4 (T403) removed ``send_2fa_reset_magic_link`` from
@@ -416,11 +415,17 @@ async def test_redeem_returns_confirmation_token_valid_for_admin_endpoint(
 
     app.dependency_overrides[get_current_user_optional] = _su_override
 
-    step_up_token, _ = issue_step_up_token(
+    # spec/011 §FR-011-306 / T400: the admin 2FA reset endpoint is now
+    # gated by ``require_step_up_token(SCOPE_ADMIN_RECOVERY)`` (was
+    # ``SCOPE_ADMIN_DESTRUCTIVE``). Mint an ``admin_recovery`` token via the
+    # canonical issuer so the AND-condition factors (password + 2nd factor)
+    # are present and the gate passes.
+    step_up_token, _ = issue_admin_recovery_step_up_token(
         user_id=su_user.id,
         security_stamp=su_user.security_stamp,
         assertion_id="test-e2e-credential",
-        scope=SCOPE_ADMIN_DESTRUCTIVE,
+        password_verified=True,
+        second_factor="totp",
     )
 
     target = await _create_user(db_session, email="ci_e2e_target@example.com")

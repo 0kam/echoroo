@@ -8,6 +8,14 @@
 
 **Organization**: Tasks are grouped by user story (P1 first → P2). Phase 2 (Foundational) is a blocking prerequisite for every user story. The MVP is **US1 alone** (fresh deployment works without email).
 
+## ⚠️ Reconciliation status (2026-05-31) — checkboxes were stale; true state below
+
+A codebase reconciliation found many `[ ]` boxes were STALE (implemented in the 12-step-plan PRs #93-#105 but never checked). The boxes have now been synced to reality. **spec/011 is materially INCOMPLETE** — not a cleanup tail.
+
+- **Done (backend core)**: US1 email removal, US2/US3/US6 invitation+bootstrap BACKEND (invitation_service, bulk SAVEPOINT, SU bootstrap ownership transfer), contracts, backend integration/security tests, runbooks, README docs (T180/T181/T191), and the foundational allowlist/settings (T013/T021/T022/T031/T090/T091/T092/T242/T244).
+- **Done this slice (PR `011-residual-backend-slice`, 2026-05-31)**: **US5 T400** (fixed a real bug — admin 2FA-reset step-up scope `SCOPE_ADMIN_DESTRUCTIVE`→`SCOPE_ADMIN_RECOVERY`; no frontend caller existed so nothing broke), **T402** (`platform.user.two_factor_reset_by_superuser` audit emit with correct superuser.id→user_id self-reset detection), **T404** test; **foundational T020/T023/T024** (11 audit-action constants declared at owning services + A-13 PII-detector registration + `test_audit_action_constants_registered.py`); **T032/T033 decisions**: accepted the US4 `USER_SCOPED_ONLY` registration in `core/endpoint_allowlist.py` (no separate `AUTHENTICATED_SELF_NO_GATE` constant) and the existing `test_endpoint_coverage.py` `is_allowlisted` exemption as canonical (no separate `test_endpoint_coverage_hard_fail.py`).
+- **GENUINELY REMAINING (large)**: **US7 banners/activity** T600-T663 (entire feature: `me.py` endpoints, the 5 email→audit emit rewrites T610-T617 that currently never surface banners, change_email cooldown T620/T621, banner GC T625, trusted-device revoke audit T630/T631, frontend T640-T643); **US2/US3/US6 FRONTEND** T220-T223/T280/T281/T520 (collaborators page, public `acceptInvitation`, invite-page 2FA enroll, `intended_owner_email`); **T030/T034** (3 banner ACTIONs — need US7 endpoints); **Step 7c** coverage uplift + **T190**; **Step 12b** Playwright e2e T192/T245/T292/T405/T544/T663/T740/T745. T180/T181 docs were already done.
+
 ## Format
 
 `- [ ] [ID] [P?] [Story?] Description`
@@ -63,12 +71,12 @@
   - `INVITATION_TOKEN_HMAC_KEY: str` (required at every boot)
   - `INVITATION_TOKEN_HMAC_KEY_OLD: str | None`
   - `model_validator(mode='after')` raises `ValueError` when `INVITATION_TOKEN_KID_OLD` is set without `INVITATION_TOKEN_HMAC_KEY_OLD` (and vice versa) — mirror the A-12 pattern at `core/settings.py:516-528`
-- [ ] T013 [P] **SPLIT ACROSS Step 2 / 3 / 10** — Remove the legacy email settings in the same PR as the consumer cleanup so settings + readers stay in sync: `RESEND_API_KEY`/`EMAIL_FROM` move to Step 2 (with `services/email.py` rewrite), `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED` **deleted in Step 3 (this PR)** alongside the middleware atomic swap, `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` remains until Step 10 (`services/email_verification_service.py` deletion). Avoids `AttributeError` between PRs.
+- [x] T013 [P] **SPLIT ACROSS Step 2 / 3 / 10** — Remove the legacy email settings in the same PR as the consumer cleanup so settings + readers stay in sync: `RESEND_API_KEY`/`EMAIL_FROM` move to Step 2 (with `services/email.py` rewrite), `EMAIL_VERIFICATION_ENFORCEMENT_ENABLED` **deleted in Step 3 (this PR)** alongside the middleware atomic swap, `EMAIL_VERIFICATION_TOKEN_TTL_SECONDS` remains until Step 10 (`services/email_verification_service.py` deletion). Avoids `AttributeError` between PRs.
 - [x] T014 [P] Add `apps/api/tests/unit/core/test_invitation_token_kid_settings.py`: assert presence, defaults, refuse-to-start co-presence validator
 
 ### Audit substrate
 
-- [ ] T020 Declare the 11 new audit-action constants (NFR-011-005) at the call-site / service-private level, matching the existing codebase convention (e.g. `services/two_factor_reset_service.py:125-141` declares `AUDIT_ACTION_REQUESTED = "two_factor_reset.requested"` etc.; `services/audit_service.py` does **not** carry such constants). Specifically:
+- [x] T020 Declare the 11 new audit-action constants (NFR-011-005) at the call-site / service-private level, matching the existing codebase convention (e.g. `services/two_factor_reset_service.py:125-141` declares `AUDIT_ACTION_REQUESTED = "two_factor_reset.requested"` etc.; `services/audit_service.py` does **not** carry such constants). Specifically:
   - `services/invitation_service.py` adds:
     - `AUDIT_ACTION_PROJECT_MEMBER_INVITE_ACCEPTED_SIGNUP = "project.member.invite_accepted_signup"`
     - `AUDIT_ACTION_PROJECT_MEMBER_INVITE_ACCEPTED = "project.member.invite_accepted"`
@@ -89,8 +97,8 @@
     - `AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL = "auth.trusted_device.revoke_all"`
 - [x] T021 In `apps/api/echoroo/services/audit_service.py` add `DESTRUCTIVE_ACTIONS: Final[frozenset[str]]` per research.md R6 (6 entries: `project.delete`, `dataset.delete`, `recording.delete`, `project.acl.update`, `project.permission.elevate`, `project.visibility.update`)
 - [x] T022 In `apps/api/echoroo/services/audit_service.py` add `build_pre_transfer_action_summary(session, project_id, actor_user_id, since, until) -> dict` helper that queries `project_audit_log` rows for `actor_user_id == :actor AND project_id == :project AND created_at BETWEEN :since AND :until`, returning `{summary: [{action, timestamp, target_id?}]}` with `target_id` preserved iff `action ∈ DESTRUCTIVE_ACTIONS`
-- [ ] T023 [P] Register each of the 11 new audit-action strings and `DESTRUCTIVE_ACTIONS` with the Phase 17 A-13 operator free-form PII detector (NFR-011-005) — extend the existing detector registration test
-- [ ] T024 [P] Add `apps/api/tests/security/test_audit_action_constants_registered.py`: asserts every new constant is unique vs existing audit-action strings + appears in the PII detector allowlist
+- [x] T023 [P] Register each of the 11 new audit-action strings and `DESTRUCTIVE_ACTIONS` with the Phase 17 A-13 operator free-form PII detector (NFR-011-005) — extend the existing detector registration test
+- [x] T024 [P] Add `apps/api/tests/security/test_audit_action_constants_registered.py`: asserts every new constant is unique vs existing audit-action strings + appears in the PII detector allowlist
 
 ### ACTION constants + endpoint coverage allowlist
 
@@ -100,9 +108,9 @@
   - `USER_BANNER_LIST_ACTION` (USER self-scope)
   - `USER_BANNER_DISMISS_ACTION` (USER self-scope)
   - `USER_ACTIVITY_LIST_ACTION` (USER self-scope)
-- [ ] T031 In `apps/api/echoroo/core/endpoint_allowlist.py` add `TOKEN_AUTH_ONLY` entries for `GET /web-api/v1/auth/invitations/{token}` and `POST /web-api/v1/auth/invitations/{token}/accept` (spec.md NFR-011-004)
-- [ ] T032 In `apps/api/echoroo/core/endpoint_allowlist.py` add `AUTHENTICATED_SELF_NO_GATE` entries (new allowlist; create the constant if absent) for `POST /web-api/v1/auth/step-up/begin` and `POST /web-api/v1/auth/step-up/complete` (spec.md NFR-011-004)
-- [ ] T033 Update `apps/api/tests/contract/test_endpoint_coverage_hard_fail.py` to recognise the new allowlists and exempt the four routes from `gate_action` requirement
+- [x] T031 In `apps/api/echoroo/core/endpoint_allowlist.py` add `TOKEN_AUTH_ONLY` entries for `GET /web-api/v1/auth/invitations/{token}` and `POST /web-api/v1/auth/invitations/{token}/accept` (spec.md NFR-011-004)
+- [x] T032 In `apps/api/echoroo/core/endpoint_allowlist.py` add `AUTHENTICATED_SELF_NO_GATE` entries (new allowlist; create the constant if absent) for `POST /web-api/v1/auth/step-up/begin` and `POST /web-api/v1/auth/step-up/complete` (spec.md NFR-011-004)
+- [x] T033 Update `apps/api/tests/contract/test_endpoint_coverage_hard_fail.py` to recognise the new allowlists and exempt the four routes from `gate_action` requirement
 - [ ] T034 Update `apps/api/tests/contract/test_actions_coherence.py` (9-class coherence per spec/007) to register the five new ACTIONs with their scope / required_permission / superuser-only triple
 
 ### Step-up token extension (existing service)
@@ -155,9 +163,9 @@
 
 ### CI guard + runbooks (skeleton)
 
-- [ ] T090 Create `apps/api/tests/contract/test_no_email_subsystem_traces.py` (R12): grep the regex from NFR-011-001 across `apps/`, `scripts/`, `compose.dev.yaml`, `.env.example`, `apps/api/README.md`, `README.md`, `.github/workflows/`, `docs/runbook/`, `apps/api/alembic/`; exclude itself and `*_legacy*.py`; fail on any match
-- [ ] T091 [P] Create skeleton `docs/runbook/invitation_token_kid_rotation.md` (R3) with sections: planned rotation, emergency rotation, forensic query for impacted invitations, initial-deploy first-time setup. Full content filled in Polish phase
-- [ ] T092 [P] Create skeleton `docs/runbook/zero-email-deployment-secret-rotation.md` (R2) listing CI/Actions secrets to delete (`RESEND_API_KEY`, `EMAIL_FROM`, `SMTP_*`)
+- [x] T090 Create `apps/api/tests/contract/test_no_email_subsystem_traces.py` (R12): grep the regex from NFR-011-001 across `apps/`, `scripts/`, `compose.dev.yaml`, `.env.example`, `apps/api/README.md`, `README.md`, `.github/workflows/`, `docs/runbook/`, `apps/api/alembic/`; exclude itself and `*_legacy*.py`; fail on any match
+- [x] T091 [P] Create skeleton `docs/runbook/invitation_token_kid_rotation.md` (R3) with sections: planned rotation, emergency rotation, forensic query for impacted invitations, initial-deploy first-time setup. Full content filled in Polish phase
+- [x] T092 [P] Create skeleton `docs/runbook/zero-email-deployment-secret-rotation.md` (R2) listing CI/Actions secrets to delete (`RESEND_API_KEY`, `EMAIL_FROM`, `SMTP_*`)
 
 ### Email helper reduction (skeleton — full rewrite in Phase 9 US7)
 
@@ -230,13 +238,13 @@
 
 ### Docs
 
-- [ ] T180 [US1] [P] Update root `README.md` quickstart section to remove SMTP / Resend / Mailpit / DKIM / DNS as setup steps
-- [ ] T181 [US1] [P] Update `apps/api/README.md` to remove the same references
+- [x] T180 [US1] [P] Update root `README.md` quickstart section to remove SMTP / Resend / Mailpit / DKIM / DNS as setup steps
+- [x] T181 [US1] [P] Update `apps/api/README.md` to remove the same references
 
 ### US1 acceptance tests
 
 - [ ] T190 [US1] [P] Add integration `apps/api/tests/integration/test_fresh_deployment_no_email_state.py` (FR-011-009, US1 AC1-2): setup wizard creates user with no `email_verified_at` column reference, `/users/me` response has no `email_verification_required` field
-- [ ] T191 [US1] Run `pytest apps/api/tests/contract/test_no_email_subsystem_traces.py` and verify ZERO matches outside Spec / Revision History / itself (US1 AC3)
+- [x] T191 [US1] Run `pytest apps/api/tests/contract/test_no_email_subsystem_traces.py` and verify ZERO matches outside Spec / Revision History / itself (US1 AC3)
 - [ ] T192 [US1] [P] Add Playwright e2e `apps/web/tests/e2e/no-email-ui-fresh-deployment.spec.ts` (US1 AC1-3): bring up with no env vars, complete setup, navigate Profile + Dashboard + Settings, assert no "verify email" / "メール認証" UI anywhere
 
 **Checkpoint**: US1 deliverable complete — fresh deployment runs end-to-end with zero email configuration.
@@ -272,9 +280,9 @@
 
 - [x] T240 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/member-invitations.yaml` against the live FastAPI app (`pytest test_openapi_diff.py`); fix YAML or app discrepancies in this PR — single-invite + listing endpoints land in this PR; YAML's bulk + revoke routes remain part of Step 8, so the stem stays in `_SPEC_011_PENDING_STEMS` until Step 8 promotes it
 - [x] T241 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/invitation-public.yaml` against the live app — stem promoted to `_SPEC_011_LIVE_CONTRACT_STEMS`
-- [ ] T242 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/trusted-users-invitation-url.yaml` against the live app (after T207)
+- [x] T242 [US2] [P] Validate `specs/011-zero-email-deployment/contracts/trusted-users-invitation-url.yaml` against the live app (after T207)
 - [x] T243 [US2] [P] Add `apps/api/tests/integration/test_member_invitation_flow.py` (FR-011-101..109): issue → resolve → accept (new user) → membership row check; issue → resolve → accept (existing user) → no duplicate user; mismatched email → generic invalid
-- [ ] T244 [US2] [P] Already added in T057 (`test_invitation_token_kid_rotation.py`); confirm it covers the FR-011-105 resolver
+- [x] T244 [US2] [P] Already added in T057 (`test_invitation_token_kid_rotation.py`); confirm it covers the FR-011-105 resolver
 - [ ] T245 [US2] [P] Add Playwright e2e `apps/web/tests/e2e/single-invitation-flow.spec.ts` (US2 AC1-6): admin issues, copy URL, second browser opens, signup, lands in project at correct role; repeat for existing-user variant; 409 for already-member
 
 **Checkpoint**: US2 deliverable complete.
@@ -360,11 +368,11 @@ US4 is complete. Step-up + admin-reset backend (T300/T301/T302/T310/T311/T312) s
 
 **Independent Test**: Trigger admin 2FA disable; observe step-up enforced; target sessions invalidated; trusted devices revoked; banner audit emitted; zero email side effects.
 
-- [ ] T400 [US5] In `apps/api/echoroo/services/two_factor_service.py` (or `two_factor_reset_service.py` admin-disable path) wire `require_step_up_token(SCOPE_ADMIN_RECOVERY)` to the admin-disable endpoint
-- [ ] T401 [US5] [P] On admin 2FA disable, invalidate target's other sessions + call `TrustedDeviceService.revoke_all_for_user(target_user)` (FR-011-306, FR-011-402)
-- [ ] T402 [US5] [P] On admin 2FA disable, emit `platform.user.two_factor_reset_by_superuser` audit (T020) — replaces the previous outbound email
+- [x] T400 [US5] In `apps/api/echoroo/services/two_factor_service.py` (or `two_factor_reset_service.py` admin-disable path) wire `require_step_up_token(SCOPE_ADMIN_RECOVERY)` to the admin-disable endpoint
+- [x] T401 [US5] [P] On admin 2FA disable, invalidate target's other sessions + call `TrustedDeviceService.revoke_all_for_user(target_user)` (FR-011-306, FR-011-402)
+- [x] T402 [US5] [P] On admin 2FA disable, emit `platform.user.two_factor_reset_by_superuser` audit (T020) — replaces the previous outbound email
 - [x] T403 [US5] [P] Remove the `send_2fa_reset_magic_link` call-site from `apps/api/echoroo/services/two_factor_reset_service.py` (T100 stubbed it; T403 deletes the call). Also drops the now-unreferenced `send_2fa_reset_magic_link` helper + `EmailDeliverySuppressed` exception from `services/email.py` and updates integration tests that monkeypatched the deleted symbol.
-- [ ] T404 [US5] [P] Add `apps/api/tests/integration/test_admin_2fa_reset_side_effects.py`: step-up enforced, sessions invalidated, trusted devices revoked, audit emitted, no email enqueued
+- [x] T404 [US5] [P] Add `apps/api/tests/integration/test_admin_2fa_reset_side_effects.py`: step-up enforced, sessions invalidated, trusted devices revoked, audit emitted, no email enqueued
 - [ ] T405 [US5] [P] Add Playwright e2e `apps/web/tests/e2e/admin-2fa-reset.spec.ts` (US5 AC1): admin disables target user's 2FA, target re-enrolls successfully
 
 **Checkpoint**: US5 deliverable complete.

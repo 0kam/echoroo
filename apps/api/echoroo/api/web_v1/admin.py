@@ -2001,7 +2001,14 @@ async def reset_user_password(
         "flips the row to ``approved`` for immediate dispatch."
     ),
     operation_id="reset2FA",
-    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_DESTRUCTIVE))],
+    # spec/011 §FR-011-306 / T400: admin 2FA reset is a *recovery*
+    # action, not a generic destructive one. It MUST be gated by the
+    # ``admin_recovery`` step-up scope (AND-condition password + 2FA),
+    # consistent with the admin password-reset endpoint above (which
+    # already uses ``SCOPE_ADMIN_RECOVERY``). The verifier refuses a
+    # webauthn-only ``admin_destructive`` token here so a half-completed
+    # challenge cannot drive the recovery surface.
+    dependencies=[Depends(require_step_up_token(SCOPE_ADMIN_RECOVERY))],
 )
 async def reset_two_factor(
     user_id: UUID,

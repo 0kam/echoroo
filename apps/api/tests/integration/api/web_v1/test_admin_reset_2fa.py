@@ -42,8 +42,7 @@ from echoroo.models.two_factor_reset_request import (
 )
 from echoroo.models.user import User
 from echoroo.services.step_up_token_service import (
-    SCOPE_ADMIN_DESTRUCTIVE,
-    issue_step_up_token,
+    issue_admin_recovery_step_up_token,
 )
 from echoroo.services.two_factor_confirmation_token import (
     PURPOSE_ADMIN_RESET_2FA,
@@ -159,13 +158,19 @@ async def admin_client_factory(  # type: ignore[no-untyped-def]
         _override_user(user)
         headers: dict[str, str] = {}
         if include_step_up:
-            token, _ = issue_step_up_token(
+            # spec/011 §FR-011-306 / T400: the admin 2FA reset endpoint is
+            # now gated by ``require_step_up_token(SCOPE_ADMIN_RECOVERY)``
+            # (was ``SCOPE_ADMIN_DESTRUCTIVE``). Mint an ``admin_recovery``
+            # token via the canonical issuer so the AND-condition factors
+            # (password + 2nd factor) are present and the gate passes.
+            token, _ = issue_admin_recovery_step_up_token(
                 user_id=user.id if user is not None else uuid4(),
                 security_stamp=(
                     user.security_stamp if user is not None else "0" * 64
                 ),
                 assertion_id="test-fixture-credential",
-                scope=SCOPE_ADMIN_DESTRUCTIVE,
+                password_verified=True,
+                second_factor="totp",
             )
             headers["X-Step-Up-Token"] = token
         return AsyncClient(

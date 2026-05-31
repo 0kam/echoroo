@@ -40,8 +40,11 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.middleware.auth import get_current_user_optional
 from echoroo.models.enums import (
     ProjectStatus,
     ProjectVisibility,
@@ -51,6 +54,10 @@ from echoroo.models.enums import (
 from echoroo.models.project import Project
 from echoroo.models.project_taxon_override import ProjectTaxonSensitivityOverride
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
+from echoroo.models.user import User
+from echoroo.services.step_up_token_service import (
+    issue_admin_recovery_step_up_token,
+)
 from echoroo.services.superuser_service import ACTION_SUPERUSER_REVOKE
 
 # Re-export the fixtures from the existing admin-superusers test module.
@@ -67,6 +74,54 @@ from tests.integration.api.web_v1.test_admin_superusers import (
 
 PII_REASON: str = "Forward to operator at jane.doe@example.com please"
 PII_TICKET: str = "ticket-jane@example.com"
+
+
+def _admin_recovery_client(
+    app: FastAPI,
+    db: AsyncSession,
+    *,
+    user: User,
+) -> AsyncClient:
+    """Build a client bearing an ``admin_recovery``-scoped step-up token.
+
+    spec/011 §FR-011-306 / T400: the ``reset-2fa`` endpoint is gated by
+    ``require_step_up_token(SCOPE_ADMIN_RECOVERY)`` (was
+    ``admin_destructive``). The shared ``admin_client_factory`` from
+    ``test_admin_superusers`` mints an ``admin_destructive`` token —
+    correct for the break-glass / revoke endpoints, but it would now
+    yield a 403 scope mismatch on ``reset-2fa`` *before* the A-13 PII
+    validator runs. These reset-2fa A-13 cases therefore mint an
+    ``admin_recovery`` token so the request reaches the Pydantic
+    boundary and the 422 PII reject is exercised.
+    """
+    captured = db
+
+    async def _override() -> User | None:
+        probe = await captured.execute(
+            sa.text(
+                "SELECT id FROM superusers "
+                "WHERE user_id = :uid AND revoked_at IS NULL LIMIT 1"
+            ),
+            {"uid": user.id},
+        )
+        row = probe.scalar_one_or_none()
+        user.is_superuser = row is not None  # type: ignore[attr-defined]
+        user._superuser_id = row  # type: ignore[attr-defined]
+        return user
+
+    app.dependency_overrides[get_current_user_optional] = _override
+    token, _ = issue_admin_recovery_step_up_token(
+        user_id=user.id,
+        security_stamp=user.security_stamp,
+        assertion_id="a13-reset-2fa-recovery",
+        password_verified=True,
+        second_factor="totp",
+    )
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        headers={"X-Step-Up-Token": token},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +320,7 @@ async def test_break_glass_enter_with_pii_returns_422_and_no_window_opens(
 @pytest.mark.asyncio
 async def test_reset_two_factor_with_pii_reason_returns_422(
     db_session: AsyncSession,
-    admin_client_factory,  # type: ignore[no-untyped-def]
+    admin_app,  # type: ignore[no-untyped-def]
 ) -> None:
     """PII in ``reason`` must yield 422 BEFORE any DB row is touched."""
     su_user = await _create_user(
@@ -276,7 +331,7 @@ async def test_reset_two_factor_with_pii_reason_returns_422(
         db_session, email="a13_reset_pii_reason_target@example.com"
     )
 
-    async with await admin_client_factory(su_user) as client:
+    async with _admin_recovery_client(admin_app, db_session, user=su_user) as client:
         response = await client.post(
             f"/web-api/v1/admin/users/{target.id}/reset-2fa",
             json={
@@ -293,7 +348,7 @@ async def test_reset_two_factor_with_pii_reason_returns_422(
 @pytest.mark.asyncio
 async def test_reset_two_factor_with_pii_support_ticket_id_returns_422(
     db_session: AsyncSession,
-    admin_client_factory,  # type: ignore[no-untyped-def]
+    admin_app,  # type: ignore[no-untyped-def]
 ) -> None:
     """PII in ``support_ticket_id`` must also yield 422."""
     su_user = await _create_user(
@@ -304,7 +359,7 @@ async def test_reset_two_factor_with_pii_support_ticket_id_returns_422(
         db_session, email="a13_reset_pii_ticket_target@example.com"
     )
 
-    async with await admin_client_factory(su_user) as client:
+    async with _admin_recovery_client(admin_app, db_session, user=su_user) as client:
         response = await client.post(
             f"/web-api/v1/admin/users/{target.id}/reset-2fa",
             json={

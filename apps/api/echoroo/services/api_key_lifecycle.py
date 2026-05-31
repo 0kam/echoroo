@@ -52,6 +52,23 @@ from typing import Final
 
 from echoroo.core.permissions import Permission
 
+#: spec/011 §NFR-011-005 / T020 — canonical platform-scope audit-action
+#: strings for the two API-key lifecycle events. ``scope_degrade`` is
+#: emitted when a key crosses the 180-day mark and its write scopes are
+#: stripped; ``revoke`` is emitted when a key crosses the 270-day mark
+#: (or is revoked out-of-band). Declaring the constants here (the
+#: service that owns the age-curve policy) is the foundational T020
+#: step; the email->audit emit that consumes them (replacing the legacy
+#: ``send_api_key_scope_degrade_email`` / ``send_api_key_revoke_email``)
+#: lands with the US7 ``services/email.py`` rewrite (T613 / T614). The
+#: detail carries the opaque ``api_key`` id only — no secret material
+#: (NFR-011-005 / A-13). ``platform.api_key.revoke`` is banner-eligible
+#: (see :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`).
+AUDIT_ACTION_PLATFORM_API_KEY_SCOPE_DEGRADE: Final[str] = (
+    "platform.api_key.scope_degrade"
+)
+AUDIT_ACTION_PLATFORM_API_KEY_REVOKE: Final[str] = "platform.api_key.revoke"
+
 #: Canonical write-scope catalogue. Membership in this set means the
 #: caller can mutate state — beat / verifier filter these strings out
 #: once a key crosses the 180-day mark.
@@ -176,6 +193,8 @@ def effective_permissions_for_age(
 
 __all__ = [
     "API_KEY_WRITE_PERMISSIONS",
+    "AUDIT_ACTION_PLATFORM_API_KEY_REVOKE",
+    "AUDIT_ACTION_PLATFORM_API_KEY_SCOPE_DEGRADE",
     "effective_permissions_for_age",
     "filter_to_read_only",
     "is_write_scope",
