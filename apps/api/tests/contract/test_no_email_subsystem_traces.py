@@ -150,6 +150,17 @@ _EXCLUSION_PREDICATES = (
     lambda rel: rel == "apps/api/tests/unit/test_migration_0022.py",
     lambda rel: rel
     == "apps/api/tests/integration/migrations/test_0022_email_subsystem_removal.py",
+    # spec/011 T190 (FR-011-009 / US1 AC1-2): the fresh-deployment guard
+    # asserts the zero-email contract by checking that the register /
+    # ``/users/me`` responses and the ``UserResponse`` schema carry NO
+    # ``email_verification_required`` / ``email_verified_at`` fields. It
+    # therefore names the deleted-surface identifiers in its assertion
+    # messages + function names (outside docstrings, so the comment
+    # stripper cannot remove them). Same historical-by-design rationale
+    # as the migration-test exclusions above: the file's purpose is to
+    # prove the absence of these names, not to reintroduce them.
+    lambda rel: rel
+    == "apps/api/tests/integration/test_fresh_deployment_no_email_state.py",
     # spec/011 Step 10b handles the frontend cleanup (T140-T149). Until
     # that PR lands the SvelteKit tree still references the deleted
     # surface in legacy stores, tests, and route components. The

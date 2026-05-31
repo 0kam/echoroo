@@ -262,7 +262,10 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # below threshold"; Step 7c (coverage uplift) PR can re-remove
         # once a targeted unit test for the remaining primitives is
         # added.
-        "echoroo/middleware/rate_limit.py",
+        # NOTE 2026-05-31 (spec/011 Step 7c): REMOVED — factory functions +
+        # init/close lifecycle tests added in
+        # tests/unit/middleware/test_rate_limit_coverage_uplift.py push
+        # this to 100%. Confirmed by targeted pytest-cov run.
         # ML modules — require GPU/model fixture setup, excluded from default test run.
         "echoroo/ml/active_learning.py",
         "echoroo/ml/base.py",
@@ -311,6 +314,17 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # security_stamp mismatch fast-path) need unit tests. Step 7c
         # coverage uplift PR will re-remove this entry. Current gap:
         # 6.2pp (78.8% → 85% target).
+        # NOTE 2026-05-31 (spec/011 Step 7c): 16 new unit tests in
+        # tests/unit/services/test_invitation_service_spec011_uplift.py
+        # cover the public-token error branches (not-found, not-pending,
+        # expired, email-mismatch, atomic-update race, already-member,
+        # emit_public_invitation_accept_audit ownership-transfer path).
+        # Current coverage: ~76.6% (+3pp from Step 7c unit tests).
+        # Still below 85% — the heavy ownership-transfer SAVEPOINT branch
+        # + trusted-invite accept path require integration-level coverage
+        # that depends on flaky test_superuser_bootstrap_invitation.py
+        # fixtures (5 tests failing with setup errors). Remaining in
+        # PHASE17_PENDING until the integration suite stabilises.
         "echoroo/services/invitation_service.py",
         "echoroo/services/project.py",
         "echoroo/services/recorder.py",
@@ -345,7 +359,10 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # response-shape variation, leaving ~1.4pp uncovered. Step 7c
         # coverage uplift PR can re-remove once additional Sentry-event
         # fixture variants are added.
-        "echoroo/observability/sentry.py",
+        # NOTE 2026-05-31 (spec/011 Step 7c): REMOVED — 30 new tests in
+        # tests/unit/test_sentry_coverage_uplift.py cover response body/data/
+        # headers/cookies/breadcrumbs(list form)/message.params/exception path.
+        # Confirmed 94.4% (above 85% threshold) by targeted pytest-cov run.
         # Workers — require Celery/Redis/DB fixtures.
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",
