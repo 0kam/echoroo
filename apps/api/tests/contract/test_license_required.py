@@ -1,28 +1,31 @@
 """License-required contract (T320 / T322 / T323, FR-085 / FR-087, SC-010).
 
-Spec FR-085 mandates that ``POST /projects`` reject creation requests that
-omit the ``license`` field with a 422 (``ERR_LICENSE_REQUIRED`` envelope)
-and that the value be one of the four CC license codes
-(``CC0`` / ``CC-BY`` / ``CC-BY-NC`` / ``CC-BY-SA``). FR-087 mandates that
-the initial license selection be recorded in
-:class:`~echoroo.models.project.ProjectLicenseHistory` so historical
-exports can reference an immutable license trail.
+Spec FR-085 mandates that ``POST /projects`` require a license at creation.
+spec/012 Phase 3 renamed the request field from ``license`` (the human-facing
+short_name) to ``license_id`` (the ``licenses.id`` primary key, e.g.
+``cc-by``). The RESPONSE field stays ``license`` and carries the joined
+short_name string (e.g. ``CC-BY``). FR-087 mandates that the initial license
+selection be recorded in
+:class:`~echoroo.models.project.ProjectLicenseHistory` so historical exports
+can reference an immutable license trail — the history row stores the
+short_name (``CC-BY``), NEVER the raw id.
 
-Tests cover the full input matrix (Phase 7 polish round 2 + 3):
+Tests cover the full input matrix:
 
-1. ``license`` missing entirely → 422 with ``error == "ERR_LICENSE_REQUIRED"``.
-2. ``license`` empty string → 422 (same envelope).
-3. ``license`` with a value outside the CC enum (e.g. ``"MIT"``) → 422.
-4. Happy path ``CC-BY`` → 201, project persisted with that license, **and**
-   exactly one ``ProjectLicenseHistory`` row is written
-   (``old_license=None``, ``new_license=CC-BY``,
+1. ``license_id`` missing entirely → standard Pydantic 422 (required field).
+2. ``license_id`` empty string → 422 (``min_length`` violation).
+3. ``license_id`` with no matching ``licenses`` row (e.g. ``"mit"``) → 422
+   with ``error_code == "license_not_found"`` (raised at the service layer).
+4. Happy path ``license_id="cc-by"`` → 201, project persisted with that
+   license, **and** exactly one ``ProjectLicenseHistory`` row is written
+   (``old_license=None``, ``new_license="CC-BY"`` — the short_name,
    ``changed_by_id=requester``) — FR-085 + FR-087 contract for the initial
    row.
 5. Two distinct project creations with different licenses → each project
    gets its own independent history row.
 6. ``PATCH /api/v1/projects/{id}/license`` happy path: a project created
-   with ``CC-BY`` and then mutated to ``CC-BY-NC`` ends up with **two**
-   history rows (initial + change).
+   with ``cc-by`` and then mutated to ``cc-by-nc`` ends up with **two**
+   history rows (initial + change), both storing short_names.
 7. Phase 7 polish round 2 (Major 5): two consecutive PATCHes with the
    *same* license value still append a row each — the no-op short-circuit
    in :func:`change_license` was deliberately removed so audit consumers
@@ -68,7 +71,6 @@ from sqlalchemy.pool import NullPool
 from echoroo.core.jwt import create_access_token
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
 )
 from echoroo.models.project import Project, ProjectLicenseHistory, ProjectMember
@@ -77,6 +79,7 @@ from echoroo.services.license_service import (
     list_license_history,
     record_initial_license,
 )
+from tests.conftest import seed_canonical_test_licenses
 
 # Test database URL — read at fixture time so the same value used by the
 # conftest ``client`` fixture also drives the patched ``AsyncSessionLocal``
@@ -230,23 +233,25 @@ async def _fetch_history_rows(
 
 @pytest.mark.asyncio
 class TestLicenseRequiredOnCreate:
-    """``POST /projects`` rejects missing / invalid licenses with 422.
+    """``POST /projects`` rejects missing / invalid ``license_id`` with 422.
 
-    Phase 7 polish round 2 (Major 6): the 422 envelope MUST carry
-    ``error == "ERR_LICENSE_REQUIRED"`` per FR-085. The detection is
-    handled at the validation handler level
-    (:func:`echoroo.core.exceptions.validation_exception_handler`) so any
-    ``loc`` chain containing ``"license"`` collapses to the same code,
-    regardless of whether the failure was "missing", "enum mismatch", or
-    "empty string".
+    spec/012 Phase 3: the request field is ``license_id`` carrying the
+    ``licenses.id`` primary key.
+
+    * Missing / empty ``license_id`` → standard Pydantic 422 (the field is
+      required + ``min_length`` constrained). The FR-085
+      ``ERR_LICENSE_REQUIRED`` envelope is no longer emitted for these
+      because the offending ``loc`` is ``license_id``, not ``license``.
+    * Unknown ``license_id`` (no matching ``licenses`` row) → 422 with
+      ``error_code == "license_not_found"`` raised at the service layer.
     """
 
-    async def test_missing_license_returns_err_license_required(
+    async def test_missing_license_returns_422(
         self,
         client: AsyncClient,
         t320_owner_headers: dict[str, str],
     ) -> None:
-        """FR-085: omitting ``license`` MUST surface ``ERR_LICENSE_REQUIRED``."""
+        """Omitting ``license_id`` MUST surface a 422 (required-field)."""
         response = await client.post(
             _PROJECTS_ENDPOINT,
             headers=t320_owner_headers,
@@ -258,51 +263,43 @@ class TestLicenseRequiredOnCreate:
         )
         assert response.status_code == 422, response.text
 
-        body = response.json()
-        assert body["error"] == "ERR_LICENSE_REQUIRED", (
-            f"Expected ERR_LICENSE_REQUIRED envelope, got {body!r}"
-        )
-        assert _has_license_field_error(body), (
-            f"422 body did not flag ``license`` as the offending field: {body!r}"
-        )
-
-    async def test_empty_string_license_returns_err_license_required(
+    async def test_empty_string_license_returns_422(
         self,
         client: AsyncClient,
         t320_owner_headers: dict[str, str],
     ) -> None:
-        """``license: ""`` collapses to the same ``ERR_LICENSE_REQUIRED`` code."""
+        """``license_id: ""`` violates ``min_length`` → 422."""
         response = await client.post(
             _PROJECTS_ENDPOINT,
             headers=t320_owner_headers,
             json={
                 "name": "T320 Empty License",
                 "visibility": "public",
-                "license": "",
+                "license_id": "",
             },
         )
         assert response.status_code == 422, response.text
-        body = response.json()
-        assert body["error"] == "ERR_LICENSE_REQUIRED", body
 
-    async def test_unknown_license_value_returns_err_license_required(
+    async def test_unknown_license_value_returns_license_not_found(
         self,
         client: AsyncClient,
+        db_session: AsyncSession,
         t320_owner_headers: dict[str, str],
     ) -> None:
-        """``license: "MIT"`` is outside the CC enum → ``ERR_LICENSE_REQUIRED``."""
+        """Unknown ``license_id`` → 422 with ``error_code == license_not_found``."""
+        await seed_canonical_test_licenses(db_session)
         response = await client.post(
             _PROJECTS_ENDPOINT,
             headers=t320_owner_headers,
             json={
                 "name": "T320 Unknown License",
                 "visibility": "public",
-                "license": "MIT",
+                "license_id": "mit",
             },
         )
         assert response.status_code == 422, response.text
         body = response.json()
-        assert body["error"] == "ERR_LICENSE_REQUIRED", body
+        assert body.get("error_code") == "license_not_found", body
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +326,7 @@ class TestLicenseHappyPathWritesHistory:
                 "name": "T320 Happy Path",
                 "description": "first license selection lands in history",
                 "visibility": "public",
-                "license": "CC-BY",
+                "license_id": "cc-by",
             },
         )
         assert response.status_code == 201, response.text
@@ -338,23 +335,24 @@ class TestLicenseHappyPathWritesHistory:
 
         project_id = body["id"]
 
-        # Project row reflects the requested license.
+        # Project row reflects the requested license (short_name via hybrid).
         project = (
             await db_session.execute(
                 sa.select(Project).where(Project.id == project_id)
             )
         ).scalar_one()
-        assert project.license == ProjectLicense.CC_BY
+        assert project.license == "CC-BY"
 
-        # FR-087: initial row exists with old_license=NULL, new_license=CC-BY,
-        # changed_by_id = requester user id. There MUST be exactly one row.
+        # FR-087: initial row exists with old_license=NULL, new_license=CC-BY
+        # (the short_name, NOT the id), changed_by_id = requester user id.
+        # There MUST be exactly one row.
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1, (
             f"Expected exactly one initial history row, got {len(rows)}"
         )
         initial = rows[0]
         assert initial.old_license is None
-        assert initial.new_license == ProjectLicense.CC_BY
+        assert initial.new_license == "CC-BY"
         assert initial.changed_by_id == t320_owner.id
 
 
@@ -380,7 +378,7 @@ class TestMultipleProjectsHaveIndependentHistory:
             json={
                 "name": "T320 Project A",
                 "visibility": "public",
-                "license": "CC0",
+                "license_id": "cc0",
             },
         )
         assert first_response.status_code == 201, first_response.text
@@ -392,7 +390,7 @@ class TestMultipleProjectsHaveIndependentHistory:
             json={
                 "name": "T320 Project B",
                 "visibility": "public",
-                "license": "CC-BY-SA",
+                "license_id": "cc-by-sa",
             },
         )
         assert second_response.status_code == 201, second_response.text
@@ -404,9 +402,9 @@ class TestMultipleProjectsHaveIndependentHistory:
 
         assert len(first_rows) == 1
         assert len(second_rows) == 1
-        assert first_rows[0].new_license == ProjectLicense.CC0
+        assert first_rows[0].new_license == "CC0"
         assert first_rows[0].old_license is None
-        assert second_rows[0].new_license == ProjectLicense.CC_BY_SA
+        assert second_rows[0].new_license == "CC-BY-SA"
         assert second_rows[0].old_license is None
 
         # Owner is the same on both — sanity check that the actor is
@@ -452,7 +450,7 @@ class TestChangeLicenseAppendsHistory:
         await record_initial_license(
             session=db_session,
             project_id=project.id,
-            license=ProjectLicense.CC_BY,
+            license="CC-BY",
             actor_user_id=t320_owner.id,
         )
         await db_session.commit()
@@ -460,33 +458,33 @@ class TestChangeLicenseAppendsHistory:
         rows_before = await _fetch_history_rows(db_session, project.id)
         assert len(rows_before) == 1
         assert rows_before[0].old_license is None
-        assert rows_before[0].new_license == ProjectLicense.CC_BY
+        assert rows_before[0].new_license == "CC-BY"
 
         change_row = await change_license(
             session=db_session,
             project_id=project.id,
-            new_license=ProjectLicense.CC_BY_NC,
+            new_license="CC-BY-NC",
             actor_user_id=t320_owner.id,
         )
         await db_session.commit()
-        assert change_row.old_license == ProjectLicense.CC_BY
-        assert change_row.new_license == ProjectLicense.CC_BY_NC
+        assert change_row.old_license == "CC-BY"
+        assert change_row.new_license == "CC-BY-NC"
 
         await db_session.refresh(project)
-        assert project.license == ProjectLicense.CC_BY_NC
+        assert project.license == "CC-BY-NC"
 
         rows_after = await _fetch_history_rows(db_session, project.id)
         assert len(rows_after) == 2
         # ASC order — oldest first per OpenAPI contract (projects.yaml:357).
-        assert rows_after[0].new_license == ProjectLicense.CC_BY
-        assert rows_after[1].old_license == ProjectLicense.CC_BY
-        assert rows_after[1].new_license == ProjectLicense.CC_BY_NC
+        assert rows_after[0].new_license == "CC-BY"
+        assert rows_after[1].old_license == "CC-BY"
+        assert rows_after[1].new_license == "CC-BY-NC"
 
         # ``list_license_history`` MUST also return ASC.
         listed = await list_license_history(db_session, project.id)
         assert [r.new_license for r in listed] == [
-            ProjectLicense.CC_BY,
-            ProjectLicense.CC_BY_NC,
+            "CC-BY",
+            "CC-BY-NC",
         ]
 
     async def test_two_same_license_patches_each_append_a_row(
@@ -509,7 +507,7 @@ class TestChangeLicenseAppendsHistory:
         await record_initial_license(
             session=db_session,
             project_id=project.id,
-            license=ProjectLicense.CC0,
+            license="CC0",
             actor_user_id=t320_owner.id,
         )
         await db_session.commit()
@@ -517,29 +515,29 @@ class TestChangeLicenseAppendsHistory:
         first = await change_license(
             session=db_session,
             project_id=project.id,
-            new_license=ProjectLicense.CC0,
+            new_license="CC0",
             actor_user_id=t320_owner.id,
         )
         await db_session.commit()
-        assert first.old_license == ProjectLicense.CC0
-        assert first.new_license == ProjectLicense.CC0
+        assert first.old_license == "CC0"
+        assert first.new_license == "CC0"
 
         second = await change_license(
             session=db_session,
             project_id=project.id,
-            new_license=ProjectLicense.CC0,
+            new_license="CC0",
             actor_user_id=t320_owner.id,
         )
         await db_session.commit()
-        assert second.old_license == ProjectLicense.CC0
-        assert second.new_license == ProjectLicense.CC0
+        assert second.old_license == "CC0"
+        assert second.new_license == "CC0"
 
         rows = await _fetch_history_rows(db_session, project.id)
         # Initial (record_initial_license) + 2 PATCHes = 3 rows.
         assert len(rows) == 3, (
             "Each PATCH must append a row even with same license (Major 5)."
         )
-        assert all(r.new_license == ProjectLicense.CC0 for r in rows)
+        assert all(r.new_license == "CC0" for r in rows)
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +550,7 @@ async def _create_project_via_api(
     headers: dict[str, str],
     *,
     name: str,
-    license_code: str,
+    license_id: str,
     visibility: str = "public",
 ) -> str:
     response = await client.post(
@@ -561,7 +559,7 @@ async def _create_project_via_api(
         json={
             "name": name,
             "visibility": visibility,
-            "license": license_code,
+            "license_id": license_id,
         },
     )
     assert response.status_code == 201, response.text
@@ -631,13 +629,13 @@ class TestPatchLicenseEndpoint:
             client,
             t320_owner_headers,
             name="T320 PATCH Owner",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await client.patch(
             _license_endpoint(project_id),
             headers=t320_owner_headers,
-            json={"license": "CC-BY-NC"},
+            json={"license_id": "cc-by-nc"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY-NC"
@@ -645,9 +643,9 @@ class TestPatchLicenseEndpoint:
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 2
         assert rows[0].old_license is None  # initial
-        assert rows[0].new_license == ProjectLicense.CC_BY
-        assert rows[1].old_license == ProjectLicense.CC_BY
-        assert rows[1].new_license == ProjectLicense.CC_BY_NC
+        assert rows[0].new_license == "CC-BY"
+        assert rows[1].old_license == "CC-BY"
+        assert rows[1].new_license == "CC-BY-NC"
         assert rows[1].changed_by_id == t320_owner.id
 
     async def test_admin_member_succeeds(
@@ -670,14 +668,14 @@ class TestPatchLicenseEndpoint:
             client,
             t320_owner_headers,
             name="T320 PATCH Admin Allowed",
-            license_code="CC0",
+            license_id="cc0",
         )
         await _add_admin_member(db_session, project_id, t320_admin.id)
 
         response = await client.patch(
             _license_endpoint(project_id),
             headers=t320_admin_headers,
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY"
@@ -685,9 +683,9 @@ class TestPatchLicenseEndpoint:
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 2
         assert rows[0].old_license is None
-        assert rows[0].new_license == ProjectLicense.CC0
-        assert rows[1].old_license == ProjectLicense.CC0
-        assert rows[1].new_license == ProjectLicense.CC_BY
+        assert rows[0].new_license == "CC0"
+        assert rows[1].old_license == "CC0"
+        assert rows[1].new_license == "CC-BY"
         # The Admin (NOT the project owner) is recorded as the actor.
         assert rows[1].changed_by_id == t320_admin.id
 
@@ -710,7 +708,7 @@ class TestPatchLicenseEndpoint:
             client,
             t320_owner_headers,
             name="T320 PATCH Member Denied",
-            license_code="CC0",
+            license_id="cc0",
         )
         await _add_member(
             db_session, project_id, t320_member.id, ProjectMemberRole.MEMBER
@@ -719,14 +717,14 @@ class TestPatchLicenseEndpoint:
         response = await client.patch(
             _license_endpoint(project_id),
             headers=t320_member_headers,
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 403, response.text
 
         # No new history row should have been written.
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC0
+        assert rows[0].new_license == "CC0"
 
     async def test_non_member_returns_403_or_404(
         self,
@@ -746,20 +744,20 @@ class TestPatchLicenseEndpoint:
             client,
             t320_owner_headers,
             name="T320 PATCH Outsider",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await client.patch(
             _license_endpoint(project_id),
             headers=t320_outsider_headers,
-            json={"license": "CC-BY-SA"},
+            json={"license_id": "cc-by-sa"},
         )
         assert response.status_code in (403, 404), response.text
 
         # No new history row should have been written.
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC_BY
+        assert rows[0].new_license == "CC-BY"
 
     async def test_extra_field_is_rejected_with_422(
         self,
@@ -772,20 +770,20 @@ class TestPatchLicenseEndpoint:
             client,
             t320_owner_headers,
             name="T320 PATCH Extra Field",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await client.patch(
             _license_endpoint(project_id),
             headers=t320_owner_headers,
-            json={"license": "CC-BY-NC", "evil_extra": True},
+            json={"license_id": "cc-by-nc", "evil_extra": True},
         )
         assert response.status_code == 422, response.text
 
         # No new history row should have been written.
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC_BY
+        assert rows[0].new_license == "CC-BY"
 
 
 # ---------------------------------------------------------------------------
@@ -1040,7 +1038,7 @@ async def _create_project_via_web_api(
     headers: dict[str, str],
     *,
     name: str,
-    license_code: str,
+    license_id: str,
     visibility: str = "public",
 ) -> str:
     """Create a project for the Web UI test cases.
@@ -1058,7 +1056,7 @@ async def _create_project_via_web_api(
         json={
             "name": name,
             "visibility": visibility,
-            "license": license_code,
+            "license_id": license_id,
         },
     )
     assert response.status_code == 201, response.text
@@ -1096,13 +1094,13 @@ class TestPatchLicenseEndpointWebApi:
             client,
             t320_owner_headers,
             name="T320 Web PATCH Owner",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await web_client.patch(
             _web_license_endpoint(project_id),
             headers=_web_bearer_headers(t320_owner),
-            json={"license": "CC-BY-NC"},
+            json={"license_id": "cc-by-nc"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY-NC"
@@ -1110,9 +1108,9 @@ class TestPatchLicenseEndpointWebApi:
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 2
         assert rows[0].old_license is None
-        assert rows[0].new_license == ProjectLicense.CC_BY
-        assert rows[1].old_license == ProjectLicense.CC_BY
-        assert rows[1].new_license == ProjectLicense.CC_BY_NC
+        assert rows[0].new_license == "CC-BY"
+        assert rows[1].old_license == "CC-BY"
+        assert rows[1].new_license == "CC-BY-NC"
         assert rows[1].changed_by_id == t320_owner.id
 
     async def test_admin_member_succeeds(
@@ -1132,22 +1130,22 @@ class TestPatchLicenseEndpointWebApi:
             client,
             t320_owner_headers,
             name="T320 Web PATCH Admin Allowed",
-            license_code="CC0",
+            license_id="cc0",
         )
         await _add_admin_member(db_session, project_id, t320_admin.id)
 
         response = await web_client.patch(
             _web_license_endpoint(project_id),
             headers=admin_headers,
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY"
 
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 2
-        assert rows[1].old_license == ProjectLicense.CC0
-        assert rows[1].new_license == ProjectLicense.CC_BY
+        assert rows[1].old_license == "CC0"
+        assert rows[1].new_license == "CC-BY"
         assert rows[1].changed_by_id == t320_admin.id
 
     async def test_regular_member_returns_403(
@@ -1167,7 +1165,7 @@ class TestPatchLicenseEndpointWebApi:
             client,
             t320_owner_headers,
             name="T320 Web PATCH Member Denied",
-            license_code="CC0",
+            license_id="cc0",
         )
         await _add_member(
             db_session, project_id, t320_member.id, ProjectMemberRole.MEMBER
@@ -1176,13 +1174,13 @@ class TestPatchLicenseEndpointWebApi:
         response = await web_client.patch(
             _web_license_endpoint(project_id),
             headers=member_headers,
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 403, response.text
 
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC0
+        assert rows[0].new_license == "CC0"
 
     async def test_non_member_returns_403_or_404(
         self,
@@ -1201,19 +1199,19 @@ class TestPatchLicenseEndpointWebApi:
             client,
             t320_owner_headers,
             name="T320 Web PATCH Outsider",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await web_client.patch(
             _web_license_endpoint(project_id),
             headers=outsider_headers,
-            json={"license": "CC-BY-SA"},
+            json={"license_id": "cc-by-sa"},
         )
         assert response.status_code in (403, 404), response.text
 
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC_BY
+        assert rows[0].new_license == "CC-BY"
 
     async def test_extra_field_is_rejected_with_422(
         self,
@@ -1225,31 +1223,28 @@ class TestPatchLicenseEndpointWebApi:
     ) -> None:
         """Web PATCH with extra payload field → 422 (schema ``extra='forbid'``).
 
-        The 422 envelope here MUST also carry ``error == "ERR_LICENSE_REQUIRED"``
-        because the request hit the license-bearing PATCH route — this is the
-        same path the FR-085 envelope is scoped to in
-        :func:`echoroo.core.exceptions.validation_exception_handler`. Any
-        future regression that returns a generic ``ValidationError`` envelope
-        on this route would silently break Web UI error rendering.
+        ``ProjectLicenseUpdateRequest`` declares ``extra="forbid"`` so an
+        unexpected field is rejected before the business gate runs. The test
+        asserts the 422 status and that no history row is written.
         """
         project_id = await _create_project_via_web_api(
             web_client,
             client,
             t320_owner_headers,
             name="T320 Web PATCH Extra Field",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         response = await web_client.patch(
             _web_license_endpoint(project_id),
             headers=_web_bearer_headers(t320_owner),
-            json={"license": "CC-BY-NC", "evil_extra": True},
+            json={"license_id": "cc-by-nc", "evil_extra": True},
         )
         assert response.status_code == 422, response.text
 
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC_BY
+        assert rows[0].new_license == "CC-BY"
 
 
 # ---------------------------------------------------------------------------
@@ -1526,7 +1521,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
             client,
             t320_owner_headers,
             name="T320 Prod Chain Owner",
-            license_code="CC-BY",
+            license_id="cc-by",
         )
 
         kwargs = _prod_chain_request_kwargs(t320_owner)
@@ -1534,15 +1529,15 @@ class TestPatchLicenseEndpointWebApiProductionChain:
             _web_license_endpoint(project_id),
             cookies=kwargs["cookies"],  # type: ignore[arg-type]
             headers=kwargs["headers"],  # type: ignore[arg-type]
-            json={"license": "CC-BY-NC"},
+            json={"license_id": "cc-by-nc"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY-NC"
 
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 2
-        assert rows[1].old_license == ProjectLicense.CC_BY
-        assert rows[1].new_license == ProjectLicense.CC_BY_NC
+        assert rows[1].old_license == "CC-BY"
+        assert rows[1].new_license == "CC-BY-NC"
         assert rows[1].changed_by_id == t320_owner.id
 
     async def test_missing_csrf_token_blocks_at_middleware(
@@ -1563,7 +1558,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
             client,
             t320_owner_headers,
             name="T320 Prod Chain CSRF Missing",
-            license_code="CC0",
+            license_id="cc0",
         )
 
         # Send only the cookies — no CSRF header.
@@ -1573,7 +1568,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
                 "session_id": _PROD_SESSION_ID,
                 "access_token": create_access_token({"sub": str(t320_owner.id)}),
             },
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 403, response.text
         body = response.json()
@@ -1582,7 +1577,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
         # No new history row.
         rows = await _fetch_history_rows(db_session, project_id)
         assert len(rows) == 1
-        assert rows[0].new_license == ProjectLicense.CC0
+        assert rows[0].new_license == "CC0"
 
     async def test_admin_with_cookie_and_csrf_succeeds(
         self,
@@ -1605,7 +1600,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
             client,
             t320_owner_headers,
             name="T320 Prod Chain Admin",
-            license_code="CC0",
+            license_id="cc0",
         )
         await _add_admin_member(db_session, project_id, t320_admin.id)
 
@@ -1614,7 +1609,7 @@ class TestPatchLicenseEndpointWebApiProductionChain:
             _web_license_endpoint(project_id),
             cookies=kwargs["cookies"],  # type: ignore[arg-type]
             headers=kwargs["headers"],  # type: ignore[arg-type]
-            json={"license": "CC-BY"},
+            json={"license_id": "cc-by"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["license"] == "CC-BY"
@@ -1649,19 +1644,26 @@ class TestErrLicenseRequiredScopedToOwnedRoutes:
     assertion is more robust against future refactors of the helper.
     """
 
-    async def test_envelope_on_license_route(
+    async def test_missing_license_id_returns_422_on_create_route(
         self,
         client: AsyncClient,
         t320_owner_headers: dict[str, str],
     ) -> None:
-        """Positive control: license-bearing route still surfaces FR-085."""
+        """spec/012 Phase 3: omitting ``license_id`` → standard 422.
+
+        The request field is now ``license_id`` so the missing-field
+        validation error carries ``loc=["body", "license_id"]`` — it no
+        longer collapses to the legacy ``ERR_LICENSE_REQUIRED`` envelope
+        (which keyed on ``"license"`` in the ``loc`` chain). Unknown ids
+        are surfaced separately as ``license_not_found`` at the service
+        layer; see :class:`TestLicenseRequiredOnCreate`.
+        """
         response = await client.post(
             _PROJECTS_ENDPOINT,
             headers=t320_owner_headers,
             json={"name": "Positive Control", "visibility": "public"},
         )
-        assert response.status_code == 422
-        assert response.json()["error"] == "ERR_LICENSE_REQUIRED"
+        assert response.status_code == 422, response.text
 
     async def test_validation_path_helper_rejects_unrelated_path(self) -> None:
         """Direct unit check on the path matcher.
@@ -1697,41 +1699,6 @@ class TestErrLicenseRequiredScopedToOwnedRoutes:
         )
         for path in unrelated_paths:
             assert not _path_is_license_route(path), path
-
-
-# ---------------------------------------------------------------------------
-# Helpers — error-shape probes. Kept module-private so the test surface
-# stays focused on the FR-085 / FR-087 contract.
-# ---------------------------------------------------------------------------
-
-
-def _has_license_field_error(body: object) -> bool:
-    """Return True when the 422 payload flags ``license`` as the offender.
-
-    Accepts the canonical ``validation_exception_handler`` shape::
-
-        {"error": "ERR_LICENSE_REQUIRED" or "ValidationError",
-         "message": ...,
-         "details": [{"type": ..., "loc": [..., "license"], "msg": ...}, ...]}
-    """
-    if not isinstance(body, dict):
-        return False
-
-    details = body.get("details")
-    if isinstance(details, list):
-        for entry in details:
-            if not isinstance(entry, dict):
-                continue
-            loc = entry.get("loc")
-            if isinstance(loc, list) and "license" in loc:
-                return True
-
-    err = body.get("error")
-    if isinstance(err, str) and "LICENSE" in err.upper():
-        return True
-
-    detail_field = body.get("detail")
-    return isinstance(detail_field, str) and "license" in detail_field.lower()
 
 
 # Suppress unused-fixture lint — the fixture is resolved by injection.

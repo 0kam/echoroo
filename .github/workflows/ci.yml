@@ -107,6 +107,13 @@ jobs:
         continue-on-error: true
         run: python scripts/lint_kms_isolation.py --no-fail
 
+      # spec/012 T055 / SC-006 - no hardcoded license short_name literals
+      # (CC0 / CC-BY / CC-BY-NC / CC-BY-SA) in the API package, frontend
+      # source, or i18n catalogues; the master table is the source of truth.
+      - name: Lint - hardcoded licenses (T055, SC-006)
+        continue-on-error: true
+        run: python scripts/lint_hardcoded_licenses.py
+
   # ---------------------------------------------------------------------------
   # T100e: OpenAPI raw-coordinate leak assertion.
   #
@@ -401,6 +408,9 @@ jobs:
 
       - name: Lint - KMS alias isolation (strict, default behaviour)
         run: python scripts/lint_kms_isolation.py
+
+      - name: Lint - hardcoded licenses (strict, T055, SC-006)
+        run: python scripts/lint_hardcoded_licenses.py --fail-on-violation
 
       - name: Generate OpenAPI document
         working-directory: apps/api

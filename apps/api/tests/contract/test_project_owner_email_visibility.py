@@ -455,7 +455,7 @@ class TestProjectOwnerEmailVisibility:
             "name": "Phase 9 Round 3 Public Mirror",
             "description": "Bearer POST mirror for owner-email scrub",
             "visibility": "public",
-            "license": "CC-BY",
+            "license_id": "cc-by",
         }
         response = await client.post(
             "/api/v1/projects",
@@ -487,7 +487,7 @@ class TestProjectOwnerEmailVisibility:
             "name": "Phase 9 Round 3 Restricted Mirror",
             "description": "Bearer POST mirror for owner-email exposure",
             "visibility": "restricted",
-            "license": "CC-BY",
+            "license_id": "cc-by",
             "restricted_config": dict(_RESTRICTED_DEFAULT_CONFIG),
         }
         response = await client.post(
@@ -522,7 +522,7 @@ class TestProjectOwnerEmailVisibility:
         """
         response = await client.patch(
             f"/api/v1/projects/{restricted_project.id}/license",
-            json={"license": "CC-BY-NC"},
+            json={"license_id": "cc-by-nc"},
             headers=owner_headers,
         )
         assert response.status_code == 200, response.text
@@ -550,7 +550,7 @@ class TestProjectOwnerEmailVisibility:
         """
         response = await client.patch(
             f"/api/v1/projects/{public_project.id}/license",
-            json={"license": "CC-BY-NC"},
+            json={"license_id": "cc-by-nc"},
             headers=owner_headers,
         )
         assert response.status_code == 200, response.text

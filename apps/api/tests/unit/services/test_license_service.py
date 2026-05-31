@@ -32,10 +32,13 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.models.project import ProjectLicenseHistory
 from echoroo.services.license import LicenseInUseError, LicenseService
 from echoroo.services.license_service import (
+    LicenseNotFoundError,
     change_license,
+    license_not_found_http_exception,
     list_license_history,
     record_initial_license,
     resolve_license_id_for_short_name,
+    resolve_license_short_name_for_id,
 )
 
 # ---------------------------------------------------------------------------
@@ -75,6 +78,22 @@ def _scalars_result(values: list[object]) -> MagicMock:
     scalars.all = MagicMock(return_value=values)
     result = MagicMock()
     result.scalars = MagicMock(return_value=scalars)
+    return result
+
+
+def _row_result(license_id: str | None, short_name: str | None = None) -> MagicMock:
+    """Return a Result-like object for ``resolve_license_for_id`` lookups.
+
+    spec/012 Phase 3 (FIX #5): ``resolve_license_for_id`` selects
+    ``(License.id, License.short_name)`` and reads the matched row via
+    ``result.one_or_none()``. ``license_id=None`` models the no-match case.
+    """
+    result = MagicMock()
+    if license_id is None:
+        result.one_or_none = MagicMock(return_value=None)
+    else:
+        row = SimpleNamespace(id=license_id, short_name=short_name)
+        result.one_or_none = MagicMock(return_value=row)
     return result
 
 
@@ -148,6 +167,63 @@ class TestResolveProjectLicenseId:
         license_id = await resolve_license_id_for_short_name(session, "CC-BY")
 
         assert license_id == "cc-by"
+
+
+def test_license_not_found_http_exception_envelope() -> None:
+    """spec/012 Phase 3 — the unknown-id 422 envelope shape."""
+    exc = license_not_found_http_exception()
+
+    assert exc.status_code == 422
+    # spec/012 Phase 3 (FIX #3): the detail carries BOTH the legacy ``error``
+    # trigger key (so the global ``http_exception_handler`` unwraps it to a
+    # top-level envelope) AND ``error_code`` (the spec/012 contract key the
+    # client reads). The handler unwrap is keyed on ``error`` only — NOT
+    # ``error_code`` — so step-up / audit envelopes keep their nested shape.
+    assert exc.detail == {
+        "error": "license_not_found",
+        "error_code": "license_not_found",
+        "message": "Unknown project license id (license_not_found)",
+    }
+
+
+@pytest.mark.asyncio
+class TestResolveProjectLicenseShortName:
+    """spec/012 Phase 3 — ``resolve_license_short_name_for_id`` (id → short_name).
+
+    The project create/update path resolves the request ``license_id`` to
+    the row's ``short_name`` ONCE so the history table + audit log keep
+    storing the human-facing short_name (e.g. ``CC-BY``), not the raw id.
+    """
+
+    async def test_blank_id_raises_license_not_found_before_db_hit(self) -> None:
+        session = AsyncMock()
+
+        with pytest.raises(LicenseNotFoundError):
+            await resolve_license_short_name_for_id(session, "   ")
+
+        session.execute.assert_not_awaited()
+
+    async def test_unknown_id_raises_license_not_found(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_row_result(None))
+
+        with pytest.raises(LicenseNotFoundError) as exc_info:
+            await resolve_license_short_name_for_id(session, "mit")
+
+        assert exc_info.value.license_id == "mit"
+        session.execute.assert_awaited_once()
+
+    async def test_known_id_returns_short_name(self) -> None:
+        session = AsyncMock()
+        session.execute = AsyncMock(
+            return_value=_row_result("cc-by", "CC-BY")
+        )
+
+        short_name = await resolve_license_short_name_for_id(session, "cc-by")
+
+        # Resolves the id (``cc-by``) to the short_name (``CC-BY``) — the
+        # value the history/audit columns must store.
+        assert short_name == "CC-BY"
 
 
 @pytest.mark.asyncio

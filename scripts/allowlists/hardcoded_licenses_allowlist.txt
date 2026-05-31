@@ -1,0 +1,33 @@
+# Allowlist for scripts/lint_hardcoded_licenses.py (spec/012 SC-006, T055).
+#
+# Line-level fingerprint format. Each non-comment line is one fingerprint of
+# the form:
+#
+#     <file>:<line>:<token>:hardcoded-license-short-name  # justification
+#
+# where <token> is one of CC0 / CC-BY / CC-BY-NC / CC-BY-SA. The fingerprint
+# is locked to a SPECIFIC (file, LINE, token) combination, so an entry covers
+# exactly ONE occurrence. This fails CLOSED: a NEW hardcoded literal on a
+# different line — or a shift of an existing occurrence because the file was
+# edited — produces a DIFFERENT fingerprint and therefore still fails the
+# gate. An edit to an allowlisted region must be re-justified (the stale
+# entry no longer matches and a fresh entry must be added deliberately).
+#
+# Inline comments use TWO SPACES + ``#``. Lines beginning with ``#`` are
+# full-line comments. See scripts/allowlists/README.md.
+#
+# ---------------------------------------------------------------------------
+# Goal: this file should be EMPTY once every functional hardcode is removed.
+# The entries below are NOT functional license values — they are the canonical
+# ``CC-BY`` example embedded in the OpenAPI ``responses`` documentation for the
+# admin license-delete 409 envelope (the example illustrates the response
+# shape; the runtime short_name still comes from the master table). There is
+# one entry per occurrence: the inner ``'CC-BY'`` quoted inside the example
+# ``message`` sentence and the ``"short_name": "CC-BY"`` example value, in each
+# of the two endpoint modules.
+# ---------------------------------------------------------------------------
+
+apps/api/echoroo/api/v1/admin.py:472:CC-BY:hardcoded-license-short-name  # OpenAPI 409 example message sentence (delete_license docs), not a functional value
+apps/api/echoroo/api/v1/admin.py:475:CC-BY:hardcoded-license-short-name  # OpenAPI 409 example short_name value (delete_license docs), not a functional value
+apps/api/echoroo/api/web_v1/_admin_licenses.py:174:CC-BY:hardcoded-license-short-name  # OpenAPI 409 example message sentence (BFF delete_license docs), not a functional value
+apps/api/echoroo/api/web_v1/_admin_licenses.py:177:CC-BY:hardcoded-license-short-name  # OpenAPI 409 example short_name value (BFF delete_license docs), not a functional value

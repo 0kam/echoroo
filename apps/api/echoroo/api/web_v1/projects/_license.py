@@ -45,7 +45,13 @@ from echoroo.schemas.project import (
     ProjectResponse,
 )
 from echoroo.services.audit_service import AuditLogService
-from echoroo.services.license_service import change_license, list_license_history
+from echoroo.services.license_service import (
+    LicenseNotFoundError,
+    change_license,
+    license_not_found_http_exception,
+    list_license_history,
+    resolve_license_for_id,
+)
 from echoroo.services.project import (
     resolve_current_user_role,
     scrub_owner_email_for_visibility,
@@ -156,11 +162,26 @@ async def update_project_license(
     )
 
     before_license = project.license
+    # spec/012 Phase 3 (FIX #5): resolve the ``licenses`` row ONCE — the
+    # request carries the ``licenses.id`` primary key, and we capture BOTH
+    # the validated id (written directly to ``Project.license_id``) and the
+    # row's short_name (e.g. ``CC-BY``, used by both the history table via
+    # ``change_license`` and the audit log; the raw id is never stored
+    # there). Passing the pre-resolved id removes the ``id -> short_name ->
+    # id`` round-trip inside ``change_license``. This mirrors the Bearer
+    # surface so the two behave identically.
+    try:
+        new_license_id, new_license_short_name = await resolve_license_for_id(
+            db, payload.license_id
+        )
+    except LicenseNotFoundError as exc:
+        raise license_not_found_http_exception() from exc
     history_row = await change_license(
         session=db,
         project_id=project.id,
-        new_license=payload.license,
+        new_license=new_license_short_name,
         actor_user_id=current_user.id,
+        new_license_id=new_license_id,
     )
     await db.commit()
     await db.refresh(project)
@@ -183,10 +204,10 @@ async def update_project_license(
             detail={
                 "history_id": str(history_row.id),
                 "old_license": before_license,
-                "new_license": payload.license,
+                "new_license": new_license_short_name,
             },
             before={"license": before_license},
-            after={"license": payload.license},
+            after={"license": new_license_short_name},
         )
     except Exception as exc:  # noqa: BLE001 — audit must never block license mutation
         logger.warning(
@@ -195,7 +216,7 @@ async def update_project_license(
             project.id,
             history_row.id,
             before_license,
-            payload.license,
+            new_license_short_name,
             current_user.id,
             exc,
         )

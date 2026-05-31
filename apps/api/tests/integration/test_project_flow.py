@@ -65,7 +65,7 @@ class TestProjectLifecycle:
                 "name": "Research Project",
                 "description": "A comprehensive bird research project",
                 "visibility": "public",
-                "license": "CC-BY",
+                "license_id": "cc-by",
             },
         )
         assert create_response.status_code == 201, create_response.text
@@ -252,7 +252,7 @@ class TestProjectLifecycle:
             json={
                 "name": "Access Control Test Project",
                 "visibility": "public",
-                "license": "CC-BY",
+                "license_id": "cc-by",
             },
         )
         assert create_response.status_code == 201, create_response.text

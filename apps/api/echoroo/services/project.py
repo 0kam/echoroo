@@ -13,6 +13,7 @@ from echoroo.models.dataset import Dataset
 from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
+from echoroo.repositories.license import LicenseRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
@@ -29,9 +30,8 @@ from echoroo.schemas.project import (
     RecordingCalendarEntry,
 )
 from echoroo.services.license_service import (
-    license_required_http_exception,
+    license_not_found_http_exception,
     record_initial_license,
-    resolve_license_id_for_short_name,
 )
 
 ProjectRoleLiteral = Literal["owner", "admin", "member", "viewer"]
@@ -96,12 +96,28 @@ _ROLE_ENUM_TO_LITERAL: dict[ProjectMemberRole, ProjectRoleLiteral] = {
 }
 
 
-async def _resolve_license_id_or_422(db: AsyncSession, license: str) -> str:
-    """Resolve a request license value or raise the FR-085 422 envelope."""
-    try:
-        return await resolve_license_id_for_short_name(db, license)
-    except ValueError as exc:
-        raise license_required_http_exception() from exc
+async def _resolve_license_by_id_or_422(
+    db: AsyncSession, license_id: str
+) -> tuple[str, str]:
+    """Resolve a request ``license_id`` to ``(licenses.id, short_name)``.
+
+    spec/012 Phase 3: project create/update carry the ``licenses.id``
+    primary key (e.g. ``cc-by``), not the human-facing ``short_name``.
+    This helper performs an id existence check via
+    :meth:`LicenseRepository.get_by_id` and returns BOTH the validated id
+    (written to ``Project.license_id``) and the row's ``short_name``
+    (written to the license-history table and audit log — those columns
+    keep storing the short_name, e.g. ``CC-BY``).
+
+    The empty / missing-required case is enforced upstream by Pydantic
+    ``min_length`` on ``license_id``; an unknown id is surfaced here as
+    HTTP 422 ``license_not_found`` (distinct from ``ERR_LICENSE_REQUIRED``).
+    """
+    license_repo = LicenseRepository(db)
+    license_obj = await license_repo.get_by_id(license_id.strip())
+    if license_obj is None:
+        raise license_not_found_http_exception()
+    return license_obj.id, license_obj.short_name
 
 
 async def resolve_current_user_role(
@@ -341,9 +357,14 @@ class ProjectService:
         else:
             final_restricted_config = request.restricted_config or {}
 
-        license_id = await _resolve_license_id_or_422(
+        # spec/012 Phase 3: the request now carries the ``licenses.id``
+        # primary key. Resolve it to the row ONCE so we can write the id
+        # to ``Project.license_id`` AND pass the short_name (NOT the raw id)
+        # to the license-history table — those columns store the
+        # human-facing short_name (e.g. ``CC-BY``).
+        license_id, license_short_name = await _resolve_license_by_id_or_422(
             self.project_repo.db,
-            request.license,
+            request.license_id,
         )
 
         # Create project
@@ -367,7 +388,7 @@ class ProjectService:
         await record_initial_license(
             session=self.project_repo.db,
             project_id=created_project.id,
-            license=request.license,
+            license=license_short_name,
             actor_user_id=user_id,
         )
 
@@ -490,10 +511,15 @@ class ProjectService:
             )
 
         resolved_license_id: str | None = None
-        if request.license is not None:
-            resolved_license_id = await _resolve_license_id_or_422(
+        if request.license_id is not None:
+            # spec/012 Phase 3: validate the request ``license_id`` against
+            # the ``licenses`` master table (id existence check → 422
+            # ``license_not_found`` on an unknown id). The short_name is not
+            # needed here because ``update_project`` does not write the
+            # license-history table (see PATCH /license for that path).
+            resolved_license_id, _ = await _resolve_license_by_id_or_422(
                 self.project_repo.db,
-                request.license,
+                request.license_id,
             )
 
         # Update fields

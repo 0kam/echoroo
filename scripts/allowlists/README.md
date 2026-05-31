@@ -7,6 +7,7 @@ This directory hosts the per-lint exemption files used by:
 - `scripts/lint_search_gate.py` -> `search_gate_allowlist.txt`
 - `scripts/lint_no_raw_coordinates.py` -> `raw_coordinates_allowlist.txt`
 - `scripts/lint_kms_isolation.py` -> `kms_isolation_allowlist.txt`
+- `scripts/lint_hardcoded_licenses.py` -> `hardcoded_licenses_allowlist.txt`
 - `scripts/assert_openapi_no_coords.py` -> `openapi_coords_allowlist.txt`
   (path-prefix matcher; NOT a fingerprint allowlist — see file header)
 
@@ -19,22 +20,35 @@ introduced by future edits. Phase 3 will touch most of these files, so
 any regression slipped through silently.
 
 The new format locks each allowlist entry to a SPECIFIC violation by
-embedding a stable signature (function name, model name, identifier
-name, etc.) into the entry. New violations in the same file produce a
-DIFFERENT fingerprint and therefore fail the lint.
+embedding a stable discriminator (function name, model name, identifier
+name, source line number, etc.) into the entry. New violations in the
+same file produce a DIFFERENT fingerprint and therefore fail the lint.
 
 ## Format
 
 Each non-comment line is one fingerprint, optionally followed by
 `  #` (two spaces + hash) and a free-form comment:
 
-    <file>:<symbol-or-kind>:<violation-kind>  # justification
+    <file>:<discriminator>:<violation-kind>  # justification
 
-Examples:
+The `<discriminator>` is whatever stable signature the owning lint emits.
+Most lints use a symbol or identifier name:
 
     apps/api/echoroo/api/v1/users.py:get_current_user:missing-permission-guard  # legacy: Phase 3 T150
     apps/api/echoroo/services/export.py:field-lat:forbidden-coordinate-identifier  # legacy schema
     apps/api/echoroo/api/v1/search/annotations.py:select-Annotation:direct-select-outside-search-gate  # legacy
+
+`scripts/lint_hardcoded_licenses.py` is LINE-LEVEL: because there are
+only four possible tokens (`CC0` / `CC-BY` / `CC-BY-NC` / `CC-BY-SA`),
+a symbol/token discriminator alone would fail OPEN — one entry would
+silence every occurrence of that token in the file, including a future
+genuine leak. It therefore pins the source line number, which fails
+CLOSED — an edit to the allowlisted region shifts the line, invalidates
+the entry, and forces the violation to be re-justified:
+
+    <file>:<line>:<token>:hardcoded-license-short-name  # justification
+
+    apps/api/echoroo/api/v1/admin.py:472:CC-BY:hardcoded-license-short-name  # OpenAPI 409 example, not functional
 
 Rules:
 

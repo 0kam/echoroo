@@ -18,6 +18,10 @@ Implementation landed on `main` via **PR #120** (PR-A backend + migration — no
 - **Intentional Phase-3 deferral (left `[ ]`)**: T021 / T022 / T023 / T028 — rename the request field `license` → `license_id` and switch the unknown-license error to `error_code: "license_not_found"`. Current contract uses the `license` (short_name) field + `ERR_LICENSE_REQUIRED`; flagged in code comments.
 - **Remaining follow-ups (left `[ ]`)**: T026 (remove frontend `ProjectLicense` union — coupled to the Phase-3 rename), T036 / T056 / T059 (manual quickstart diff / FR-010 throwaway-DB abort / full e2e), T055 (SC-006 grep gate — backend `models/enums.py` still declares the `ProjectLicense` enum until the Phase-3 cleanup; no automated CI gate yet), T058 (confirm whether a frontend OpenAPI type-gen step exists).
 
+## Phase 3 completion (2026-05-31) — PR #128
+
+The intentionally-deferred Phase-3 contract rename + SC-006 gate landed via **PR #128** (branch `012-license-phase3-rename`, base `d290de69`): request field `license` → `license_id` (value semantics short_name → PK id), unknown id → 422 `error_code: "license_not_found"`, `ProjectLicense` enum removed, every write path resolves id→short_name so `project_license_history` + audit keep storing the short_name, and `scripts/lint_hardcoded_licenses.py` (line-level, fail-closed) wired into the CI warn + strict gates. Closes **T021 / T022 / T023 / T024 / T026 / T028 / T055 / T058**. Gate 1/2/3/4 green; internal 4-lens adversarial review (7 raised → 5 confirmed → all fixed, incl. reverting a cross-cutting `core/exceptions.py` envelope change to stay contained). **Still open (manual operator gates):** **T036** (migration before/after diff snapshot), **T056** (FR-010 throwaway-DB abort), **T059** (full quickstart §1–7 e2e after merge).
+
 ## Delivery shape (revised)
 
 The original plan called for a single PR. Codex review flagged that 53 tasks spanning migration + backend + frontend + admin UX + enum cleanup in one PR is high-risk given the forward-only nature of the migration. **Revised approach: 2-PR split.**
@@ -110,17 +114,17 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 - [X] T018 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/web_v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the BFF aggregator.
 - [X] T019 [P] [US1] Add `GET /licenses` handler in `apps/api/echoroo/api/v1/licenses.py` (new file), returning `LicenseListResponse`. Register the router in the v1 aggregator.
 - [X] T020 [US1] Run the existing OpenAPI diff check (`apps/api/tests/contract/test_openapi_diff.py`) to confirm the new endpoints are documented and don't break the harness; regenerate the snapshot if expected.
-- [ ] T021 [US1] Update `apps/api/echoroo/repositories/project.py` — `create()` / `update()` write via `license_id`; read paths join `licenses` and surface `License.short_name` as `project.license` in the response model.
-- [ ] T022 [US1] Update `apps/api/echoroo/services/project_service.py` — on create/update, validate that the submitted `license_id` exists in the master before insert. Unknown id raises a `LicenseNotFoundError` that the API layer maps to 422 with `error_code: "license_not_found"`. License-required validation (FR-005) is enforced via Pydantic on `ProjectCreateRequest`.
-- [ ] T023 [US1] Update `apps/api/echoroo/schemas/project.py` — `ProjectCreateRequest` and `ProjectUpdateRequest` replace `license: ProjectLicense` with `license_id: str`. `ProjectResponse.license` continues to expose `str | None` (the joined short_name). Add validator on `license_id` for max length 50.
+- [x] T021 [US1] Update `apps/api/echoroo/repositories/project.py` — `create()` / `update()` write via `license_id`; read paths join `licenses` and surface `License.short_name` as `project.license` in the response model.
+- [x] T022 [US1] Update `apps/api/echoroo/services/project_service.py` — on create/update, validate that the submitted `license_id` exists in the master before insert. Unknown id raises a `LicenseNotFoundError` that the API layer maps to 422 with `error_code: "license_not_found"`. License-required validation (FR-005) is enforced via Pydantic on `ProjectCreateRequest`.
+- [x] T023 [US1] Update `apps/api/echoroo/schemas/project.py` — `ProjectCreateRequest` and `ProjectUpdateRequest` replace `license: ProjectLicense` with `license_id: str`. `ProjectResponse.license` continues to expose `str | None` (the joined short_name). Add validator on `license_id` for max length 50.
 - [x] T024 [US1] Update `apps/api/echoroo/services/detection_export.py:381` — replace `project.license.value` with `project.license` (the joined short_name string from the new property). Update the contract test for the export to verify the wire shape is unchanged (still a license short_name in the CSV column).
 
 ### Implementation — frontend [PR-B]
 
 - [x] T025 [P] [US1] Add `apps/web/src/lib/api/licenses.ts` exposing a TanStack Query `useLicenses()` hook that calls `apiClient.request<LicenseListResponse>('/web-api/v1/licenses')` with `staleTime: 0` and `refetchOnMount: 'always'` (per research §R5 revised — SC-001 compliance).
-- [ ] T026 [P] [US1] Add `License` and `LicenseListResponse` TypeScript interfaces in `apps/web/src/lib/types/index.ts` matching the backend Pydantic schema. **Also remove the legacy `ProjectLicense` union type** (`'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA'`); replace usages in `Project`, `ProjectCreateRequest`, `ProjectUpdateRequest` interfaces with `string` (display) and `license_id: string` (submit).
+- [x] T026 [P] [US1] Add `License` and `LicenseListResponse` TypeScript interfaces in `apps/web/src/lib/types/index.ts` matching the backend Pydantic schema. **Also remove the legacy `ProjectLicense` union type** (`'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA'`); replace usages in `Project`, `ProjectCreateRequest`, `ProjectUpdateRequest` interfaces with `string` (display) and `license_id: string` (submit).
 - [x] T027 [US1] Update `apps/web/src/routes/(app)/projects/new/+page.svelte` — remove the hardcoded `LICENSE_OPTIONS` constant; replace the `<select>` population with the result of `useLicenses()`; the form's value carries `license.id` (not short_name); render visible option text as `{short_name}` with the full `{name}` as `title` tooltip.
-- [ ] T028 [US1] Update the form submit handler to send `{ license_id }` to the backend (rename from `{ license }` and value semantics from short_name to id).
+- [x] T028 [US1] Update the form submit handler to send `{ license_id }` to the backend (rename from `{ license }` and value semantics from short_name to id).
 - [x] T029 [P] [US1] Add an empty-state UI for when `useLicenses()` returns an empty array (per spec.md edge case: "No licenses available — ask an administrator to add one"). Use a translation key.
 - [x] T030 [P] [US1] Add translation keys to `apps/web/messages/en.json` and `apps/web/messages/ja.json` — `project_new_license_loading`, `project_new_license_empty`, `project_new_license_unknown_error`. Keep both locale files in lockstep.
 
@@ -199,7 +203,7 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 
 - [x] T053 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run mypy echoroo/'` and confirm no new errors.
 - [x] T054 [P] Run `docker exec echoroo-backend sh -c 'cd /app && uv run ruff check echoroo/ tests/'` and fix any new lint warnings.
-- [ ] T055 **SC-006 grep gate**: Run a repository-wide grep ensuring no hardcoded license short_name strings remain in user-facing surfaces:
+- [x] T055 **SC-006 grep gate** (implemented as `scripts/lint_hardcoded_licenses.py`, line-level fail-closed allowlist, wired into ci.yml warn + strict gates): Run a repository-wide grep ensuring no hardcoded license short_name strings remain in user-facing surfaces:
       ```bash
       docker exec echoroo-backend sh -c 'cd /app && grep -rn --include="*.py" -E "\"CC0\"|\"CC-BY\"|\"CC-BY-NC\"|\"CC-BY-SA\"" echoroo/ tests/ | grep -v test_ | grep -v "migration\|migrations\|0024"'
       docker exec echoroo-frontend sh -c 'cd /app && grep -rn -E "\"CC0\"|\"CC-BY\"" src/ messages/ | grep -v test'
@@ -210,7 +214,7 @@ Per the Echoroo constitution principle II (Test-Driven Development is NON-NEGOTI
 ### Frontend [PR-B]
 
 - [x] T057 [P] Run `docker exec echoroo-frontend sh -c 'cd /app && npm run check'` (final pass after Phase 5 changes).
-- [ ] T058 [P] Regenerate frontend OpenAPI types if the project has a generation step (confirm via `apps/web/package.json` scripts) and commit the regenerated types.
+- [x] T058 [P] Regenerate frontend OpenAPI types if the project has a generation step (confirm via `apps/web/package.json` scripts) and commit the regenerated types. **No-op: confirmed no type-gen step exists** — `openapi-typescript` is a devDependency but no `package.json` script invokes it and there is no generated types file; `lib/types/index.ts` is hand-authored.
 
 ### Cross-cutting
 

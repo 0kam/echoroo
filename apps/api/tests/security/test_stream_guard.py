@@ -55,7 +55,6 @@ from echoroo.core.actions import (
 from echoroo.core.permissions import Permission
 from echoroo.models.api_key import ApiKey
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -251,7 +250,7 @@ async def test_recheck_raises_when_matrix_denies(monkeypatch: pytest.MonkeyPatch
         owner_id = uuid.uuid4()
         visibility = ProjectVisibility.RESTRICTED
         restricted_config: dict[str, Any] = {}
-        license = ProjectLicense.CC_BY
+        license = "CC-BY"
 
     async def _decide(*, db: Any, action: Any, project_id: Any, current_user: Any, request: Any, refresh_api_key_scopes: bool = False) -> Any:  # noqa: ARG001
         return perm_module.PermissionDecision(
@@ -287,7 +286,7 @@ async def test_recheck_passes_when_matrix_allows(monkeypatch: pytest.MonkeyPatch
         owner_id = uuid.uuid4()
         visibility = ProjectVisibility.RESTRICTED
         restricted_config: dict[str, Any] = {}
-        license = ProjectLicense.CC_BY
+        license = "CC-BY"
 
     refresh_calls: list[bool] = []
 

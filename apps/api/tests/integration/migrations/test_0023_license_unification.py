@@ -776,7 +776,7 @@ def test_0023_seeded_projects_preserve_license_after_migration(
     This is the regression-resistant assertion for SC-002 (zero existing
     projects lose their license) and SC-003 (no orphan license references).
     """
-    # Map from the legacy ProjectLicense enum value to the expected canonical id.
+    # Map from the legacy projectlicense enum short_name to the expected canonical id.
     EXPECTED_MAPPING = {
         "CC0": "cc0",
         "CC-BY": "cc-by",

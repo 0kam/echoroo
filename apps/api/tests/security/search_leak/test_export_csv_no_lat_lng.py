@@ -71,7 +71,6 @@ from echoroo.models.enums import (
     DatasetVisibility,
     DetectionSource,
     DetectionStatus,
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
     TagCategory,
@@ -466,7 +465,7 @@ class TestExportCsvPublicRowValues:
         assert row["license"].startswith("CC"), (
             f"Expected a CC-style license slug, got {row['license']!r}"
         )
-        assert row["license"] == ProjectLicense.CC_BY.value
+        assert row["license"] == "CC-BY"
 
         # license_history_url points at the canonical FR-087 endpoint.
         expected_url = f"/api/v1/projects/{t312_public_project.id}/license-history"
@@ -530,4 +529,4 @@ class TestExportCsvRestrictedRowValues:
         """FR-085: every project has a CC-style license slug emitted."""
         _, rows = await _run_export(db_session, t312_restricted_project.id)
         assert rows
-        assert rows[0]["license"] == ProjectLicense.CC0.value
+        assert rows[0]["license"] == "CC0"

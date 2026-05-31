@@ -426,7 +426,7 @@ class TestGuestMutatingEndpoints401:
             "/web-api/v1/projects/",
             json={
                 "name": "Should not be created",
-                "license": "CC-BY",
+                "license_id": "cc-by",
             },
         )
         assert response.status_code == 401, (
