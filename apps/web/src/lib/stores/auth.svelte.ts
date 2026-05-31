@@ -344,9 +344,6 @@ const NO_REDIRECT_PATH_SEGMENTS = [
   '/invite',
   '/login',
   '/register',
-  '/forgot-password',
-  '/reset-password',
-  '/verify-email',
   '/2fa',
   // spec/011 US4: a forced-change user sitting on the change-password
   // screen must not be bounced to /login when a background refresh fails.

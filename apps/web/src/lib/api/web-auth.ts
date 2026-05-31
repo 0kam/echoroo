@@ -36,15 +36,14 @@ const CSRF_COOKIE_NAME = 'echoroo_csrf';
  * our defence-in-depth posture honest.
  *
  * Strictly: `/login` / `/register` / `/refresh` happen before any session
- * exists; `/password-reset/request` is anonymous; `/2fa/setup/totp` is the
- * pre-confirm "begin" call where the user has only an interim_token.
+ * exists; `/2fa/setup/totp` is the pre-confirm "begin" call where the user
+ * has only an interim_token.
  */
 const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   '/login',
   '/register',
   '/refresh',
   '/2fa/setup/totp',
-  '/password-reset/request',
 ]);
 
 /**
@@ -264,12 +263,4 @@ export async function challengeTwoFactor(
 
 export async function logoutUser(): Promise<void> {
   await postJson<void>('/logout', {});
-}
-
-export async function requestPasswordReset(email: string): Promise<void> {
-  await postJson<void>('/password-reset/request', { email });
-}
-
-export async function confirmPasswordReset(token: string, newPassword: string): Promise<void> {
-  await postJson<void>('/password-reset/confirm', { token, new_password: newPassword });
 }
