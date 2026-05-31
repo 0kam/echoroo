@@ -72,7 +72,6 @@ const currentUser = {
   organization: null,
   is_active: true,
   is_superuser: false,
-  email_verified_at: '2026-05-18T00:00:00Z',
   created_at: '2026-05-18T00:00:00Z',
   last_login_at: '2026-05-18T00:00:00Z',
 } satisfies User;

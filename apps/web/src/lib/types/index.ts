@@ -187,7 +187,6 @@ export interface User {
   organization?: string | null;
   is_active: boolean;
   is_superuser: boolean;
-  email_verified_at: string | null;
   created_at: string;
   last_login_at?: string | null;
   /**
@@ -242,28 +241,6 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
-}
-
-/**
- * Password reset request
- */
-export interface PasswordResetRequest {
-  email: string;
-}
-
-/**
- * Password reset confirmation
- */
-export interface PasswordResetConfirm {
-  token: string;
-  password: string;
-}
-
-/**
- * Email verification request
- */
-export interface EmailVerifyRequest {
-  token: string;
 }
 
 /**
@@ -912,7 +889,6 @@ export interface SetupUserResponse {
   id: string;
   email: string;
   display_name?: string | null;
-  email_verified_at?: string | null;
   two_factor_enabled: boolean;
   created_at: string;
   updated_at: string;

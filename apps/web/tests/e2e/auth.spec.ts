@@ -30,9 +30,9 @@ test.describe('Authentication', () => {
       // Submit form
       await page.click('button[type="submit"]');
 
-      // Should redirect to email verification page
-      await expect(page).toHaveURL(/\/verify-email/);
-      await expect(page.locator('text=Check your email')).toBeVisible();
+      // Should redirect to /login?registered=true after registration
+      // (zero-email deployment — no email verification step).
+      await expect(page).toHaveURL(/\/login\?registered=true/);
     });
 
     test('should show validation errors for invalid input', async ({ page }) => {
@@ -171,93 +171,6 @@ test.describe('Authentication', () => {
 
       // Should redirect to login
       await expect(page).toHaveURL(/\/login/);
-    });
-  });
-
-  test.describe('Password Reset Flow', () => {
-    test('should request password reset', async ({ page }) => {
-      await page.goto('/forgot-password');
-
-      // Fill in email
-      await page.fill('#email', 'test@example.com');
-
-      // Submit form
-      await page.click('button[type="submit"]');
-
-      // Should show success message
-      await expect(page.locator('text=Check your email')).toBeVisible();
-    });
-
-    test('should show success message even for non-existent email', async ({ page }) => {
-      // This is a security feature - don't reveal if email exists
-      await page.goto('/forgot-password');
-
-      await page.fill('#email', 'nonexistent@example.com');
-      await page.click('button[type="submit"]');
-
-      // Should still show success message
-      await expect(page.locator('text=Check your email')).toBeVisible();
-    });
-
-    test('should reset password with valid token', async ({ page }) => {
-      // Note: In real tests, you would need to get a valid reset token
-      // For now, we test the UI flow
-
-      // Navigate to reset password page with mock token
-      await page.goto('/reset-password?token=mock-token');
-
-      // Fill in new password
-      await page.fill('#password', 'NewPassword123!');
-      await page.fill('#confirmPassword', 'NewPassword123!');
-
-      // Note: Submit will fail with mock token, but we test validation
-      await expect(page.locator('#password')).toHaveValue('NewPassword123!');
-    });
-
-    test('should show validation errors for invalid password', async ({ page }) => {
-      await page.goto('/reset-password?token=mock-token');
-
-      // Try weak password
-      await page.fill('#password', 'weak');
-      await page.fill('#confirmPassword', 'weak');
-      await page.click('button[type="submit"]');
-
-      await expect(page.locator('text=at least 8 characters')).toBeVisible();
-    });
-  });
-
-  test.describe('Email Verification Flow', () => {
-    test('should show verification pending message after registration', async ({ page }) => {
-      await page.goto('/verify-email?registered=true');
-
-      await expect(page.locator('text=Check your email')).toBeVisible();
-      await expect(page.locator('button:has-text("Resend")')).toBeVisible();
-    });
-
-    test('should verify email with valid token', async ({ page }) => {
-      // Note: In real tests, you would need a valid verification token
-      // For now, we test the UI flow
-
-      await page.goto('/verify-email?token=mock-token');
-
-      // Should attempt to verify
-      // With mock token, it will fail, but we test the UI is shown
-      await expect(page.locator('text=verifying', { timeout: 1000 }).or(page.locator('text=failed'))).toBeVisible({
-        timeout: 5000,
-      });
-    });
-
-    test('should allow resending verification email', async ({ page }) => {
-      await page.goto('/verify-email?registered=true');
-
-      // Click resend button
-      await page.click('button:has-text("Resend")');
-
-      // Should show success message
-      await expect(page.locator('text=sent successfully')).toBeVisible();
-
-      // Button should be disabled with cooldown
-      await expect(page.locator('button:has-text("Resend in")')).toBeVisible();
     });
   });
 

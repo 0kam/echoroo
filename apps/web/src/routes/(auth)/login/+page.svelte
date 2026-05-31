@@ -359,14 +359,6 @@
           </div>
         {/if}
 
-        <div class="flex items-center justify-end">
-          <div class="text-sm">
-            <a href={localizeHref('/forgot-password')} class="font-medium text-primary-600 hover:text-primary-500">
-              {m.auth_login_forgot_password()}
-            </a>
-          </div>
-        </div>
-
         <div>
           <button
             type="submit"

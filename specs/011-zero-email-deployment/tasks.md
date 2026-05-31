@@ -201,30 +201,32 @@
 
 ### Frontend deletions
 
-- [ ] T140 [US1] [P] Delete `apps/web/src/routes/(auth)/verify-email/` directory
-- [ ] T141 [US1] [P] Delete `apps/web/src/routes/(auth)/forgot-password/` directory (if present)
-- [ ] T142 [US1] [P] Delete `apps/web/src/routes/(auth)/2fa-reset/` magic-link path (if present)
-- [ ] T143 [US1] [P] In `apps/web/src/routes/(auth)/login/+page.svelte` remove any link to `/forgot-password` or `/2fa-reset/magic-link`
-- [ ] T144 [US1] [P] In `apps/web/src/hooks.server.ts` remove `email_verified_at` from the session shape
-- [ ] T145 [US1] [P] In `apps/web/src/routes/(app)/profile/+page.svelte` remove the email-verify badge
-- [ ] T146 [US1] [P] In `apps/web/src/routes/(app)/dashboard/+page.svelte` remove the `isEmailVerified` derived
-- [ ] T147 [US1] [P] In `apps/web/src/lib/api/auth.ts` remove `verifyEmail`, `resendVerification`, `requestPasswordReset` client methods
-- [ ] T148 [US1] [P] In `apps/web/src/lib/api/web-auth.ts` mirror T147 edits (if the parallel client surface exists)
-- [ ] T149 [US1] [P] In `apps/web/src/lib/types/index.ts` remove `email_verified_at` from `User` and derived types; add `must_change_password`
-- [ ] T150 [US1] [P] In `apps/web/src/lib/stores/auth.svelte.ts` remove `email_verified_at` references; add `must_change_password` derived
-- [ ] T151 [US1] [P] In `apps/web/messages/en.json` and `apps/web/messages/ja.json` remove every email-verification key
+> **Step 10b completion (2026-05-31)** — frontend email-UI removal done on branch `011-step10b-email-ui-removal`. Deleted `(auth)/verify-email/`, `forgot-password/`, AND `reset-password/` (the email-magic-link reset, dead now that backend password-reset endpoints are gone; NOT the US4 `change-password/` page). Removed the login forgot-password link, `/forgot-password`+`/verify-email` from `hooks.server.ts` AUTH_ROUTES + `auth.svelte.ts` NO_REDIRECT_PATH_SEGMENTS, the profile/dashboard email-verify badges + `isEmailVerified`, the `verifyEmail`/`resendVerificationEmail`/`requestPasswordReset`/`confirmPasswordReset` client methods (auth.ts + web-auth.ts) + CSRF_EXEMPT entries, `email_verified_at` from `User`/`SetupUserResponse`, the orphaned `PasswordResetRequest`/`PasswordResetConfirm`/`EmailVerifyRequest` types, and 16 i18n keys. `must_change_password` (US4) KEPT. Gate 1 (npm check 0 new) + code review (zero live dangling refs, no over-deletion) + Gate 3 smoke (login/dashboard/profile clean, deleted routes 404, /change-password intact, console clean) + vitest 64/64 (Trusted Device preserved); i18n parity en=ja. **Still open: T180/T181 (README SMTP/Resend/Mailpit doc cleanup) — separate docs follow-up.**
+
+- [x] T140 [US1] [P] Delete `apps/web/src/routes/(auth)/verify-email/` directory
+- [x] T141 [US1] [P] Delete `apps/web/src/routes/(auth)/forgot-password/` directory (if present)
+- [x] T142 [US1] [P] Delete `apps/web/src/routes/(auth)/2fa-reset/` magic-link path (if present)
+- [x] T143 [US1] [P] In `apps/web/src/routes/(auth)/login/+page.svelte` remove any link to `/forgot-password` or `/2fa-reset/magic-link`
+- [x] T144 [US1] [P] In `apps/web/src/hooks.server.ts` remove `email_verified_at` from the session shape
+- [x] T145 [US1] [P] In `apps/web/src/routes/(app)/profile/+page.svelte` remove the email-verify badge
+- [x] T146 [US1] [P] In `apps/web/src/routes/(app)/dashboard/+page.svelte` remove the `isEmailVerified` derived
+- [x] T147 [US1] [P] In `apps/web/src/lib/api/auth.ts` remove `verifyEmail`, `resendVerification`, `requestPasswordReset` client methods
+- [x] T148 [US1] [P] In `apps/web/src/lib/api/web-auth.ts` mirror T147 edits (if the parallel client surface exists)
+- [x] T149 [US1] [P] In `apps/web/src/lib/types/index.ts` remove `email_verified_at` from `User` and derived types; add `must_change_password`
+- [x] T150 [US1] [P] In `apps/web/src/lib/stores/auth.svelte.ts` remove `email_verified_at` references; add `must_change_password` derived
+- [x] T151 [US1] [P] In `apps/web/messages/en.json` and `apps/web/messages/ja.json` remove every email-verification key
 
 ### Test deletions
 
-- [ ] T160 [US1] [P] Delete `apps/api/tests/security/authentication/test_email_verification_required.py`
-- [ ] T161 [US1] [P] Delete `apps/api/tests/unit/middleware/test_email_verification_enforcement.py`
-- [ ] T162 [US1] [P] In `apps/api/tests/unit/core/test_auth_settings_010.py` trim verification-only fields
-- [ ] T163 [US1] [P] In `apps/api/tests/integration/test_setup_flow.py` remove email-verification assertions
-- [ ] T164 [US1] [P] Delete `apps/web/src/routes/(auth)/verify-email/verify-email.spec.ts`
-- [ ] T165 [US1] [P] Delete `apps/web/src/routes/(app)/profile/email-verification.spec.ts` (if present)
-- [ ] T166 [US1] [P] Delete `apps/web/src/lib/stores/auth.email-verification.test.ts`
-- [ ] T167 [US1] [P] In `apps/web/src/routes/(auth)/login/login-trusted-device.spec.ts` trim fixture references to `email_verified_at`; preserve Trusted Device assertions (spec/010 in-scope)
-- [ ] T168 [US1] [P] In `apps/web/tests/e2e/auth.spec.ts` (or equivalent) remove verify-email walkthroughs
+- [x] T160 [US1] [P] Delete `apps/api/tests/security/authentication/test_email_verification_required.py`
+- [x] T161 [US1] [P] Delete `apps/api/tests/unit/middleware/test_email_verification_enforcement.py`
+- [x] T162 [US1] [P] In `apps/api/tests/unit/core/test_auth_settings_010.py` trim verification-only fields
+- [x] T163 [US1] [P] In `apps/api/tests/integration/test_setup_flow.py` remove email-verification assertions
+- [x] T164 [US1] [P] Delete `apps/web/src/routes/(auth)/verify-email/verify-email.spec.ts`
+- [x] T165 [US1] [P] Delete `apps/web/src/routes/(app)/profile/email-verification.spec.ts` (if present)
+- [x] T166 [US1] [P] Delete `apps/web/src/lib/stores/auth.email-verification.test.ts`
+- [x] T167 [US1] [P] In `apps/web/src/routes/(auth)/login/login-trusted-device.spec.ts` trim fixture references to `email_verified_at`; preserve Trusted Device assertions (spec/010 in-scope)
+- [x] T168 [US1] [P] In `apps/web/tests/e2e/auth.spec.ts` (or equivalent) remove verify-email walkthroughs
 
 ### Docs
 

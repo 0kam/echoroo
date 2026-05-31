@@ -1,7 +1,8 @@
 /**
  * Authentication API client (spec/009 PR B — BFF migration)
  *
- * Handles login, registration, password reset, and email verification.
+ * Handles login, registration, and the spec/011 US4 step-up /
+ * change-password ceremonies.
  *
  * Spec/009 PR B (2026-05-13): all callers now target the BFF
  * `/web-api/v1/auth/...` surface, which uses session cookies + CSRF
@@ -10,10 +11,9 @@
  * module. Mutating calls attach `X-CSRF-Token` from the `echoroo_csrf`
  * cookie via the same helper pattern used by `lib/api/projects.ts`.
  *
- * NOTE on `verifyEmail` / `resendVerificationEmail`:
- *   - `/web-api/v1/auth/verify-email` and `/verify-email/resend` are
- *     anonymous pre-session BFF endpoints. Structured backend error
- *     codes are preserved in `ApiError.code` for safe UI branching.
+ * spec/011 zero-email deployment: the email-verification and emailed
+ * password-reset flows were removed; their client helpers no longer
+ * exist on this module.
  */
 import type {
   User,
@@ -97,9 +97,6 @@ const CSRF_EXEMPT_PATHS: ReadonlySet<string> = new Set([
   '/login',
   '/register',
   '/refresh',
-  '/password-reset/request',
-  '/verify-email',
-  '/verify-email/resend',
 ]);
 
 function getCsrfToken(): string | null {
@@ -250,37 +247,6 @@ export async function refreshToken(): Promise<TokenResponse> {
 }
 
 /**
- * Request a password reset email (BFF surface, anonymous).
- */
-export async function requestPasswordReset(email: string): Promise<MessageResponse> {
-  return postAuth<MessageResponse>('/password-reset/request', { email });
-}
-
-/**
- * Confirm a password reset using the emailed token (BFF surface).
- *
- * The BFF schema uses `new_password` (the legacy v1 surface accepted
- * `password`); the conversion happens here so callers can keep using
- * the natural `password` argument name.
- */
-export async function confirmPasswordReset(
-  token: string,
-  password: string
-): Promise<MessageResponse> {
-  return postAuth<MessageResponse>('/password-reset/confirm', {
-    token,
-    new_password: password,
-  });
-}
-
-/**
- * Verify an email address with the token from the verification email.
- */
-export async function verifyEmail(token: string): Promise<MessageResponse> {
-  return postAuth<MessageResponse>('/verify-email', { token });
-}
-
-/**
  * Get the current authenticated user.
  *
  * Uses the BFF cookie + CSRF surface at ``/web-api/v1/users/me`` so
@@ -311,13 +277,6 @@ export async function getCurrentUser(): Promise<User> {
     throw new ApiError(detail, response.status, detail);
   }
   return (await response.json()) as User;
-}
-
-/**
- * Resend the email verification mail to the current user.
- */
-export async function resendVerificationEmail(): Promise<MessageResponse> {
-  return postAuth<MessageResponse>('/verify-email/resend');
 }
 
 /**

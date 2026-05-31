@@ -4,7 +4,6 @@
    */
 
   import { authStore } from '$lib/stores/auth.svelte';
-  import { resendVerificationEmail } from '$lib/api/auth';
   import {
     listTrustedDevices,
     revokeAllTrustedDevices,
@@ -22,11 +21,8 @@
 
   // UI state
   let isSubmitting = $state(false);
-  let isResendingVerification = $state(false);
   let successMessage = $state('');
   let errorMessage = $state('');
-  let verificationSuccessMessage = $state('');
-  let verificationErrorMessage = $state('');
   let trustedDevices = $state<TrustedDevice[]>([]);
   let isLoadingTrustedDevices = $state(false);
   let trustedDevicesError = $state('');
@@ -39,7 +35,6 @@
     displayName !== (authStore.user?.display_name ?? '') ||
     organization !== (authStore.user?.organization ?? '')
   );
-  let isEmailVerified = $derived(authStore.user?.email_verified_at != null);
 
   onMount(() => {
     void loadTrustedDevices();
@@ -96,23 +91,6 @@
     organization = authStore.user?.organization ?? '';
     successMessage = '';
     errorMessage = '';
-  }
-
-  async function handleResendVerification() {
-    if (isResendingVerification || isEmailVerified) return;
-
-    isResendingVerification = true;
-    verificationSuccessMessage = '';
-    verificationErrorMessage = '';
-
-    try {
-      await resendVerificationEmail();
-      verificationSuccessMessage = 'Verification email sent successfully!';
-    } catch {
-      verificationErrorMessage = 'Failed to resend verification email. Please try again.';
-    } finally {
-      isResendingVerification = false;
-    }
   }
 
   async function loadTrustedDevices() {
@@ -304,47 +282,15 @@
               <div>
                 <dt class="text-sm font-medium text-stone-500">{m.profile_status_label()}</dt>
                 <dd class="mt-1 text-sm text-stone-900">
-                  <span
-                    class="inline-flex rounded-full px-2 py-1 text-xs font-semibold leading-5 {isEmailVerified
-                      ? 'bg-success-light text-success'
-                      : 'bg-warning-light text-warning'}"
-                  >
-                    {isEmailVerified ? m.profile_status_verified() : m.profile_status_unverified()}
-                  </span>
                   {#if authStore.user?.is_superuser}
-                    <span class="ml-2 inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">
+                    <span class="inline-flex rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold leading-5 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400">
                       {m.profile_status_admin()}
                     </span>
+                  {:else}
+                    <span class="text-stone-500">—</span>
                   {/if}
                 </dd>
               </div>
-              {#if !isEmailVerified}
-                <div class="sm:col-span-2">
-                  <dt class="text-sm font-medium text-stone-500">Email verification</dt>
-                  <dd class="mt-1 text-sm text-stone-900">
-                    <p class="text-stone-600">
-                      Verify your email address to keep your account in good standing.
-                    </p>
-                    <p class="mt-1 text-stone-600">
-                      We'll send a verification link to {authStore.user?.email}.
-                    </p>
-                    {#if verificationSuccessMessage}
-                      <p class="mt-2 text-sm font-medium text-success">{verificationSuccessMessage}</p>
-                    {/if}
-                    {#if verificationErrorMessage}
-                      <p class="mt-2 text-sm font-medium text-danger">{verificationErrorMessage}</p>
-                    {/if}
-                    <button
-                      type="button"
-                      onclick={handleResendVerification}
-                      disabled={isResendingVerification}
-                      class="mt-3 inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isResendingVerification ? 'Sending...' : 'Resend Verification Email'}
-                    </button>
-                  </dd>
-                </div>
-              {/if}
               <div>
                 <dt class="text-sm font-medium text-stone-500">{m.profile_member_since_label()}</dt>
                 <dd class="mt-1 text-sm text-stone-900">
