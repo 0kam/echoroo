@@ -7,6 +7,8 @@
   import { projectsApi } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
   import { useLicenses } from '$lib/api/public-licenses';
+  import { authStore } from '$lib/stores/auth.svelte';
+  import InvitationUrlDialog from '$lib/components/InvitationUrlDialog.svelte';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import type { License } from '$lib/types';
@@ -48,6 +50,24 @@
   let selectedTaxa = $state<string[]>([]);
   const targetTaxa = $derived(selectedTaxa.join(', '));
   let visibility = $state<'public' | 'restricted'>('restricted');
+
+  // spec/011 US6 superuser bootstrap. Superusers may transfer ownership
+  // of the new project to another user by supplying their email here; the
+  // backend then issues a one-shot ADMIN member invitation with
+  // `ownership_transfer_on_accept=true` and returns its URL. The field is
+  // SU-gated in the template via `authStore.user?.is_superuser` and the
+  // value is silently dropped server-side for non-superusers.
+  let intendedOwnerEmail = $state('');
+  // Inline field error for the intended_owner_email input — set when the
+  // backend returns 422 `ERR_INVALID_INTENDED_OWNER_EMAIL`.
+  let intendedOwnerEmailError = $state<string | null>(null);
+  // One-shot invitation URL surfaced after a successful SU bootstrap;
+  // drives `InvitationUrlDialog`. While set, the redirect to the new
+  // project detail is deferred until the user closes the dialog.
+  let invitationUrl = $state<string | null>(null);
+  // Holds the created project id so the deferred redirect (on dialog
+  // close) can navigate to the detail page.
+  let createdProjectId = $state<string | null>(null);
   // License is required (FR-085). Empty string is the "unselected" sentinel
   // that disables the submit button until the user picks an option from the
   // live master fetch. spec/012 Phase 3 (T021-T028): this now holds the
@@ -171,6 +191,16 @@
       return;
     }
 
+    // spec/011 US6: a superuser supplied a malformed intended owner
+    // email. Surface it inline on the dedicated SU field (which owns its
+    // own `role="alert"`) and suppress the form-level banner so the
+    // message is announced once.
+    if (err.code === 'ERR_INVALID_INTENDED_OWNER_EMAIL') {
+      intendedOwnerEmailError = m.projects_new_intended_owner_email_invalid();
+      error = null;
+      return;
+    }
+
     const detail = err.detail || err.message || '';
     error = detail || m.project_new_error();
   }
@@ -181,6 +211,7 @@
   async function handleSubmit(e: Event) {
     e.preventDefault();
     error = null;
+    intendedOwnerEmailError = null;
 
     if (!validateForm()) {
       return;
@@ -192,17 +223,37 @@
     // the display `short_name` on the response.
     isSubmitting = true;
 
+    // spec/011 US6: only superusers may transfer ownership of the new
+    // project. Include the email in the create body when the caller is a
+    // superuser AND the field is non-empty; the backend silently drops it
+    // for non-superusers, but we gate client-side so a non-empty value
+    // from a non-superuser never leaves the browser.
+    const trimmedIntendedOwner = intendedOwnerEmail.trim();
+    const includeIntendedOwner =
+      authStore.user?.is_superuser === true && trimmedIntendedOwner.length > 0;
+
     try {
-      const project = await projectsApi.create({
+      const response = await projectsApi.create({
         name: name.trim(),
         description: description.trim() || undefined,
         target_taxa: targetTaxa || undefined,
         visibility,
         license_id: licenseId,
+        ...(includeIntendedOwner ? { intended_owner_email: trimmedIntendedOwner } : {}),
       });
 
+      // SU bootstrap: a one-shot invitation URL was issued. Show it in the
+      // dialog and defer the redirect until the user closes it (the URL is
+      // non-recoverable once dismissed). Otherwise keep the regular
+      // redirect-to-detail behavior.
+      if (response.invitation_url) {
+        createdProjectId = response.id;
+        invitationUrl = response.invitation_url;
+        return;
+      }
+
       // Redirect to project detail page
-      await goto(localizeHref(`/projects/${project.id}`));
+      await goto(localizeHref(`/projects/${response.id}`));
     } catch (err) {
       if (err instanceof ApiError) {
         applyApiError(err);
@@ -211,6 +262,21 @@
       }
     } finally {
       isSubmitting = false;
+    }
+  }
+
+  /**
+   * Close the one-shot invitation dialog and, only then, navigate to the
+   * newly-created project's detail page (spec/011 US6). The redirect is
+   * intentionally deferred until close so the SU cannot lose the URL by
+   * being navigated away before copying it.
+   */
+  async function handleInvitationDialogClose() {
+    invitationUrl = null;
+    const targetId = createdProjectId;
+    createdProjectId = null;
+    if (targetId) {
+      await goto(localizeHref(`/projects/${targetId}`));
     }
   }
 
@@ -387,6 +453,54 @@
           </div>
         </div>
 
+        <!-- Intended Owner Email (spec/011 US6 superuser bootstrap).
+             Only superusers see this field; submitting a value transfers
+             ownership of the new project to that user via a one-shot
+             ADMIN member invitation. The value is silently dropped
+             server-side for non-superusers, but we gate the input here so
+             it never renders for them. -->
+        {#if authStore.user?.is_superuser}
+          <div>
+            <label for="intended-owner-email" class="block text-sm font-medium text-stone-700">
+              {m.projects_new_intended_owner_email_label()}
+            </label>
+            <input
+              id="intended-owner-email"
+              name="intended_owner_email"
+              type="email"
+              bind:value={intendedOwnerEmail}
+              disabled={isSubmitting}
+              data-testid="intended-owner-email-input"
+              aria-invalid={intendedOwnerEmailError !== null}
+              aria-describedby={intendedOwnerEmailError
+                ? 'intended-owner-email-hint intended-owner-email-error'
+                : 'intended-owner-email-hint'}
+              oninput={() => {
+                // Clear the inline error as soon as the user edits the
+                // field so the message does not linger after a fix.
+                if (intendedOwnerEmailError) {
+                  intendedOwnerEmailError = null;
+                }
+              }}
+              class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100 disabled:cursor-not-allowed sm:text-sm"
+              placeholder="owner@example.com"
+            />
+            <p id="intended-owner-email-hint" class="mt-1 text-xs text-stone-500">
+              {m.projects_new_intended_owner_email_help()}
+            </p>
+            {#if intendedOwnerEmailError}
+              <p
+                id="intended-owner-email-error"
+                class="mt-1 text-xs text-danger"
+                role="alert"
+                data-testid="intended-owner-email-error"
+              >
+                {intendedOwnerEmailError}
+              </p>
+            {/if}
+          </div>
+        {/if}
+
         <!-- License (FR-085: required, no default selection)
              spec/012 T027: dropdown is populated live from the operator-curated
              licenses master via `useLicenses()` (FR-001 / FR-002). Phase 3
@@ -545,3 +659,12 @@
     </div>
   </form>
 </div>
+
+<!-- spec/011 US6: one-shot invitation URL surfaced after a successful
+     superuser bootstrap. Redirect to the project detail is deferred until
+     this dialog is closed (handled in `handleInvitationDialogClose`). -->
+<InvitationUrlDialog
+  open={invitationUrl !== null}
+  url={invitationUrl ?? ''}
+  onClose={handleInvitationDialogClose}
+/>

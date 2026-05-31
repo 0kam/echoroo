@@ -451,6 +451,23 @@ export interface Project {
 export type ProjectResponse = Project;
 
 /**
+ * Response from `POST /web-api/v1/projects/` (spec/011 US6).
+ *
+ * Extends the standard `Project` create response with the one-shot
+ * superuser-bootstrap invitation fields. `invitation_url` /
+ * `invitation_id` are non-null **only** when a superuser supplied a
+ * valid `intended_owner_email`; in that case the backend issues a
+ * `kind=member`, `role=ADMIN`, `ownership_transfer_on_accept=true`
+ * invitation and returns the one-shot URL here (served with
+ * `Cache-Control: no-store`). For non-superusers, or when no email was
+ * supplied, both fields are `null` and the caller redirects normally.
+ */
+export interface ProjectCreateResponse extends Project {
+  invitation_url: string | null;
+  invitation_id: string | null;
+}
+
+/**
  * Project create request.
  *
  * `visibility` and `license_id` are both required by the contract
@@ -470,6 +487,16 @@ export interface ProjectCreateRequest {
   target_taxa?: string;
   visibility: ProjectVisibility;
   license_id: string;
+  /**
+   * spec/011 US6 superuser bootstrap: when the caller is a superuser and
+   * supplies a valid email here, the backend creates the project and
+   * issues a one-shot `kind=member`, `role=ADMIN`,
+   * `ownership_transfer_on_accept=true` invitation, returning the
+   * resulting URL in `ProjectCreateResponse.invitation_url`. Silently
+   * dropped server-side for non-superusers. An invalid email yields a
+   * 422 `ERR_INVALID_INTENDED_OWNER_EMAIL` (superuser only).
+   */
+  intended_owner_email?: string;
 }
 
 /**
@@ -717,6 +744,116 @@ export interface InvitationAcceptResponse {
   project_id: string;
   member_id?: string;
   trusted_user_id?: string;
+}
+
+// ============================================
+// Project Member Invitation Types (spec/011 US6)
+//
+// Wire shapes for the project-scoped member invitation endpoints. The
+// SU-bootstrap PR adds these to unblock the future collaborators page
+// (no UI consumer in this PR beyond the shared `projectsApi` methods).
+// ============================================
+
+/**
+ * Role granted by a member invitation. Mirrors the lowercase enum the
+ * backend `POST /projects/{id}/invitations` body accepts.
+ */
+export type MemberInvitationRole = 'viewer' | 'member' | 'admin';
+
+/**
+ * `POST /projects/{id}/invitations` request — issue a single member
+ * invitation bound to one email.
+ */
+export interface MemberInvitationIssueRequest {
+  email: string;
+  role: MemberInvitationRole;
+}
+
+/**
+ * `POST /projects/{id}/invitations` 201 response. `invitation_url` is
+ * one-shot (served with no-store) and cannot be recovered after the
+ * issuing response is consumed.
+ */
+export interface MemberInvitationIssueResponse {
+  invitation_id: string;
+  invitation_url: string;
+  expires_at: string;
+  bound_email_hash: string;
+}
+
+/**
+ * `POST /projects/{id}/invitations/bulk` request — issue one invitation
+ * per email, all with the same `role`.
+ */
+export interface BulkInvitationRequest {
+  role: MemberInvitationRole;
+  emails: string[];
+}
+
+/**
+ * One element of the 207 multi-status array returned by the bulk issue
+ * endpoint. `invitation_url` is one-shot and populated only for the
+ * `issued` status; the other statuses leave it `null`.
+ */
+export interface BulkInvitationResultItem {
+  email: string;
+  status: 'issued' | 'duplicate_pending' | 'rate_limited' | 'internal_error';
+  invitation_id: string | null;
+  invitation_url: string | null;
+  expires_at: string | null;
+  error_message: string | null;
+}
+
+/**
+ * One row of `GET /projects/{id}/invitations`. `bound_email` is the
+ * plaintext target (operator-visible listing). This is a mixed
+ * member+trusted listing item, so several fields are nullable depending
+ * on the row `kind` (mirrors backend `schemas/member_invitations.py`):
+ * - `role` is null on trusted-kind rows (backend `ProjectMemberRole | None`).
+ * - `granted_permissions` is null on member rows (backend `list[str] | None`);
+ *   the resolved permission set is only carried on trusted-kind rows.
+ * - `expires_at` is always present (backend `expires_at: datetime`).
+ */
+export interface ProjectInvitationListItem {
+  id: string;
+  kind: 'member' | 'trusted';
+  role: MemberInvitationRole | null;
+  granted_permissions: string[] | null;
+  status: string;
+  bound_email: string;
+  issued_by: string;
+  issued_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  declined_at: string | null;
+  ownership_transfer_on_accept: boolean;
+}
+
+/**
+ * `GET /projects/{id}/invitations` response envelope.
+ */
+export interface ProjectInvitationListResponse {
+  items: ProjectInvitationListItem[];
+}
+
+/**
+ * `POST /projects/{id}/invitations/{invitation_id}/revoke` request body.
+ * The reason is optional, recorded for the audit trail when supplied.
+ */
+export interface InvitationRevokeRequest {
+  reason?: string;
+}
+
+/**
+ * `POST /projects/{id}/invitations/{invitation_id}/revoke` response.
+ */
+export interface InvitationRevokeResponse {
+  invitation_id: string;
+  // Backend returns the row's status enum value (happy-path is 'revoked',
+  // but keep this wide rather than over-narrowing to a single literal).
+  status: string;
+  revoked_at: string;
 }
 
 // ============================================
