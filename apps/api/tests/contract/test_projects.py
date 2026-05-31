@@ -122,7 +122,7 @@ class TestProjectEndpoints:
             "name": "Test Project",
             "description": "A test research project",
             "visibility": "public",
-            "license": "CC-BY",
+            "license_id": "cc-by",
         }
 
         response = await client.post(
@@ -159,7 +159,7 @@ class TestProjectEndpoints:
         project_data = {
             "name": "Minimal Project",
             "visibility": "public",
-            "license": "CC-BY",
+            "license_id": "cc-by",
         }
 
         response = await client.post(
@@ -202,7 +202,7 @@ class TestProjectEndpoints:
         project_data = {
             "name": "Legacy Private Project",
             "visibility": "private",
-            "license": "CC-BY",
+            "license_id": "cc-by",
         }
 
         response = await client.post(
@@ -347,7 +347,7 @@ class TestProjectEndpoints:
             json={
                 "name": "Project to Delete",
                 "visibility": "public",
-                "license": "CC-BY",
+                "license_id": "cc-by",
             },
         )
         project_id = create_response.json()["id"]

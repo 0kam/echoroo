@@ -166,12 +166,12 @@ class ProjectCreateRequest(BaseModel):
     # default to match ``additionalProperties: false`` + ``required`` in the
     # OpenAPI shape.
     visibility: ProjectVisibility = Field(..., description="Project visibility level")
-    # Phase 3 will rename this request field to ``license_id``.
-    license: RequiredProjectLicenseInput = Field(
+    license_id: RequiredProjectLicenseInput = Field(
         ...,
         description=(
-            "Project data license — required at creation (FR-085). "
-            "One of CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
+            "Project data license id — required at creation (FR-085). "
+            "Carries the ``licenses.id`` primary key (e.g. ``cc-by``); an "
+            "unknown id is rejected with 422 ``license_not_found``."
         ),
     )
     restricted_config: dict[str, Any] = Field(
@@ -219,10 +219,13 @@ class ProjectUpdateRequest(BaseModel):
         description="Operator-typed comma-separated focus taxa (optional).",
     )
     visibility: ProjectVisibility | None = Field(None, description="Project visibility level")
-    # Phase 3 will rename this request field to ``license_id``.
-    license: ProjectLicenseInput | None = Field(
+    license_id: ProjectLicenseInput | None = Field(
         None,
-        description="Project data license",
+        description=(
+            "Project data license id (``licenses.id`` primary key, e.g. "
+            "``cc-by``). An unknown id is rejected with 422 "
+            "``license_not_found``."
+        ),
     )
     restricted_config: dict[str, Any] | None = Field(
         None,
@@ -516,19 +519,20 @@ class ProjectLicenseUpdateRequest(BaseModel):
     """Request body for ``PATCH /projects/{id}/license`` (FR-085 / FR-087).
 
     Contract: ``contracts/projects.yaml:325-347``. The body is a
-    one-field object — ``license`` is required and must be one of the four
-    CC enum values; any extra field is rejected with 422 per
+    one-field object — ``license_id`` is required and must reference an
+    existing ``licenses.id`` primary key; an unknown id is rejected with
+    422 ``license_not_found`` and any extra field is rejected with 422 per
     ``additionalProperties: false`` in the OpenAPI shape.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    # Phase 3 will rename this request field to ``license_id``.
-    license: ProjectLicenseInput = Field(
+    license_id: ProjectLicenseInput = Field(
         ...,
         description=(
-            "Target license — required (FR-085). One of "
-            "CC0 / CC-BY / CC-BY-NC / CC-BY-SA."
+            "Target license id — required (FR-085). Carries the "
+            "``licenses.id`` primary key (e.g. ``cc-by``); an unknown id "
+            "is rejected with 422 ``license_not_found``."
         ),
     )
 

@@ -57,7 +57,13 @@ from echoroo.schemas.project import (
     ProjectUpdateRequest,
     RestrictedConfigUpdateRequest,
 )
-from echoroo.services.license_service import change_license, list_license_history
+from echoroo.services.license_service import (
+    LicenseNotFoundError,
+    change_license,
+    license_not_found_http_exception,
+    list_license_history,
+    resolve_license_for_id,
+)
 from echoroo.services.project import (
     ProjectService,
     resolve_current_user_role,
@@ -380,11 +386,24 @@ async def update_project_license(
         request=http_request,
         db=db,
     )
+    # spec/012 Phase 3 (FIX #5): resolve the ``licenses`` row ONCE — the
+    # request carries the ``licenses.id`` primary key, and we capture BOTH
+    # the validated id (written directly to ``Project.license_id``) and the
+    # row's short_name (e.g. ``CC-BY``, written to the history table; the
+    # raw id is never stored there). Passing the pre-resolved id removes the
+    # fragile ``id -> short_name -> id`` round-trip inside ``change_license``.
+    try:
+        new_license_id, new_license_short_name = await resolve_license_for_id(
+            db, request.license_id
+        )
+    except LicenseNotFoundError as exc:
+        raise license_not_found_http_exception() from exc
     await change_license(
         session=db,
         project_id=project.id,
-        new_license=request.license,
+        new_license=new_license_short_name,
         actor_user_id=current_user.id,
+        new_license_id=new_license_id,
     )
     await db.commit()
     # Refresh so the response reflects the committed value (the prior

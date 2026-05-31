@@ -41,7 +41,6 @@
 
   type ProjectVisibility = 'public' | 'restricted';
   type ProjectStatus = 'active' | 'dormant' | 'archived';
-  type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
 
   interface PublicOwner {
     id: string;
@@ -53,7 +52,10 @@
     name: string;
     description: string | null;
     visibility: ProjectVisibility;
-    license: ProjectLicense;
+    // Display license short_name (e.g. `CC-BY`), joined from the `licenses`
+    // master on the response side. A plain string so admin-added licenses
+    // (e.g. CC-BY-ND) render without a hardcoded short_name union.
+    license: string;
     restricted_config: Record<string, unknown>;
     restricted_config_version: number;
     status: ProjectStatus;

@@ -47,7 +47,6 @@ from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectInvitationKind,
     ProjectInvitationStatus,
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -235,7 +234,7 @@ def _vanilla_create_payload(suffix: str | None = None) -> dict[str, Any]:
     return {
         "name": f"T541 project {suffix or uuid.uuid4().hex[:6]}",
         "visibility": ProjectVisibility.PUBLIC.value,
-        "license": ProjectLicense.CC_BY.value,
+        "license_id": "cc-by",
     }
 
 

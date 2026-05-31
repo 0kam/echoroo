@@ -111,7 +111,7 @@ describe('projectsApi BFF public-read behaviour', () => {
     await projectsApi.create({
       name: 'Project',
       visibility: 'public',
-      license: 'CC-BY',
+      license_id: 'cc-by',
     });
 
     expect(refreshSpy).toHaveBeenCalledTimes(1);
@@ -146,7 +146,7 @@ describe('projectsApi BFF public-read behaviour', () => {
       projectsApi.create({
         name: 'Project',
         visibility: 'public',
-        license: 'CC-BY',
+        license_id: 'cc-by',
       })
     ).rejects.toMatchObject({
       status: 401,
@@ -207,7 +207,7 @@ describe('projectsApi BFF public-read behaviour', () => {
     await projectsApi.create({
       name: 'Project',
       visibility: 'public',
-      license: 'CC-BY',
+      license_id: 'cc-by',
     });
     await projectsApi.update('project-1', { name: 'Renamed' });
     await projectsApi.delete('project-1');

@@ -382,17 +382,6 @@ export interface RestrictedConfig {
 export type RestrictedConfigUpdateRequest = RestrictedConfig;
 
 /**
- * Project license enum (Phase 7 / FR-085).
- *
- * The Permissions Redesign (006) requires every new project to declare a
- * Creative Commons license at create time. This enum mirrors the
- * `ProjectCreateRequest.license` enum in
- * `specs/006-permissions-redesign/contracts/projects.yaml` (CC0, CC-BY,
- * CC-BY-NC, CC-BY-SA).
- */
-export type ProjectLicense = 'CC0' | 'CC-BY' | 'CC-BY-NC' | 'CC-BY-SA';
-
-/**
  * Project entity
  *
  * `restricted_config` and `restricted_config_version` were added by
@@ -438,7 +427,12 @@ export interface Project {
   description?: string;
   target_taxa?: string;
   visibility: ProjectVisibility;
-  license?: ProjectLicense | string;
+  /**
+   * Display license short_name (e.g. `CC-BY`), joined from the `licenses`
+   * master on the response side. spec/012 Phase 3: this stays the response
+   * display field; the create/update wire field is the PK `license_id`.
+   */
+  license?: string;
   /**
    * Project status (Phase 9 / FR-019). Optional for backwards
    * compatibility — older detail responses may omit it.
@@ -476,26 +470,23 @@ export type ProjectResponse = Project;
 /**
  * Project create request.
  *
- * `visibility` and `license` are both required by the contract
+ * `visibility` and `license_id` are both required by the contract
  * (`specs/006-permissions-redesign/contracts/projects.yaml`,
- * `ProjectCreateRequest.required = [name, visibility, license]`).
+ * `ProjectCreateRequest.required = [name, visibility, license_id]`).
  *
- * spec/012 PR-B (T026): `license` is widened from the legacy
- * `ProjectLicense` enum to `ProjectLicense | string` because the
- * project creation form now reads the live `licenses` master and may
- * surface admin-added licenses (e.g. `CC-BY-ND`) that the enum did not
- * anticipate. Phase 2 (research §R1 revised) keeps the wire field
- * `license` carrying the `short_name`; Phase 3 will rename it to
- * `license_id` (the stable FK identifier). Until that rename lands the
- * enum union is kept for backwards-compatible call sites that still
- * narrow on the four canonical values.
+ * spec/012 Phase 3 (T021-T028): the wire field is the licenses PK
+ * `license_id` (e.g. `cc-by`, lowercase) instead of the legacy
+ * `license` short_name. The form sources valid ids live from the
+ * operator-curated `licenses` master via `useLicenses()`; an unknown id
+ * returns 422 `license_not_found`. The response side still surfaces the
+ * joined `short_name` via `Project.license`.
  */
 export interface ProjectCreateRequest {
   name: string;
   description?: string;
   target_taxa?: string;
   visibility: ProjectVisibility;
-  license: ProjectLicense | string;
+  license_id: string;
 }
 
 /**
@@ -506,7 +497,7 @@ export interface ProjectUpdateRequest {
   description?: string;
   target_taxa?: string;
   visibility?: ProjectVisibility;
-  license?: ProjectLicense | string;
+  license_id?: string;
 }
 
 /**
@@ -537,9 +528,10 @@ export interface ProjectSummary {
   description: string | null;
   visibility: ProjectVisibility;
   status: ProjectStatus;
-  // spec/012 PR-B: master-driven licenses may include admin-added short_names
-  // (e.g. CC-BY-ND) outside the legacy enum. Match `Project.license` shape.
-  license: ProjectLicense | string;
+  // Display license short_name (e.g. `CC-BY`), joined from the `licenses`
+  // master on the response side. Master-driven licenses may include
+  // admin-added short_names (e.g. CC-BY-ND). Match `Project.license` shape.
+  license: string;
   /**
    * Public-safe display string for the owner. Falls back to the
    * local-part of the email on the backend so this is **never** the

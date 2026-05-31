@@ -222,8 +222,23 @@ async def http_exception_handler(
     detail = exc.detail
     if isinstance(detail, dict) and "error" in detail:
         # Caller supplied a contract envelope explicitly — emit it at the
-        # top level so ``body["error"] == "ERR_..."`` is reachable
-        # without traversing a nested ``detail`` key.
+        # top level so ``body["error"] == "ERR_..."`` (legacy ``error`` key)
+        # is reachable without traversing a nested ``detail`` key. This
+        # keeps the Bearer and BFF surfaces structurally identical for
+        # coded error envelopes.
+        #
+        # NOTE: the unwrap is keyed *only* on the legacy ``error`` key, NOT
+        # ``error_code``. Several spec/011+ endpoints (step-up auth, the
+        # audit ``META_AUDIT_WRITE_FAILED`` fail-closed body) raise
+        # ``HTTPException(detail={"error_code": ...})`` and contractually
+        # keep the nested ``{"detail": {"error_code": ...}}`` envelope.
+        # Widening this guard to ``"error_code" in detail`` would silently
+        # flatten those envelopes too (spec/012 must not re-shape spec/011's
+        # step-up / audit contracts). Endpoints that want a top-level
+        # ``error_code`` either emit a ``JSONResponse`` directly
+        # (``csrf_failed``, ``license_in_use``) or include BOTH the ``error``
+        # trigger key AND ``error_code`` in the detail dict (see
+        # :func:`echoroo.services.license_service.license_not_found_http_exception`).
         return JSONResponse(
             status_code=exc.status_code,
             headers=exc.headers,

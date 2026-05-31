@@ -44,14 +44,26 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.enums import ProjectLicense
 from echoroo.models.license import License
 from echoroo.models.project import Project, ProjectLicenseHistory
 
 
-def _license_short_name(license: ProjectLicense | str) -> str:
-    if isinstance(license, ProjectLicense):
-        return license.value
+class LicenseNotFoundError(Exception):
+    """Raised when a request references a non-existent ``licenses.id``.
+
+    spec/012 Phase 3: project create/update accept a ``license_id`` that
+    carries the ``licenses.id`` primary key (e.g. ``cc-by``). An id with
+    no matching row is rejected with HTTP 422 ``license_not_found`` (see
+    :func:`license_not_found_http_exception`). The error carries the
+    offending id so callers can include it in the response if desired.
+    """
+
+    def __init__(self, license_id: str) -> None:
+        self.license_id = license_id
+        super().__init__(f"Unknown project license id: {license_id}")
+
+
+def _license_short_name(license: str) -> str:
     return license.strip()
 
 
@@ -66,9 +78,102 @@ def license_required_http_exception() -> HTTPException:
     )
 
 
+def license_not_found_http_exception() -> HTTPException:
+    """Return the spec/012 Phase 3 unknown-license-id 422 envelope.
+
+    The request field changed from the license ``short_name`` to the
+    ``licenses.id`` primary key; an id with no matching row is a client
+    error surfaced as ``error_code: license_not_found`` (distinct from
+    the missing/empty case, which Pydantic enforces as a standard 422).
+
+    The detail dict carries BOTH the legacy ``error`` trigger key AND
+    ``error_code``. The global :func:`echoroo.core.exceptions
+    .http_exception_handler` unwraps any detail dict containing ``error``
+    to the top level, so the client receives ``body["error_code"] ==
+    "license_not_found"`` directly. The unwrap is deliberately keyed on
+    ``error`` (not ``error_code``) so spec/011's step-up and the audit
+    ``META_AUDIT_WRITE_FAILED`` envelopes — which raise
+    ``HTTPException(detail={"error_code": ...})`` and contractually keep
+    the nested ``{"detail": {...}}`` shape — are left byte-for-byte
+    unchanged. Mirroring the legacy ``ERR_*`` convention here keeps the
+    license contract self-contained without widening the global handler.
+    """
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "license_not_found",
+            "error_code": "license_not_found",
+            "message": "Unknown project license id (license_not_found)",
+        },
+    )
+
+
+async def resolve_license_for_id(
+    db: AsyncSession,
+    license_id: str,
+) -> tuple[str, str]:
+    """Resolve a ``licenses.id`` to ``(id, short_name)`` in a single query.
+
+    spec/012 Phase 3: project create/update/PATCH carry the ``licenses.id``
+    primary key (e.g. ``cc-by``). The PATCH path needs BOTH the validated
+    id (written directly to ``Project.license_id``) and the row's
+    ``short_name`` (written to the license-history table + audit log, which
+    keep storing the human-facing ``CC-BY`` form). Resolving the row ONCE
+    here — mirroring the CREATE path's
+    ``services.project._resolve_license_by_id_or_422`` — lets the PATCH
+    handlers set ``Project.license_id`` directly via the validated id and
+    pass the short_name to the history writer, eliminating the fragile
+    ``id -> short_name -> id`` round-trip that previously relied on the
+    ``licenses.short_name`` UNIQUE constraint (present only in migration
+    0023, not mirrored on the ORM model).
+
+    Returns:
+        ``(license_id, short_name)`` for the matched row.
+
+    Raises:
+        LicenseNotFoundError: when no ``licenses`` row matches ``license_id``.
+    """
+    resolved_id = license_id.strip()
+    if not resolved_id:
+        raise LicenseNotFoundError(license_id)
+
+    result = await db.execute(
+        select(License.id, License.short_name)
+        .where(License.id == resolved_id)
+        .limit(1)
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise LicenseNotFoundError(resolved_id)
+
+    return row.id, row.short_name
+
+
+async def resolve_license_short_name_for_id(
+    db: AsyncSession,
+    license_id: str,
+) -> str:
+    """Resolve a ``licenses.id`` to its ``short_name`` row value.
+
+    spec/012 Phase 3: project create/update now carry the ``licenses.id``
+    primary key (e.g. ``cc-by``). The license-history table and audit log
+    still store the human-facing ``short_name`` (e.g. ``CC-BY``), so every
+    write path resolves the id to the row's ``short_name`` ONCE and passes
+    that string downstream — never the raw id.
+
+    Thin wrapper over :func:`resolve_license_for_id` kept for callers that
+    only need the short_name (legacy callers / tests).
+
+    Raises:
+        LicenseNotFoundError: when no ``licenses`` row matches ``license_id``.
+    """
+    _, short_name = await resolve_license_for_id(db, license_id)
+    return short_name
+
+
 async def resolve_license_id_for_short_name(
     db: AsyncSession,
-    short_name: str | ProjectLicense,
+    short_name: str,
 ) -> str:
     """Resolve a project license short name to the canonical ``licenses.id``."""
     license_short_name = _license_short_name(short_name)
@@ -90,7 +195,7 @@ async def resolve_license_id_for_short_name(
 async def record_initial_license(
     session: AsyncSession,
     project_id: UUID,
-    license: ProjectLicense | str,
+    license: str,
     actor_user_id: UUID,
 ) -> ProjectLicenseHistory:
     """Append the initial ``ProjectLicenseHistory`` row for a new project.
@@ -126,8 +231,10 @@ async def record_initial_license(
 async def change_license(
     session: AsyncSession,
     project_id: UUID,
-    new_license: ProjectLicense | str | None,
+    new_license: str | None,
     actor_user_id: UUID,
+    *,
+    new_license_id: str | None = None,
 ) -> ProjectLicenseHistory:
     """Update ``Project.license_id`` and unconditionally append a history row.
 
@@ -153,10 +260,23 @@ async def change_license(
         session: Open async SQLAlchemy session — the caller owns the
             transaction and is responsible for ``commit``.
         project_id: Target project UUID.
-        new_license: Desired license. The row is appended even if it
-            matches the current value — by design, see Major 5 above.
+        new_license: Desired license ``short_name`` (e.g. ``CC-BY``). The
+            row is appended even if it matches the current value — by
+            design, see Major 5 above. Used both for the history row's
+            ``new_license`` column and — when ``new_license_id`` is NOT
+            supplied — to re-resolve the canonical ``licenses.id``.
         actor_user_id: User who initiated the change. Stored on the
             history row as ``changed_by_id``.
+        new_license_id: Pre-resolved ``licenses.id`` (spec/012 Phase 3 FIX
+            #5). When supplied (the PATCH endpoints resolve the row ONCE
+            via :func:`resolve_license_for_id` and pass both id +
+            short_name), it is written directly to ``Project.license_id``
+            and the internal ``short_name -> id`` re-resolution is skipped
+            entirely — removing the ``id -> short_name -> id`` round-trip
+            that previously depended on the DB ``short_name`` UNIQUE
+            constraint. When ``None`` (legacy callers / unit tests that
+            pass only a short_name), the function falls back to resolving
+            the id from ``new_license`` as before.
 
     Returns:
         The new history row.
@@ -185,10 +305,16 @@ async def change_license(
         raise ValueError("Project license history requires a new license")
 
     old_license = project.license
-    try:
-        new_license_id = await resolve_license_id_for_short_name(session, new_license)
-    except ValueError as exc:
-        raise license_required_http_exception() from exc
+    if new_license_id is None:
+        # Legacy / unit-test path: only a short_name was supplied, so
+        # re-resolve the canonical id. The PATCH endpoints take the
+        # pre-resolved branch below (FIX #5) and never hit this.
+        try:
+            new_license_id = await resolve_license_id_for_short_name(
+                session, new_license
+            )
+        except ValueError as exc:
+            raise license_required_http_exception() from exc
 
     project.license_id = new_license_id
     new_license_short_name = _license_short_name(new_license)
@@ -238,9 +364,13 @@ async def list_license_history(
 
 
 __all__ = [
+    "LicenseNotFoundError",
     "change_license",
+    "license_not_found_http_exception",
     "license_required_http_exception",
     "list_license_history",
     "record_initial_license",
+    "resolve_license_for_id",
     "resolve_license_id_for_short_name",
+    "resolve_license_short_name_for_id",
 ]

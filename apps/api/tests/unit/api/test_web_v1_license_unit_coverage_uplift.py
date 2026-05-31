@@ -135,7 +135,10 @@ async def test_update_project_license_happy_path() -> None:
     request = _request_with({"x-request-id": "req-2"})
 
     payload = MagicMock()
-    payload.license = "CC-BY-NC"
+    # spec/012 Phase 3 (FIX #5): the handler reads ``payload.license_id`` and
+    # resolves the ``licenses`` row ONCE to ``(id, short_name)`` before calling
+    # ``change_license`` with the pre-resolved id.
+    payload.license_id = "cc-by-nc"
 
     history_row = MagicMock()
     history_row.id = uuid4()
@@ -145,6 +148,11 @@ async def test_update_project_license_happy_path() -> None:
     fake_response_cls.model_validate = MagicMock(return_value=sentinel_response)
 
     with patch.object(mod, "gate_action", new=AsyncMock(return_value=project)), \
+            patch.object(
+                mod,
+                "resolve_license_for_id",
+                new=AsyncMock(return_value=("cc-by-nc", "CC-BY-NC")),
+            ), \
             patch.object(mod, "change_license", new=AsyncMock(return_value=history_row)), \
             patch.object(mod, "_write_license_audit", new=AsyncMock()), \
             patch.object(mod, "scrub_owner_email_for_visibility"), \
@@ -177,7 +185,7 @@ async def test_update_project_license_swallows_audit_failure(caplog: pytest.LogC
     request = _request_with()
 
     payload = MagicMock()
-    payload.license = "CC0"
+    payload.license_id = "cc0"
 
     history_row = MagicMock()
     history_row.id = uuid4()
@@ -187,6 +195,11 @@ async def test_update_project_license_swallows_audit_failure(caplog: pytest.LogC
     fake_response_cls.model_validate = MagicMock(return_value=sentinel_response)
 
     with patch.object(mod, "gate_action", new=AsyncMock(return_value=project)), \
+            patch.object(
+                mod,
+                "resolve_license_for_id",
+                new=AsyncMock(return_value=("cc0", "CC0")),
+            ), \
             patch.object(mod, "change_license", new=AsyncMock(return_value=history_row)), \
             patch.object(
                 mod, "_write_license_audit", new=AsyncMock(side_effect=RuntimeError("audit-down"))

@@ -43,7 +43,6 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectStatus,
     ProjectVisibility,
     TaxonOverrideApprovalStatus,

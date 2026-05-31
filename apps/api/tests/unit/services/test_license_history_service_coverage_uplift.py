@@ -29,7 +29,6 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.enums import ProjectLicense
 from echoroo.models.project import ProjectLicenseHistory
 from echoroo.services.license_service import (
     _license_short_name,
@@ -91,19 +90,14 @@ def _project_stub(*, license: str = "CC-BY") -> MagicMock:
 
 
 class TestLicenseShortName:
-    """``_license_short_name`` accepts both enum and string inputs."""
-
-    def test_enum_value_is_returned_verbatim(self) -> None:
-        """``ProjectLicense`` member → its ``.value`` literal."""
-        assert _license_short_name(ProjectLicense.CC_BY) == "CC-BY"
-        assert _license_short_name(ProjectLicense.CC0) == "CC0"
-        assert _license_short_name(ProjectLicense.CC_BY_NC) == "CC-BY-NC"
-        assert _license_short_name(ProjectLicense.CC_BY_SA) == "CC-BY-SA"
+    """``_license_short_name`` normalises a string short name (enum removed)."""
 
     def test_string_input_is_stripped(self) -> None:
         """Whitespace around a literal short name is stripped (defensive)."""
         assert _license_short_name("  CC-BY  ") == "CC-BY"
         assert _license_short_name("CC-BY-SA") == "CC-BY-SA"
+        assert _license_short_name("CC0") == "CC0"
+        assert _license_short_name("CC-BY-NC") == "CC-BY-NC"
 
     def test_empty_string_returns_empty(self) -> None:
         """Empty / whitespace-only string stays empty — the caller is
@@ -172,14 +166,6 @@ class TestResolveLicenseIdForShortName:
         license_id = await resolve_license_id_for_short_name(session, "CC-BY")
         assert license_id == "cc-by"
 
-    async def test_accepts_project_license_enum_input(self) -> None:
-        """The resolver also accepts a :class:`ProjectLicense` member directly."""
-        session = AsyncMock(spec=AsyncSession)
-        session.execute = AsyncMock(return_value=_execute_result("cc0"))
-
-        license_id = await resolve_license_id_for_short_name(session, ProjectLicense.CC0)
-        assert license_id == "cc0"
-
 
 # ---------------------------------------------------------------------------
 # record_initial_license — single happy path (FR-087)
@@ -196,7 +182,7 @@ class TestRecordInitialLicense:
         project_id = uuid4()
         actor_id = uuid4()
 
-        row = await record_initial_license(session, project_id, ProjectLicense.CC_BY, actor_id)
+        row = await record_initial_license(session, project_id, "CC-BY", actor_id)
 
         assert isinstance(row, ProjectLicenseHistory)
         assert row.project_id == project_id
@@ -236,7 +222,7 @@ class TestChangeLicense:
             await change_license(
                 session,
                 uuid4(),
-                ProjectLicense.CC_BY,
+                "CC-BY",
                 uuid4(),
             )
 
@@ -291,7 +277,7 @@ class TestChangeLicense:
         row = await change_license(
             session,
             project_id,
-            ProjectLicense.CC_BY_NC,
+            "CC-BY-NC",
             actor_id,
         )
 

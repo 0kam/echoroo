@@ -17,7 +17,6 @@ import pytest
 
 from echoroo.api.v1 import projects as mod
 from echoroo.models.enums import (
-    ProjectLicense,
     ProjectMemberRole,
     ProjectVisibility,
 )
@@ -45,7 +44,7 @@ async def test_create_project_commits_and_returns(
     request = ProjectCreateRequest(
         name="Alpha",
         visibility=ProjectVisibility.PUBLIC,
-        license=ProjectLicense.CC0,
+        license_id="cc0",
     )
     result = await mod.create_project(
         request=request,
@@ -214,8 +213,8 @@ async def test_get_project_license_history_returns_validated_rows(
     fake_row = SimpleNamespace(
         id=uuid4(),
         project_id=uuid4(),
-        old_license=ProjectLicense.CC0,
-        new_license=ProjectLicense.CC_BY,
+        old_license="CC0",
+        new_license="CC-BY",
         changed_at=datetime.now(UTC),
         changed_by_id=uuid4(),
     )
@@ -233,7 +232,7 @@ async def test_get_project_license_history_returns_validated_rows(
         db=db,
     )
     assert len(result.items) == 1
-    assert result.items[0].new_license == ProjectLicense.CC_BY
+    assert result.items[0].new_license == "CC-BY"
 
 
 def test_get_project_service_factory_returns_service() -> None:

@@ -67,15 +67,6 @@ class ProjectStatus(StrEnum):
     ARCHIVED = "archived"
 
 
-class ProjectLicense(StrEnum):
-    """Project data license."""
-
-    CC0 = "CC0"
-    CC_BY = "CC-BY"
-    CC_BY_NC = "CC-BY-NC"
-    CC_BY_SA = "CC-BY-SA"
-
-
 class SettingType(StrEnum):
     """System setting value types."""
 

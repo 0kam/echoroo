@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.settings import get_settings
-from echoroo.models.enums import ProjectLicense, ProjectVisibility
+from echoroo.models.enums import ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.user import User
 from echoroo.services.project import DEFAULT_RESTRICTED_CONFIG
@@ -145,7 +145,7 @@ async def test_project_create_update_delete_bff_contract(
         "name": f"A2 Project {uuid.uuid4()}",
         "description": "created by PR A2 test",
         "visibility": ProjectVisibility.PUBLIC.value,
-        "license": ProjectLicense.CC_BY.value,
+        "license_id": "cc-by",
     }
     await assert_csrf_required(
         client,
@@ -240,7 +240,7 @@ async def test_create_restricted_project_with_empty_config_uses_defaults(
             "name": f"A2 Restricted Defaults {uuid.uuid4()}",
             "description": "restricted project with empty config",
             "visibility": ProjectVisibility.RESTRICTED.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
             "restricted_config": {},
         },
         headers=owner_headers,
@@ -266,7 +266,7 @@ async def test_create_restricted_project_user_override_wins(
             "name": f"A2 Restricted Override {uuid.uuid4()}",
             "description": "restricted project with config overrides",
             "visibility": ProjectVisibility.RESTRICTED.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
             "restricted_config": {
                 "allow_media_playback": True,
                 "public_location_precision_h3_res": 5,
@@ -300,7 +300,7 @@ async def test_create_public_project_with_empty_config_succeeds(
             "name": f"A2 Public Empty Config {uuid.uuid4()}",
             "description": "public project with empty config",
             "visibility": ProjectVisibility.PUBLIC.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
             "restricted_config": {},
         },
         headers=owner_headers,
@@ -324,7 +324,7 @@ async def test_create_project_with_target_taxa(
             "description": "created with target taxa",
             "target_taxa": "Birds, Anurans",
             "visibility": ProjectVisibility.PUBLIC.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
         },
         headers=owner_headers,
         follow_redirects=True,
@@ -347,7 +347,7 @@ async def test_create_project_without_target_taxa_is_null(
             "name": f"A2 Project No Target Taxa {uuid.uuid4()}",
             "description": "created without target taxa",
             "visibility": ProjectVisibility.PUBLIC.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
         },
         headers=owner_headers,
         follow_redirects=True,
@@ -370,7 +370,7 @@ async def test_update_project_target_taxa(
             "name": f"A2 Project Update Target Taxa {uuid.uuid4()}",
             "description": "created before target taxa update",
             "visibility": ProjectVisibility.PUBLIC.value,
-            "license": ProjectLicense.CC_BY.value,
+            "license_id": "cc-by",
         },
         headers=owner_headers,
         follow_redirects=True,
