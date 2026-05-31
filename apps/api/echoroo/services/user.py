@@ -2,6 +2,7 @@
 
 import logging
 import unicodedata
+from typing import Final
 from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
@@ -14,6 +15,20 @@ from echoroo.repositories.user import UserRepository
 from echoroo.schemas.user import PasswordChangeRequest, UserUpdateRequest
 from echoroo.services.email import send_email_change_notification
 from echoroo.services.trusted_device_service import TrustedDeviceService
+
+#: spec/011 §NFR-011-005 / FR-011-305 / T020 — canonical platform-scope
+#: audit-action string for a user email change. Emitted (per the table
+#: in data-model.md) by the email-change flow which also triggers
+#: session invalidation + trusted-device revoke + cool-off. Declaring
+#: the constant here (the service that owns ``change_email``) is the
+#: foundational T020 step; the email->audit emit that consumes it lands
+#: with the US7 ``services/email.py`` rewrite (T610-T617). The detail
+#: carries old/new email *hashes* only — never the plaintext address
+#: (NFR-011-005 / A-13). The string is banner-eligible (see
+#: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`).
+AUDIT_ACTION_PLATFORM_USER_EMAIL_CHANGED: Final[str] = (
+    "platform.user.email_changed"
+)
 
 
 def _normalize_email_for_change(email: str) -> str:

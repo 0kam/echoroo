@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Final, Literal
 from uuid import UUID
 
 import sqlalchemy as sa
@@ -25,6 +25,21 @@ from echoroo.services.account_security_tokens import (
 
 _ACTIVE_DEVICE_CAP = 5
 _RAW_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+#: spec/011 §NFR-011-005 / FR-011-402 / T020 — canonical platform-scope
+#: audit-action string for a bulk trusted-device revocation
+#: (:meth:`TrustedDeviceService.revoke_all_for_user`). Emitted when a
+#: sensitive account change wipes every trusted device for a user
+#: (admin password reset / self-reset / email change / admin 2FA
+#: disable per FR-011-402 / R10). Declaring the constant here (the
+#: service that owns the revoke-all primitive) is the foundational
+#: T020 step; the email->audit emit that consumes it lands with the
+#: US7 ``services/email.py`` rewrite (T610-T617). The string is
+#: banner-eligible (see
+#: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`).
+AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL: Final[str] = (
+    "auth.trusted_device.revoke_all"
+)
 TrustedDeviceRejectReason = Literal[
     "missing",
     "malformed",

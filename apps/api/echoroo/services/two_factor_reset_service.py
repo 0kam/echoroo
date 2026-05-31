@@ -47,6 +47,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import AsyncSessionLocal
+from echoroo.models.superuser import Superuser
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.two_factor_reset_request import (
     DISPATCHABLE_STATUSES,
@@ -120,6 +121,24 @@ ACTIVE_REQUEST_UNIQUE_CONSTRAINT: Final[str] = (
 # ---------------------------------------------------------------------------
 # Audit action labels
 # ---------------------------------------------------------------------------
+
+#: spec/011 §FR-011-306 / NFR-011-005 / T020 — the canonical
+#: platform-scope audit-action string emitted when a system superuser
+#: drives an admin 2FA disable (reset) for a target user. Distinct from
+#: the internal ``two_factor.reset_completed`` row written by
+#: :meth:`TwoFactorService.reset_user_two_factor`: this string is the
+#: spec/011 banner-eligible event (see
+#: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`) that
+#: surfaces in the target user's ``GET /me/banners`` list and in the
+#: activity timeline. Emitted by the dispatch poller (``_apply_one``)
+#: post-commit when the actor differs from the target; the self-reset
+#: path (actor == target) reuses the same action with a
+#: ``self_reset=True`` detail discriminator (FR-011-306 has no separate
+#: ``user.2fa_reset_self`` event because the self-service magic-link
+#: flow is removed, FR-011-005).
+AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER: Final[str] = (
+    "platform.user.two_factor_reset_by_superuser"
+)
 
 AUDIT_ACTION_REQUESTED = "two_factor_reset.requested"
 AUDIT_ACTION_TOKEN_VERIFIED = "two_factor_reset.token_verified"
@@ -1318,6 +1337,51 @@ async def _apply_one(
         },
     )
 
+    # spec/011 §FR-011-306 / T402: emit the canonical
+    # ``platform.user.two_factor_reset_by_superuser`` banner-eligible
+    # event now that the disable has actually committed. This replaces
+    # the previous outbound email and is the row that surfaces in the
+    # target user's ``GET /me/banners`` list and activity timeline.
+    #
+    # ``self_reset`` discriminates the actor==target case (a superuser
+    # recovering their own account) from the operator-vs-target case.
+    # FR-011-306 has no separate ``user.2fa_reset_self`` event, so we
+    # keep ONE action string and carry the self/operator dimension in
+    # the detail. The detail carries only opaque UUIDs — no email, no
+    # secret, no operator free-form text (NFR-011-005 / A-13).
+    #
+    # NOTE: ``row.requested_by_superuser_id`` is a ``superusers.id``
+    # (the superuser ROW id), NOT a ``users.id`` — those are distinct id
+    # spaces. To detect a genuine self-reset we resolve the requesting
+    # superuser's underlying ``user_id`` and compare THAT against the
+    # target ``row.user_id``. The platform audit ``actor_user_id`` is
+    # likewise the actor's user id (the dimension dashboards filter on),
+    # falling back to the superuser-row id only if the superuser row has
+    # since been removed.
+    requester_user_id = await session.scalar(
+        sa.select(Superuser.user_id).where(
+            Superuser.id == row.requested_by_superuser_id
+        )
+    )
+    is_self_reset = (
+        requester_user_id is not None and requester_user_id == row.user_id
+    )
+    actor_user_id = (
+        requester_user_id
+        if requester_user_id is not None
+        else row.requested_by_superuser_id
+    )
+    await _write_platform_audit(
+        actor_user_id=actor_user_id,
+        action=AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER,
+        detail={
+            "request_id": str(row.id),
+            "target_user_id": str(row.user_id),
+            "self_reset": is_self_reset,
+            "applied_at": applied_at.isoformat(),
+        },
+    )
+
     # User-facing notification. Failure is best-effort but logged
     # via an audit row so on-call has signal.
     try:
@@ -1497,6 +1561,7 @@ __all__ = [
     "AUDIT_ACTION_EMAIL_FAILED",
     "AUDIT_ACTION_EXPIRED",
     "AUDIT_ACTION_FAILED",
+    "AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER",
     "AUDIT_ACTION_REQUESTED",
     "AUDIT_ACTION_TOKEN_ISSUED",
     "AUDIT_ACTION_TOKEN_REDEEMED",
