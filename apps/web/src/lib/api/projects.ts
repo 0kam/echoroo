@@ -19,6 +19,14 @@ import type {
   TrustedUserUpdateRequest,
   ProjectTrustedStatus,
   InvitationAcceptResponse,
+  ProjectCreateResponse,
+  MemberInvitationIssueRequest,
+  MemberInvitationIssueResponse,
+  BulkInvitationRequest,
+  BulkInvitationResultItem,
+  ProjectInvitationListResponse,
+  InvitationRevokeRequest,
+  InvitationRevokeResponse,
 } from '$lib/types';
 import { ApiError, apiClient } from './client';
 
@@ -206,10 +214,24 @@ export const projectsApi = {
   },
 
   /**
-   * Create a new project
+   * Create a new project.
+   *
+   * Returns `ProjectCreateResponse`, which extends `Project` with the
+   * one-shot superuser-bootstrap invitation fields (`invitation_url` /
+   * `invitation_id`). For non-superusers, or when `intended_owner_email`
+   * is absent, both are `null` and the response is otherwise the regular
+   * project shape — so existing callers reading `.id` / `.name` / etc.
+   * stay source-compatible.
+   *
+   * spec/011 US6: when the caller is a superuser and `data` carries a
+   * non-empty `intended_owner_email`, the backend issues a `kind=member`,
+   * `role=ADMIN`, `ownership_transfer_on_accept=true` invitation and
+   * returns its one-shot URL here. The field is silently dropped
+   * server-side for non-superusers. An invalid email surfaces as a 422
+   * `ApiError(code='ERR_INVALID_INTENDED_OWNER_EMAIL')`.
    */
-  create: async (data: ProjectCreateRequest): Promise<Project> => {
-    return callWebApi<Project>('POST', '/projects/', data);
+  create: async (data: ProjectCreateRequest): Promise<ProjectCreateResponse> => {
+    return callWebApi<ProjectCreateResponse>('POST', '/projects/', data);
   },
 
   /**
@@ -400,6 +422,91 @@ export const projectsApi = {
     await callWebApi<void>(
       'DELETE',
       `/projects/${projectId}/invitations/${encodeURIComponent(token)}`
+    );
+  },
+
+  /**
+   * Issue a single project member invitation (spec/011 US6 plumbing).
+   *
+   * `POST /projects/{id}/invitations` → 201 `MemberInvitationIssueResponse`.
+   * The returned `invitation_url` is one-shot and cannot be recovered
+   * after this response is consumed. No UI consumer in this PR — exported
+   * to unblock the future collaborators page.
+   *
+   * Backend error codes surface via `ApiError.code` (e.g. 409
+   * `ERR_INVITATION_PENDING`).
+   */
+  issueInvitation: async (
+    projectId: string,
+    body: MemberInvitationIssueRequest
+  ): Promise<MemberInvitationIssueResponse> => {
+    return callWebApi<MemberInvitationIssueResponse>(
+      'POST',
+      `/projects/${projectId}/invitations`,
+      body
+    );
+  },
+
+  /**
+   * List project invitations (spec/011 US6 plumbing).
+   *
+   * `GET /projects/{id}/invitations?kind=&status=` →
+   * `ProjectInvitationListResponse`. Both filters are optional and only
+   * appended to the query string when supplied. No UI consumer in this
+   * PR — exported to unblock the future collaborators page.
+   */
+  listInvitations: async (
+    projectId: string,
+    opts?: { kind?: string; status?: string }
+  ): Promise<ProjectInvitationListResponse> => {
+    const queryParams = new URLSearchParams();
+    if (opts?.kind) queryParams.set('kind', opts.kind);
+    if (opts?.status) queryParams.set('status', opts.status);
+    const query = queryParams.toString();
+    return callWebApi<ProjectInvitationListResponse>(
+      'GET',
+      `/projects/${projectId}/invitations${query ? `?${query}` : ''}`
+    );
+  },
+
+  /**
+   * Bulk-issue project member invitations (spec/011 US6 plumbing).
+   *
+   * `POST /projects/{id}/invitations/bulk` → 207 multi-status array of
+   * `BulkInvitationResultItem`. A 207 is `response.ok`, so `callWebApi`
+   * parses the body normally; per-email outcomes are encoded in each
+   * element's `status` (`issued` / `duplicate_pending` / `rate_limited`
+   * / `internal_error`). No UI consumer in this PR — exported to unblock
+   * the future collaborators page.
+   */
+  bulkInvite: async (
+    projectId: string,
+    body: BulkInvitationRequest
+  ): Promise<BulkInvitationResultItem[]> => {
+    return callWebApi<BulkInvitationResultItem[]>(
+      'POST',
+      `/projects/${projectId}/invitations/bulk`,
+      body
+    );
+  },
+
+  /**
+   * Revoke a pending project invitation (spec/011 US6 plumbing).
+   *
+   * `POST /projects/{id}/invitations/{invitation_id}/revoke` →
+   * `InvitationRevokeResponse`. The optional `reason` is recorded for the
+   * audit trail. No UI consumer in this PR — exported to unblock the
+   * future collaborators page.
+   */
+  revokeInvitation: async (
+    projectId: string,
+    invitationId: string,
+    body?: InvitationRevokeRequest
+  ): Promise<InvitationRevokeResponse> => {
+    return callWebApi<InvitationRevokeResponse>(
+      'POST',
+      `/projects/${projectId}/invitations/${encodeURIComponent(invitationId)}/revoke`,
+      body ?? {}
     );
   },
 };
