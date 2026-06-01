@@ -29,7 +29,8 @@ from __future__ import annotations
 
 import logging
 import unicodedata
-from typing import Final
+from typing import Any, Final
+from uuid import UUID
 
 from echoroo.core.kms import compute_pii_hash
 from echoroo.core.text import has_control_chars
@@ -93,152 +94,289 @@ def _sanitise_email_field(value: object, *, field_name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# No-op stubs (signatures preserved for in-tree call-sites)
+# In-app banner emitters (spec/011 US7, T610-T614)
 #
-# Every helper below is a Phase 9 US7 (``tasks.md`` T610-T614) target;
-# it will be rewritten to enqueue an in-app banner audit event via
-# ``services.user_banner``. Until then the stubs intentionally do
-# nothing besides log a single deprecation-grade warning so operators
-# can detect any caller that is still wired into the old email path.
+# The former no-op email stubs are now thin wrappers around the
+# in-app banner subsystem: each one writes a single ``platform_audit_log``
+# row whose ``action`` is banner-eligible (see
+# :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`) and whose
+# ``detail`` carries ``target_user_id`` so the row surfaces to the
+# *recipient* (not the actor) via ``user_banner.list_banners`` /
+# ``list_activity``. The audit row itself IS the banner (the read side
+# matches on ``detail->>'target_user_id'`` for non-self events).
+#
+# A-13 discipline: detail payloads carry only hashes / dates / non-PII
+# enum values — NEVER a raw email address, API-key secret, or raw IP.
+# The ``to`` parameter is retained on the signatures the call-sites
+# already pass, but it is NEVER persisted; we only emit its non-PII
+# surrogate hash into structured logs.
 # ---------------------------------------------------------------------------
+
+
+async def _emit_banner_audit(
+    *,
+    target_user_id: UUID,
+    action: str,
+    detail: dict[str, Any],
+    actor_user_id: UUID | str | None = None,
+    request_id: str = "",
+    ip_hash: str = "",
+    ua_hash: str = "",
+) -> None:
+    """Write a banner-eligible ``platform_audit_log`` row (fresh session).
+
+    The :class:`AuditLogService` writer requires a *fresh* AsyncSession
+    (the SERIALIZABLE upgrade + advisory lock are rejected once any SQL
+    has run on the connection), so we open a dedicated session here and
+    commit it independently — mirroring
+    :func:`echoroo.services.admin_password_reset._write_audit_row`.
+
+    ``target_user_id`` is ALWAYS injected into ``detail`` (overriding any
+    caller-supplied value) because the banner read side keys off
+    ``detail->>'target_user_id'`` for events whose actor is not the
+    recipient (login dispatcher / worker-originated rows). Omitting it
+    would make the banner silently never surface.
+
+    Soft-alert on failure (FR-088): the originating state change has
+    already committed by the time this runs, so a missing audit row must
+    not bubble up as a hard error. We log a warning and continue.
+
+    Note: ``ip_hash`` / ``ua_hash`` are passed to the writer as the raw
+    ``ip`` / ``user_agent`` arguments. They are already HMAC surrogates
+    (the call-sites only ever hold hashed values), so the writer's own
+    re-hashing yields a hash-of-a-hash — acceptable here because these
+    audit rows are never replayed against a raw-IP lookup; the
+    banner-targeting predicate matches on ``detail->>'target_user_id'``
+    and the actor hash, not on ``ip_hash``.
+    """
+    # Avoid a module-import cycle (audit_service imports nothing from
+    # this module, but keeping the import local documents the one-way
+    # dependency and matches the lazy-import convention used by the
+    # admin-reset service).
+    from echoroo.core.database import AsyncSessionLocal  # noqa: PLC0415
+    from echoroo.services.audit_service import AuditLogService  # noqa: PLC0415
+
+    payload = dict(detail)
+    payload["target_user_id"] = str(target_user_id)
+    try:
+        async with AsyncSessionLocal() as audit_session:
+            try:
+                await AuditLogService(audit_session).write_platform_event(
+                    actor_user_id=actor_user_id,
+                    action=action,
+                    request_id=request_id,
+                    ip=ip_hash,
+                    user_agent=ua_hash,
+                    detail=payload,
+                )
+                await audit_session.commit()
+            except Exception:
+                await audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert
+        logger.warning(
+            "%s banner audit write failed (FR-088 soft alert): target=%s "
+            "error=%r",
+            action,
+            target_user_id,
+            exc,
+        )
 
 
 async def send_login_notification(
     *,
     to: str,
+    user_id: UUID,
     ip_hash: str,
     ua_hash: str,
     timestamp: str,
+    request_id: str = "",
 ) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The full rewrite to ``services.user_banner.enqueue_event`` lands in
-    Phase 9 US7 (``tasks.md`` T610-T614). For now this is a no-op that
-    logs a deprecation warning so call-sites can be left in place
-    during the incremental refactor.
+    """Emit the new-device login banner (spec/011 US7 T610, FR-011-008).
 
     Args:
-        to: Recipient email address (unused; preserved for signature parity).
+        to: Recipient email address — NEVER persisted; only its non-PII
+            surrogate hash is logged.
+        user_id: The user who signed in (banner recipient + actor).
         ip_hash: HMAC-SHA256 hex of the client IP.
         ua_hash: HMAC-SHA256 hex of the User-Agent header.
         timestamp: ISO-8601 timestamp of the sign-in.
+        request_id: Request-envelope id for the audit row.
     """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_login_notification stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
-        "in Phase 9 US7 (recipient_hash=%s, ip_hash=%s, ua_hash=%s, "
-        "timestamp=%s)",
-        recipient_hash,
+    logger.info(
+        "send_login_notification: emitting new-device banner "
+        "(recipient_hash=%s, ip_hash=%s, ua_hash=%s, timestamp=%s)",
+        _safe_recipient_hash(to),
         ip_hash,
         ua_hash,
         timestamp,
     )
+    await _emit_banner_audit(
+        target_user_id=user_id,
+        action="auth.login.new_device",
+        actor_user_id=user_id,
+        detail={
+            "ip_hash": ip_hash,
+            "ua_hash": ua_hash,
+            "timestamp": timestamp,
+        },
+        request_id=request_id,
+        ip_hash=ip_hash,
+        ua_hash=ua_hash,
+    )
 
 
-async def send_email_change_notification(to: str) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The full rewrite to ``services.user_banner.enqueue_event`` lands in
-    Phase 9 US7 (``tasks.md`` T610-T614).
+async def send_email_change_notification(
+    to: str,
+    *,
+    user_id: UUID,
+    request_id: str = "",
+) -> None:
+    """Emit the email-change banner (spec/011 US7 T611, FR-011-008).
 
     Args:
-        to: Previous recipient email address (unused; preserved for signature parity).
+        to: Previous recipient email address — NEVER persisted; only its
+            non-PII surrogate hash is logged.
+        user_id: The user whose email changed (banner recipient + actor).
+        request_id: Request-envelope id for the audit row.
     """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_email_change_notification stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
-        "in Phase 9 US7 (recipient_hash=%s)",
-        recipient_hash,
+    logger.info(
+        "send_email_change_notification: emitting email-change banner "
+        "(recipient_hash=%s)",
+        _safe_recipient_hash(to),
+    )
+    await _emit_banner_audit(
+        target_user_id=user_id,
+        action="platform.user.email_changed",
+        actor_user_id=user_id,
+        detail={},
+        request_id=request_id,
     )
 
 
 async def send_2fa_reset_dispatched(
     to: str,
     *,
+    user_id: UUID,
     dispatched_at_iso: str,
+    actor_user_id: UUID | str | None = None,
+    request_id: str = "",
 ) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The full rewrite to ``services.user_banner.enqueue_event`` lands in
-    Phase 9 US7 (``tasks.md`` T610-T614).
+    """Emit the admin-2FA-reset banner (spec/011 US7 T612, FR-011-008).
 
     Args:
-        to: Recipient email address (unused; preserved for signature parity).
+        to: Recipient email address — NEVER persisted; only its non-PII
+            surrogate hash is logged.
+        user_id: The user whose 2FA was reset (banner recipient).
         dispatched_at_iso: ISO-8601 timestamp the reset was applied.
+        actor_user_id: The superuser who initiated the reset; the
+            recipient (``user_id``) is the banner target via
+            ``detail.target_user_id``.
+        request_id: Request-envelope id for the audit row.
     """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_2fa_reset_dispatched stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
-        "in Phase 9 US7 (recipient_hash=%s, dispatched_at_iso=%s)",
-        recipient_hash,
+    logger.info(
+        "send_2fa_reset_dispatched: emitting 2FA-reset banner "
+        "(recipient_hash=%s, dispatched_at_iso=%s)",
+        _safe_recipient_hash(to),
         dispatched_at_iso,
+    )
+    await _emit_banner_audit(
+        target_user_id=user_id,
+        action="platform.user.two_factor_reset_by_superuser",
+        actor_user_id=actor_user_id,
+        detail={"dispatched_at": dispatched_at_iso},
+        request_id=request_id,
     )
 
 
 async def send_api_key_revoke_email(
     *,
     to: str,
+    user_id: UUID,
     api_key_prefix: str,
     created_at_iso: str,
     revoked_at_iso: str,
+    request_id: str = "",
 ) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
-
-    The full rewrite to ``services.user_banner.enqueue_event`` lands in
-    Phase 9 US7 (``tasks.md`` T610-T614).
+    """Emit the API-key-revoke banner (spec/011 US7 T613/T614, FR-011-008).
 
     Args:
-        to: Recipient email address (unused; preserved for signature parity).
-        api_key_prefix: First-4 of the revoked key.
+        to: Recipient email address — NEVER persisted; only its non-PII
+            surrogate hash is logged.
+        user_id: The key owner (banner recipient).
+        api_key_prefix: First-4 of the revoked key (non-secret prefix).
         created_at_iso: ISO-8601 timestamp the key was created.
         revoked_at_iso: ISO-8601 timestamp the key was revoked.
+        request_id: Request-envelope id for the audit row.
     """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_api_key_revoke_email stub invoked — see spec/011 §FR-011-008 / "
-        "tasks.md T100. Caller will be rewritten to user_banner.enqueue_event "
-        "in Phase 9 US7 (recipient_hash=%s, prefix=%s, created_at_iso=%s, "
-        "revoked_at_iso=%s)",
-        recipient_hash,
+    logger.info(
+        "send_api_key_revoke_email: emitting api-key-revoke banner "
+        "(recipient_hash=%s, prefix=%s, created_at_iso=%s, revoked_at_iso=%s)",
+        _safe_recipient_hash(to),
         api_key_prefix,
         created_at_iso,
         revoked_at_iso,
+    )
+    await _emit_banner_audit(
+        target_user_id=user_id,
+        action="platform.api_key.revoke",
+        actor_user_id=None,
+        detail={
+            "api_key_prefix": api_key_prefix,
+            "created_at": created_at_iso,
+            "revoked_at": revoked_at_iso,
+        },
+        request_id=request_id,
     )
 
 
 async def send_api_key_scope_degrade_email(
     *,
     to: str,
+    user_id: UUID,
     api_key_prefix: str,
     created_at_iso: str,
     degraded_at_iso: str,
     grace_days_until_revoke: int,
+    request_id: str = "",
 ) -> None:
-    """Stub for spec/011 zero-email deployment (Step 2 T100).
+    """Emit the API-key-scope-degrade banner (spec/011 US7 T613, FR-011-008).
 
-    The full rewrite to ``services.user_banner.enqueue_event`` lands in
-    Phase 9 US7 (``tasks.md`` T610-T614).
+    The ``platform.api_key.scope_degrade`` action is NOT in the
+    banner-eligible enum (OQ6 keeps the contract enum unchanged in this
+    slice), so this row surfaces in ``/me/activity`` but not as a
+    standalone banner — which is the intended behaviour for the
+    degrade-grace event.
 
     Args:
-        to: Recipient email address (unused; preserved for signature parity).
-        api_key_prefix: First-4 of the affected key.
+        to: Recipient email address — NEVER persisted; only its non-PII
+            surrogate hash is logged.
+        user_id: The key owner (banner recipient).
+        api_key_prefix: First-4 of the affected key (non-secret prefix).
         created_at_iso: ISO-8601 timestamp the key was created.
         degraded_at_iso: ISO-8601 timestamp write-scope was stripped.
         grace_days_until_revoke: Days remaining before full revocation.
+        request_id: Request-envelope id for the audit row.
     """
-    recipient_hash = _safe_recipient_hash(to)
-    logger.warning(
-        "send_api_key_scope_degrade_email stub invoked — see spec/011 "
-        "§FR-011-008 / tasks.md T100. Caller will be rewritten to "
-        "user_banner.enqueue_event in Phase 9 US7 "
+    logger.info(
+        "send_api_key_scope_degrade_email: emitting scope-degrade event "
         "(recipient_hash=%s, prefix=%s, created_at_iso=%s, degraded_at_iso=%s, "
         "grace_days_until_revoke=%s)",
-        recipient_hash,
+        _safe_recipient_hash(to),
         api_key_prefix,
         created_at_iso,
         degraded_at_iso,
         grace_days_until_revoke,
+    )
+    await _emit_banner_audit(
+        target_user_id=user_id,
+        action="platform.api_key.scope_degrade",
+        actor_user_id=None,
+        detail={
+            "api_key_prefix": api_key_prefix,
+            "created_at": created_at_iso,
+            "degraded_at": degraded_at_iso,
+            "grace_days_until_revoke": grace_days_until_revoke,
+        },
+        request_id=request_id,
     )

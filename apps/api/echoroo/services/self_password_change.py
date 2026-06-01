@@ -95,8 +95,26 @@ AUDIT_ACTION_AUTH_PASSWORD_CHANGED: Final[str] = "auth.password_changed"
 
 #: Reason code passed to :meth:`TrustedDeviceService.revoke_all_for_user`.
 #: Matches the legacy :meth:`UserService.change_password` reason so the
-#: two code paths converge on a single audit vocabulary.
-_TD_REVOKE_REASON: Final[str] = "password_changed"
+#: two code paths converge on a single audit vocabulary. spec/011 T630
+#: remapped the historical ``"password_changed"`` to the canonical
+#: ``"password_change"`` (the member declared in
+#: :data:`echoroo.services.trusted_device_service.REVOKE_ALL_REASONS`).
+_TD_REVOKE_REASON: Final[str] = "password_change"
+
+
+class EmailChangeCooldownActiveError(Exception):
+    """The user is inside the 24-hour email-change cool-off (FR-011-305).
+
+    During the window opened by a self-service email change, a
+    self-service password change is rejected. The caller maps this to a
+    409 with ``error_code=email_change_cooldown_active`` (OQ9).
+    """
+
+    def __init__(self, cooldown_until: datetime) -> None:
+        super().__init__(
+            "email change cool-off active; password change is blocked"
+        )
+        self.cooldown_until = cooldown_until
 
 
 class CurrentPasswordMismatchError(Exception):
@@ -220,6 +238,21 @@ async def change_password(
     """
     tick = now or datetime.now(UTC)
 
+    # ---- 0. Email-change cool-off gate (FR-011-305 / T621) --------------
+    #
+    # A self-service email change opens a 24-hour cool-off that ALSO
+    # blocks self-service password changes for the same user. The
+    # operator recovery path (``admin_password_reset.reset_password``)
+    # does NOT read this column and therefore bypasses the cool-off
+    # (OQ10). The gate runs first so a cooled-off user gets the cool-off
+    # error regardless of whether their current credential is correct.
+    cooldown_until = user.email_change_cooldown_until
+    if cooldown_until is not None:
+        if cooldown_until.tzinfo is None:
+            cooldown_until = cooldown_until.replace(tzinfo=UTC)
+        if tick < cooldown_until:
+            raise EmailChangeCooldownActiveError(cooldown_until)
+
     # ---- 1. Forced-change temp-password expiry gate (FR-011-209) --------
     #
     # The temp password lives in ``password_hash`` exactly like the live
@@ -302,6 +335,7 @@ async def change_password(
 __all__ = [
     "AUDIT_ACTION_AUTH_PASSWORD_CHANGED",
     "CurrentPasswordMismatchError",
+    "EmailChangeCooldownActiveError",
     "NewPasswordReusedError",
     "change_password",
 ]

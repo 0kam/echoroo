@@ -47,6 +47,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from typing import Any, Final
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -167,21 +168,43 @@ async def dispatch_login_notification(
             "login_notification payload missing recipient email"
         )
 
-    user_id = payload.get("user_id")
+    user_id_raw = payload.get("user_id")
     event_id = payload.get("event_id") or payload.get("idempotency_key")
     logger.info(
-        "login_notification: dispatching email user_id=%s ip_hash=%s ua_hash=%s event_id=%s",
-        user_id,
+        "login_notification: dispatching banner user_id=%s ip_hash=%s ua_hash=%s event_id=%s",
+        user_id_raw,
         ip_hash,
         ua_hash,
         event_id,
     )
 
+    if not user_id_raw:
+        # ``user_id`` is required to target the in-app banner at the
+        # recipient (the audit row keys off ``detail.target_user_id``).
+        # An empty value indicates a producer-side bug; abort so the row
+        # moves to ``dead_letter`` after retries.
+        raise LoginNotificationPayloadError(
+            "login_notification payload missing user_id"
+        )
+    try:
+        user_id = UUID(str(user_id_raw))
+    except (ValueError, TypeError) as exc:
+        raise LoginNotificationPayloadError(
+            "login_notification payload carries a malformed user_id"
+        ) from exc
+
+    # spec/011 US7 (T615): the former email send is now an in-app banner
+    # emit (``services.email.send_login_notification`` writes a
+    # banner-eligible ``platform_audit_log`` row). The recipient address
+    # is no longer persisted — only ``user_id`` (banner target) + the
+    # IP / UA hashes flow into the audit detail.
     await send_login_notification(
         to=recipient,
+        user_id=user_id,
         ip_hash=ip_hash,
         ua_hash=ua_hash,
         timestamp=timestamp,
+        request_id=str(event_id) if event_id else "",
     )
 
 

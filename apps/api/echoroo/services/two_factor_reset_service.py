@@ -61,7 +61,6 @@ from echoroo.models.two_factor_reset_request import (
     TwoFactorResetRequest,
 )
 from echoroo.models.user import User
-from echoroo.services import email as email_service
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.superuser_service import (
     ACTION_TWO_FACTOR_RESET_SKIP_DELAY,
@@ -1382,24 +1381,14 @@ async def _apply_one(
         },
     )
 
-    # User-facing notification. Failure is best-effort but logged
-    # via an audit row so on-call has signal.
-    try:
-        await email_service.send_2fa_reset_dispatched(
-            user.email,
-            dispatched_at_iso=applied_at.isoformat(),
-        )
-    except Exception as exc:  # noqa: BLE001
-        await _write_platform_audit(
-            actor_user_id=row.requested_by_superuser_id,
-            action=AUDIT_ACTION_EMAIL_FAILED,
-            detail={
-                "stage": "applied_notification",
-                "request_id": str(row.id),
-                "target_user_id": str(row.user_id),
-                "error": exc.__class__.__name__,
-            },
-        )
+    # spec/011 US7 (T612): the user-facing notification is now an in-app
+    # banner. The ``platform.user.two_factor_reset_by_superuser`` audit
+    # row written by ``_write_platform_audit`` above already carries
+    # ``target_user_id`` and is banner-eligible, so it surfaces directly
+    # in the target user's ``GET /me/banners`` — no separate
+    # ``send_2fa_reset_dispatched`` emit is needed (a second call would
+    # double-emit the same banner action). ``user`` is still resolved
+    # above for the audit ``target_user_id`` derivation.
     return True
 
 

@@ -124,11 +124,17 @@ async def dispatch_trusted_expiry_notification(
             "is not 'trusted_user' or 'owner'"
         )
 
-    # Phase 10 stub: log the dispatch and return so ``mark_done`` runs
-    # in the outbox processor's surrounding transaction. The recipient
-    # address is logged through the same hashing helper used for
-    # login-notification emails so we do not spill PII into Datadog.
-    from echoroo.services.email import _safe_recipient_hash
+    # spec/011 T616: the email-send path is permanently gone. The
+    # trusted-expiry notice now surfaces purely as the
+    # ``project.trusted_user.expiry_notice`` audit row written by
+    # :func:`echoroo.workers.trusted_expiry_notifier._record_notice_audit`
+    # (which carries ``target_user_id`` so it appears in the trusted
+    # user's ``GET /me/activity``). This handler stays a tidy outbox
+    # consumer: it validates the payload and returns so ``mark_done``
+    # runs in the surrounding transaction and the row does not
+    # dead-letter. The recipient address is logged only through the
+    # non-PII surrogate hash so we never spill PII into log storage.
+    from echoroo.services.email import _safe_recipient_hash  # noqa: PLC0415
 
     logger.info(
         "trusted_expiry_dispatcher: queued warning notification "

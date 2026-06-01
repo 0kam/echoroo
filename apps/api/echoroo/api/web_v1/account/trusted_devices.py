@@ -88,7 +88,13 @@ async def revoke_all_account_trusted_devices(
     db: DbSession,
 ) -> Response:
     user = _require_authenticated(current_user)
-    await TrustedDeviceService(db).revoke_all_for_user(user=user)
+    # spec/011 T630 (OQ11): the self-service revoke-all now passes an
+    # explicit reason from the allowlist so the audit row is attributed
+    # (a missing/``None`` reason now raises ``ValueError``).
+    await TrustedDeviceService(db).revoke_all_for_user(
+        user=user,
+        reason="user_self_revoke",
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
