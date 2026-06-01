@@ -35,7 +35,6 @@ from sqlalchemy.pool import NullPool
 import echoroo.core.database as db_module
 from echoroo.models.trusted_device import TrustedDevice
 from echoroo.models.user import User
-from echoroo.services import trusted_device_service as td_svc_mod
 from echoroo.services.trusted_device_service import (
     AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL,
     REVOKE_ALL_REASONS,

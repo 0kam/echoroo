@@ -16,7 +16,6 @@ lands in the same test database rather than the production engine.
 
 from __future__ import annotations
 
-import os
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4

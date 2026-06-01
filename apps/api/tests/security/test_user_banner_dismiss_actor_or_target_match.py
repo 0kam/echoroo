@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -513,7 +512,6 @@ async def test_all_404_paths_return_identical_body(
     """All deny paths return the same HTTP status and response body."""
     app, users = dismiss_app
     self_user = users["self"]
-    stranger_user = users["stranger"]
 
     # Insert a row targeting self; stranger will try to dismiss it.
     real_row = await _insert_audit(

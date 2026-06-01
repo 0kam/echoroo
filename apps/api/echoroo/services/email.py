@@ -120,8 +120,6 @@ async def _emit_banner_audit(
     detail: dict[str, Any],
     actor_user_id: UUID | str | None = None,
     request_id: str = "",
-    ip_hash: str = "",
-    ua_hash: str = "",
 ) -> None:
     """Write a banner-eligible ``platform_audit_log`` row (fresh session).
 
@@ -129,7 +127,8 @@ async def _emit_banner_audit(
     (the SERIALIZABLE upgrade + advisory lock are rejected once any SQL
     has run on the connection), so we open a dedicated session here and
     commit it independently — mirroring
-    :func:`echoroo.services.admin_password_reset._write_audit_row`.
+    :func:`echoroo.services.admin_password_reset._write_audit_row` and
+    :func:`echoroo.services.trusted_device_service._emit_revoke_all_audit`.
 
     ``target_user_id`` is ALWAYS injected into ``detail`` (overriding any
     caller-supplied value) because the banner read side keys off
@@ -141,13 +140,13 @@ async def _emit_banner_audit(
     already committed by the time this runs, so a missing audit row must
     not bubble up as a hard error. We log a warning and continue.
 
-    Note: ``ip_hash`` / ``ua_hash`` are passed to the writer as the raw
-    ``ip`` / ``user_agent`` arguments. They are already HMAC surrogates
-    (the call-sites only ever hold hashed values), so the writer's own
-    re-hashing yields a hash-of-a-hash — acceptable here because these
-    audit rows are never replayed against a raw-IP lookup; the
-    banner-targeting predicate matches on ``detail->>'target_user_id'``
-    and the actor hash, not on ``ip_hash``.
+    Note: the writer's ``ip`` / ``user_agent`` arguments are ALWAYS passed
+    as ``""`` so the writer does not HMAC-hash anything into the
+    ``ip_hash`` / ``user_agent_hash`` columns. Any pre-hashed IP / UA
+    surrogate a caller wants to retain lives ONLY inside ``detail``
+    (``detail.ip_hash`` / ``detail.ua_hash``) — passing the already-hashed
+    value to the writer would produce a hash-of-a-hash. Mirrors
+    :func:`echoroo.services.trusted_device_service._emit_revoke_all_audit`.
     """
     # Avoid a module-import cycle (audit_service imports nothing from
     # this module, but keeping the import local documents the one-way
@@ -165,8 +164,8 @@ async def _emit_banner_audit(
                     actor_user_id=actor_user_id,
                     action=action,
                     request_id=request_id,
-                    ip=ip_hash,
-                    user_agent=ua_hash,
+                    ip="",
+                    user_agent="",
                     detail=payload,
                 )
                 await audit_session.commit()
@@ -211,6 +210,10 @@ async def send_login_notification(
         ua_hash,
         timestamp,
     )
+    # The pre-hashed ``ip_hash`` / ``ua_hash`` surrogates are carried ONLY
+    # inside ``detail`` — they are NOT forwarded to the audit writer's
+    # ``ip`` / ``user_agent`` arguments, which would re-hash them into a
+    # hash-of-a-hash in the ``ip_hash`` / ``user_agent_hash`` columns.
     await _emit_banner_audit(
         target_user_id=user_id,
         action="auth.login.new_device",
@@ -221,8 +224,6 @@ async def send_login_notification(
             "timestamp": timestamp,
         },
         request_id=request_id,
-        ip_hash=ip_hash,
-        ua_hash=ua_hash,
     )
 
 

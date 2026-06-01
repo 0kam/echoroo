@@ -41,17 +41,16 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 import echoroo.core.database as db_module
 from echoroo.api.web_v1 import me as me_module
 from echoroo.core.database import get_db
 from echoroo.middleware.auth import get_current_user
 from echoroo.models.user import User
-from echoroo.services import trusted_device_service as td_svc_mod
-from echoroo.services.user_banner import DEFAULT_BANNER_MAX_AGE_DAYS, BANNER_ELIGIBLE_ACTIONS
+from echoroo.services.user_banner import DEFAULT_BANNER_MAX_AGE_DAYS
 from tests.conftest import TEST_DATABASE_URL
 
 pytestmark = pytest.mark.asyncio

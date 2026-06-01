@@ -140,7 +140,10 @@ class UserService:
             request: Password change data
 
         Raises:
-            HTTPException: If user not found, current password invalid, or new password weak
+            HTTPException: If user not found, current password invalid,
+                new password weak, or the user is still inside the
+                24-hour email-change cool-off (HTTP 409,
+                ``email_change_cooldown_active``).
         """
         user = await self.user_repo.get_by_id(user_id)
         if not user:
@@ -148,6 +151,31 @@ class UserService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
+
+        # ---- Cool-off gate (FR-011-305 / T621) --------------------------
+        #
+        # A self-service email change opens a 24-hour cool-off that ALSO
+        # blocks this legacy self-service password-change route — otherwise
+        # a cooled-off user could rotate their password here and defeat the
+        # gate enforced on ``change_email`` / ``self_password_change``. The
+        # operator recovery path (``admin_password_reset.reset_password``)
+        # does NOT read this column and therefore bypasses the cool-off
+        # (OQ10). Verbatim mirror of the gate in ``change_email``.
+        cooldown_until = user.email_change_cooldown_until
+        if cooldown_until is not None:
+            if cooldown_until.tzinfo is None:
+                cooldown_until = cooldown_until.replace(tzinfo=UTC)
+            if datetime.now(UTC) < cooldown_until:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error_code": "email_change_cooldown_active",
+                        "message": (
+                            "Email change is in a 24-hour cool-off; please "
+                            f"wait until {cooldown_until.isoformat()}."
+                        ),
+                    },
+                )
 
         # Verify current password
         if not verify_password(request.current_password, user.password_hash):
@@ -165,6 +193,12 @@ class UserService:
 
         # Update password
         user.password_hash = hash_password(request.new_password)
+        # Cross-transaction soft-alert: ``revoke_all_for_user`` commits its
+        # single ``auth.trusted_device.revoke_all`` banner audit row in a
+        # fresh independent session BEFORE this caller's commit below, so a
+        # rollback after this point would leave an orphaned banner. Accepted
+        # per FR-088 (the in-method fresh-session emit is the established
+        # soft-alert contract; the post-revoke fallible window is small).
         await TrustedDeviceService(self.db).revoke_all_for_user(
             user=user,
             reason="password_change",
@@ -260,15 +294,29 @@ class UserService:
         self.db.add(user)
         await self.db.flush()
 
+        # ---- Open the 24-hour cool-off window + persist (FR-011-305) -----
+        #
+        # Assigned and persisted BEFORE ``revoke_all_for_user`` so the only
+        # fallible step left AFTER the revoke is the commit itself. This
+        # shrinks the post-revoke window in which a caller failure would
+        # orphan the independently-committed banner audit row (mirrors the
+        # ordering already wired in ``self_password_change`` /
+        # ``admin_password_reset``).
+        user.email_change_cooldown_until = tick + EMAIL_CHANGE_COOLDOWN
+        await self.user_repo.update(user)
+
+        # Cross-transaction soft-alert: ``revoke_all_for_user`` commits its
+        # single ``auth.trusted_device.revoke_all`` banner audit row in a
+        # fresh independent session BEFORE this caller's commit below, so a
+        # rollback after this point would leave an orphaned banner. Accepted
+        # per FR-088 (the in-method fresh-session emit is the established
+        # soft-alert contract; the post-revoke fallible window is just the
+        # commit below).
         await TrustedDeviceService(self.db).revoke_all_for_user(
             user=user,
             reason="email_change",
         )
 
-        # ---- Open the 24-hour cool-off window (FR-011-305) --------------
-        user.email_change_cooldown_until = tick + EMAIL_CHANGE_COOLDOWN
-
-        await self.user_repo.update(user)
         await self.db.commit()
 
         logger.info(

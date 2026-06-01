@@ -311,6 +311,13 @@ async def change_password(
     await session.flush()
 
     # ---- 7. Defence-in-depth trusted-device revocation ------------------
+    #
+    # Cross-transaction soft-alert: ``revoke_all_for_user`` commits its
+    # single ``auth.trusted_device.revoke_all`` banner audit row in a fresh
+    # independent session BEFORE the caller's commit, so a caller rollback
+    # after this point would leave an orphaned banner. Accepted per FR-088
+    # (the in-method fresh-session emit is the established soft-alert
+    # contract). The audit row below is likewise soft-alert.
     await TrustedDeviceService(session).revoke_all_for_user(
         user=user,
         reason=_TD_REVOKE_REASON,
