@@ -630,7 +630,6 @@
   "collaborators_issuing": "発行中...",
   "collaborators_error_invalid_email": "有効なメールアドレスを入力してください。",
   "collaborators_error_issue": "招待の発行に失敗しました。",
-  "collaborators_url_warning": "招待リンクは一度だけ表示され、ダイアログを閉じると復元できません。今すぐコピーして共有してください。",
   "collaborators_bulk_toggle_single": "個別招待",
   "collaborators_bulk_toggle_bulk": "一括招待",
   "collaborators_bulk_heading": "一括招待",

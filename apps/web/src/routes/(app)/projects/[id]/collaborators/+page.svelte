@@ -170,10 +170,13 @@
     e.preventDefault();
     bulkError = null;
 
-    const emails = bulkEmailsText
+    const parsed = bulkEmailsText
       .split(/\r?\n/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+    // Exact-duplicate dedupe: drops obvious paste mistakes that would
+    // otherwise hit the backend's atomic in-list-duplicate rejection.
+    const emails = [...new Set(parsed)];
 
     if (emails.length === 0) {
       bulkError = m.collaborators_bulk_error_empty();
@@ -630,7 +633,7 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {#each bulkResults as result (result.email)}
+                    {#each bulkResults as result, i (i)}
                       <tr class="border-b border-stone-200">
                         <td class="px-4 py-2 text-sm text-stone-700">{result.email}</td>
                         <td class="px-4 py-2 text-sm">

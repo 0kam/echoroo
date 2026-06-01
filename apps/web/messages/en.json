@@ -630,7 +630,6 @@
   "collaborators_issuing": "Issuing...",
   "collaborators_error_invalid_email": "Enter a valid email address.",
   "collaborators_error_issue": "Failed to issue the invitation.",
-  "collaborators_url_warning": "The invitation link is shown only once and cannot be recovered after you close the dialog. Copy and share it now.",
   "collaborators_bulk_toggle_single": "Single invite",
   "collaborators_bulk_toggle_bulk": "Bulk invite",
   "collaborators_bulk_heading": "Bulk invite",
