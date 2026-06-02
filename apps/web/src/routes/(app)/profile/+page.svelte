@@ -454,6 +454,22 @@
               {m.profile_api_tokens_description()}
             </p>
           </div>
+
+          <!-- Activity Link (spec/011 US7) -->
+          <div>
+            <a
+              href={localizeHref('/profile/activity')}
+              class="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-500"
+            >
+              <svg class="mr-2 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {m.activity_title()}
+            </a>
+            <p class="mt-1 text-sm text-stone-500">
+              {m.activity_empty_description()}
+            </p>
+          </div>
         </div>
       </div>
     </div>
