@@ -32,7 +32,7 @@
 
   import { browser } from '$app/environment';
   import { goto } from '$app/navigation';
-  import { ApiError } from '$lib/api/client';
+  import { ApiError, apiClient } from '$lib/api/client';
   import {
     resolveInvitation,
     acceptInvitation,
@@ -193,6 +193,16 @@
       }
     }
     if (isNewUser) {
+      // The accept 201 established a real session via server-set HttpOnly
+      // cookies (no access_token in the body). Opening this (public) page
+      // logged-out latched the apiClient's cold-start refresh gate
+      // (`refreshDisabledUntilLogin`) when the initial refresh probe 401-ed.
+      // That latch normally only clears on a real login via setAccessToken,
+      // so without resetting it here, initialize() would throw 401 WITHOUT
+      // hitting /auth/refresh and bounce this freshly-signed-up user to
+      // /login. Clearing it is safe: we are past a confirmed 201 accept, so
+      // a valid refresh cookie genuinely exists.
+      apiClient.clearRefreshLatch();
       try {
         await authStore.initialize({ silent: false });
       } catch {
