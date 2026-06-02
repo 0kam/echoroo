@@ -2656,6 +2656,7 @@
   "invite_landing_accept_success_member": "You have joined the project as a member.",
   "invite_landing_accept_success_trusted": "Trusted access granted. You can now use the project's capabilities you were granted.",
   "invite_landing_continue_to_project": "Continue to project",
+  "invite_role_trusted_user": "trusted user",
   "invite_signup_intro": "Create your account to join {project} as {role}.",
   "invite_signup_email_label": "Your email",
   "invite_signup_password_label": "Password",

@@ -46,7 +46,7 @@
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
 
-  /** Page server-load output ({ token, projectId }). */
+  /** Page server-load output ({ token }). */
   let { data } = $props();
   const token = $derived(data.token);
 
@@ -65,8 +65,26 @@
   let secretCopied = $state(false);
   let fieldErrors = $state<{ password?: boolean; totpCode?: boolean }>({});
 
-  /** Display label for the role/kind ("Member", "Trusted", ...). */
-  const roleLabel = $derived(ctx?.role ?? ctx?.kind ?? '');
+  /**
+   * Translate the invitation role into a localised label. When ``role`` is
+   * null (a trusted-kind invitation has no project role) we fall back to the
+   * "trusted user" label.
+   */
+  function roleDisplayLabel(role: string | null | undefined): string {
+    switch (role) {
+      case 'viewer':
+        return m.role_viewer();
+      case 'member':
+        return m.role_member();
+      case 'admin':
+        return m.role_admin();
+      default:
+        return m.invite_role_trusted_user();
+    }
+  }
+
+  /** Localised display label for the invitation role/kind. */
+  const roleLabel = $derived(roleDisplayLabel(ctx?.role));
 
   // Resolve the invitation on mount (browser-only — never SSR; the token
   // must not be resolved server-side where it could surface in logs).

@@ -2656,6 +2656,7 @@
   "invite_landing_accept_success_member": "プロジェクトのメンバーとして参加しました。",
   "invite_landing_accept_success_trusted": "Trusted アクセスが付与されました。付与された機能を使用できます。",
   "invite_landing_continue_to_project": "プロジェクトへ移動",
+  "invite_role_trusted_user": "信頼済みユーザー",
   "invite_signup_intro": "{project} に {role} として参加するためアカウントを作成します。",
   "invite_signup_email_label": "メールアドレス",
   "invite_signup_password_label": "パスワード",
