@@ -379,6 +379,15 @@
   "profile_api_tokens_link": "APIトークン",
   "profile_api_tokens_description": "プログラムからのアクセス用APIトークンを管理します。",
 
+  "banner_view_activity": "アクティビティを表示",
+  "banner_dismiss_aria": "バナーを閉じる",
+  "activity_title": "アクティビティ",
+  "activity_empty_title": "アクティビティはまだありません",
+  "activity_empty_description": "アカウントのアクティビティがここに表示されます。",
+  "activity_load_more": "さらに読み込む",
+  "activity_loading": "読み込み中…",
+  "activity_load_error": "アクティビティを読み込めませんでした。もう一度お試しください。",
+
   "setup_page_title": "Echorooへようこそ",
   "setup_create_admin": "管理者アカウントを作成してください",
   "setup_email_label": "メールアドレス",
