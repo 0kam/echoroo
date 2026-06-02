@@ -203,15 +203,18 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
     }
 
     if (_tempPasswordIssuedInScenario3 !== null) {
-      // Scenario 3 ran and issued a temp password but did NOT complete the
+      // Scenario 3 clicked reset (marker set) but did NOT complete the
       // forced-change (test failed mid-way). We need to recover.
+      // Note: marker may be 'pending' (reset clicked, reveal not yet seen) or
+      // the actual temp password string.
       console.warn(
-        '[C-4 afterAll] Scenario 3 did not complete password restore. Triggering recovery…'
+        '[C-4 afterAll] Scenario 3 did not complete password restore. Triggering recovery…' +
+          ` (marker: ${_tempPasswordIssuedInScenario3 === 'pending' ? 'pending (pre-reveal)' : 'temp-password-known'})`
       );
       await restoreTargetPassword(browser);
     }
     // If _tempPasswordIssuedInScenario3 is null, Scenario 3 never reached the
-    // reset step — TARGET's password was not changed and no recovery is needed.
+    // reset button click — TARGET's password was not changed and no recovery is needed.
   });
 
   // -------------------------------------------------------------------------
@@ -272,17 +275,23 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
 
     const targetRow = page.locator('tbody tr', { hasText: TARGET.email });
     const targetRowCount = await targetRow.count();
-    if (targetRowCount === 0) {
-      test.skip(
-        true,
-        `Target user ${TARGET.email} not found on /admin/users even after search. ` +
-          `Ensure the e2e seed has been run.`
-      );
-      return;
-    }
+    // Seeded e2e accounts are a required precondition — a missing account means
+    // the test harness is broken, not a condition to skip gracefully.
+    expect(
+      targetRowCount,
+      `Seeded target user ${TARGET.email} must exist on /admin/users. ` +
+        `A missing seeded account indicates a broken harness — re-run the e2e seed script.`
+    ).toBeGreaterThan(0);
 
     const resetButton = targetRow.locator('[data-testid^="admin-reset-password-"]');
     await expect(resetButton).toBeVisible({ timeout: 5000 });
+
+    // C-4: Set the marker BEFORE clicking reset — this ensures afterAll will
+    // trigger the recovery path even if a later assertion throws. The marker
+    // is the sentinel value "pending" (not the actual temp password yet).
+    // It will be overwritten with the real temp password once revealed.
+    _tempPasswordIssuedInScenario3 = 'pending';
+
     await resetButton.click();
 
     // ---- Step C: Step-up modal ----
@@ -304,7 +313,8 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
     expect(tempPassword, 'Temp password must be non-empty').toBeTruthy();
     expect(tempPassword.length, 'Temp password should be at least 12 chars').toBeGreaterThanOrEqual(12);
 
-    // C-4: record temp password so afterAll can recover if the test fails below.
+    // C-4: update with the actual temp password now that we have it.
+    // afterAll uses this to log in as TARGET and complete forced-change.
     _tempPasswordIssuedInScenario3 = tempPassword;
 
     await expect(page.locator('[data-testid="temp-password-copy"]')).toBeVisible();

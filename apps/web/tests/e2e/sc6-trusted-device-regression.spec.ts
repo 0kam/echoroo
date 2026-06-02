@@ -223,19 +223,23 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
       );
     }
 
-    if (!assertionBPassed) {
-      console.log(
-        `SC-6 Step 3: activity row not found after ${pageCount} page(s).`
-      );
-    }
-
-    // At least ONE of the two assertions must hold.
+    // assertionB (activity row) is REQUIRED — the backend emits
+    // "auth.trusted_device.revoke_all" even when revoked_count==0 (T630).
+    // The activity row MUST appear to prove FR-011-402 is genuinely enforced.
     expect(
-      assertionAPassed || assertionBPassed,
-      'Expected EITHER zero trusted devices in profile section OR ' +
-        'an auth.trusted_device.revoke_all row in the activity view. ' +
-        `assertionA (zero-devices): ${assertionAPassed}, ` +
-        `assertionB (activity-row): ${assertionBPassed}`
+      assertionBPassed,
+      `SC-6: auth.trusted_device.revoke_all row MUST appear in the activity view ` +
+        `(FR-011-402). Row not found after ${pageCount} page(s). ` +
+        `This proves the backend emitted the audit event even with zero active devices.`
+    ).toBe(true);
+
+    // assertionA (zero trusted devices in UI) is an ADDITIONAL check — not an alternative.
+    // It validates the profile page state after revoke-all.
+    expect(
+      assertionAPassed,
+      'SC-6: After revoke-all, the profile page must show zero active trusted devices ' +
+        '(either "No trusted devices" text or a disabled "Revoke all" button). ' +
+        `assertionA (zero-devices): ${assertionAPassed}`
     ).toBe(true);
 
     assertNoRealConsoleErrors(getErrors, 'SC-6: trusted-device revocation');

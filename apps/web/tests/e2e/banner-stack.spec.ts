@@ -6,13 +6,17 @@
  *   2. Dismiss persists across reload (POST /me/banners/dismiss → 204, idempotent).
  *   3. Empty/logged-out state: no BannerStack rendered, /me/banners not called.
  *   4. Activity view: platform event row appears, pagination works.
- *   5. (best-effort) new-device login banner — assert if present, skip if absent.
  *
  * Banner generator:
  *   POST /web-api/v1/account/trusted-devices/revoke-all emits
  *   "auth.trusted_device.revoke_all" (banner-eligible per BANNER_ELIGIBLE_ACTIONS).
  *   The service writes exactly ONE audit row per call, even when no active devices
  *   exist (revoked_count==0). Safe to call repeatedly — harmless on e2e-member.
+ *
+ * Note: The 4 event-type→banner mappings are covered by backend integration test
+ * test_user_banners.py (T661). This e2e proves the frontend banner mechanism end-to-end
+ * using the real revoke-all banner (render role=alert + non-empty summary, dismiss-persists,
+ * empty/logged-out, activity row + Load-more).
  *
  * Account: e2e-member@echoroo.app (accumulates revoke-all audit rows; harmless).
  * Password: E2E-Test-Password-123!
@@ -47,7 +51,12 @@ async function dismissAllVisibleBanners(
   // Dismiss one at a time — each dismiss triggers a list re-fetch.
   // I-3: use deterministic waits (waitForResponse + waitForFunction) instead of
   // fixed waitForTimeout.
-  while (true) {
+  // Cap at 50 iterations to prevent unbounded loops when banners accumulate
+  // (e.g. when running the full suite after admin-password-reset generates many banners).
+  const MAX_DISMISSALS = 50;
+  let dismissed = 0;
+
+  while (dismissed < MAX_DISMISSALS) {
     const dismissBtn = page.locator('[role="alert"] button[aria-label]').first();
     const visible = await dismissBtn.isVisible().catch(() => false);
     if (!visible) break;
@@ -65,6 +74,8 @@ async function dismissAllVisibleBanners(
       dismissBtn.click(),
     ]);
 
+    dismissed++;
+
     // Wait until the dismissed banner is gone from the DOM.
     await page
       .waitForFunction(
@@ -74,6 +85,10 @@ async function dismissAllVisibleBanners(
       .catch(() => {
         // If more banners remain, loop continues.
       });
+  }
+
+  if (dismissed >= MAX_DISMISSALS) {
+    console.warn(`dismissAllVisibleBanners: hit max dismissals (${MAX_DISMISSALS}) — stopping`);
   }
 }
 
@@ -346,49 +361,4 @@ test.describe.serial('Banner stack + activity view (US7 T663)', () => {
     assertNoRealConsoleErrors(getErrors, 'Test 4: activity view');
   });
 
-  // ─── Test 5: (best-effort) new-device login banner ───────────────────────
-
-  test('(best-effort) new-device login banner — present or absent without failure', async ({
-    browser,
-  }) => {
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    const getErrors = trackConsoleErrors(page);
-
-    await loginWithSharedTotp(page, { email: MEMBER_EMAIL });
-    await page.waitForLoadState('networkidle');
-
-    // Brief wait for TanStack Query to fetch banners.
-    await page.waitForTimeout(3000);
-
-    // Check whether a new-device banner appeared.
-    const allAlerts = await page.locator('[role="alert"]:has(button[aria-label])').all();
-    let newDeviceBannerFound = false;
-
-    for (const alert of allAlerts) {
-      const text = await alert.textContent().catch(() => '');
-      if (
-        text?.toLowerCase().includes('new device') ||
-        text?.toLowerCase().includes('new login') ||
-        text?.toLowerCase().includes('auth.login.new_device')
-      ) {
-        newDeviceBannerFound = true;
-        await expect(alert.locator('p.flex-1').first()).toBeVisible();
-        await expect(alert.locator('a').first()).toBeVisible();
-        await expect(alert.locator('button[aria-label]').first()).toBeVisible();
-        console.log('Best-effort new-device banner: PRESENT and structure verified.');
-        break;
-      }
-    }
-
-    if (!newDeviceBannerFound) {
-      console.log(
-        'Best-effort new-device banner: ABSENT in this run (known dev gap — not a failure).'
-      );
-    }
-
-    assertNoRealConsoleErrors(getErrors, 'Test 5: best-effort new-device banner');
-
-    await context.close();
-  });
 });

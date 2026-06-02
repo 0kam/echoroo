@@ -165,11 +165,13 @@ test.describe('No email-verification UI — logged-in screens', () => {
   // Log in once before all tests in this describe block
   test.beforeEach(async ({ page }) => {
     await loginWithSharedTotp(page, { email: 'e2e-owner@echoroo.app' });
-    // Confirm we landed on dashboard (or another (app) route)
-    const pathname = new URL(page.url()).pathname.replace(/^\/[a-z]{2}(?=\/)/, '');
+    // Confirm we landed on dashboard after login.
+    // Strip the locale prefix (/en, /ja, …) before asserting the path.
+    // The || startsWith('/') form is intentionally avoided — it is always true.
+    const pathname = new URL(page.url()).pathname.replace(/^\/(en|ja)(?=\/|$)/, '');
     expect(
-      pathname.startsWith('/dashboard') || pathname.startsWith('/'),
-      `Expected to land on /dashboard after login, got: ${page.url()}`
+      pathname.startsWith('/dashboard'),
+      `Expected to land on /dashboard after login, got: ${page.url()} (stripped path: ${pathname})`
     ).toBe(true);
   });
 

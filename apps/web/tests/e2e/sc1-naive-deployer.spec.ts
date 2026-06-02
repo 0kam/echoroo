@@ -23,35 +23,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { loginWithSharedTotp } from './helpers/spec011-auth';
-
-// ---------------------------------------------------------------------------
-// Console error tracking (reuse pattern from single-invitation-flow.spec.ts)
-// ---------------------------------------------------------------------------
-
-const BENIGN_CONSOLE_ERROR_PATTERNS = [
-  '401',
-  '403',
-  '404',
-  'net::ERR_ABORTED',
-  'Failed to load resource',
-];
-
-function isBenignConsoleError(msg: string): boolean {
-  return BENIGN_CONSOLE_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
-}
-
-function trackConsoleErrors(page: Page): () => string[] {
-  const errors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' && !isBenignConsoleError(msg.text())) {
-      errors.push(msg.text());
-    }
-  });
-  page.on('pageerror', (err) => {
-    errors.push(`PAGE ERROR: ${err.message}`);
-  });
-  return () => errors;
-}
+import { trackConsoleErrors, assertNoRealConsoleErrors } from './helpers/spec011-infra';
 
 // ---------------------------------------------------------------------------
 // Helpers: email-verification / email-config gate detection
@@ -112,10 +84,12 @@ test.describe.serial('SC-1: naive-deployer zero-email journey (T740)', () => {
     await loginWithSharedTotp(page, { email: 'e2e-owner@echoroo.app' });
 
     // Confirm landing on dashboard (auth works without email verification step).
-    const pathname = new URL(page.url()).pathname.replace(/^\/[a-z]{2}(?=\/)/, '');
+    // Strip the locale prefix (/en, /ja, …) before asserting the path.
+    // The || startsWith('/') form is intentionally avoided — it is always true.
+    const pathname = new URL(page.url()).pathname.replace(/^\/(en|ja)(?=\/|$)/, '');
     expect(
-      pathname.startsWith('/dashboard') || pathname.startsWith('/'),
-      `Expected dashboard after login, got: ${page.url()}`
+      pathname.startsWith('/dashboard'),
+      `Expected to land on /dashboard after login, got: ${page.url()} (stripped path: ${pathname})`
     ).toBe(true);
 
     // Positive anchor: dashboard main element visible.
@@ -191,7 +165,6 @@ test.describe.serial('SC-1: naive-deployer zero-email journey (T740)', () => {
     console.log(`SC-1 Step 2-3: project created, landed at ${finalUrl}`);
 
     // ── Final: zero console errors ─────────────────────────────────────────
-    const errors = getErrors();
-    expect(errors, `Unexpected console errors: ${errors.join(', ')}`).toHaveLength(0);
+    assertNoRealConsoleErrors(getErrors, 'SC-1: naive-deployer journey');
   });
 });
