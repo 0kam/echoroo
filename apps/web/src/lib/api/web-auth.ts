@@ -14,7 +14,7 @@
  * only to keep older pages compiling until they are migrated.
  */
 
-import { ApiError } from './client';
+import { ApiError, apiClient } from './client';
 
 const BASE = '/web-api/v1/auth';
 
@@ -356,16 +356,37 @@ async function webAuthErrorFromResponse(response: Response): Promise<WebAuthErro
 }
 
 /**
- * `GET /web-api/v1/auth/invitations/{token}` — public resolver
- * (TOKEN_AUTH_ONLY). Sends cookies so an authenticated caller gets the
- * `is_logged_in` / `authenticated_email_matches_bound` flags, but never a
- * Bearer header (this runs pre-login for the signup branch).
+ * `GET /web-api/v1/auth/invitations/{token}` — OPTIONAL-auth resolver
+ * (token-in-path). The backend resolver reads the optional current user to
+ * set `is_logged_in` / `authenticated_email_matches_bound`. Because the BFF
+ * `/web-api/v1/*` mount authenticates the session via the in-memory
+ * `Authorization: Bearer <access-token>` (there is no access-token cookie),
+ * we MUST attach the Bearer WHEN a logged-in user opens the link, otherwise
+ * the resolver returns 401 `auth_required` instead of the existing-user
+ * accept context. Conversely, a logged-OUT new-user visitor has NO token —
+ * we attach NO Authorization header so the backend treats the request as
+ * anonymous and returns the signup branch. Cookies are always sent.
+ *
+ * Mirrors the conditional-Bearer construction in `auth.ts` (`postAuth`) and
+ * `client.ts` (`request()`).
  */
 export async function resolveInvitation(
   token: string
 ): Promise<InvitationContextResponse> {
   const url = `${resolveBaseUrl()}${BASE}/invitations/${encodeURIComponent(token)}`;
-  const response = await fetch(url, { method: 'GET', credentials: 'include' });
+  const headers: Record<string, string> = {};
+  // Conditional Bearer: attach the in-memory access token only when a
+  // logged-in session exists. A logged-out new-user visitor has no token
+  // (`getAccessToken()` returns null) → no header → backend signup branch.
+  const accessToken = apiClient.getAccessToken();
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+  const response = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers,
+  });
   if (!response.ok) {
     throw await webAuthErrorFromResponse(response);
   }
@@ -382,6 +403,13 @@ export async function resolveInvitation(
  * caller can branch on `err.code` (e.g. `ERR_ALREADY_MEMBER`). For the
  * new-user branch the backend sets session cookies on the 201 response — the
  * caller must then hydrate via `authStore.initialize()`.
+ *
+ * Like `resolveInvitation`, the accept endpoint is OPTIONAL-auth: the
+ * existing-user `{ accept: true }` branch MUST carry the in-memory
+ * `Authorization: Bearer <access-token>` so the BFF recognizes the session
+ * and takes the existing-user path; the logged-OUT new-user branch has no
+ * token and sends NO Authorization header so the backend creates the account
+ * via the signup payload.
  */
 export async function acceptInvitation(
   token: string,
@@ -393,6 +421,15 @@ export async function acceptInvitation(
   const csrfToken = getCsrfToken();
   if (csrfToken && !CSRF_EXEMPT_PATHS.has(path)) {
     headers['X-CSRF-Token'] = csrfToken;
+  }
+  // Conditional Bearer (mirrors `auth.ts` `postAuth` / `client.ts`): the
+  // existing-user accept branch is issued from a logged-in session, so the
+  // Bearer is the only credential the BFF session middleware accepts (no
+  // access-token cookie exists). The logged-out new-user branch has no token
+  // → no header → backend signup path stays anonymous.
+  const accessToken = apiClient.getAccessToken();
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
   }
   const response = await fetch(url, {
     method: 'POST',
