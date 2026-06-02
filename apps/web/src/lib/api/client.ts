@@ -212,6 +212,29 @@ export class ApiClient {
   }
 
   /**
+   * Clear the cold-start refresh latch without stamping an access token.
+   *
+   * The latch (`refreshDisabledUntilLogin`) is set after a cold-start
+   * refresh probe 401s (no valid session yet) and is normally only
+   * cleared by `setAccessToken` on a real login. However, some flows
+   * establish a genuine session purely via server-set HttpOnly cookies
+   * and return NO `access_token` in the response body — notably the
+   * spec/011 public invite-accept (the 201 sets `echoroo_session` /
+   * `echoroo_refresh` cookies server-side, no token in the body).
+   *
+   * In that case the in-memory token is still absent, so the next
+   * `initialize()` MUST be allowed to call `/web-api/v1/auth/refresh`
+   * to mint a fresh access token from the now-valid refresh cookie.
+   * Callers invoke this AFTER a confirmed authentication event (e.g. a
+   * 201 accept) so the anonymous-Guest protection the latch provides is
+   * not weakened — clearing it here always corresponds to a real,
+   * server-established session.
+   */
+  clearRefreshLatch(): void {
+    this.refreshDisabledUntilLogin = false;
+  }
+
+  /**
    * Public method to trigger a token refresh.
    * Deduplicates concurrent refresh attempts via the shared refreshPromise.
    */

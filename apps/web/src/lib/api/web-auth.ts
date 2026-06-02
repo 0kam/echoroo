@@ -14,7 +14,7 @@
  * only to keep older pages compiling until they are migrated.
  */
 
-import { ApiError } from './client';
+import { ApiError, apiClient } from './client';
 
 const BASE = '/web-api/v1/auth';
 
@@ -263,4 +263,182 @@ export async function challengeTwoFactor(
 
 export async function logoutUser(): Promise<void> {
   await postJson<void>('/logout', {});
+}
+
+// ---------- Public invitation flow (spec/011 US2, T223) ----------
+
+/**
+ * `GET /web-api/v1/auth/invitations/{token}` 200 body (FR-011-105).
+ *
+ * `bound_email` is `null` when an authenticated caller's own email does NOT
+ * match the invitation (anti-enumeration — never leak the invitee identity
+ * to a wrong-account session). It is always present for the anonymous
+ * signup branch.
+ */
+export interface InvitationContextResponse {
+  project_name: string;
+  /** Member-kind role; `null` for trusted-overlay invitations. */
+  role: 'viewer' | 'member' | 'admin' | null;
+  /** `'member'` or `'trusted'`. */
+  kind: string;
+  bound_email: string | null;
+  /** ISO-8601 expiry timestamp. */
+  expires_at: string;
+  is_bootstrap: boolean;
+  is_logged_in: boolean;
+  authenticated_email_matches_bound: boolean;
+}
+
+/** New-user signup branch payload (FR-011-106 step 1a). */
+export interface InvitationAcceptNewUserPayload {
+  /** MUST canonicalize-equal `bound_email`; mismatch collapses to a 404. */
+  email: string;
+  /** Min 12 chars; backend additionally rejects HIBP-compromised passwords. */
+  password: string;
+  totp_enrollment: {
+    /** Client-generated base32 secret (the field name is "signed" for forward-compat). */
+    totp_secret_signed: string;
+    /** Exactly 6 digits. */
+    totp_initial_code: string;
+  };
+}
+
+/** Existing-user accept branch payload (FR-011-106 step 1b). */
+export interface InvitationAcceptExistingPayload {
+  accept: true;
+}
+
+/**
+ * `POST /web-api/v1/auth/invitations/{token}/accept` 201 body (FR-011-106).
+ *
+ * NOTE: the body carries NO `access_token` / `user`. For the new-user
+ * branch the backend establishes the session SERVER-SIDE (sets HttpOnly
+ * cookies on the 201 response), so the caller must hydrate the in-memory
+ * session via `authStore.initialize()` rather than reading a token here.
+ */
+export interface InvitationAcceptResponse {
+  project_id: string;
+  role: 'viewer' | 'member' | 'admin' | null;
+  kind: string;
+  ownership_transferred: boolean;
+  membership_created: boolean;
+}
+
+/**
+ * Build a `WebAuthError` from a non-OK response, preserving the structured
+ * envelope code (`detail.error`) and raw body so callers can branch on
+ * `err.code` (e.g. `ERR_ALREADY_MEMBER`) and `err.status`.
+ */
+async function webAuthErrorFromResponse(response: Response): Promise<WebAuthError> {
+  const data = (await response.json().catch(() => null)) as
+    | { detail?: unknown; error?: unknown; message?: unknown }
+    | null;
+  let message = 'Request failed';
+  let code: string | null = null;
+  if (data && typeof data === 'object') {
+    const detail = data.detail;
+    if (typeof detail === 'string') {
+      message = detail;
+    } else if (detail && typeof detail === 'object') {
+      const d = detail as Record<string, unknown>;
+      if (typeof d.message === 'string') message = d.message;
+      if (typeof d.error === 'string') code = d.error;
+    }
+    if (!code && typeof data.error === 'string') code = data.error;
+    if (typeof data.message === 'string' && message === 'Request failed') {
+      message = data.message;
+    }
+  }
+  const err = new WebAuthError(message, response.status, response.headers);
+  err.code = code;
+  err.body = data;
+  return err;
+}
+
+/**
+ * `GET /web-api/v1/auth/invitations/{token}` — OPTIONAL-auth resolver
+ * (token-in-path). The backend resolver reads the optional current user to
+ * set `is_logged_in` / `authenticated_email_matches_bound`. Because the BFF
+ * `/web-api/v1/*` mount authenticates the session via the in-memory
+ * `Authorization: Bearer <access-token>` (there is no access-token cookie),
+ * we MUST attach the Bearer WHEN a logged-in user opens the link, otherwise
+ * the resolver returns 401 `auth_required` instead of the existing-user
+ * accept context. Conversely, a logged-OUT new-user visitor has NO token —
+ * we attach NO Authorization header so the backend treats the request as
+ * anonymous and returns the signup branch. Cookies are always sent.
+ *
+ * Mirrors the conditional-Bearer construction in `auth.ts` (`postAuth`) and
+ * `client.ts` (`request()`).
+ */
+export async function resolveInvitation(
+  token: string
+): Promise<InvitationContextResponse> {
+  const url = `${resolveBaseUrl()}${BASE}/invitations/${encodeURIComponent(token)}`;
+  const headers: Record<string, string> = {};
+  // Conditional Bearer: attach the in-memory access token only when a
+  // logged-in session exists. A logged-out new-user visitor has no token
+  // (`getAccessToken()` returns null) → no header → backend signup branch.
+  const accessToken = apiClient.getAccessToken();
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+  const response = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers,
+  });
+  if (!response.ok) {
+    throw await webAuthErrorFromResponse(response);
+  }
+  return (await response.json()) as InvitationContextResponse;
+}
+
+/**
+ * `POST /web-api/v1/auth/invitations/{token}/accept` — accept an invitation.
+ *
+ * The payload shape branches on the caller's auth state: anonymous callers
+ * send the new-user signup payload; logged-in callers send `{ accept: true }`.
+ * Attaches the CSRF token (when a cookie is present) and sends cookies, the
+ * same way `postJson` does, but parses the structured error envelope so the
+ * caller can branch on `err.code` (e.g. `ERR_ALREADY_MEMBER`). For the
+ * new-user branch the backend sets session cookies on the 201 response — the
+ * caller must then hydrate via `authStore.initialize()`.
+ *
+ * Like `resolveInvitation`, the accept endpoint is OPTIONAL-auth: the
+ * existing-user `{ accept: true }` branch MUST carry the in-memory
+ * `Authorization: Bearer <access-token>` so the BFF recognizes the session
+ * and takes the existing-user path; the logged-OUT new-user branch has no
+ * token and sends NO Authorization header so the backend creates the account
+ * via the signup payload.
+ */
+export async function acceptInvitation(
+  token: string,
+  payload: InvitationAcceptNewUserPayload | InvitationAcceptExistingPayload
+): Promise<InvitationAcceptResponse> {
+  const path = `/invitations/${encodeURIComponent(token)}/accept`;
+  const url = `${resolveBaseUrl()}${BASE}${path}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const csrfToken = getCsrfToken();
+  if (csrfToken && !CSRF_EXEMPT_PATHS.has(path)) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
+  // Conditional Bearer (mirrors `auth.ts` `postAuth` / `client.ts`): the
+  // existing-user accept branch is issued from a logged-in session, so the
+  // Bearer is the only credential the BFF session middleware accepts (no
+  // access-token cookie exists). The logged-out new-user branch has no token
+  // → no header → backend signup path stays anonymous.
+  const accessToken = apiClient.getAccessToken();
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw await webAuthErrorFromResponse(response);
+  }
+  return (await response.json()) as InvitationAcceptResponse;
 }

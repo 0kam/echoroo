@@ -1,262 +1,319 @@
 <script lang="ts">
   /**
-   * Invitation landing page — Phase 10 / T521 (Round 2 polish).
+   * Invitation landing page — spec/011 US2 public invite flow (T220).
    *
-   * URL shape: ``/invite/{signed_token}?project_id={uuid}``.
+   * URL shape: ``/invite/{signed_token}`` (lives under ``(public)`` so it is
+   * reachable by anonymous visitors with NO auth-guard redirect — the signed
+   * token is the credential and must never be bounced through
+   * ``/login?redirect=...``).
    *
-   * Rationale for living under ``(public)``
-   * ---------------------------------------
-   * Before Round 2 this page lived under ``(app)/invite/[token]/`` and the
-   * ``(app)`` layout guard redirected unauthenticated visitors to
-   * ``/login?redirect=/invite/{token}`` — which leaked the signed token
-   * into the login URL, the browser history, the SvelteKit
-   * ``redirect`` query string, and (often) reverse-proxy access logs.
-   * Round 1 flagged this as a *Critical*. The fix moves the page to
-   * ``(public)`` so SvelteKit never has to bounce through ``/login`` with
-   * the token in tow; instead, this component renders the appropriate
-   * variant for each session state.
+   * Flow
+   * ----
+   *   loading
+   *     → resolveInvitation(token)                       (GET resolver)
+   *         → is_logged_in = false → ``signup``          (new-user branch)
+   *         → is_logged_in = true  → ``confirm``         (existing-user branch)
+   *     → acceptInvitation(token, payload)               (POST accept)
+   *         → new-user: backend set HttpOnly session cookies on the 201;
+   *           the body has NO access_token, so hydrate via
+   *           authStore.initialize() (refresh → /users/me → setUser).
+   *         → strip the token from the URL via history.replaceState BEFORE
+   *           any navigation, then land in the project.
    *
-   * Behaviour
-   * ---------
-   * 1. **Signed in** — same accept path as before: ``POST
-   *    /web-api/v1/projects/{project_id}/invitations/{token}/accept`` with
-   *    a generated ``X-Idempotency-Key`` (FR-053). On 200 we ``replaceState``
-   *    the URL bar to the project detail URL so the token disappears from
-   *    the user's history.
-   * 2. **Signed out** — render the "Sign in to accept" CTA. Clicking the
-   *    button stashes ``{token, projectId}`` in ``sessionStorage`` and
-   *    navigates to ``/login`` *without* a ``redirect`` query parameter.
-   *    After the user authenticates, the auth flow returns them to the
-   *    canonical ``/invite-resume`` route which reads back the stash and
-   *    ``replaceState``s the user onto the in-place accept URL.
-   *
-   * Backend errors surface via ``ApiError.code`` and map to the existing
-   * ``invite_landing_*`` i18n keys (no new keys required for this fix).
-   *
-   * Decline flow (FR-107)
-   * ---------------------
-   * Authenticated recipients may DELETE the invitation themselves
-   * (collapse-to-404 for cross-account / mismatch per FR-055). Decline is
-   * unavailable to signed-out callers — they must sign in first to make a
-   * decision attributable to a user identity (the backend gates DELETE on
-   * the bearer principal anyway).
+   * Security
+   * --------
+   *   - The token NEVER leaks: the page stays under ``(public)``; there is no
+   *     ``goto('/login?redirect=/invite/...')``; ``history.replaceState``
+   *     removes the token from the URL/history before navigating post-accept.
+   *   - The client-generated TOTP secret is NEVER logged.
+   *   - The bound email is rendered read-only (and handled gracefully when
+   *     ``null`` for a wrong-account authenticated caller).
    */
 
-  import { goto } from '$app/navigation';
   import { browser } from '$app/environment';
-  import { ApiError } from '$lib/api/client';
-  import { projectsApi } from '$lib/api/projects';
+  import { goto } from '$app/navigation';
+  import { ApiError, apiClient } from '$lib/api/client';
+  import {
+    resolveInvitation,
+    acceptInvitation,
+    type InvitationContextResponse,
+    type InvitationAcceptResponse,
+  } from '$lib/api/web-auth';
   import { authStore } from '$lib/stores/auth.svelte';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { generateId } from '$lib/utils/id';
-  import type { InvitationAcceptResponse } from '$lib/types';
+  import { generateTotpEnrollment, totpQrDataUrl } from '$lib/utils/totpEnroll';
+  import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
+  import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
 
-  /** Page server-load output. */
+  /** Page server-load output ({ token, isAuthenticated }). */
   let { data } = $props();
   const token = $derived(data.token);
-  const projectId = $derived(data.projectId);
 
-  type Phase =
-    | 'idle'
-    | 'login_required'
-    | 'accepting'
-    | 'success'
-    | 'error'
-    | 'declining'
-    | 'declined';
+  type Phase = 'loading' | 'signup' | 'confirm' | 'submitting' | 'success' | 'error';
 
-  /**
-   * Component lifecycle:
-   *
-   *   idle → (login_required | accepting) → success | error
-   *
-   * The decline path is reachable only from `error` or `idle` while the
-   * recipient is signed in.
-   */
-  let phase = $state<Phase>('idle');
+  let phase = $state<Phase>('loading');
+  let ctx = $state<InvitationContextResponse | null>(null);
   let result = $state<InvitationAcceptResponse | null>(null);
   let errorKey = $state<string | null>(null);
-  let confirmDeclineOpen = $state(false);
+
+  // --- new-user signup form state ---
+  let password = $state('');
+  let totpSecret = $state(''); // client-generated; NEVER logged
+  let totpQr = $state('');
+  let totpCode = $state('');
+  let secretCopied = $state(false);
+  let fieldErrors = $state<{ password?: boolean; totpCode?: boolean }>({});
 
   /**
-   * Idempotency key — generated once per page load. Per FR-053, reusing
-   * the same key with the same token is required for safe retries; using
-   * it with a different token returns 409 from the backend.
+   * Translate the invitation role into a localised label. When ``role`` is
+   * null (a trusted-kind invitation has no project role) we fall back to the
+   * "trusted user" label.
    */
-  const idempotencyKey = generateId();
+  function roleDisplayLabel(role: string | null | undefined): string {
+    switch (role) {
+      case 'viewer':
+        return m.role_viewer();
+      case 'member':
+        return m.role_member();
+      case 'admin':
+        return m.role_admin();
+      default:
+        return m.invite_role_trusted_user();
+    }
+  }
 
-  /** sessionStorage keys used to round-trip the token across login. */
-  const RESUME_TOKEN_KEY = 'echoroo:pendingInviteToken';
-  const RESUME_PROJECT_KEY = 'echoroo:pendingInviteProjectId';
+  /** Localised display label for the invitation role/kind. */
+  const roleLabel = $derived(roleDisplayLabel(ctx?.role));
+
+  // Resolve the invitation on mount (browser-only — never SSR; the token
+  // must not be resolved server-side where it could surface in logs).
+  $effect(() => {
+    if (!browser) return;
+    void load();
+  });
 
   /**
-   * Translate `ApiError` into the i18n key surfaced to the user. Returns
-   * the generic-error key when the error wasn't an ApiError.
+   * Ensure the in-memory access token is hydrated before the first resolve,
+   * WITHOUT triggering a second concurrent `/auth/refresh`.
+   *
+   * Token-hydration race (spec/011 Gate 3)
+   * --------------------------------------
+   * The access token lives in memory inside `apiClient`; a hard navigation
+   * into this `(public)` page wipes it. The root `+layout.svelte` kicks off
+   * `authStore.initialize({ silent })` fire-and-forget (no await), so for a
+   * logged-in invitee this `load()` would otherwise race ahead, find
+   * `getAccessToken()` still `null`, omit the Bearer (correctly), and 401 the
+   * resolve → "Failed to process the invitation."
+   *
+   * Gating on the server-provided `echoroo_logged_in` marker:
+   *   - marker ABSENT (`data.isAuthenticated === false`) → genuinely
+   *     logged-out new user: do nothing. We must NOT probe `/auth/refresh`
+   *     here — a cold-start 401 would latch `refreshDisabledUntilLogin` on
+   *     the apiClient, which the accept flow then has to clear. Resolve
+   *     anonymously → signup branch (unchanged behaviour).
+   *   - marker PRESENT but in-memory token still `null` → AWAIT hydration so
+   *     the conditional Bearer is populated before resolve.
+   *
+   * No double `/auth/refresh`:
+   *   We await `apiClient.refreshToken()`, which delegates to
+   *   `refreshAccessToken()`. That method DEDUPES concurrent refreshes via a
+   *   shared in-flight promise (`client.ts`: `if (this.refreshPromise) return
+   *   this.refreshPromise;`). So if the layout's `initialize()` already has a
+   *   refresh in flight, we join the SAME promise — no second network call.
+   *   If the layout's refresh already succeeded, `getAccessToken()` is
+   *   non-null and we skip this entirely. If it already failed, the
+   *   `refreshDisabledUntilLogin` latch is set and `refreshToken()` rejects
+   *   synchronously (no network call). In every case there is at most ONE
+   *   `/web-api/v1/auth/refresh` request.
+   *
+   * Defensive: on hydration failure/timeout we fall through to
+   * `resolveInvitation` anyway (it will 401 → error panel, same as before) —
+   * we never hang on `loading`.
    */
-  function mapAcceptError(err: unknown): string {
+  async function hydrateAccessTokenIfSessionExists(): Promise<void> {
+    if (!data.isAuthenticated) return; // logged-out new user — skip entirely
+    if (apiClient.getAccessToken()) return; // already hydrated — nothing to do
+    try {
+      await apiClient.refreshToken();
+    } catch {
+      // Hydration failed (e.g. stale/expired refresh cookie despite the
+      // marker). Fall through and let resolveInvitation 401 → error panel
+      // rather than hanging the loading spinner.
+    }
+  }
+
+  async function load(): Promise<void> {
+    phase = 'loading';
+    errorKey = null;
+    try {
+      await hydrateAccessTokenIfSessionExists();
+      const resolved = await resolveInvitation(token);
+      ctx = resolved;
+      if (resolved.is_logged_in) {
+        phase = 'confirm';
+      } else {
+        // New-user signup branch: client-generate a TOTP secret bound to the
+        // invitee email and render the QR. bound_email is always present for
+        // an anonymous caller.
+        const email = resolved.bound_email ?? '';
+        const { secret, provisioningUri } = generateTotpEnrollment(email);
+        totpSecret = secret;
+        totpQr = await totpQrDataUrl(provisioningUri);
+        phase = 'signup';
+      }
+    } catch (err) {
+      errorKey = mapError(err);
+      phase = 'error';
+    }
+  }
+
+  // ---- new-user signup submit ----
+  async function submitSignup(e: Event): Promise<void> {
+    e.preventDefault();
+    fieldErrors = {};
+    errorKey = null;
+    if (password.length < 12) {
+      fieldErrors.password = true;
+      errorKey = 'invite_signup_password_invalid';
+      return;
+    }
+    const code = totpCode.trim().replace(/\s+/g, '');
+    if (code.length !== 6) {
+      fieldErrors.totpCode = true;
+      errorKey = 'invite_signup_totp_invalid';
+      return;
+    }
+    if (!ctx?.bound_email) {
+      errorKey = 'invite_landing_generic_error';
+      phase = 'error';
+      return;
+    }
+    phase = 'submitting';
+    try {
+      const res = await acceptInvitation(token, {
+        email: ctx.bound_email,
+        password,
+        totp_enrollment: { totp_secret_signed: totpSecret, totp_initial_code: code },
+      });
+      await afterAccept(res, true);
+    } catch (err) {
+      errorKey = mapError(err);
+      // 422 (password/TOTP) returns to the form rather than a terminal error.
+      if (err instanceof ApiError && err.status === 422) {
+        if (errorKey === 'invite_signup_totp_invalid') fieldErrors.totpCode = true;
+        if (errorKey === 'invite_signup_password_invalid') fieldErrors.password = true;
+        phase = 'signup';
+      } else {
+        phase = 'error';
+      }
+    }
+  }
+
+  // ---- existing-user confirm submit ----
+  async function submitConfirm(e: Event): Promise<void> {
+    e.preventDefault();
+    errorKey = null;
+    phase = 'submitting';
+    try {
+      const res = await acceptInvitation(token, { accept: true });
+      await afterAccept(res, false);
+    } catch (err) {
+      errorKey = mapError(err);
+      phase = 'error';
+    }
+  }
+
+  /**
+   * Shared post-accept handling.
+   *
+   * For the new-user branch the backend established the session server-side
+   * (HttpOnly cookies on the 201) but returned NO access_token in the body,
+   * so we hydrate the in-memory token + user via authStore.initialize().
+   * We strip the token from the URL FIRST so it can never leak — even if
+   * initialize() were to navigate (it won't for a fresh, valid session).
+   */
+  async function afterAccept(res: InvitationAcceptResponse, isNewUser: boolean): Promise<void> {
+    result = res;
+    if (browser && typeof history !== 'undefined') {
+      try {
+        history.replaceState(history.state, '', localizeHref('/dashboard'));
+      } catch {
+        // replaceState is best-effort; the success panel + Continue button
+        // below still work without it.
+      }
+    }
+    if (isNewUser) {
+      // The accept 201 established a real session via server-set HttpOnly
+      // cookies (no access_token in the body). Opening this (public) page
+      // logged-out latched the apiClient's cold-start refresh gate
+      // (`refreshDisabledUntilLogin`) when the initial refresh probe 401-ed.
+      // That latch normally only clears on a real login via setAccessToken,
+      // so without resetting it here, initialize() would throw 401 WITHOUT
+      // hitting /auth/refresh and bounce this freshly-signed-up user to
+      // /login. Clearing it is safe: we are past a confirmed 201 accept, so
+      // a valid refresh cookie genuinely exists.
+      apiClient.clearRefreshLatch();
+      try {
+        await authStore.initialize({ silent: false });
+      } catch {
+        // The session cookie is present; if hydration hiccups, the project
+        // page's own guard recovers on navigation.
+      }
+    }
+    phase = 'success';
+  }
+
+  function continueToProject(): void {
+    if (!result) return;
+    void goto(localizeHref(`/projects/${result.project_id}`));
+  }
+
+  function copySecret(): void {
+    if (!totpSecret || typeof navigator === 'undefined') return;
+    navigator.clipboard?.writeText(totpSecret).then(() => {
+      secretCopied = true;
+      setTimeout(() => (secretCopied = false), 2000);
+    });
+  }
+
+  /** Map a thrown error to an i18n key. */
+  function mapError(err: unknown): string {
     if (err instanceof ApiError) {
-      switch (err.status) {
-        case 403:
-          if (err.code === 'ERR_EMAIL_MISMATCH') {
-            return 'invite_landing_email_mismatch';
-          }
-          break;
-        case 404:
-          return 'invite_landing_invitation_not_found';
-        case 410:
-          if (err.code === 'ERR_INVITATION_TERMINAL_STATE') {
-            return 'invite_landing_already_used';
-          }
-          return 'invite_landing_expired';
-        case 409:
-          return 'invite_landing_conflict';
-        case 503:
-          return 'invite_landing_infra_unavailable';
+      const code = err.code;
+      if (err.status === 404) return 'invite_landing_invitation_not_found';
+      if (err.status === 409 && code === 'ERR_ALREADY_MEMBER') {
+        return 'invite_landing_already_member';
+      }
+      if (err.status === 409) return 'invite_landing_conflict';
+      if (err.status === 429) return 'invite_landing_rate_limited';
+      if (err.status === 422) {
+        return code === 'ERR_TOTP_ENROLLMENT_INVALID'
+          ? 'invite_signup_totp_invalid'
+          : 'invite_signup_password_invalid';
       }
     }
     return 'invite_landing_generic_error';
   }
 
-  /** Resolve an i18n key to its localised string. */
+  /** Resolve an i18n key to its localised string (no dynamic m[...] lookup). */
   function tr(key: string): string {
     switch (key) {
-      case 'invite_landing_email_mismatch':
-        return m.invite_landing_email_mismatch();
       case 'invite_landing_invitation_not_found':
         return m.invite_landing_invitation_not_found();
-      case 'invite_landing_already_used':
-        return m.invite_landing_already_used();
-      case 'invite_landing_expired':
-        return m.invite_landing_expired();
+      case 'invite_landing_already_member':
+        return m.invite_landing_already_member();
       case 'invite_landing_conflict':
         return m.invite_landing_conflict();
-      case 'invite_landing_infra_unavailable':
-        return m.invite_landing_infra_unavailable();
-      case 'invite_landing_missing_project':
-        return m.invite_landing_missing_project();
+      case 'invite_landing_rate_limited':
+        return m.invite_landing_rate_limited();
+      case 'invite_signup_totp_invalid':
+        return m.invite_signup_totp_invalid();
+      case 'invite_signup_password_invalid':
+        return m.invite_signup_password_invalid();
       default:
         return m.invite_landing_generic_error();
     }
-  }
-
-  async function tryAccept(): Promise<void> {
-    if (!projectId) {
-      phase = 'error';
-      errorKey = 'invite_landing_missing_project';
-      return;
-    }
-    if (!token) {
-      phase = 'error';
-      errorKey = 'invite_landing_invitation_not_found';
-      return;
-    }
-    phase = 'accepting';
-    errorKey = null;
-    try {
-      const res = await projectsApi.acceptInvitation(
-        projectId,
-        token,
-        idempotencyKey,
-      );
-      result = res;
-      phase = 'success';
-      // Drop the token from the URL bar (and therefore from the entry in
-      // the browser history). We replace with the project detail URL so
-      // that `Back` returns the user to wherever they came from rather
-      // than to an invite URL with a now-consumed token.
-      if (browser && typeof history !== 'undefined') {
-        const target = res.project_id
-          ? localizeHref(`/projects/${res.project_id}`)
-          : projectId
-            ? localizeHref(`/projects/${projectId}`)
-            : localizeHref('/dashboard');
-        try {
-          history.replaceState(history.state, '', target);
-        } catch {
-          // replaceState is best-effort. If it throws (e.g. exotic
-          // browsers, sandboxed iframes) we still have the success
-          // panel + Continue button below.
-        }
-      }
-    } catch (err) {
-      errorKey = mapAcceptError(err);
-      phase = 'error';
-    }
-  }
-
-  /**
-   * React to auth-store transitions. While the store is loading we stay
-   * idle. Once it resolves we either kick off the accept (signed in) or
-   * present the in-place login CTA (signed out).
-   */
-  $effect(() => {
-    if (authStore.isLoading) return;
-    if (phase !== 'idle') return;
-    if (authStore.isAuthenticated) {
-      void tryAccept();
-    } else {
-      phase = 'login_required';
-    }
-  });
-
-  function startLoginRedirect(): void {
-    if (!browser) return;
-    // Stash the invite credentials in sessionStorage so the login flow
-    // can resume the accept without ever putting the token into a URL
-    // query parameter.
-    try {
-      if (token) sessionStorage.setItem(RESUME_TOKEN_KEY, token);
-      if (projectId) sessionStorage.setItem(RESUME_PROJECT_KEY, projectId);
-    } catch {
-      // Ignore storage failures; we still send the user to the login
-      // page — they will simply lose the auto-resume on this device.
-    }
-    // Round 3 polish — fix Critical #1: navigate with `replaceState: true`
-    // so the current `/invite/{token}` history entry is overwritten rather
-    // than pushed onto the back stack. Without this, the signed token
-    // would remain reachable via the browser Back button (and visible in
-    // session history APIs) for the entire round-trip through
-    // `/login` → `/invite-resume`. Replacing the entry guarantees that
-    // once we reach the login screen, the token URL is gone from the
-    // forward/back history altogether.
-    void goto(localizeHref('/login?redirect=/invite-resume'), {
-      replaceState: true,
-    });
-  }
-
-  async function handleDecline(): Promise<void> {
-    if (!projectId || !token) {
-      confirmDeclineOpen = false;
-      return;
-    }
-    phase = 'declining';
-    try {
-      await projectsApi.declineInvitation(projectId, token);
-      phase = 'declined';
-      confirmDeclineOpen = false;
-    } catch {
-      // Best-effort: the decline endpoint is intentionally generous
-      // (404 / 410 / 204), so any unexpected error surfaces as the
-      // generic message but we still allow the user to navigate away.
-      errorKey = 'invite_landing_generic_error';
-      phase = 'error';
-      confirmDeclineOpen = false;
-    }
-  }
-
-  function continueToProject(): void {
-    if (result?.project_id) {
-      void goto(localizeHref(`/projects/${result.project_id}`));
-    } else if (projectId) {
-      void goto(localizeHref(`/projects/${projectId}`));
-    } else {
-      void goto(localizeHref('/dashboard'));
-    }
-  }
-
-  function backToHome(): void {
-    void goto(localizeHref(authStore.isAuthenticated ? '/dashboard' : '/'));
   }
 </script>
 
@@ -264,20 +321,22 @@
   <title>{m.invite_landing_title()} - Echoroo</title>
 </svelte:head>
 
-<div
-  class="mx-auto max-w-xl px-4 py-12"
-  data-testid="invite-landing-page"
->
-  <h1 class="mb-2 text-2xl font-bold text-stone-900">
-    {m.invite_landing_title()}
-  </h1>
+<div class="flex min-h-screen items-center justify-center bg-stone-50 px-4 py-12 sm:px-6 lg:px-8">
+  <div class="w-full max-w-md space-y-8" data-testid="invite-landing-page">
+    <div class="flex justify-end gap-1">
+      <DarkModeToggle />
+      <LanguageSwitcher />
+    </div>
 
-  {#if phase === 'idle' || phase === 'accepting'}
-    <div
-      data-testid="invite-landing-loading"
-      class="rounded-lg bg-surface-card p-6 shadow"
-    >
-      <div class="flex items-center gap-3">
+    <div class="flex flex-col items-center">
+      <img src="/echoroo.png" alt="Echoroo" class="mb-4 h-16 w-auto" />
+      <h2 class="text-center text-3xl font-extrabold text-stone-900">
+        {m.invite_landing_title()}
+      </h2>
+    </div>
+
+    {#if phase === 'loading'}
+      <div class="flex items-center justify-center gap-3 py-6" data-testid="invite-landing-loading">
         <svg
           class="h-5 w-5 animate-spin text-primary-600"
           xmlns="http://www.w3.org/2000/svg"
@@ -285,14 +344,7 @@
           viewBox="0 0 24 24"
           aria-hidden="true"
         >
-          <circle
-            class="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-          ></circle>
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path
             class="opacity-75"
             fill="currentColor"
@@ -301,154 +353,183 @@
         </svg>
         <p class="text-sm text-stone-700">{m.invite_landing_loading()}</p>
       </div>
-    </div>
-  {:else if phase === 'login_required'}
-    <div
-      data-testid="invite-landing-login-required"
-      class="rounded-lg bg-surface-card p-6 shadow"
-      role="status"
-    >
-      <p class="text-sm text-stone-700">{m.invite_landing_login_required()}</p>
-      <div class="mt-4">
-        <button
-          type="button"
-          data-testid="invite-landing-login-button"
-          onclick={startLoginRedirect}
-          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
-        >
-          {m.invite_landing_login_button()}
-        </button>
-      </div>
-    </div>
-  {:else if phase === 'success' && result}
-    <div
-      data-testid="invite-landing-success"
-      class="rounded-lg bg-success-light p-6"
-      role="status"
-    >
-      <p class="text-sm font-medium text-success">
-        {result.kind === 'trusted'
-          ? m.invite_landing_accept_success_trusted()
-          : m.invite_landing_accept_success_member()}
+    {:else if phase === 'signup'}
+      <!-- New-user signup branch: read-only email + password + TOTP enroll -->
+      <p class="text-sm text-stone-600" data-testid="invite-signup-intro">
+        {m.invite_signup_intro({ project: ctx?.project_name ?? '', role: roleLabel })}
       </p>
-      <div class="mt-4">
-        <button
-          type="button"
-          data-testid="invite-landing-continue"
-          onclick={continueToProject}
-          class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
-        >
-          {m.invite_landing_continue_to_project()}
-        </button>
-      </div>
-    </div>
-  {:else if phase === 'declined'}
-    <div
-      data-testid="invite-landing-declined"
-      class="rounded-lg bg-stone-100 p-6"
-      role="status"
-    >
-      <p class="text-sm text-stone-700">{m.invite_declined_message()}</p>
-      <div class="mt-4">
-        <button
-          type="button"
-          onclick={backToHome}
-          class="inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-        >
-          {m.invite_decline_back_to_home()}
-        </button>
-      </div>
-    </div>
-  {:else if phase === 'error' && errorKey}
-    <div
-      data-testid="invite-landing-error"
-      data-error-key={errorKey}
-      class="rounded-lg bg-danger-light p-6"
-      role="alert"
-    >
-      <p class="text-sm font-medium text-danger">{tr(errorKey)}</p>
 
-      <div class="mt-4 flex flex-wrap gap-2">
-        {#if errorKey !== 'invite_landing_email_mismatch' && errorKey !== 'invite_landing_already_used' && errorKey !== 'invite_landing_expired' && errorKey !== 'invite_landing_invitation_not_found' && errorKey !== 'invite_landing_missing_project'}
-          <!--
-            For transient errors (503 infra unavailable, generic
-            failures, idempotency conflict) offer a Retry button so the
-            recipient can try again without a full page reload. We
-            deliberately do NOT offer Retry on terminal errors (mismatch,
-            not found, expired) because those will never recover.
-          -->
-          <button
-            type="button"
-            data-testid="invite-landing-retry"
-            onclick={tryAccept}
-            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700"
-          >
-            {m.common_retry()}
-          </button>
-        {/if}
-        {#if authStore.isAuthenticated}
-          <button
-            type="button"
-            data-testid="invite-landing-decline-open"
-            onclick={() => (confirmDeclineOpen = true)}
-            class="inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-          >
-            {m.invite_decline_button()}
-          </button>
-        {/if}
-        <button
-          type="button"
-          onclick={backToHome}
-          class="inline-flex items-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-        >
-          {m.invite_decline_back_to_home()}
-        </button>
-      </div>
-    </div>
-  {/if}
-</div>
+      <form class="space-y-6" onsubmit={submitSignup} data-testid="invite-signup-form">
+        <div class="space-y-4">
+          <div>
+            <label for="invite-email" class="block text-sm font-medium text-stone-700">
+              {m.invite_signup_email_label()}
+            </label>
+            <input
+              id="invite-email"
+              type="email"
+              value={ctx?.bound_email ?? ''}
+              readonly
+              data-testid="invite-signup-email"
+              class="mt-1 block w-full appearance-none rounded-md border border-stone-300 bg-stone-100 px-3 py-2 text-stone-900 sm:text-sm"
+            />
+          </div>
 
-{#if confirmDeclineOpen}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="invite-decline-modal-title"
-    data-testid="invite-decline-modal"
-  >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
-      <div class="border-b border-stone-200 px-6 py-4">
-        <h2
-          id="invite-decline-modal-title"
-          class="m-0 text-lg font-semibold text-stone-900"
+          <div>
+            <label for="invite-password" class="block text-sm font-medium text-stone-700">
+              {m.invite_signup_password_label()}
+            </label>
+            <input
+              id="invite-password"
+              type="password"
+              autocomplete="new-password"
+              required
+              bind:value={password}
+              data-testid="invite-signup-password"
+              class="mt-1 block w-full appearance-none rounded-md border px-3 py-2 text-stone-900 placeholder-stone-500 focus:z-10 focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
+              class:border-danger={fieldErrors.password}
+              class:border-stone-300={!fieldErrors.password}
+            />
+            <p class="mt-1 text-xs text-stone-500">{m.invite_signup_password_hint()}</p>
+          </div>
+        </div>
+
+        <!-- TOTP enrollment (QR + manual secret + 6-digit code) -->
+        <div class="rounded-md border border-card bg-surface-card p-4">
+          <p class="text-sm text-stone-700">{m.invite_signup_totp_intro()}</p>
+
+          <div class="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+            {#if totpQr}
+              <img
+                src={totpQr}
+                alt="2FA QR code"
+                data-testid="invite-signup-qr"
+                class="h-60 w-60 rounded border border-stone-200 bg-white p-2"
+              />
+            {/if}
+
+            <div class="flex-1">
+              <p class="text-xs font-medium text-stone-600">
+                {m.invite_signup_totp_secret_label()}
+              </p>
+              <code
+                class="mt-2 block break-all rounded bg-stone-100 p-2 font-mono text-sm text-stone-800"
+                data-testid="invite-signup-secret"
+              >
+                {totpSecret}
+              </code>
+              <button
+                type="button"
+                onclick={copySecret}
+                class="mt-2 rounded px-2 py-1 text-xs font-medium text-primary-600 ring-1 ring-primary-200 hover:bg-primary-50"
+              >
+                {secretCopied
+                  ? m.auth_two_factor_secret_copied()
+                  : m.auth_two_factor_secret_copy()}
+              </button>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <label for="invite-totp-code" class="block text-sm font-medium text-stone-700">
+              {m.invite_signup_totp_code_label()}
+            </label>
+            <input
+              id="invite-totp-code"
+              type="text"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="6"
+              required
+              bind:value={totpCode}
+              data-testid="invite-signup-code"
+              class="mt-1 block w-full appearance-none rounded-md border px-3 py-2 text-center font-mono text-lg tracking-widest text-stone-900 placeholder-stone-400 focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
+              class:border-danger={fieldErrors.totpCode}
+              class:border-stone-300={!fieldErrors.totpCode}
+            />
+          </div>
+        </div>
+
+        {#if errorKey}
+          <div class="rounded-md bg-danger-light p-4" role="alert" data-testid="invite-signup-error">
+            <p class="text-sm font-medium text-danger">{tr(errorKey)}</p>
+          </div>
+        {/if}
+
+        <button
+          type="submit"
+          data-testid="invite-signup-submit"
+          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-stone-400 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
         >
-          {m.invite_decline_confirm_title()}
-        </h2>
+          {m.invite_signup_submit()}
+        </button>
+      </form>
+    {:else if phase === 'confirm'}
+      <!-- Existing-user confirm branch -->
+      <p class="text-sm text-stone-600" data-testid="invite-confirm-intro">
+        {m.invite_confirm_intro({ project: ctx?.project_name ?? '', role: roleLabel })}
+      </p>
+
+      {#if ctx && ctx.is_logged_in && !ctx.authenticated_email_matches_bound}
+        <div class="rounded-md bg-warning/10 p-3" role="alert" data-testid="invite-confirm-mismatch">
+          <p class="text-sm text-stone-800">{m.invite_confirm_email_mismatch()}</p>
+        </div>
+      {/if}
+
+      <form class="space-y-6" onsubmit={submitConfirm}>
+        <button
+          type="submit"
+          data-testid="invite-confirm-submit"
+          class="group relative flex w-full justify-center rounded-md border border-transparent bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-stone-400 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
+        >
+          {m.invite_confirm_accept()}
+        </button>
+      </form>
+    {:else if phase === 'submitting'}
+      <div class="flex items-center justify-center gap-3 py-6" data-testid="invite-submitting">
+        <svg
+          class="h-5 w-5 animate-spin text-primary-600"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+        >
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path
+            class="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+          ></path>
+        </svg>
+        <p class="text-sm text-stone-700">{m.invite_landing_loading()}</p>
       </div>
-      <div class="p-6">
-        <p class="m-0 text-sm leading-relaxed text-stone-700">
-          {m.invite_decline_confirm_message()}
+    {:else if phase === 'success' && result}
+      <div class="rounded-md bg-success-light p-6" role="status" data-testid="invite-landing-success">
+        <p class="text-sm font-medium text-success">
+          {result.kind === 'trusted'
+            ? m.invite_landing_accept_success_trusted()
+            : m.invite_landing_accept_success_member()}
         </p>
+        <div class="mt-4">
+          <button
+            type="button"
+            data-testid="invite-landing-continue"
+            onclick={continueToProject}
+            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          >
+            {m.invite_landing_continue_to_project()}
+          </button>
+        </div>
       </div>
-      <div class="flex justify-end gap-3 border-t border-stone-200 px-6 py-4">
-        <button
-          type="button"
-          onclick={() => (confirmDeclineOpen = false)}
-          disabled={phase === 'declining'}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.common_cancel()}
-        </button>
-        <button
-          type="button"
-          data-testid="invite-decline-confirm"
-          onclick={handleDecline}
-          disabled={phase === 'declining'}
-          class="rounded-md bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.invite_decline_confirm_button()}
-        </button>
+    {:else if phase === 'error' && errorKey}
+      <div
+        class="rounded-md bg-danger-light p-4"
+        role="alert"
+        data-testid="invite-landing-error"
+        data-error-key={errorKey}
+      >
+        <p class="text-sm font-medium text-danger">{tr(errorKey)}</p>
       </div>
-    </div>
+    {/if}
   </div>
-{/if}
+</div>
