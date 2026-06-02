@@ -46,7 +46,7 @@
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
 
-  /** Page server-load output ({ token }). */
+  /** Page server-load output ({ token, isAuthenticated }). */
   let { data } = $props();
   const token = $derived(data.token);
 
@@ -93,10 +93,61 @@
     void load();
   });
 
+  /**
+   * Ensure the in-memory access token is hydrated before the first resolve,
+   * WITHOUT triggering a second concurrent `/auth/refresh`.
+   *
+   * Token-hydration race (spec/011 Gate 3)
+   * --------------------------------------
+   * The access token lives in memory inside `apiClient`; a hard navigation
+   * into this `(public)` page wipes it. The root `+layout.svelte` kicks off
+   * `authStore.initialize({ silent })` fire-and-forget (no await), so for a
+   * logged-in invitee this `load()` would otherwise race ahead, find
+   * `getAccessToken()` still `null`, omit the Bearer (correctly), and 401 the
+   * resolve → "Failed to process the invitation."
+   *
+   * Gating on the server-provided `echoroo_logged_in` marker:
+   *   - marker ABSENT (`data.isAuthenticated === false`) → genuinely
+   *     logged-out new user: do nothing. We must NOT probe `/auth/refresh`
+   *     here — a cold-start 401 would latch `refreshDisabledUntilLogin` on
+   *     the apiClient, which the accept flow then has to clear. Resolve
+   *     anonymously → signup branch (unchanged behaviour).
+   *   - marker PRESENT but in-memory token still `null` → AWAIT hydration so
+   *     the conditional Bearer is populated before resolve.
+   *
+   * No double `/auth/refresh`:
+   *   We await `apiClient.refreshToken()`, which delegates to
+   *   `refreshAccessToken()`. That method DEDUPES concurrent refreshes via a
+   *   shared in-flight promise (`client.ts`: `if (this.refreshPromise) return
+   *   this.refreshPromise;`). So if the layout's `initialize()` already has a
+   *   refresh in flight, we join the SAME promise — no second network call.
+   *   If the layout's refresh already succeeded, `getAccessToken()` is
+   *   non-null and we skip this entirely. If it already failed, the
+   *   `refreshDisabledUntilLogin` latch is set and `refreshToken()` rejects
+   *   synchronously (no network call). In every case there is at most ONE
+   *   `/web-api/v1/auth/refresh` request.
+   *
+   * Defensive: on hydration failure/timeout we fall through to
+   * `resolveInvitation` anyway (it will 401 → error panel, same as before) —
+   * we never hang on `loading`.
+   */
+  async function hydrateAccessTokenIfSessionExists(): Promise<void> {
+    if (!data.isAuthenticated) return; // logged-out new user — skip entirely
+    if (apiClient.getAccessToken()) return; // already hydrated — nothing to do
+    try {
+      await apiClient.refreshToken();
+    } catch {
+      // Hydration failed (e.g. stale/expired refresh cookie despite the
+      // marker). Fall through and let resolveInvitation 401 → error panel
+      // rather than hanging the loading spinner.
+    }
+  }
+
   async function load(): Promise<void> {
     phase = 'loading';
     errorKey = null;
     try {
+      await hydrateAccessTokenIfSessionExists();
       const resolved = await resolveInvitation(token);
       ctx = resolved;
       if (resolved.is_logged_in) {
