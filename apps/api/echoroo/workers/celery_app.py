@@ -127,6 +127,11 @@ app.conf.include = [
     # the verifier-side safety net in
     # :mod:`echoroo.services.api_key_verification`.
     "echoroo.workers.api_key_age_check",
+    # spec/011 US7 (T625 / FR-011-309) — daily GC of
+    # ``user_banner_dismissals`` rows older than the banner age cap
+    # (``DEFAULT_BANNER_MAX_AGE_DAYS``). Single ``DELETE ... RETURNING``
+    # so the sweep is idempotent and stateless across runs.
+    "echoroo.workers.banner_gc",
 ]
 
 # Periodic tasks (beat schedule)
@@ -230,5 +235,15 @@ app.conf.beat_schedule = {
     "api-key-age-check-daily": {
         "task": "echoroo.workers.api_key_age_check.api_key_age_check",
         "schedule": crontab(hour=1, minute=15),
+    },
+    # spec/011 US7 (T625 / FR-011-309) — daily GC of stale banner
+    # dismissals. Fires at 03:30 UTC, after the 03:00 trusted-expiry
+    # notifier so the sequential daily jobs never overlap (occupied
+    # slots: 00:00 / 01:00 / 01:15 / 02:00 / 02:30 / 02:45 / 03:00).
+    # The task name MUST exactly match the ``@app.task(name=...)`` in
+    # :mod:`echoroo.workers.banner_gc` or beat silently fails to wire.
+    "banner-dismissal-gc-daily": {
+        "task": "echoroo.workers.banner_gc.gc_user_banner_dismissals",
+        "schedule": crontab(hour=3, minute=30),
     },
 }

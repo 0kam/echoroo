@@ -57,13 +57,11 @@ from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.settings import get_settings
 from echoroo.services.api_key_lifecycle import (
     API_KEY_WRITE_PERMISSIONS,
+    AUDIT_ACTION_PLATFORM_API_KEY_REVOKE,
+    AUDIT_ACTION_PLATFORM_API_KEY_SCOPE_DEGRADE,
     filter_to_read_only,
 )
 from echoroo.services.audit_service import AuditLogService
-from echoroo.services.email import (
-    send_api_key_revoke_email,
-    send_api_key_scope_degrade_email,
-)
 from echoroo.workers.celery_app import app
 
 logger = logging.getLogger(__name__)
@@ -225,20 +223,28 @@ async def _degrade_due_keys(
 
 
 async def _emit_revoke_event(row: _SweepRow, *, revoked_at: datetime) -> None:
-    """Audit + email after the revoke commit lands."""
+    """Emit the banner-eligible revoke audit row after the commit lands.
+
+    spec/011 US7 (T614/T617): the former post-commit email send is gone.
+    The single ``platform.api_key.revoke`` audit row IS the in-app banner
+    — it carries ``target_user_id`` so ``user_banner.list_banners`` /
+    ``list_activity`` surface it to the key owner (the row's actor is the
+    system, not the user). The owner email is never persisted; we only
+    log its non-PII surrogate hash if it is missing for diagnostics.
+    """
     async with AsyncSessionLocal() as audit_session:
         try:
             audit = AuditLogService(audit_session)
             await audit.write_platform_event(
                 actor_user_id=None,
-                action="api_key.revoke",
+                action=AUDIT_ACTION_PLATFORM_API_KEY_REVOKE,
                 request_id="celery-api-key-age-check",
                 ip="0.0.0.0",
                 user_agent="celery/api_key_age_check",
                 detail={
                     "api_key_id": str(row.api_key_id),
-                    "user_id": str(row.user_id),
-                    "prefix": row.prefix,
+                    "target_user_id": str(row.user_id),
+                    "api_key_prefix": row.prefix,
                     "reason": "api_key_age_check: 270d policy (FR-083)",
                     "created_at": row.created_at.isoformat(),
                     "revoked_at": revoked_at.isoformat(),
@@ -248,49 +254,37 @@ async def _emit_revoke_event(row: _SweepRow, *, revoked_at: datetime) -> None:
         except Exception:
             await audit_session.rollback()
             logger.exception(
-                "api_key.revoke audit write failed (api_key_id=%s)",
+                "%s audit write failed (api_key_id=%s)",
+                AUDIT_ACTION_PLATFORM_API_KEY_REVOKE,
                 row.api_key_id,
             )
-
-    if not row.user_email:
-        logger.warning(
-            "api_key.revoke email skipped — owner has no email "
-            "(api_key_id=%s, user_id=%s)",
-            row.api_key_id,
-            row.user_id,
-        )
-        return
-    try:
-        await send_api_key_revoke_email(
-            to=row.user_email,
-            api_key_prefix=row.prefix,
-            created_at_iso=row.created_at.isoformat(),
-            revoked_at_iso=revoked_at.isoformat(),
-        )
-    except Exception:
-        logger.exception(
-            "api_key.revoke email send failed (api_key_id=%s)",
-            row.api_key_id,
-        )
 
 
 async def _emit_degrade_event(
     row: _SweepRow, *, degraded_at: datetime, grace_days: int
 ) -> None:
-    """Audit + email after the degrade commit lands."""
+    """Emit the scope-degrade audit row after the commit lands.
+
+    spec/011 US7 (T613/T617): the former post-commit email send is gone.
+    The ``platform.api_key.scope_degrade`` action is NOT in the
+    banner-eligible enum (OQ6 keeps the contract enum unchanged), so this
+    row surfaces in ``/me/activity`` but not as a standalone banner. It
+    still carries ``target_user_id`` so the owner can see it in the
+    activity history.
+    """
     async with AsyncSessionLocal() as audit_session:
         try:
             audit = AuditLogService(audit_session)
             await audit.write_platform_event(
                 actor_user_id=None,
-                action="api_key.scope_degrade",
+                action=AUDIT_ACTION_PLATFORM_API_KEY_SCOPE_DEGRADE,
                 request_id="celery-api-key-age-check",
                 ip="0.0.0.0",
                 user_agent="celery/api_key_age_check",
                 detail={
                     "api_key_id": str(row.api_key_id),
-                    "user_id": str(row.user_id),
-                    "prefix": row.prefix,
+                    "target_user_id": str(row.user_id),
+                    "api_key_prefix": row.prefix,
                     "reason": "api_key_age_check: 180d policy (FR-083)",
                     "created_at": row.created_at.isoformat(),
                     "degraded_at": degraded_at.isoformat(),
@@ -301,31 +295,10 @@ async def _emit_degrade_event(
         except Exception:
             await audit_session.rollback()
             logger.exception(
-                "api_key.scope_degrade audit write failed (api_key_id=%s)",
+                "%s audit write failed (api_key_id=%s)",
+                AUDIT_ACTION_PLATFORM_API_KEY_SCOPE_DEGRADE,
                 row.api_key_id,
             )
-
-    if not row.user_email:
-        logger.warning(
-            "api_key.scope_degrade email skipped — owner has no email "
-            "(api_key_id=%s, user_id=%s)",
-            row.api_key_id,
-            row.user_id,
-        )
-        return
-    try:
-        await send_api_key_scope_degrade_email(
-            to=row.user_email,
-            api_key_prefix=row.prefix,
-            created_at_iso=row.created_at.isoformat(),
-            degraded_at_iso=degraded_at.isoformat(),
-            grace_days_until_revoke=grace_days,
-        )
-    except Exception:
-        logger.exception(
-            "api_key.scope_degrade email send failed (api_key_id=%s)",
-            row.api_key_id,
-        )
 
 
 # --- async pipeline + Celery entry point ------------------------------------

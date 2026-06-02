@@ -593,7 +593,8 @@ class TwoFactorService:
         self.db.add(user)
         revoked_trusted_devices = await TrustedDeviceService(self.db).revoke_all_for_user(
             user=user,
-            reason="two_factor_reset",
+            reason="2fa_disable",
+            actor_user_id=actor_id,
         )
         await self._clear_totp_failures(user.id)
         await self._clear_backup_failures(user.id)

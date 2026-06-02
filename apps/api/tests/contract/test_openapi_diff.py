@@ -98,6 +98,12 @@ _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
         # accepts ``intended_owner_email`` (SU bootstrap) and the
         # YAML's single path/method is live.
         "su-bootstrap-project-create",
+        # spec/011 US7 (T660): the in-app banner + activity read
+        # endpoints (``GET /me/banners``, ``POST /me/banners/dismiss``,
+        # ``GET /me/activity``) landed in this slice, so the stem is
+        # promoted to live and the harness subset-asserts every path /
+        # method / response-code (NFR-011-009).
+        "me-banners-activity",
     }
 )
 
@@ -110,7 +116,6 @@ _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
 _SPEC_011_PENDING_STEMS: frozenset[str] = frozenset(
     {
         "admin-password-reset",
-        "me-banners-activity",
     }
 )
 

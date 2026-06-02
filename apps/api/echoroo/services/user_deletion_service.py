@@ -235,7 +235,7 @@ async def soft_delete_user(
     user.updated_at = now
     revoked_trusted_devices = await TrustedDeviceService(session).revoke_all_for_user(
         user=user,
-        reason="account_deleted",
+        reason="user_deleted",
     )
 
     audit_detail: dict[str, Any] = {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -23,6 +24,8 @@ from echoroo.services.account_security_tokens import (
     hash_account_security_token,
 )
 
+logger = logging.getLogger(__name__)
+
 _ACTIVE_DEVICE_CAP = 5
 _RAW_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
@@ -39,6 +42,28 @@ _RAW_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 #: :data:`echoroo.services.user_banner.BANNER_ELIGIBLE_ACTIONS`).
 AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL: Final[str] = (
     "auth.trusted_device.revoke_all"
+)
+
+#: spec/011 §FR-011-402 / T630 — allowlist of reason codes accepted by
+#: :meth:`TrustedDeviceService.revoke_all_for_user`. Every call-site MUST
+#: pass one of these; an unknown reason raises ``ValueError`` so a typo
+#: cannot silently emit an un-attributed revoke-all audit row.
+#:
+#: ``password_change`` is included so the shipped self-service /legacy
+#: change-password flows (``services.self_password_change`` +
+#: ``services.user.UserService.change_password``) keep working after
+#: their reason strings were remapped from the historical
+#: ``"password_changed"`` to the canonical ``"password_change"``.
+REVOKE_ALL_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "password_reset",
+        "password_reset_self",
+        "password_change",
+        "email_change",
+        "2fa_disable",
+        "user_self_revoke",
+        "user_deleted",
+    }
 )
 TrustedDeviceRejectReason = Literal[
     "missing",
@@ -116,10 +141,113 @@ class TrustedDeviceService:
         self,
         *,
         user: User,
-        reason: str | None = None,
+        reason: str,
+        actor_user_id: UUID | None = None,
     ) -> int:
-        del reason  # Reason is audit context; trusted_devices persists no raw event data.
-        return await self.repository.revoke_all_for_user(user_id=user.id)
+        """Revoke every active trusted device for ``user`` and audit it.
+
+        spec/011 §FR-011-402 / T630. The revoke itself runs on the
+        caller's session (so it commits atomically with the surrounding
+        state change), then a SINGLE ``auth.trusted_device.revoke_all``
+        audit row is written in a FRESH session and committed
+        independently — the audit writer issues ``SET TRANSACTION
+        ISOLATION LEVEL SERIALIZABLE`` which the caller's already-used
+        connection cannot satisfy (mirrors
+        :func:`echoroo.services.admin_password_reset._write_audit_row`).
+
+        The audit ``detail`` carries ``target_user_id`` so the row
+        surfaces as an in-app banner to the affected user even when the
+        actor is an operator (admin reset / admin 2FA disable). The emit
+        is IDEMPOTENT in the sense that exactly one row is written per
+        call — including when ``revoked_count == 0`` (no active devices)
+        — so the banner / activity history records every revoke-all
+        event regardless of how many rows the repository flipped.
+
+        Args:
+            user: The user whose trusted devices are being revoked
+                (the banner target).
+            reason: One of :data:`REVOKE_ALL_REASONS`. An unknown reason
+                raises ``ValueError`` so a typo cannot emit an
+                un-attributed audit row.
+            actor_user_id: The actor performing the revoke. Defaults to
+                ``user.id`` (self-revoke); operator-driven call-sites
+                (admin password reset, admin 2FA disable) pass the
+                operator's id.
+
+        Returns:
+            The number of trusted-device rows the repository flipped to
+            revoked (0 when none were active).
+
+        Raises:
+            ValueError: ``reason`` is not in :data:`REVOKE_ALL_REASONS`.
+        """
+        if reason not in REVOKE_ALL_REASONS:
+            raise ValueError(
+                f"unknown revoke_all_for_user reason {reason!r}; "
+                f"expected one of {sorted(REVOKE_ALL_REASONS)}"
+            )
+        effective_actor = actor_user_id if actor_user_id is not None else user.id
+        revoked_count = await self.repository.revoke_all_for_user(user_id=user.id)
+        await self._emit_revoke_all_audit(
+            target_user_id=user.id,
+            actor_user_id=effective_actor,
+            reason=reason,
+            revoked_count=revoked_count,
+        )
+        return revoked_count
+
+    async def _emit_revoke_all_audit(
+        self,
+        *,
+        target_user_id: UUID,
+        actor_user_id: UUID,
+        reason: str,
+        revoked_count: int,
+    ) -> None:
+        """Write the single revoke-all audit row in a fresh session.
+
+        Soft-alert on failure (FR-088): the trusted-device revocation has
+        already happened on the caller's session, so a missing audit row
+        must not bubble up as a hard error. We log a warning and continue.
+        The fresh ``AsyncSessionLocal`` is required because the audit
+        writer's SERIALIZABLE upgrade is rejected on a connection that has
+        already run SQL (the caller's session ran the revoke UPDATE).
+        """
+        from echoroo.core.database import AsyncSessionLocal  # noqa: PLC0415
+        from echoroo.services.audit_service import (  # noqa: PLC0415
+            AuditLogService,
+        )
+
+        detail = {
+            "user_id": str(target_user_id),
+            "target_user_id": str(target_user_id),
+            "revoked_count": revoked_count,
+            "reason": reason,
+        }
+        try:
+            async with AsyncSessionLocal() as audit_session:
+                try:
+                    await AuditLogService(audit_session).write_platform_event(
+                        actor_user_id=actor_user_id,
+                        action=AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL,
+                        request_id="",
+                        ip="",
+                        user_agent="",
+                        detail=detail,
+                    )
+                    await audit_session.commit()
+                except Exception:
+                    await audit_session.rollback()
+                    raise
+        except Exception as exc:  # noqa: BLE001 — soft alert
+            logger.warning(
+                "%s audit write failed (FR-088 soft alert): target=%s "
+                "reason=%s error=%r",
+                AUDIT_ACTION_AUTH_TRUSTED_DEVICE_REVOKE_ALL,
+                target_user_id,
+                reason,
+                exc,
+            )
 
     async def evaluate_login_bypass(
         self,

@@ -221,6 +221,17 @@ async def _record_notice_audit(
                     detail={
                         "invitation_id": str(invitation_id),
                         "user_id": str(user_id),
+                        # spec/011 T616 — surface the expiry notice in the
+                        # trusted user's in-app activity view (FR-011-401 /
+                        # FR-011-307). The banner/activity read side keys
+                        # off ``detail.target_user_id`` for non-self
+                        # (system-actor) rows; without it the notice would
+                        # never appear in ``GET /me/activity``. The action
+                        # stays the existing ``project.trusted_user.
+                        # expiry_notice`` (NOT banner-eligible — OQ8 keeps
+                        # the contract enum unchanged in this slice), so it
+                        # surfaces in activity only, not as a banner.
+                        "target_user_id": str(user_id),
                         "expires_at": expires_at.isoformat(),
                     },
                 )

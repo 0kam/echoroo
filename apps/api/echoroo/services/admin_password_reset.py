@@ -331,6 +331,11 @@ async def reset_password(
     await TrustedDeviceService(session).revoke_all_for_user(
         user=target,
         reason=td_reason,
+        # spec/011 T630 (OQ13): attribute the revoke-all audit row to the
+        # operator. For a self-reset (``actor_id == target_user_id``)
+        # this is the user themselves; for an operator-driven reset it is
+        # the superuser.
+        actor_user_id=actor_id,
     )
 
     # ---- 6. Audit row (FR-011-208) --------------------------------------

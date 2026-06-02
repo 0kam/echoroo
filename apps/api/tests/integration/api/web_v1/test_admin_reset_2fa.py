@@ -744,15 +744,12 @@ async def test_reset_2fa_audit_detail_has_nonce_not_raw_token(
 @pytest.mark.asyncio
 async def test_dispatch_due_requests_applies_reset(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """run_dispatch_due_requests applies a pending_delay row whose dispatch_at <= now."""
-    from unittest.mock import AsyncMock
-
-    import echoroo.services.email as email_svc
-    from echoroo.services.two_factor_reset_service import run_dispatch_due_requests
-
-    monkeypatch.setattr(email_svc, "send_2fa_reset_dispatched", AsyncMock())
+    from echoroo.services.two_factor_reset_service import (
+        AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER,
+        run_dispatch_due_requests,
+    )
 
     su_user = await _create_user(db_session, email="r2fa_su_dispatch@example.com")
     su_row = await _create_superuser(db_session, user=su_user)
@@ -783,8 +780,23 @@ async def test_dispatch_due_requests_applies_reset(
     await db_session.refresh(target)
     assert target.two_factor_enabled is False
 
-    # Email notification should have been sent.
-    email_svc.send_2fa_reset_dispatched.assert_called_once()  # type: ignore[attr-defined]
+    # spec/011 US7 (T612): the user-facing notification is no longer an
+    # outbound email — it is an in-app banner sourced from the
+    # banner-eligible ``platform.user.two_factor_reset_by_superuser``
+    # audit row written for the target user. Assert that row exists so
+    # the notification path stays covered.
+    notify_rows = (
+        await db_session.execute(
+            sa.text(
+                "SELECT detail FROM platform_audit_log "
+                "WHERE action = :action ORDER BY created_at DESC LIMIT 5"
+            ),
+            {"action": AUDIT_ACTION_PLATFORM_USER_TWO_FACTOR_RESET_BY_SUPERUSER},
+        )
+    ).fetchall()
+    assert any(
+        (r[0] or {}).get("target_user_id") == str(target.id) for r in notify_rows
+    ), "banner-eligible 2FA-reset audit row must be written for the target user"
 
 
 @pytest.mark.asyncio
@@ -901,74 +913,18 @@ async def test_dispatch_due_requests_expires_overdue_rows(
 
 
 # ---------------------------------------------------------------------------
-# Round-2 Fix-1 — email failure surfaces as ``email_notification_failed`` audit
+# Round-2 Fix-1 — (removed) email failure audit
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dispatch_email_failure_writes_email_notification_failed_audit(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """When ``send_2fa_reset_dispatched`` raises, the poller must write
-    a ``two_factor_reset.email_notification_failed`` audit row with
-    ``stage='applied_notification'`` while keeping the request in
-    ``applied`` (the reset itself succeeded — only the user-facing
-    notification mail failed).
-    """
-    import echoroo.services.email as email_svc
-    from echoroo.services.two_factor_reset_service import run_dispatch_due_requests
-
-    async def _boom(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("simulated banner-enqueue outage")
-
-    monkeypatch.setattr(email_svc, "send_2fa_reset_dispatched", _boom)
-
-    su_user = await _create_user(db_session, email="r2fa_email_fail_su@example.com")
-    su_row = await _create_superuser(db_session, user=su_user)
-    target = await _create_user(db_session, email="r2fa_email_fail_target@example.com")
-
-    past = datetime.now(UTC) - timedelta(minutes=1)
-    row = TwoFactorResetRequest(
-        user_id=target.id,
-        requested_by_superuser_id=su_row.id,
-        support_ticket_id="ZD-EMAILFAIL-001",
-        reason="Email failure path test",
-        status=STATUS_PENDING_DELAY,
-        skip_delay=False,
-        dispatch_at=past,
-        expires_at=datetime.now(UTC) + timedelta(hours=71),
-        confirmation_token_nonce=secrets.token_hex(32),
-    )
-    db_session.add(row)
-    await db_session.commit()
-    request_id = row.id
-
-    summary = await run_dispatch_due_requests(db_session)
-    # The reset itself must still succeed — only the notification mail failed.
-    assert summary.applied == 1
-    assert summary.failed == 0
-
-    # Audit row must exist for the email failure (best-effort visibility).
-    audit_rows = (
-        await db_session.execute(
-            sa.text(
-                "SELECT detail FROM platform_audit_log "
-                "WHERE action = 'two_factor_reset.email_notification_failed' "
-                "ORDER BY created_at DESC LIMIT 5"
-            )
-        )
-    ).fetchall()
-    assert audit_rows, "email_notification_failed audit row must be written"
-    found = any(
-        str(request_id) in str(r[0])
-        and (r[0] or {}).get("stage") == "applied_notification"
-        for r in audit_rows
-    )
-    assert found, (
-        "audit row for this request_id with stage='applied_notification' "
-        "must be present"
-    )
+# spec/011 US7 (T612): the previous
+# ``test_dispatch_email_failure_writes_email_notification_failed_audit``
+# test was removed alongside the outbound ``send_2fa_reset_dispatched``
+# email call in ``two_factor_reset_service._apply_one``. The user-facing
+# notification is now an in-app banner sourced from the banner-eligible
+# ``platform.user.two_factor_reset_by_superuser`` audit row (written
+# unconditionally by the poller), so there is no longer an email-send
+# step that can fail and no ``two_factor_reset.email_notification_failed``
+# audit row to assert on. The banner-eligible audit row is covered by
+# ``test_dispatch_due_requests_applies_reset`` above.
 
 
 # ---------------------------------------------------------------------------
