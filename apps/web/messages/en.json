@@ -379,6 +379,15 @@
   "profile_api_tokens_link": "API Tokens",
   "profile_api_tokens_description": "Manage API tokens for programmatic access.",
 
+  "banner_view_activity": "View activity",
+  "banner_dismiss_aria": "Dismiss banner",
+  "activity_title": "Activity",
+  "activity_empty_title": "No activity yet",
+  "activity_empty_description": "Your account activity will appear here.",
+  "activity_load_more": "Load more",
+  "activity_loading": "Loading…",
+  "activity_load_error": "Could not load activity. Please try again.",
+
   "setup_page_title": "Welcome to Echoroo",
   "setup_create_admin": "Create your administrator account",
   "setup_email_label": "Email",

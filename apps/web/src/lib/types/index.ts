@@ -133,6 +133,15 @@ export type {
 // We re-export from data.ts as it's the primary source
 export type { DatasetSummary } from './data';
 
+// Re-export spec/011 US7 banner + activity types
+export type {
+  BannerItem,
+  BannerListResponse,
+  BannerDismissRequest,
+  ActivityItem,
+  ActivityPageResponse,
+} from './me';
+
 // ============================================
 // Common Types
 // ============================================

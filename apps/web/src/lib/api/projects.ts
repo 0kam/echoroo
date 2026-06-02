@@ -106,7 +106,7 @@ async function getAccessTokenForWebApi(): Promise<string | null> {
  *               headers so the caller can override (e.g. set
  *               `X-Idempotency-Key` for FR-053 accept).
  */
-async function callWebApi<T>(
+export async function callWebApi<T>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body?: unknown,

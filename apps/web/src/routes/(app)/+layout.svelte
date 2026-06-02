@@ -11,6 +11,7 @@
   import * as m from '$lib/paraglide/messages';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
+  import BannerStack from '$lib/components/BannerStack.svelte';
 
   interface Props {
     children: import('svelte').Snippet;
@@ -129,6 +130,11 @@
       </div>
     {/if}
   </header>
+
+  <!-- spec/011 US7: non-modal banner stack (self-guards on auth; renders
+       nothing when there are no banners). Sits above the scrollable content
+       so banners stay fixed below the header. -->
+  <BannerStack />
 
   <!-- Page content (flex-1 so it fills remaining height) -->
   <div class="flex min-h-0 flex-1 overflow-y-auto">
