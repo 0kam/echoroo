@@ -17,6 +17,10 @@
 import { test, expect } from '@playwright/test';
 import { loginWithSharedTotp } from './helpers/spec011-auth';
 import { generateTotpCode, waitForFreshTotpWindow } from './helpers/totp';
+import {
+  trackConsoleErrors,
+  assertNoRealConsoleErrors,
+} from './helpers/spec011-infra';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -36,47 +40,53 @@ const COLLABORATORS_PATH = `/en/projects/${E2E_PROJECT_ID}/collaborators`;
  * Revoke any pending invitation for an email (idempotent cleanup).
  * Clicks Revoke + confirms in the dialog. No-op if no pending row found.
  * The page must already be at the collaborators route.
+ *
+ * I-4 fix: re-read row count each iteration, iterate from last row to avoid
+ * live-locator misclick/hang, and bound the loop to avoid infinite iteration.
+ *
+ * @param maxRevocations - Max number of pending rows to revoke. Defaults to 5
+ *   to prevent runaway loops when many stale Pending rows exist (e.g., for
+ *   e2e-member which accumulates Pending rows from repeated test runs).
  */
 async function revokePendingIfExists(
   ownerPage: import('@playwright/test').Page,
-  email: string
+  email: string,
+  maxRevocations = 5
 ): Promise<void> {
-  // There may be multiple Pending rows for the same email across runs; handle all.
-  const rows = ownerPage
-    .locator('table tbody tr')
-    .filter({ hasText: email })
-    .filter({ hasText: 'Pending' });
+  for (let iteration = 0; iteration < maxRevocations; iteration++) {
+    // Re-read the count on each iteration so we handle list mutations correctly.
+    const rows = ownerPage
+      .locator('table tbody tr')
+      .filter({ hasText: email })
+      .filter({ hasText: 'Pending' });
 
-  const count = await rows.count().catch(() => 0);
-  if (count === 0) return;
+    const count = await rows.count().catch(() => 0);
+    if (count === 0) break; // No more pending rows.
 
-  for (let i = 0; i < count; i++) {
-    const revokeBtn = rows.first().locator('button:has-text("Revoke")');
-    if (!(await revokeBtn.isVisible().catch(() => false))) continue;
+    // Click Revoke on the LAST pending row (iterate from end to avoid index shifts).
+    const revokeBtn = rows.nth(count - 1).locator('button:has-text("Revoke")');
+    if (!(await revokeBtn.isVisible().catch(() => false))) {
+      // Button gone between count and click — re-count on next iteration.
+      continue;
+    }
 
     await revokeBtn.click();
 
     // Confirm the revoke dialog.
-    // The modal has role="dialog" with a "Revoke" confirm button (distinct from the row button).
     const confirmBtn = ownerPage.locator('[role="dialog"]').locator('button:has-text("Revoke")');
     await confirmBtn.waitFor({ state: 'visible', timeout: 5000 });
     await confirmBtn.click();
 
-    // Wait for the row to update.
-    await ownerPage.waitForTimeout(800);
+    // Wait for the dialog to close before continuing.
+    await confirmBtn.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {});
   }
 }
 
 /**
  * Remove an existing project membership via the API (idempotent cleanup for re-runs).
  *
- * The remove-member endpoint is a BFF (cookie + CSRF) surface. Strategy:
- *   1. Navigate the owner page to the project members page (which is on the
- *      authenticated surface), then use page.evaluate to call fetch() from
- *      inside the browser — this automatically sends session cookies and the
- *      CSRF cookie, so CSRFMiddleware passes.
- *   2. Build the Bearer token by calling /auth/refresh from inside the page.
- *
+ * Calls DELETE /web-api/v1/projects/{projectId}/members/{userId} from inside
+ * the browser so session cookies + CSRF are sent automatically.
  * No-op if the user is not a member (404) or if cleanup fails (non-fatal).
  */
 async function removeMembershipIfExists(
@@ -84,20 +94,14 @@ async function removeMembershipIfExists(
   userId: string
 ): Promise<void> {
   try {
-    // Call the DELETE endpoint directly from inside the browser page via evaluate.
-    // The browser already holds the session cookies AND the echoroo_csrf cookie
-    // (httponly=false), so we can read it via document.cookie and include it
-    // as the X-CSRF-Token header in the fetch call.
     const statusCode = await ownerPage.evaluate(
       async ([projectId, uid]) => {
-        // Read CSRF token from cookie string.
         const csrfMatch = document.cookie
           .split(';')
           .map((c) => c.trim())
           .find((c) => c.startsWith('echoroo_csrf='));
         const csrfToken = csrfMatch ? csrfMatch.split('=').slice(1).join('=') : '';
 
-        // First refresh to get a bearer token.
         let accessToken = '';
         try {
           const refreshResp = await fetch('/web-api/v1/auth/refresh', {
@@ -141,11 +145,26 @@ async function removeMembershipIfExists(
 }
 
 /**
+ * Count how many Accepted rows exist for `email` in the collaborators table.
+ * Used for C-3 run-specific assertion hardening.
+ */
+async function countAcceptedRows(
+  ownerPage: import('@playwright/test').Page,
+  email: string
+): Promise<number> {
+  return ownerPage
+    .locator('table tbody tr')
+    .filter({ hasText: email })
+    .filter({ hasText: 'Accepted' })
+    .count()
+    .catch(() => 0);
+}
+
+/**
  * Issue a single invitation as owner and return the invitation path to navigate to.
  *
- * The backend returns `invitation_url` as a 4-part signed token envelope
- * (e.g. "{raw}.{exp}.{kid}.{mac}"), NOT a full URL. The public invite route is
- * /en/invite/{token}, so we build the path from the token value.
+ * The backend returns `invitation_url` as a 4-part signed token envelope.
+ * The public invite route is /en/invite/{token}.
  *
  * If there is already a pending invitation for the email (from a previous test run),
  * we revoke it first so re-issuance succeeds.
@@ -157,7 +176,7 @@ async function issueInvitation(
   email: string,
   role: 'viewer' | 'member' | 'admin' = 'member'
 ): Promise<string> {
-  // Wait for the page to load — the form is only shown after canManage is true.
+  // Wait for the page to load.
   await ownerPage.waitForSelector('#invite-email', { timeout: 15000 });
 
   // Clean up any pre-existing pending invitation (prior test run residue).
@@ -166,7 +185,6 @@ async function issueInvitation(
   await ownerPage.fill('#invite-email', email);
   await ownerPage.selectOption('#invite-role', role);
 
-  // Click the "Issue invitation" submit button inside the single-invite form.
   await ownerPage.click('form button[type="submit"]:has-text("Issue invitation")');
 
   // Wait for the one-shot dialog to appear.
@@ -180,15 +198,13 @@ async function issueInvitation(
   // Close the dialog.
   await ownerPage.click('[data-testid="invitation-url-close-button"]');
 
-  // The backend may return either:
-  //   - A full URL like http://localhost:5173/en/invite/{token}
-  //   - A signed token envelope like "{raw}.{exp}.{kid}.{mac}"
-  // Build the invite path accordingly.
+  // M-2: do NOT log the full token — only log a prefix.
+  console.log(`issueInvitation: token prefix: ${tokenOrUrl.substring(0, 8)}...`);
+
   if (tokenOrUrl.startsWith('http://') || tokenOrUrl.startsWith('https://')) {
     const parsed = new URL(tokenOrUrl);
     return parsed.pathname + parsed.search;
   }
-  // Token-only: build /en/invite/{token} path.
   return `/en/invite/${encodeURIComponent(tokenOrUrl)}`;
 }
 
@@ -196,56 +212,7 @@ async function issueInvitation(
 // Test suite
 // ---------------------------------------------------------------------------
 
-/**
- * Known-benign console error patterns during the invite / auth flow.
- *
- * The SvelteKit + auth lifecycle produces predictable HTTP-level errors that
- * are NOT application bugs:
- *
- *   - 401 Unauthorized:  The auth layout issues a background /users/me probe on
- *                        pages that may or may not be authenticated (invite landing,
- *                        public routes). A cold-start 401 is expected and handled.
- *   - 403 Forbidden:     Permission guards fire during background API probes.
- *   - 404 Not Found:     Cleanup calls hit 404 for already-removed memberships.
- *   - 409 Conflict:      Scenario C deliberately triggers a 409 on accept.
- *   - net::ERR_ABORTED:  SvelteKit cancels in-flight requests on navigation.
- *
- * We only want to fail on TRUE JavaScript errors (unhandled exceptions, type
- * errors, etc.) — not resource-load console.error messages from fetch.
- */
-const BENIGN_CONSOLE_ERROR_PATTERNS = [
-  '401',
-  '403',
-  '404',
-  '409',
-  'net::ERR_ABORTED',
-  'Failed to load resource',
-];
-
-function isBenignConsoleError(msg: string): boolean {
-  return BENIGN_CONSOLE_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
-}
-
-/**
- * Attach a console error listener to a page and return the collected errors.
- * Only TRUE JavaScript errors (pageerror / console.error that are not HTTP status
- * messages) are captured — intentional auth/permission HTTP errors are filtered out.
- */
-function trackConsoleErrors(page: import('@playwright/test').Page): () => string[] {
-  const errors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' && !isBenignConsoleError(msg.text())) {
-      errors.push(msg.text());
-    }
-  });
-  page.on('pageerror', (err) => {
-    errors.push(`PAGE ERROR: ${err.message}`);
-  });
-  return () => errors;
-}
-
 test.describe('US2 single-collaborator invitation flow', () => {
-  // Unique stamp per run so each scenario uses a fresh email.
   const stamp = Date.now();
 
   // ---------------------------------------------------------------------------
@@ -297,8 +264,6 @@ test.describe('US2 single-collaborator invitation flow', () => {
     // Submit the signup form.
     await inviteePage.click('[data-testid="invite-signup-submit"]');
 
-    // Accept may land directly on success panel, then we click Continue to project,
-    // OR the page navigates directly. Wait for either the continue button or the project route.
     const successOrProject = await Promise.race([
       inviteePage
         .waitForSelector('[data-testid="invite-landing-continue"]', { timeout: 25000 })
@@ -317,7 +282,6 @@ test.describe('US2 single-collaborator invitation flow', () => {
         { timeout: 15000 }
       );
     } else if (successOrProject === 'timeout') {
-      // Check for error to surface a meaningful failure message.
       const errorEl = inviteePage.locator('[data-testid="invite-signup-error"]');
       const errorVisible = await errorEl.isVisible().catch(() => false);
       if (errorVisible) {
@@ -338,11 +302,8 @@ test.describe('US2 single-collaborator invitation flow', () => {
 
     // 3. Admin verifies new member appears in the collaborators listing (Accepted status).
     await ownerPage.goto(COLLABORATORS_PATH);
-    // Wait for listing table to load (either invitations table or empty message).
     await ownerPage.waitForSelector('table, [class*="text-stone-500"]', { timeout: 15000 });
 
-    // The accepted invitation should appear with the new email and Accepted status.
-    // Using .first() as a defensive measure against multiple rows for the same email.
     const memberRow = ownerPage
       .locator('table tbody tr')
       .filter({ hasText: newUserEmail })
@@ -351,17 +312,8 @@ test.describe('US2 single-collaborator invitation flow', () => {
     await expect(memberRow).toBeVisible({ timeout: 10000 });
     console.log(`Scenario A: admin verified ${newUserEmail} in collaborators listing`);
 
-    // Report console errors (non-fatal HTTP errors already filtered by trackConsoleErrors).
-    const inviteeErrors = getInviteeErrors();
-    const ownerErrors = getOwnerErrors();
-    if (inviteeErrors.length > 0) {
-      console.warn(`Scenario A: invitee console errors: ${inviteeErrors.join('; ')}`);
-    }
-    if (ownerErrors.length > 0) {
-      console.warn(`Scenario A: owner console errors: ${ownerErrors.join('; ')}`);
-    }
-    expect(inviteeErrors, 'Invitee page console errors').toHaveLength(0);
-    expect(ownerErrors, 'Owner page console errors (post-issue)').toHaveLength(0);
+    assertNoRealConsoleErrors(getInviteeErrors, 'Scenario A: invitee page');
+    assertNoRealConsoleErrors(getOwnerErrors, 'Scenario A: owner page');
 
     await inviteeCtx.close();
     await ownerCtx.close();
@@ -369,6 +321,10 @@ test.describe('US2 single-collaborator invitation flow', () => {
 
   // ---------------------------------------------------------------------------
   // Scenario B — existing-user accept
+  //
+  // C-3 fix: before issuing, capture the count of Accepted rows for
+  // NONMEMBER_EMAIL; after accept, assert the count INCREASED by 1 so we
+  // never pass on a stale row from a prior run.
   // ---------------------------------------------------------------------------
   test('Scenario B: existing-user accept via invite link', async ({ browser }) => {
     const ownerCtx = await browser.newContext();
@@ -379,9 +335,31 @@ test.describe('US2 single-collaborator invitation flow', () => {
     await loginWithSharedTotp(ownerPage, { email: OWNER_EMAIL, password: E2E_PASSWORD });
     await ownerPage.goto(COLLABORATORS_PATH);
 
-    // Pre-run idempotency: if nonmember is already a member (from a prior run),
-    // remove the membership so the accept flow starts from a clean state.
+    // Pre-run idempotency: remove any existing membership so the accept flow
+    // starts from a clean state.
     await removeMembershipIfExists(ownerPage, NONMEMBER_USER_ID);
+
+    // Navigate fresh to the collaborators page to ensure the table reflects
+    // the post-cleanup state (avoids stale DOM from the removeMembership evaluate call).
+    await ownerPage.goto(COLLABORATORS_PATH);
+    await ownerPage.waitForLoadState('networkidle');
+    await ownerPage.waitForSelector('table, [class*="text-stone-500"]', { timeout: 15000 });
+
+    // C-3: capture the baseline count of Accepted rows BEFORE issuing this run's invite.
+    // Also revoke any pending rows now so the baseline is stable.
+    await revokePendingIfExists(ownerPage, NONMEMBER_EMAIL);
+    // Reload once more after revoke to get a stable baseline — networkidle ensures
+    // TanStack Query has settled and the table is fully populated.
+    await ownerPage.goto(COLLABORATORS_PATH);
+    await ownerPage.waitForLoadState('networkidle');
+    await ownerPage.waitForSelector('table, [class*="text-stone-500"]', { timeout: 15000 });
+    // Wait for any lazy-loaded rows to appear.
+    await ownerPage.waitForTimeout(1000);
+
+    const acceptedCountBefore = await countAcceptedRows(ownerPage, NONMEMBER_EMAIL);
+    console.log(
+      `Scenario B: accepted rows for ${NONMEMBER_EMAIL} before invite: ${acceptedCountBefore}`
+    );
 
     const invitePath = await issueInvitation(ownerPage, NONMEMBER_EMAIL, 'member');
 
@@ -398,14 +376,13 @@ test.describe('US2 single-collaborator invitation flow', () => {
     await inviteePage.waitForSelector('[data-testid="invite-confirm-submit"]', { timeout: 20000 });
     await expect(inviteePage.locator('[data-testid="invite-signup-form"]')).not.toBeVisible();
 
-    // Ensure no email-mismatch warning (email matches logged-in user).
+    // Ensure no email-mismatch warning.
     const mismatch = inviteePage.locator('[data-testid="invite-confirm-mismatch"]');
     expect(await mismatch.isVisible().catch(() => false)).toBe(false);
 
     // Accept the invitation.
     await inviteePage.click('[data-testid="invite-confirm-submit"]');
 
-    // Wait for success panel or project navigation.
     const outcome = await Promise.race([
       inviteePage
         .waitForSelector('[data-testid="invite-landing-continue"]', { timeout: 20000 })
@@ -436,31 +413,31 @@ test.describe('US2 single-collaborator invitation flow', () => {
     expect(inviteePage.url()).toContain(`/projects/${E2E_PROJECT_ID}`);
     console.log(`Scenario B: ${NONMEMBER_EMAIL} landed on project page`);
 
-    // 3. Admin verifies nonmember now appears as member (at least one Accepted row).
+    // 3. Admin verifies nonmember now appears as member.
+    // C-3: reload page and assert count INCREASED by exactly 1 relative to the
+    // baseline captured above — never passes on a stale row from a prior run.
     await ownerPage.goto(COLLABORATORS_PATH);
+    await ownerPage.waitForLoadState('networkidle');
     await ownerPage.waitForSelector('table, [class*="text-stone-500"]', { timeout: 15000 });
+    await ownerPage.waitForTimeout(1000);
 
-    // Use .first() to handle multiple Accepted rows from repeated test runs.
-    const memberRow = ownerPage
-      .locator('table tbody tr')
-      .filter({ hasText: NONMEMBER_EMAIL })
-      .filter({ hasText: 'Accepted' })
-      .first();
-    await expect(memberRow).toBeVisible({ timeout: 10000 });
+    const acceptedCountAfter = await countAcceptedRows(ownerPage, NONMEMBER_EMAIL);
+    console.log(
+      `Scenario B: accepted rows for ${NONMEMBER_EMAIL} after accept: ${acceptedCountAfter}`
+    );
+    expect(
+      acceptedCountAfter,
+      `Scenario B: accepted row count for ${NONMEMBER_EMAIL} must have increased by 1 ` +
+        `(was ${acceptedCountBefore}, now ${acceptedCountAfter})`
+    ).toBe(acceptedCountBefore + 1);
+
     console.log(`Scenario B: admin verified ${NONMEMBER_EMAIL} in collaborators listing`);
 
     // 4. Cleanup: remove nonmember's membership so re-runs start from a clean state.
     await removeMembershipIfExists(ownerPage, NONMEMBER_USER_ID);
 
-    // Report console errors.
-    const inviteeErrors = getInviteeErrors();
-    const ownerErrors = getOwnerErrors();
-    if (inviteeErrors.length > 0)
-      console.warn(`Scenario B: invitee console errors: ${inviteeErrors.join('; ')}`);
-    if (ownerErrors.length > 0)
-      console.warn(`Scenario B: owner console errors: ${ownerErrors.join('; ')}`);
-    expect(inviteeErrors, 'Invitee page console errors').toHaveLength(0);
-    expect(ownerErrors, 'Owner page console errors').toHaveLength(0);
+    assertNoRealConsoleErrors(getInviteeErrors, 'Scenario B: invitee page');
+    assertNoRealConsoleErrors(getOwnerErrors, 'Scenario B: owner page');
 
     await inviteeCtx.close();
     await ownerCtx.close();
@@ -497,7 +474,6 @@ test.describe('US2 single-collaborator invitation flow', () => {
     const errorEl = memberPage.locator('[data-testid="invite-landing-error"]');
     await expect(errorEl).toBeVisible();
 
-    // The error key attribute should be invite_landing_already_member (mapped from 409 + ERR_ALREADY_MEMBER).
     const errorKey = await errorEl.getAttribute('data-error-key');
     expect(errorKey).toBe('invite_landing_already_member');
 
@@ -511,12 +487,7 @@ test.describe('US2 single-collaborator invitation flow', () => {
     );
     expect(memberPage.url()).not.toContain(`/projects/${E2E_PROJECT_ID}`);
 
-    // Report console errors. Note: the error panel itself is expected behavior,
-    // not a console.error call, so the console should be clean.
-    const memberErrors = getMemberErrors();
-    if (memberErrors.length > 0)
-      console.warn(`Scenario C: member console errors: ${memberErrors.join('; ')}`);
-    expect(memberErrors, 'Member page console errors').toHaveLength(0);
+    assertNoRealConsoleErrors(getMemberErrors, 'Scenario C: member page');
 
     await memberCtx.close();
     await ownerCtx.close();

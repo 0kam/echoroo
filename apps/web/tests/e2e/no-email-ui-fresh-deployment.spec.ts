@@ -104,8 +104,10 @@ test.describe('No email-verification UI — logged-out', () => {
 test.describe('No email-verification UI — deleted routes return 404 / no form', () => {
   for (const deletedRoute of ['/en/verify-email', '/en/forgot-password', '/en/reset-password']) {
     test(`${deletedRoute} does not render a real form`, async ({ page }) => {
-      // Navigate and wait for the page to settle (allow redirects)
-      await page.goto(deletedRoute, { waitUntil: 'networkidle' });
+      // I-7: use domcontentloaded instead of networkidle for deleted routes —
+      // these routes return 404 immediately, and networkidle can hang on
+      // SvelteKit error-page hydration requests.
+      await page.goto(deletedRoute, { waitUntil: 'domcontentloaded' });
 
       // The page should NOT contain a form targeting these deleted flows
       const verifyFormVisible = await page

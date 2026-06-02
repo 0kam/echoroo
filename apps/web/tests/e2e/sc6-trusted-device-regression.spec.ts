@@ -20,94 +20,27 @@
  *   3. Assert observably that revocation happened: EITHER
  *      - the profile page trusted-devices section shows zero active devices, OR
  *      - the activity view (/profile/activity) shows an "auth.trusted_device.revoke_all" row.
+ *      (I-6: if the activity row is not on the first page, page through Load-more before
+ *      concluding absent.)
  *
  * Account: e2e-trusted@echoroo.app
  * Password: E2E-Test-Password-123!
  * Shared TOTP secret (TEST_MODE): VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { loginWithSharedTotp } from './helpers/spec011-auth';
-
-// ---------------------------------------------------------------------------
-// Console error tracking (reuse pattern from single-invitation-flow.spec.ts)
-// ---------------------------------------------------------------------------
-
-const BENIGN_CONSOLE_ERROR_PATTERNS = [
-  '401',
-  '403',
-  '404',
-  'net::ERR_ABORTED',
-  'Failed to load resource',
-];
-
-function isBenignConsoleError(msg: string): boolean {
-  return BENIGN_CONSOLE_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
-}
-
-function trackConsoleErrors(page: Page): () => string[] {
-  const errors: string[] = [];
-  page.on('console', (msg) => {
-    if (msg.type() === 'error' && !isBenignConsoleError(msg.text())) {
-      errors.push(msg.text());
-    }
-  });
-  page.on('pageerror', (err) => {
-    errors.push(`PAGE ERROR: ${err.message}`);
-  });
-  return () => errors;
-}
-
-// ---------------------------------------------------------------------------
-// Helper: call POST /web-api/v1/account/trusted-devices/revoke-all from
-// inside the browser. Reuses the identical helper pattern from
-// banner-stack.spec.ts so no standalone fetch wiring is needed.
-// Returns the HTTP status code.
-// ---------------------------------------------------------------------------
-
-async function revokeAllTrustedDevicesInBrowser(page: Page): Promise<number> {
-  return page.evaluate(async () => {
-    const csrfMatch = document.cookie
-      .split(';')
-      .map((c) => c.trim())
-      .find((c) => c.startsWith('echoroo_csrf='));
-    const csrfToken = csrfMatch ? csrfMatch.split('=').slice(1).join('=') : '';
-
-    let accessToken = '';
-    try {
-      const refreshResp = await fetch('/web-api/v1/auth/refresh', {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (refreshResp.ok) {
-        const refreshData = (await refreshResp.json()) as { access_token?: string };
-        accessToken = refreshData.access_token ?? '';
-      }
-    } catch {
-      // Proceed without Bearer.
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-
-    const resp = await fetch('/web-api/v1/account/trusted-devices/revoke-all', {
-      method: 'POST',
-      credentials: 'include',
-      headers,
-    });
-    return resp.status;
-  });
-}
+import {
+  trackConsoleErrors,
+  assertNoRealConsoleErrors,
+  revokeAllTrustedDevicesInBrowser,
+} from './helpers/spec011-infra';
 
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
 
 test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-402)', () => {
-  // Allow ample time for the sequential multi-step journey.
   test.setTimeout(120_000);
 
   test('self revoke-all is observable: zero trusted devices or activity row', async ({ page }) => {
@@ -119,7 +52,6 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
     // ── Step 1: Login ──────────────────────────────────────────────────────
     await loginWithSharedTotp(page, { email: 'e2e-trusted@echoroo.app' });
 
-    // Confirm landing off /login.
     const postLoginPath = new URL(page.url()).pathname.replace(/^\/[a-z]{2}(?=\/)/, '');
     expect(
       !postLoginPath.startsWith('/login'),
@@ -132,12 +64,10 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
     await page.goto('/en/profile');
     await page.waitForLoadState('networkidle');
 
-    // Wait for the trusted-devices section to load.
     await page.waitForSelector('section[aria-labelledby="trusted-devices-heading"]', {
       timeout: 15000,
     });
 
-    // Wait for the loading state to clear.
     await page.waitForFunction(
       () => {
         const loadingText = document.querySelector('p')?.textContent ?? '';
@@ -147,30 +77,38 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
       { timeout: 10000 }
     );
 
-    // Check whether the "Revoke all" button is enabled (devices present) or
-    // disabled (no active devices).
+    // I-6: check whether the "Revoke all" button is present AND enabled.
+    // Do not treat a missing button as "disabled" — distinguish the two cases.
     const revokeAllBtn = page.locator('button:has-text("Revoke all")');
-    await expect(revokeAllBtn).toBeVisible({ timeout: 10000 });
-
-    const isEnabled = await revokeAllBtn.isEnabled().catch(() => false);
+    const revokeAllBtnVisible = await revokeAllBtn.isVisible().catch(() => false);
 
     let revokeStatus: number;
-    if (isEnabled) {
-      // There are active trusted devices — click the UI button.
-      await revokeAllBtn.click();
+    if (revokeAllBtnVisible) {
+      // Button is present — check if it is enabled (devices exist) or disabled.
+      const isEnabled = await revokeAllBtn.isEnabled().catch(() => false);
 
-      // Wait for the success message to appear.
-      const successMsg = page.locator('[role="status"]:has-text("revoked")');
-      await expect(successMsg).toBeVisible({ timeout: 10000 });
-      console.log('SC-6 Step 2: "Revoke all" UI button clicked, success message visible.');
-
-      revokeStatus = 204; // Inferred from UI success.
+      if (isEnabled) {
+        await revokeAllBtn.click();
+        const successMsg = page.locator('[role="status"]:has-text("revoked")');
+        await expect(successMsg).toBeVisible({ timeout: 10000 });
+        console.log('SC-6 Step 2: "Revoke all" UI button clicked, success message visible.');
+        revokeStatus = 204;
+      } else {
+        // Button present but disabled — no active devices. Call directly.
+        console.log(
+          'SC-6 Step 2: "Revoke all" button is disabled (no active devices). ' +
+            'Calling revoke-all endpoint directly.'
+        );
+        revokeStatus = await revokeAllTrustedDevicesInBrowser(page);
+        expect([200, 204], `revoke-all returned unexpected status ${revokeStatus}`).toContain(
+          revokeStatus
+        );
+      }
     } else {
-      // No active trusted devices in the UI (already clean). Call the endpoint
-      // directly so we still exercise the revoke-all code path and generate
-      // an audit row, which lets us assert the activity evidence below.
+      // Button not found at all — call the endpoint directly.
       console.log(
-        'SC-6 Step 2: no active trusted devices, calling revoke-all endpoint directly.'
+        'SC-6 Step 2: "Revoke all" button not found in profile section. ' +
+          'Calling revoke-all endpoint directly to exercise code path.'
       );
       revokeStatus = await revokeAllTrustedDevicesInBrowser(page);
       expect([200, 204], `revoke-all returned unexpected status ${revokeStatus}`).toContain(
@@ -186,7 +124,6 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
     await page.goto('/en/profile');
     await page.waitForLoadState('networkidle');
 
-    // Wait for the section and loading to clear.
     await page.waitForSelector('section[aria-labelledby="trusted-devices-heading"]', {
       timeout: 10000,
     });
@@ -201,22 +138,25 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
       { timeout: 10000 }
     );
 
-    // After revoking, the section should show either:
-    //   - "No trusted devices." (all cleared), or
-    //   - "Revoke all" button disabled (no devices left).
     const noDevicesText = await page
       .locator('p:has-text("No trusted devices")')
       .isVisible()
       .catch(() => false);
-    const revokeAllDisabled = !(await revokeAllBtn.isEnabled().catch(() => false));
+
+    // I-6: only assert "disabled" if the button is actually present.
+    const revokeAllBtnAfter = page.locator('button:has-text("Revoke all")');
+    const revokeAllBtnAfterVisible = await revokeAllBtnAfter.isVisible().catch(() => false);
+    const revokeAllDisabled = revokeAllBtnAfterVisible
+      ? !(await revokeAllBtnAfter.isEnabled().catch(() => true))
+      : false; // button absent — don't claim it's disabled
 
     const assertionAPassed = noDevicesText || revokeAllDisabled;
 
     // Assertion B: activity view shows the revoke_all audit row.
+    // I-6: page through Load-more if the row is not on the first page.
     await page.goto('/en/profile/activity');
     await page.waitForLoadState('networkidle');
 
-    // Wait for the list to initialize.
     await page.waitForFunction(
       () =>
         document.querySelector('ul') !== null || document.querySelectorAll('p').length > 1,
@@ -225,20 +165,68 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
     );
     await page.waitForTimeout(1000);
 
-    const revokeRow = page.locator('li').filter({ hasText: 'auth.trusted_device.revoke_all' });
-    const assertionBPassed = await revokeRow.first().isVisible({ timeout: 10000 }).catch(() => false);
+    let assertionBPassed = false;
+    let pageCount = 0;
+    const MAX_PAGES = 10; // Safety cap to avoid infinite Load-more loop.
 
-    if (assertionBPassed) {
-      // Verify the row has a non-empty timestamp.
-      const timestamp = revokeRow.first().locator('span').last();
-      const tsText = await timestamp.textContent().catch(() => '');
-      expect(
-        tsText?.trim().length,
-        'Activity row timestamp should be non-empty'
-      ).toBeGreaterThan(0);
-      console.log('SC-6 Step 3: activity row "auth.trusted_device.revoke_all" visible.');
-    } else {
-      console.log('SC-6 Step 3: activity row not visible yet (may be behind pagination).');
+    while (pageCount < MAX_PAGES) {
+      pageCount++;
+
+      const revokeRow = page.locator('li').filter({ hasText: 'auth.trusted_device.revoke_all' });
+      const rowVisible = await revokeRow.first().isVisible().catch(() => false);
+
+      if (rowVisible) {
+        // Verify the row has a non-empty timestamp.
+        const timestamp = revokeRow.first().locator('span').last();
+        const tsText = await timestamp.textContent().catch(() => '');
+        expect(
+          tsText?.trim().length,
+          'Activity row timestamp should be non-empty'
+        ).toBeGreaterThan(0);
+        console.log(
+          `SC-6 Step 3: activity row "auth.trusted_device.revoke_all" visible (page ${pageCount}).`
+        );
+        assertionBPassed = true;
+        break;
+      }
+
+      // Row not found on this page — try Load-more if available.
+      const loadMoreBtn = page.locator('button', { hasText: /load more/i });
+      const hasLoadMore = await loadMoreBtn.isVisible().catch(() => false);
+      if (!hasLoadMore) {
+        console.log(
+          `SC-6 Step 3: activity row not found after ${pageCount} page(s), no Load-more button.`
+        );
+        break;
+      }
+
+      const rowsBefore = await page.locator('li').count();
+      await loadMoreBtn.click();
+      await page
+        .waitForFunction(
+          (before: number) => document.querySelectorAll('li').length > before,
+          rowsBefore,
+          { timeout: 10000 }
+        )
+        .catch(() => {
+          // Load-more completed with no new rows — stop paging.
+        });
+
+      const rowsAfter = await page.locator('li').count();
+      if (rowsAfter <= rowsBefore) {
+        console.log(`SC-6 Step 3: Load-more yielded no new rows — stopping pagination.`);
+        break;
+      }
+
+      console.log(
+        `SC-6 Step 3: Load-more clicked (page ${pageCount}): ${rowsBefore}→${rowsAfter} rows.`
+      );
+    }
+
+    if (!assertionBPassed) {
+      console.log(
+        `SC-6 Step 3: activity row not found after ${pageCount} page(s).`
+      );
     }
 
     // At least ONE of the two assertions must hold.
@@ -250,8 +238,6 @@ test.describe.serial('SC-6: trusted-device revocation regression (T745 / FR-011-
         `assertionB (activity-row): ${assertionBPassed}`
     ).toBe(true);
 
-    // ── Final: zero real console errors ───────────────────────────────────
-    const errors = getErrors();
-    expect(errors, `Unexpected console errors: ${errors.join(', ')}`).toHaveLength(0);
+    assertNoRealConsoleErrors(getErrors, 'SC-6: trusted-device revocation');
   });
 });
