@@ -49,8 +49,6 @@ async function dismissAllVisibleBanners(
   page: import('@playwright/test').Page
 ): Promise<void> {
   // Dismiss one at a time — each dismiss triggers a list re-fetch.
-  // I-3: use deterministic waits (waitForResponse + waitForFunction) instead of
-  // fixed waitForTimeout.
   // Cap at 50 iterations to prevent unbounded loops when banners accumulate
   // (e.g. when running the full suite after admin-password-reset generates many banners).
   const MAX_DISMISSALS = 50;
@@ -61,7 +59,11 @@ async function dismissAllVisibleBanners(
     const visible = await dismissBtn.isVisible().catch(() => false);
     if (!visible) break;
 
-    // Wait for the dismiss 204 response and then for all alerts to disappear.
+    // Capture a unique identifier for THIS specific button so we can wait for
+    // exactly this one to disappear (not all buttons), allowing the loop to
+    // continue if more banners remain after a re-fetch.
+    const ariaLabel = await dismissBtn.getAttribute('aria-label').catch(() => null);
+
     await Promise.all([
       page
         .waitForResponse(
@@ -76,15 +78,25 @@ async function dismissAllVisibleBanners(
 
     dismissed++;
 
-    // Wait until the dismissed banner is gone from the DOM.
-    await page
-      .waitForFunction(
-        () => document.querySelectorAll('[role="alert"] button[aria-label]').length === 0,
-        { timeout: 8000 }
-      )
-      .catch(() => {
-        // If more banners remain, loop continues.
-      });
+    // Wait until THIS specific button is gone from the DOM (not all buttons).
+    // This lets the loop continue even if other banners remain visible.
+    if (ariaLabel) {
+      await page
+        .waitForFunction(
+          (label: string) =>
+            !Array.from(document.querySelectorAll('button[aria-label]')).some(
+              (btn) => btn.getAttribute('aria-label') === label
+            ),
+          ariaLabel,
+          { timeout: 8000 }
+        )
+        .catch(() => {
+          // Non-fatal: already gone.
+        });
+    } else {
+      // Fallback: short settle wait.
+      await page.waitForTimeout(500);
+    }
   }
 
   if (dismissed >= MAX_DISMISSALS) {
@@ -149,102 +161,91 @@ test.describe.serial('Banner stack + activity view (US7 T663)', () => {
     await page.goto('/en/dashboard');
     await page.waitForLoadState('networkidle');
 
-    // Ensure at least one banner is present (generate one if needed).
-    let hasBanner = await page.locator('[role="alert"]').first().isVisible().catch(() => false);
-    if (!hasBanner) {
-      const status = await revokeAllTrustedDevicesInBrowser(page);
-      expect([200, 204]).toContain(status);
-      await page.reload();
-      await page.waitForLoadState('networkidle');
-    }
+    // ── Step 2a: Clean slate (setup) ──────────────────────────────────────
+    // Dismiss ALL currently-visible banners so we start from a known-empty
+    // state. This is setup only — NOT a persistence assertion.
+    await dismissAllVisibleBanners(page);
 
-    // Wait for the banner to appear.
-    await expect(page.locator('[role="alert"]').first()).toBeVisible({ timeout: BANNER_TIMEOUT_MS });
-
-    // Count banners before dismissal and track the first banner's dismiss button
-    // by snapshotting its aria-label attribute so we can detect its removal.
-    const allBanners = page.locator('[role="alert"]:has(button[aria-label])');
-    const countBefore = await allBanners.count();
-    expect(countBefore).toBeGreaterThan(0);
-
-    // Capture the aria-label of the first banner's dismiss button as a unique identifier.
-    const firstBanner = allBanners.first();
-    const firstDismissBtn = firstBanner.locator('button[aria-label]');
-    await expect(firstDismissBtn).toBeVisible();
-    const dismissAriaLabel = await firstDismissBtn.getAttribute('aria-label');
-
-    // I-3: wait for the dismiss 204 response deterministically.
-    await Promise.all([
-      page.waitForResponse(
-        (resp) => resp.url().includes('/me/banners') && resp.status() === 204,
-        { timeout: 10000 }
-      ),
-      firstDismissBtn.click(),
-    ]);
-
-    // I-3: wait for the specific dismissed banner to be removed from the DOM.
-    // We wait for the button with the captured aria-label to disappear — this is
-    // more reliable than counting total banners (new banners can appear concurrently).
-    if (dismissAriaLabel) {
-      await page
-        .waitForFunction(
-          (label: string) =>
-            !Array.from(
-              document.querySelectorAll('button[aria-label]')
-            ).some((btn) => btn.getAttribute('aria-label') === label),
-          dismissAriaLabel,
-          { timeout: 8000 }
-        )
-        .catch(() => {
-          // Non-fatal: may have already disappeared.
-        });
-    } else {
-      // Fallback: wait briefly for the DOM to settle.
-      await page.waitForFunction(
-        () => document.querySelectorAll('[role="alert"]:has(button[aria-label])').length === 0,
-        { timeout: 8000 }
-      ).catch(() => {});
-    }
-
-    // Reload and assert the dismissed banner did NOT reappear.
+    // Reload and confirm 0 banners remain (ensures the dismiss-all above
+    // persisted and we start from a genuinely clean slate).
     await page.reload();
     await page.waitForLoadState('networkidle');
 
-    // I-3: wait for TanStack Query to finish fetching (no fixed sleep).
+    // Give TanStack Query time to fetch and render (or confirm absence).
     await page.waitForFunction(
       () => {
-        // Heuristic: wait until the loading spinner / skeleton is gone.
-        // The BannerStack renders immediately from cache; no spinner present.
+        // Wait until any in-flight fetch has settled.  BannerStack renders
+        // immediately; if no banners exist the stack is empty after networkidle.
         return true;
       },
       { timeout: 5000 }
     );
 
-    // Dismiss ALL remaining banners so subsequent tests start clean.
-    await dismissAllVisibleBanners(page);
+    const initialCount = await page.locator('[role="alert"]').count();
+    expect(initialCount, 'Clean-slate: expected 0 banners after dismiss-all + reload').toBe(0);
 
-    // After dismissing all, the stack should render nothing.
-    // I-3: wait for function instead of fixed sleep.
-    await page.waitForFunction(
-      () => document.querySelectorAll('[role="alert"]:has(button[aria-label])').length === 0,
-      { timeout: 8000 }
-    );
-    await expect(page.locator('[role="alert"]').first()).not.toBeVisible({ timeout: 5000 });
+    // ── Step 2b: Generate exactly ONE fresh banner ────────────────────────
+    const status = await revokeAllTrustedDevicesInBrowser(page);
+    expect([200, 204], `revoke-all returned unexpected status ${status}`).toContain(status);
 
-    // Reload one more time — dismissed state must persist.
+    // Reload so TanStack Query fetches fresh data (staleTime=60s).
     await page.reload();
     await page.waitForLoadState('networkidle');
-    // I-3: deterministic wait for page to be fully loaded and query settled.
-    await page.waitForFunction(
-      () => {
-        // The BannerStack is server-query-driven; once networkidle the query
-        // result should be reflected. Return true immediately and let Playwright's
-        // own waitForLoadState handle network settling.
-        return true;
-      },
-      { timeout: 3000 }
+
+    // Assert exactly 1 banner visible — render check.
+    await expect(page.locator('[role="alert"]').first()).toBeVisible({ timeout: BANNER_TIMEOUT_MS });
+    const countAfterGenerate = await page.locator('[role="alert"]').count();
+    expect(countAfterGenerate, 'Expected exactly 1 banner after generating one').toBe(1);
+
+    // The banner must have a non-empty summary and a View-activity link.
+    const summaryText = await page.locator('[role="alert"] p.flex-1').first().textContent();
+    expect(summaryText?.trim().length, 'Banner summary must be non-empty').toBeGreaterThan(0);
+    const activityLink = page.locator('[role="alert"] a').first();
+    await expect(activityLink).toBeVisible();
+    const href = await activityLink.getAttribute('href');
+    expect(href, '"View activity" href must contain /profile/activity').toContain(
+      '/profile/activity'
     );
-    await expect(page.locator('[role="alert"]').first()).not.toBeVisible({ timeout: 8000 });
+
+    // ── Step 2c: Dismiss that one banner ─────────────────────────────────
+    const dismissBtn = page.locator('[role="alert"] button[aria-label]').first();
+    await expect(dismissBtn).toBeVisible();
+
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes('/me/banners') && resp.status() === 204,
+        { timeout: 10000 }
+      ),
+      dismissBtn.click(),
+    ]);
+
+    // Wait for the banner to disappear from the DOM before reloading.
+    await page.waitForFunction(
+      () => document.querySelectorAll('[role="alert"]').length === 0,
+      { timeout: 8000 }
+    );
+
+    // ── Step 2d: Reload — NO cleanup — persistence assertion ─────────────
+    // IMPORTANT: we do NOT call dismissAllVisibleBanners (or any dismiss
+    // helper) between this reload and the count assertion below.
+    //
+    // If dismiss-persistence is broken and the banner reappears, count will
+    // be 1 and the test FAILS.  A cleanup call here would hide that failure
+    // — which is precisely the false-confidence bug this test was fixed to
+    // prevent.
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+
+    // Allow TanStack Query to settle (networkidle covers the /me/banners fetch).
+    await page.waitForFunction(() => true, { timeout: 3000 });
+
+    // THE persistence assertion: the dismissed banner must NOT reappear.
+    // No dismiss/cleanup runs before this assert.
+    const persistedCount = await page.locator('[role="alert"]').count();
+    expect(
+      persistedCount,
+      'Persistence: dismissed banner must NOT reappear after reload (count should be 0)'
+    ).toBe(0);
 
     assertNoRealConsoleErrors(getErrors, 'Test 2: dismiss persists');
   });
