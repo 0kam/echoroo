@@ -20,84 +20,52 @@
  *   tests/integration/test_admin_password_reset.py
  * A fixme placeholder is included below to document the gap.
  *
- * Environment gate
- * ----------------
- * All tests skip unless `ADMIN_PWD_RESET_E2E_ENABLED=1` is set.
- * Even with the suite enabled, tests skip if required env vars are absent.
- * This keeps CI collection cheap and credential-free by default.
+ * Environment
+ * -----------
+ * Designed for the TEST_MODE dev harness:
+ *   TEST_MODE=true, TEST_TOTP_SECRET_BASE32=VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
+ * Any seeded e2e-* account can be used with the shared TOTP secret.
+ * No env-gate flag required — runs in the standard dev suite.
  *
- * Required environment variables
- * --------------------------------
- *   ADMIN_PWD_RESET_E2E_ENABLED=1   Enable this suite.
- *
- * Optional environment variables (all have dev-sensible defaults)
- * ---------------------------------------------------------------
- *   ADMIN_PWD_RESET_ACTOR_EMAIL          Superuser email.
- *                                        Default: e2e-admin@echoroo.app
- *   ADMIN_PWD_RESET_ACTOR_PASSWORD       Superuser password.
- *                                        Default: E2E-Test-Password-123!
- *   ADMIN_PWD_RESET_ACTOR_TOTP_SECRET    Superuser TOTP secret (base32).
- *                                        Default: shared TEST_MODE secret
- *                                        JBSWY3DPEHPK3PXP (preview env).
- *   ADMIN_PWD_RESET_TARGET_EMAIL         Non-superuser to reset.
- *                                        Default: e2e-viewer@echoroo.app
- *   ADMIN_PWD_RESET_TARGET_PASSWORD      Current (pre-test) password for
- *                                        TARGET. Not used to log in — only
- *                                        consumed when the test needs to
- *                                        restore the account after the run.
- *                                        Default: E2E-Test-Password-123!
- *   ADMIN_PWD_RESET_TARGET_TOTP_SECRET   TARGET TOTP secret (base32).
- *                                        Default: shared TEST_MODE secret
- *                                        JBSWY3DPEHPK3PXP.
- *
- * Idempotency note
- * ----------------
- * The test resets the TARGET's password and then changes it again as part
- * of the happy-path scenario. After the test, TARGET's password is the
- * random `NEW_PASSWORD` value generated at runtime, NOT the original
- * `ADMIN_PWD_RESET_TARGET_PASSWORD`. Re-running the test against a dev DB
- * that retains state is therefore safe as long as the e2e-viewer account
- * can reach the change-password screen after each reset.
+ * Safety / idempotency
+ * --------------------
+ * TARGET's password is restored to E2E-Test-Password-123! (the suite default)
+ * after the forced-change flow, so other specs that depend on this account
+ * remain unaffected.
  *
  * How to run
  * ----------
  *   ./scripts/docker.sh dev
- *   ADMIN_PWD_RESET_E2E_ENABLED=1 npx playwright test tests/e2e/admin-password-reset.spec.ts
- *
- *   # Headed (for debugging):
- *   ADMIN_PWD_RESET_E2E_ENABLED=1 npx playwright test tests/e2e/admin-password-reset.spec.ts --headed
+ *   ECHOROO_API_URL=http://localhost:8002 npx playwright test tests/e2e/admin-password-reset.spec.ts
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { loginWithSharedTotp, SHARED_TOTP_SECRET, E2E_PASSWORD } from './helpers/spec011-auth';
 import { generateTotpCode, waitForFreshTotpWindow } from './helpers/totp';
 
 // ---------------------------------------------------------------------------
-// Environment gate
+// Accounts
 // ---------------------------------------------------------------------------
 
-const SUITE_ENABLED = process.env.ADMIN_PWD_RESET_E2E_ENABLED === '1';
-
-// ACTOR: a superuser account with TOTP enrolled.
+// ACTOR: e2e-admin is a platform superuser with TOTP enrolled.
 const ACTOR = {
   email: process.env.ADMIN_PWD_RESET_ACTOR_EMAIL ?? 'e2e-admin@echoroo.app',
-  password: process.env.ADMIN_PWD_RESET_ACTOR_PASSWORD ?? 'E2E-Test-Password-123!',
-  // Shared TEST_MODE TOTP secret (works in preview and any dev DB seeded
-  // with seed_e2e_permissions.py + TEST_MODE=true).
+  password: process.env.ADMIN_PWD_RESET_ACTOR_PASSWORD ?? E2E_PASSWORD,
   totpSecret:
-    process.env.ADMIN_PWD_RESET_ACTOR_TOTP_SECRET ?? 'JBSWY3DPEHPK3PXP',
+    process.env.ADMIN_PWD_RESET_ACTOR_TOTP_SECRET ?? SHARED_TOTP_SECRET,
 };
 
 // TARGET: a non-superuser whose password will be reset by ACTOR.
+// Using e2e-viewer to avoid disrupting accounts relied on by other specs.
 const TARGET = {
   email: process.env.ADMIN_PWD_RESET_TARGET_EMAIL ?? 'e2e-viewer@echoroo.app',
-  // TARGET's TOTP for the subsequent login after reset.
   totpSecret:
-    process.env.ADMIN_PWD_RESET_TARGET_TOTP_SECRET ?? 'JBSWY3DPEHPK3PXP',
+    process.env.ADMIN_PWD_RESET_TARGET_TOTP_SECRET ?? SHARED_TOTP_SECRET,
 };
 
-// A unique strong password for the forced-change step — random enough to
-// avoid HIBP hits and policy collisions between runs.
-const NEW_PASSWORD = `E2E-Chg-${Date.now()}-Aa1!`;
+// The new password set during the forced-change flow.
+// Set to the suite default so the TARGET account is restored after the test.
+const NEW_PASSWORD = process.env.ADMIN_PWD_RESET_NEW_PASSWORD ?? E2E_PASSWORD;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -111,71 +79,16 @@ function stripLocale(pathname: string): string {
   return pathname.replace(/^\/[a-z]{2}(?=\/|$)/, '');
 }
 
-/**
- * Log in via the UI, completing the TOTP 2FA challenge if presented.
- * Mirrors the pattern from admin-superusers.spec.ts.
- */
-async function login(
-  page: Page,
-  email: string,
-  password: string,
-  totpSecret: string,
-): Promise<void> {
-  await page.goto('/en/login');
-  await page.fill('input[name="email"]', email);
-  await page.fill('input[name="password"]', password);
-  await page.click('button[type="submit"]');
-
-  const twoFactorForm = page.locator('[data-testid="two-factor-form"]');
-  const offLoginRedirect = page.waitForURL(
-    (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-    { timeout: 15000 },
-  );
-
-  await Promise.race([
-    twoFactorForm.waitFor({ state: 'visible', timeout: 15000 }),
-    offLoginRedirect.catch(() => undefined),
-  ]);
-
-  if (await twoFactorForm.isVisible().catch(() => false)) {
-    if (!totpSecret) {
-      test.skip(true, '2FA challenge appeared but TOTP secret is not configured.');
-      return;
-    }
-    await waitForFreshTotpWindow();
-    const code = generateTotpCode(totpSecret);
-    await page.fill('[data-testid="two-factor-code-input"]', code);
-    await Promise.all([
-      page.waitForURL(
-        (url) =>
-          !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      ),
-      page.click('[data-testid="two-factor-submit"]'),
-    ]);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
 
 test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
-  // Skip the entire suite when the env gate is not set.
-  test.beforeEach(() => {
-    test.skip(!SUITE_ENABLED, 'ADMIN_PWD_RESET_E2E_ENABLED is not set');
-    test.skip(!ACTOR.email, 'ADMIN_PWD_RESET_ACTOR_EMAIL is not configured');
-    test.skip(!ACTOR.password, 'ADMIN_PWD_RESET_ACTOR_PASSWORD is not configured');
-    test.skip(!ACTOR.totpSecret, 'ADMIN_PWD_RESET_ACTOR_TOTP_SECRET is not configured');
-    test.skip(!TARGET.email, 'ADMIN_PWD_RESET_TARGET_EMAIL is not configured');
-    test.skip(!TARGET.totpSecret, 'ADMIN_PWD_RESET_TARGET_TOTP_SECRET is not configured');
-  });
-
   // -------------------------------------------------------------------------
   // Scenario 1: ACTOR opens /admin/users — page renders with the user roster
   // -------------------------------------------------------------------------
   test('admin/users page loads and displays at least one user row', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
 
     // Wait for the page heading.
@@ -191,7 +104,7 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 2: Step-up modal appears when ACTOR clicks "Reset password"
   // -------------------------------------------------------------------------
   test('clicking Reset password for a user opens the step-up modal', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
 
     // Wait for the table to populate.
@@ -217,30 +130,39 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 3: Full happy-path
   //   ACTOR resets TARGET → reveal dialog shows temp password →
   //   TARGET logs in → auto-routed to /change-password →
-  //   TARGET changes password → lands on /dashboard (session alive)
+  //   TARGET changes password to suite default → lands on /dashboard (session alive)
   // -------------------------------------------------------------------------
   test('full admin-reset flow: reset → forced-change → dashboard', async ({ page, browser }) => {
+    // This scenario exercises: login → admin reset → step-up → reveal → new context login →
+    // forced-change → dashboard. Each step has its own sub-timeout; we raise the overall
+    // test timeout to accommodate all of them.
+    test.setTimeout(90000);
     // ---- Step A: ACTOR logs in and navigates to /admin/users ----
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
-    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
 
-    // ---- Step B: Find the TARGET user row by email ----
-    // Look for the reset button in a row that also contains TARGET's email.
-    // Strategy: iterate visible reset buttons and find the nearest email cell.
-    // We search the entire table text for TARGET's email, then locate the
-    // reset button in that same row.
+    // Wait for the table to load.
+    await expect(page.locator('table')).toBeVisible({ timeout: 15000 });
+
+    // ---- Step B: Search for TARGET by email to ensure it appears regardless of pagination ----
+    // The admin users list is ordered newest-first; seeded accounts may be on page 2+.
+    // Using the search input guarantees the row appears on the first page.
+    const searchInput = page.locator('input[type="search"]');
+    await expect(searchInput).toBeVisible({ timeout: 5000 });
+    await searchInput.fill(TARGET.email);
+    // Allow the debounced search to fire (300ms) and the table to re-render.
+    await page.waitForTimeout(600);
+
     const targetRow = page.locator('tbody tr', {
       hasText: TARGET.email,
     });
 
     const targetRowCount = await targetRow.count();
     if (targetRowCount === 0) {
-      // TARGET is not visible on the current page — the test cannot continue
-      // without the seeded TARGET account. Skip gracefully.
+      // TARGET is not visible even after search — skip gracefully.
       test.skip(
         true,
-        `Target user ${TARGET.email} not found on /admin/users. Ensure the e2e seed has been run.`,
+        `Target user ${TARGET.email} not found on /admin/users even after search. Ensure the e2e seed has been run.`,
       );
       return;
     }
@@ -281,39 +203,15 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
     const targetPage = await targetContext.newPage();
 
     try {
-      await targetPage.goto('/en/login');
-      await targetPage.fill('input[name="email"]', TARGET.email);
-      await targetPage.fill('input[name="password"]', tempPassword);
-      await targetPage.click('button[type="submit"]');
-
-      // TARGET may be presented with a 2FA challenge (seeded accounts have 2FA).
-      const targetTwoFactor = targetPage.locator('[data-testid="two-factor-form"]');
-      const targetOffLogin = targetPage.waitForURL(
-        (url) =>
-          !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      );
-
-      await Promise.race([
-        targetTwoFactor.waitFor({ state: 'visible', timeout: 15000 }),
-        targetOffLogin.catch(() => undefined),
-      ]);
-
-      if (await targetTwoFactor.isVisible().catch(() => false)) {
-        await waitForFreshTotpWindow();
-        const targetTotp = generateTotpCode(TARGET.totpSecret);
-        await targetPage.fill('[data-testid="two-factor-code-input"]', targetTotp);
-        await Promise.all([
-          targetPage.waitForURL(
-            (url) =>
-              !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-            { timeout: 15000 },
-          ),
-          targetPage.click('[data-testid="two-factor-submit"]'),
-        ]);
-      }
+      // Log in as TARGET using the temp password.
+      // TARGET has 2FA; use the shared TEST_MODE TOTP secret via loginWithSharedTotp
+      // which uses the battle-tested seeded-permissions.helpers.ts login() under the hood.
+      // The temp password is passed as the password override.
+      await loginWithSharedTotp(targetPage, { email: TARGET.email, password: tempPassword });
 
       // ---- Step G: TARGET is auto-routed to /change-password ----
+      // After login with a temp password the backend returns 423 and the
+      // login page routes directly to /change-password.
       await expect(targetPage).toHaveURL(
         (url) => stripLocale(url.pathname) === '/change-password',
         { timeout: 15000 },
@@ -325,6 +223,8 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
       ).toBeVisible({ timeout: 10000 });
 
       // ---- Step H: TARGET completes the forced-change ----
+      // Use NEW_PASSWORD (= E2E_PASSWORD = E2E-Test-Password-123!) to restore
+      // the account to the suite default so other specs are unaffected.
       await targetPage.fill('[data-testid="change-password-current-input"]', tempPassword);
       await targetPage.fill('[data-testid="change-password-new-input"]', NEW_PASSWORD);
       await targetPage.fill('[data-testid="change-password-confirm-input"]', NEW_PASSWORD);
@@ -360,7 +260,7 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 4: Step-up modal — invalid credentials surface an error
   // -------------------------------------------------------------------------
   test('step-up modal shows error when wrong password or TOTP is supplied', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
 
@@ -394,8 +294,6 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // in real-time Playwright tests without backend time-mocking.
   //
   // Coverage location: apps/api/tests/integration/test_admin_password_reset.py
-  //   — the backend integration suite fast-forwards the clock to 24h+1s and
-  //     asserts a 401 "credentials_expired" response.
   test.fixme(
     'temp password is rejected after its 24h TTL expires (backend integration test coverage)',
     async () => {
