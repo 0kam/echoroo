@@ -22,6 +22,7 @@
     "@tanstack/svelte-query": "^5.67.0",
     "h3-js": "^4.1.0",
     "maplibre-gl": "^5.19.0",
+    "otplib": "^13.4.0",
     "qrcode": "^1.5.4",
     "svelte": "^5.15.0",
     "wavesurfer.js": "^7.8.0"
@@ -43,7 +44,6 @@
     "globals": "^15.14.0",
     "jsdom": "^25.0.1",
     "openapi-typescript": "~7.4.0",
-    "otplib": "^13.4.0",
     "postcss": "^8.4.49",
     "prettier": "^3.4.2",
     "prettier-plugin-svelte": "^3.3.2",
