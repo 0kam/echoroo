@@ -1971,6 +1971,23 @@ async def _handle_change_password(
             ip=_client_ip(request),
             user_agent=_user_agent(request),
         )
+    except self_password_change.EmailChangeCooldownActiveError as exc:
+        # spec/011 §FR-011-305 / US7 (T621): a self-service email change
+        # opens a 24-hour cool-off that also blocks self-service password
+        # changes. Surface a 409 with the cool-off deadline (OQ9).
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": "email_change_cooldown_active",
+                "message": (
+                    "A recent email change opened a 24-hour cool-off; "
+                    "please wait until "
+                    f"{exc.cooldown_until.isoformat()} to change your "
+                    "password."
+                ),
+            },
+        ) from exc
     except self_password_change.CurrentPasswordMismatchError as exc:
         await db.rollback()
         raise HTTPException(

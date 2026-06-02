@@ -154,7 +154,7 @@ async def test_revoke_device_and_revoke_all_mark_only_user_devices_revoked(
 
     assert await service.revoke_device(user=user, device_id=other_device.device.id) is False
 
-    revoked_count = await service.revoke_all_for_user(user=user)
+    revoked_count = await service.revoke_all_for_user(user=user, reason="user_self_revoke")
     await db_session.refresh(second.device)
     await db_session.refresh(other_device.device)
 

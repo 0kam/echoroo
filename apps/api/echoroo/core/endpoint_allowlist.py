@@ -318,6 +318,53 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # spec/011 US7 (T600-T602 / T030) — in-app banner + activity read
+    # endpoints. Each operates strictly on the *authenticated session
+    # user only* (resolved via ``CurrentUser``); there is no project
+    # context and no cross-user side effect, so they correctly carry NO
+    # ``gate_action`` project-permission guard. The ``Action`` model has
+    # no representable "authenticated-self" shape, so — exactly like the
+    # step-up and change-password entries above — these routes are
+    # classified ``USER_SCOPED_ONLY`` in the allowlist instead.
+    AllowlistEntry(
+        path_pattern="/web-api/v1/me/banners",
+        methods=frozenset({"GET"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Banner list operates strictly on the authenticated session "
+            "user (spec/011 FR-011-301/302 / T600)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#me-banners",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/me/banners/dismiss",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Banner dismiss records a dismissal for the authenticated "
+            "session user only (spec/011 FR-011-302 / T601)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#me-banners",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/me/activity",
+        methods=frozenset({"GET"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "Activity history is scoped to the authenticated session "
+            "user's own audit rows (spec/011 FR-011-307 / T602)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="spec/011-zero-email-deployment#me-activity",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     AllowlistEntry(
         path_pattern="/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
         methods=frozenset({"POST"}),

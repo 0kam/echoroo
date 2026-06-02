@@ -13,6 +13,7 @@ from echoroo.api.web_v1 import auth as auth_module
 from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_module
 from echoroo.api.web_v1 import detection_runs as detection_runs_module
 from echoroo.api.web_v1 import licenses as licenses_module
+from echoroo.api.web_v1 import me as me_module
 from echoroo.api.web_v1 import taxa as taxa_module
 from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
@@ -53,6 +54,12 @@ web_v1_router.include_router(audit_module.router)
 # auto-logout. Scope is intentionally read-only — see
 # :mod:`echoroo.api.web_v1.users`.
 web_v1_router.include_router(users_module.router)
+# spec/011 US7 (T600-T602, FR-011-301..310) — in-app banner + activity
+# read endpoints under ``/web-api/v1/me/*``. Authenticated-self only
+# (resolved via ``CurrentUser``); no project context, so the routes
+# carry no ``gate_action`` guard and are classified ``USER_SCOPED_ONLY``
+# in :mod:`echoroo.core.endpoint_allowlist`.
+web_v1_router.include_router(me_module.router)
 # Spec/009 PR 4 — first-party recorders catalog. Mounted at the top
 # level of ``/web-api/v1`` (not under ``/projects``) because the legacy
 # router is a tenant-wide catalog endpoint (no ``project_id`` in the

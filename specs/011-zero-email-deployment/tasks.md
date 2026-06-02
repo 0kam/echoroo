@@ -17,6 +17,7 @@ A codebase reconciliation found many `[ ]` boxes were STALE (implemented in the 
 - **GENUINELY REMAINING (large)**: **US7 banners/activity** T600-T663 (entire feature: `me.py` endpoints, the 5 email→audit emit rewrites T610-T617 that currently never surface banners, change_email cooldown T620/T621, banner GC T625, trusted-device revoke audit T630/T631, frontend T640-T643); **US2 public invite flow** T220/T223 (public invite resolver + new-user signup + client-side TOTP enroll page; auth.ts resolveInvitation/acceptInvitation) — **must be built under `(public)` NOT `(auth)` (token-leak via login redirect)**; **US2/US3 collaborators page** T221/T222/T280/T281 (single+bulk invite, listing, revoke — new `/collaborators` tab coexisting with `/members`); **T030/T034** (3 banner ACTIONs — need US7 endpoints); **Step 12b** Playwright e2e T192/T245/T292/T405/T544/T663/T740/T745. T180/T181 docs were already done.
 - **Done this slice (PR `011-us6-su-bootstrap`, 2026-06-01)**: **T520** SU-bootstrap frontend (projects/new `intended_owner_email` SU-gated field + one-shot `InvitationUrlDialog` shown BEFORE redirect + 422 `ERR_INVALID_INTENDED_OWNER_EMAIL` mapping) + **invitation plumbing** (lib/types invitation type set + ProjectCreate{Request,Response}; projects.ts `create()`→ProjectCreateResponse + issue/list/bulk/revoke invitation methods unblocking the future collaborators PR; `InvitationUrlDialog.svelte` shared component, backdrop/Escape non-dismissive to protect the one-shot URL). Gate 1 (npm check 0 new) + review (mergeable, 2 plumbing-type nullability fixes applied) + Gate 3 (SU sees field → request carries intended_owner_email → 201 invitation_url → dialog before redirect; non-SU field absent from DOM; console 0). i18n: 8 keys en=ja. NOTE: chose IA = `/collaborators` coexists with `/members`; US2 new-user signup uses client-side TOTP secret generation (add `otpauth` dep in PR-1) since backend has no public TOTP-begin endpoint.
 - **Done this slice (PR `011-collaborators-page`, 2026-06-01)**: **US2/US3 collaborators FRONTEND** (T221/T222/T280/T281) — new `(app)/projects/[id]/collaborators/+page.svelte` (single-invite + one-shot `InvitationUrlDialog`, member-kind listing + revoke confirm, bulk paste 1-50 + result table + Copy-all-as-CSV, one-shot URLs transient-only + non-recoverability warning), Collaborators nav tab, `manage_members` all-or-nothing gate, i18n en/ja parity (JA「共同編集者」, adjustable). **REUSES** #133 plumbing (projects.ts issue/list/bulk/revoke + types + dialog — no API/type changes). code-reviewer: 0 critical/high/med, 2 low fixed (dead i18n key, bulk dedupe+index-key). Gate 1 npm check 0 err, Gate 3 ブラウザ実機 PASS (e2e-admin superuser、single/bulk/revoke 全動作 + console 0)、Gate 2 N/A (Playwright e2e T245/T292 は Step 12b deferred)。**残: US2 public invite (T220/T223 `(public)`+otpauth) / US7 frontend (#134 merge 依存) / Step 12b e2e**。
+- **Done this slice (PR `011-us7-banner-backend`, 2026-06-01)**: **US7 BACKEND complete** — `me.py` banner/activity read API (T600-T602) gated via the **`USER_SCOPED_ONLY` allowlist path** (OQ1: the `Action` model has no user-self scope, so `gate_action(USER_BANNER_*)` is not representable; followed the step-up T031-T033 precedent → **T030/T034 reinterpreted = NO `actions.py` change**, 3 allowlist entries instead); `services/email.py` 5 stubs rewritten to **fresh-session audit emits each carrying `target_user_id`** (T610-T614, load-bearing for banner surfacing) + 4 workers switched off email/outbox onto audit emit (T615-T617); `change_email` 24h cool-off (409 `email_change_cooldown_active`) + banner + security_stamp-rotation session invalidation (T620/T621) — **the cool-off ALSO gates `self_password_change` AND legacy `UserService.change_password`** (FR-011-305; the legacy path was a review-found bypass, OQ14-adjacent); `trusted_device_service.revoke_all_for_user` reason-allowlist (**added `password_change`** so shipped self/legacy change-password flows don't ValueError) + `actor_user_id` param + fresh-session idempotent audit (one row even at count 0), all 6 call-sites remapped (T630/T631); `workers/banner_gc.py` daily Celery beat 03:30 aligned to `DEFAULT_BANNER_MAX_AGE_DAYS` (T625); `me-banners-activity` OpenAPI stem promoted PENDING→LIVE (T660); tests T661/T662 + GC + revoke-idempotent + cool-off. **Adversarial multi-lens review: 13 confirmed (1 medium FR-011-305 legacy-path bypass + 12 low: orphan-banner cross-tx ordering ×3 accepted per FR-088, hash-of-a-hash fixed, 7 test-file ruff nits) — all fixed or accepted-by-precedent.** Gate 1 ruff+mypy clean (branch code), Gate 2 ~140 tests pass / 0 regressions, Gate 3 N/A (no frontend in this slice). **Still REMAINING for US7: frontend T640-T643 + T663 Playwright e2e (slice D / Step 12b).**
 - **Done this slice (PR `011-step7c-coverage`, 2026-05-31)**: **T190** fresh-deployment integration test; **Step 7c** coverage uplift PARTIAL — `middleware/rate_limit.py` (→100%) and `observability/sentry.py` (→94.4%) brought over threshold and removed from `PHASE17_PENDING` in `scripts/check_coverage_threshold.py`; `services/invitation_service.py` improved (error-branch unit tests added) but STAYS in `PHASE17_PENDING` (its SAVEPOINT ownership-transfer / trusted-invite paths need integration tests to cross the threshold — follow-up); `services/email.py` stays exempt (emit rewrites are US7 T610-T617, deferred).
 
 ## Format
@@ -105,7 +106,7 @@ A codebase reconciliation found many `[ ]` boxes were STALE (implemented in the 
 
 ### ACTION constants + endpoint coverage allowlist
 
-- [ ] T030 In `apps/api/echoroo/core/actions.py` add the five new ACTION constants (data-model.md §ACTION):
+- [x] T030 (DONE via allowlist path — banner ACTIONs are `USER_SCOPED_ONLY` allowlist entries, NOT `actions.py` constants, since the `Action` model has no user-self scope; the 2 project/admin ACTIONs already existed) In `apps/api/echoroo/core/actions.py` add the five new ACTION constants (data-model.md §ACTION):
   - `PROJECT_MEMBER_INVITATION_ISSUE_ACTION` (PROJECT scope, `MANAGE_MEMBERS` required)
   - `ADMIN_USER_RESET_PASSWORD_ACTION` (USER scope, superuser-only)
   - `USER_BANNER_LIST_ACTION` (USER self-scope)
@@ -114,7 +115,7 @@ A codebase reconciliation found many `[ ]` boxes were STALE (implemented in the 
 - [x] T031 In `apps/api/echoroo/core/endpoint_allowlist.py` add `TOKEN_AUTH_ONLY` entries for `GET /web-api/v1/auth/invitations/{token}` and `POST /web-api/v1/auth/invitations/{token}/accept` (spec.md NFR-011-004)
 - [x] T032 In `apps/api/echoroo/core/endpoint_allowlist.py` add `AUTHENTICATED_SELF_NO_GATE` entries (new allowlist; create the constant if absent) for `POST /web-api/v1/auth/step-up/begin` and `POST /web-api/v1/auth/step-up/complete` (spec.md NFR-011-004)
 - [x] T033 Update `apps/api/tests/contract/test_endpoint_coverage_hard_fail.py` to recognise the new allowlists and exempt the four routes from `gate_action` requirement
-- [ ] T034 Update `apps/api/tests/contract/test_actions_coherence.py` (9-class coherence per spec/007) to register the five new ACTIONs with their scope / required_permission / superuser-only triple
+- [x] T034 (DONE — allowlist path chosen, so no new Actions to register; `test_actions_coherence.py` + `test_endpoint_coverage_hard_fail.py` stay green with the 3 `USER_SCOPED_ONLY` entries) Update `apps/api/tests/contract/test_actions_coherence.py` (9-class coherence per spec/007) to register the five new ACTIONs with their scope / required_permission / superuser-only triple
 
 ### Step-up token extension (existing service)
 
@@ -424,35 +425,35 @@ US4 is complete. Step-up + admin-reset backend (T300/T301/T302/T310/T311/T312) s
 
 ### Backend — banner read API
 
-- [ ] T600 [US7] Add `GET /web-api/v1/me/banners` to `apps/api/echoroo/api/web_v1/me.py` (or new file). Returns undismissed events targeting the authenticated user, ≤30 days old. Gate via `gate_action(USER_BANNER_LIST_ACTION)`
-- [ ] T601 [US7] Add `POST /web-api/v1/me/banners/dismiss` with body `{audit_table, audit_log_id}`. CSRF-required. Idempotent (204 each time). 404 collapsed for any failure (not found / not yours / unauthenticated) per FR-011-302 anti-enumeration. Gate via `gate_action(USER_BANNER_DISMISS_ACTION)`. Calls `services/user_banner.dismiss` which performs the actor-or-target match (T060)
-- [ ] T602 [US7] Add `GET /web-api/v1/me/activity` to `apps/api/echoroo/api/web_v1/me.py`. Cursor-based pagination, all events targeting the authenticated user, no age limit. Gate via `gate_action(USER_ACTIVITY_LIST_ACTION)`
+- [x] T600 [US7] Add `GET /web-api/v1/me/banners` to `apps/api/echoroo/api/web_v1/me.py` (or new file). Returns undismissed events targeting the authenticated user, ≤30 days old. Gate via `gate_action(USER_BANNER_LIST_ACTION)`
+- [x] T601 [US7] Add `POST /web-api/v1/me/banners/dismiss` with body `{audit_table, audit_log_id}`. CSRF-required. Idempotent (204 each time). 404 collapsed for any failure (not found / not yours / unauthenticated) per FR-011-302 anti-enumeration. Gate via `gate_action(USER_BANNER_DISMISS_ACTION)`. Calls `services/user_banner.dismiss` which performs the actor-or-target match (T060)
+- [x] T602 [US7] Add `GET /web-api/v1/me/activity` to `apps/api/echoroo/api/web_v1/me.py`. Cursor-based pagination, all events targeting the authenticated user, no age limit. Gate via `gate_action(USER_ACTIVITY_LIST_ACTION)`
 
 ### Backend — banner enqueue rewrite (final, from Phase 2 stubs)
 
-- [ ] T610 [US7] Rewrite `apps/api/echoroo/services/email.py:send_login_notification` to emit `auth.login.new_device` audit (T020) via `AuditLogService.write_platform_event`; remove all email-transport code
-- [ ] T611 [US7] [P] Rewrite `send_email_change_notification` to emit `platform.user.email_changed` audit + integrate with T620 change-email flow
-- [ ] T612 [US7] [P] Rewrite `send_2fa_reset_dispatched` to emit `platform.user.two_factor_reset_by_superuser` audit (call site removed in T403; this helper becomes a thin wrapper for the audit write)
-- [ ] T613 [US7] [P] Rewrite `send_api_key_scope_degrade_email` to emit a `platform.api_key.scope_degrade` audit (existing event-type) — banner-eligible
-- [ ] T614 [US7] [P] Rewrite `send_api_key_revoke_email` to emit `platform.api_key.revoke` audit (T020)
-- [ ] T615 [US7] [P] In `apps/api/echoroo/workers/login_notification_dispatcher.py` switch from email send to banner enqueue (already preset by T610 emitting the audit row)
-- [ ] T616 [US7] [P] In `apps/api/echoroo/workers/trusted_expiry_dispatcher.py` + `apps/api/echoroo/workers/trusted_expiry_notifier.py` switch from email send / outbox row to banner enqueue (FR-011-401, FR-011-010)
-- [ ] T617 [US7] [P] In `apps/api/echoroo/workers/api_key_age_check.py` replace the email send call-sites (`send_api_key_revoke_email`, `send_api_key_scope_degrade_email`) with the banner-enqueue helpers (already wired via T613/T614 — confirm the call-site delegates)
+- [x] T610 [US7] Rewrite `apps/api/echoroo/services/email.py:send_login_notification` to emit `auth.login.new_device` audit (T020) via `AuditLogService.write_platform_event`; remove all email-transport code
+- [x] T611 [US7] [P] Rewrite `send_email_change_notification` to emit `platform.user.email_changed` audit + integrate with T620 change-email flow
+- [x] T612 [US7] [P] Rewrite `send_2fa_reset_dispatched` to emit `platform.user.two_factor_reset_by_superuser` audit (call site removed in T403; this helper becomes a thin wrapper for the audit write)
+- [x] T613 [US7] [P] Rewrite `send_api_key_scope_degrade_email` to emit a `platform.api_key.scope_degrade` audit (existing event-type) — banner-eligible
+- [x] T614 [US7] [P] Rewrite `send_api_key_revoke_email` to emit `platform.api_key.revoke` audit (T020)
+- [x] T615 [US7] [P] In `apps/api/echoroo/workers/login_notification_dispatcher.py` switch from email send to banner enqueue (already preset by T610 emitting the audit row)
+- [x] T616 [US7] [P] In `apps/api/echoroo/workers/trusted_expiry_dispatcher.py` + `apps/api/echoroo/workers/trusted_expiry_notifier.py` switch from email send / outbox row to banner enqueue (FR-011-401, FR-011-010)
+- [x] T617 [US7] [P] In `apps/api/echoroo/workers/api_key_age_check.py` replace the email send call-sites (`send_api_key_revoke_email`, `send_api_key_scope_degrade_email`) with the banner-enqueue helpers (already wired via T613/T614 — confirm the call-site delegates)
 
 ### Backend — email-change flow (FR-011-305)
 
-- [ ] T620 [US7] In `apps/api/echoroo/services/user.py` modify `change_email`:
+- [x] T620 [US7] In `apps/api/echoroo/services/user.py` modify `change_email`:
   - Emit `platform.user.email_changed` audit
   - Invalidate ALL of the user's active sessions (forcing re-login)
   - Call `TrustedDeviceService.revoke_all_for_user(user)` (R10)
   - Set 24h cool-off (a `users.email_change_cooldown_until` column already exists? If not, add as part of the additive migration T010 — re-check; this is an additive change if missing)
   - Reject further `change_email` or `change_password` for the user during the cool-off
-- [ ] T621 [US7] [P] Implement the cool-off check in `services/user.change_email`: read `users.email_change_cooldown_until` (added by T010); reject the request with a clear "please wait until <ts>" error if `now() < cooldown_until`; on a successful change, set `cooldown_until = now() + 24h`. Mirror the same gate in `services/admin_password_reset.reset_password` for the user's own concurrent password-change requests (FR-011-305).
+- [x] T621 [US7] [P] Implement the cool-off check in `services/user.change_email`: read `users.email_change_cooldown_until` (added by T010); reject the request with a clear "please wait until <ts>" error if `now() < cooldown_until`; on a successful change, set `cooldown_until = now() + 24h`. Mirror the same gate in `services/admin_password_reset.reset_password` for the user's own concurrent password-change requests (FR-011-305).
 
 ### Backend — TrustedDevice revocation audit (R10)
 
-- [ ] T625 [US7] [P] Add Celery beat task `gc_user_banner_dismissals` in `apps/api/echoroo/workers/banner_gc.py` (new file) that runs daily and deletes `user_banner_dismissals` rows older than 30 days (FR-011-309). Wire the schedule entry in `workers/celery_app.py`. The GC window MUST align with the banner age limit (FR-011-302) so a dismissed banner whose dismissal row was GC'd does not re-surface (data-model.md invariant). Add `tests/integration/test_banner_dismissal_gc.py` verifying age-cutoff behaviour
-- [ ] T630 [US7] Modify `TrustedDeviceService.revoke_all_for_user` in `apps/api/echoroo/services/trusted_device_service.py` so that the existing `reason: str | None` parameter is **no longer discarded** (currently `del reason` on line 106). Instead, after revoking, emit one `auth.trusted_device.revoke_all` audit row via `AuditLogService.write_platform_event` carrying `{user_id, revoked_count, reason}`. Wire all existing call-sites to pass an appropriate reason code:
+- [x] T625 [US7] [P] Add Celery beat task `gc_user_banner_dismissals` in `apps/api/echoroo/workers/banner_gc.py` (new file) that runs daily and deletes `user_banner_dismissals` rows older than 30 days (FR-011-309). Wire the schedule entry in `workers/celery_app.py`. The GC window MUST align with the banner age limit (FR-011-302) so a dismissed banner whose dismissal row was GC'd does not re-surface (data-model.md invariant). Add `tests/integration/test_banner_dismissal_gc.py` verifying age-cutoff behaviour
+- [x] T630 [US7] Modify `TrustedDeviceService.revoke_all_for_user` in `apps/api/echoroo/services/trusted_device_service.py` so that the existing `reason: str | None` parameter is **no longer discarded** (currently `del reason` on line 106). Instead, after revoking, emit one `auth.trusted_device.revoke_all` audit row via `AuditLogService.write_platform_event` carrying `{user_id, revoked_count, reason}`. Wire all existing call-sites to pass an appropriate reason code:
   - `services/user.py` (email change): `reason="email_change"`
   - `services/two_factor_service.py` (admin 2FA disable): `reason="2fa_disable"`
   - `api/web_v1/auth.py` (self trusted-device wipe): `reason="user_self_revoke"`
@@ -460,7 +461,7 @@ US4 is complete. Step-up + admin-reset backend (T300/T301/T302/T310/T311/T312) s
   - `api/web_v1/account/trusted_devices.py` (single-device revoke surface that may sweep): keep existing semantics
   - `services/admin_password_reset.py` (new, T310): `reason="password_reset"` (or `"password_reset_self"` for self-reset)
   Reason code allowlist: `{"password_reset", "password_reset_self", "email_change", "2fa_disable", "user_self_revoke", "user_deleted"}`. Reject unknown reason codes at the helper boundary (raise `ValueError`). Keep the helper idempotent (R10 followup): calling it when the user has zero active devices is a no-op that still emits exactly one audit row with `revoked_count=0`.
-- [ ] T631 [US7] [P] Add `apps/api/tests/security/test_trusted_device_revoke_idempotent.py`: revoke twice in the same TX is a no-op on the second call
+- [x] T631 [US7] [P] Add `apps/api/tests/security/test_trusted_device_revoke_idempotent.py`: revoke twice in the same TX is a no-op on the second call
 
 ### Frontend — banner UI
 
@@ -471,9 +472,9 @@ US4 is complete. Step-up + admin-reset backend (T300/T301/T302/T310/T311/T312) s
 
 ### Contracts + tests
 
-- [ ] T660 [US7] [P] Validate `specs/011-zero-email-deployment/contracts/me-banners-activity.yaml` against the live app
-- [ ] T661 [US7] [P] Add `apps/api/tests/integration/test_user_banners.py` (FR-011-301..310): each of 4 trigger events surfaces; dismiss is idempotent; cross-user dismissal 404
-- [ ] T662 [US7] [P] Add `apps/api/tests/security/test_user_banner_dismiss_actor_or_target_match.py` (security review M-2): every combination of `(audit_table × actor_user_id vs detail.target_user_id × authenticated user)` enumerated; cross-user dismissals all return 404
+- [x] T660 [US7] [P] Validate `specs/011-zero-email-deployment/contracts/me-banners-activity.yaml` against the live app
+- [x] T661 [US7] [P] Add `apps/api/tests/integration/test_user_banners.py` (FR-011-301..310): each of 4 trigger events surfaces; dismiss is idempotent; cross-user dismissal 404
+- [x] T662 [US7] [P] Add `apps/api/tests/security/test_user_banner_dismiss_actor_or_target_match.py` (security review M-2): every combination of `(audit_table × actor_user_id vs detail.target_user_id × authenticated user)` enumerated; cross-user dismissals all return 404
 - [ ] T663 [US7] [P] Add Playwright e2e `apps/web/tests/e2e/banner-stack.spec.ts` (US7 AC1-5): trigger new-device login, API key revoke, email change, 2FA reset; verify banner stack updates, dismiss works, activity view shows full history
 
 **Checkpoint**: US7 deliverable complete.

@@ -211,3 +211,15 @@ apps/api/echoroo/api/web_v1/_admin_settings.py:get_system_settings:missing-permi
 apps/api/echoroo/api/web_v1/_admin_settings.py:update_system_settings:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/_admin_users.py:list_users:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/_admin_users.py:update_user:missing-permission-guard  # spec/009 PR 5: thin adapter (legacy unguarded)
+
+# spec/011 US7 (T600-T602) in-app banner + activity endpoints. These operate
+# strictly on the authenticated session user (resolved by CurrentUser); there
+# is no project context and no cross-user side effect, so they carry NO
+# gate_action project-permission guard — the same USER_SCOPED_ONLY trust
+# boundary (OQ1) as /web-api/v1/users/me, change-password, and the step-up
+# endpoints. They are classified USER_SCOPED_ONLY in core/endpoint_allowlist.py;
+# the Action model has no user-self scope to bind. Cookie + CSRF transport is
+# enforced by the production middleware chain.
+apps/api/echoroo/api/web_v1/me.py:dismiss_me_banner:missing-permission-guard  # spec/011 US7: USER_SCOPED_ONLY (no project scope)
+apps/api/echoroo/api/web_v1/me.py:list_me_activity:missing-permission-guard  # spec/011 US7: USER_SCOPED_ONLY (no project scope)
+apps/api/echoroo/api/web_v1/me.py:list_me_banners:missing-permission-guard  # spec/011 US7: USER_SCOPED_ONLY (no project scope)
