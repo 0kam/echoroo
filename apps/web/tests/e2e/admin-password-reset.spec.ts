@@ -20,84 +20,61 @@
  *   tests/integration/test_admin_password_reset.py
  * A fixme placeholder is included below to document the gap.
  *
- * Environment gate
- * ----------------
- * All tests skip unless `ADMIN_PWD_RESET_E2E_ENABLED=1` is set.
- * Even with the suite enabled, tests skip if required env vars are absent.
- * This keeps CI collection cheap and credential-free by default.
+ * Environment
+ * -----------
+ * Designed for the TEST_MODE dev harness:
+ *   TEST_MODE=true, TEST_TOTP_SECRET_BASE32=VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
+ * Any seeded e2e-* account can be used with the shared TOTP secret.
+ * No env-gate flag required — runs in the standard dev suite.
  *
- * Required environment variables
- * --------------------------------
- *   ADMIN_PWD_RESET_E2E_ENABLED=1   Enable this suite.
- *
- * Optional environment variables (all have dev-sensible defaults)
- * ---------------------------------------------------------------
- *   ADMIN_PWD_RESET_ACTOR_EMAIL          Superuser email.
- *                                        Default: e2e-admin@echoroo.app
- *   ADMIN_PWD_RESET_ACTOR_PASSWORD       Superuser password.
- *                                        Default: E2E-Test-Password-123!
- *   ADMIN_PWD_RESET_ACTOR_TOTP_SECRET    Superuser TOTP secret (base32).
- *                                        Default: shared TEST_MODE secret
- *                                        JBSWY3DPEHPK3PXP (preview env).
- *   ADMIN_PWD_RESET_TARGET_EMAIL         Non-superuser to reset.
- *                                        Default: e2e-viewer@echoroo.app
- *   ADMIN_PWD_RESET_TARGET_PASSWORD      Current (pre-test) password for
- *                                        TARGET. Not used to log in — only
- *                                        consumed when the test needs to
- *                                        restore the account after the run.
- *                                        Default: E2E-Test-Password-123!
- *   ADMIN_PWD_RESET_TARGET_TOTP_SECRET   TARGET TOTP secret (base32).
- *                                        Default: shared TEST_MODE secret
- *                                        JBSWY3DPEHPK3PXP.
- *
- * Idempotency note
- * ----------------
- * The test resets the TARGET's password and then changes it again as part
- * of the happy-path scenario. After the test, TARGET's password is the
- * random `NEW_PASSWORD` value generated at runtime, NOT the original
- * `ADMIN_PWD_RESET_TARGET_PASSWORD`. Re-running the test against a dev DB
- * that retains state is therefore safe as long as the e2e-viewer account
- * can reach the change-password screen after each reset.
+ * Safety / idempotency (C-4)
+ * --------------------------
+ * TARGET's password is ALWAYS restored to E2E-Test-Password-123! (the suite default)
+ * after the forced-change flow — even if the happy-path steps fail. The afterAll
+ * hook performs a best-effort recovery: if TARGET cannot log in with the suite
+ * default password, it triggers another admin reset + forced-change to restore it,
+ * or logs a CLEAR FAILURE so the account is never silently left on an unknown password.
  *
  * How to run
  * ----------
  *   ./scripts/docker.sh dev
- *   ADMIN_PWD_RESET_E2E_ENABLED=1 npx playwright test tests/e2e/admin-password-reset.spec.ts
- *
- *   # Headed (for debugging):
- *   ADMIN_PWD_RESET_E2E_ENABLED=1 npx playwright test tests/e2e/admin-password-reset.spec.ts --headed
+ *   ECHOROO_API_URL=http://localhost:8002 npx playwright test tests/e2e/admin-password-reset.spec.ts
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Browser } from '@playwright/test';
+import { loginWithSharedTotp, SHARED_TOTP_SECRET, E2E_PASSWORD } from './helpers/spec011-auth';
 import { generateTotpCode, waitForFreshTotpWindow } from './helpers/totp';
 
 // ---------------------------------------------------------------------------
-// Environment gate
+// Accounts
 // ---------------------------------------------------------------------------
 
-const SUITE_ENABLED = process.env.ADMIN_PWD_RESET_E2E_ENABLED === '1';
-
-// ACTOR: a superuser account with TOTP enrolled.
+// ACTOR: e2e-admin is a platform superuser with TOTP enrolled.
 const ACTOR = {
   email: process.env.ADMIN_PWD_RESET_ACTOR_EMAIL ?? 'e2e-admin@echoroo.app',
-  password: process.env.ADMIN_PWD_RESET_ACTOR_PASSWORD ?? 'E2E-Test-Password-123!',
-  // Shared TEST_MODE TOTP secret (works in preview and any dev DB seeded
-  // with seed_e2e_permissions.py + TEST_MODE=true).
-  totpSecret:
-    process.env.ADMIN_PWD_RESET_ACTOR_TOTP_SECRET ?? 'JBSWY3DPEHPK3PXP',
+  password: process.env.ADMIN_PWD_RESET_ACTOR_PASSWORD ?? E2E_PASSWORD,
+  totpSecret: process.env.ADMIN_PWD_RESET_ACTOR_TOTP_SECRET ?? SHARED_TOTP_SECRET,
 };
 
 // TARGET: a non-superuser whose password will be reset by ACTOR.
+// Using e2e-viewer to avoid disrupting accounts relied on by other specs.
 const TARGET = {
   email: process.env.ADMIN_PWD_RESET_TARGET_EMAIL ?? 'e2e-viewer@echoroo.app',
-  // TARGET's TOTP for the subsequent login after reset.
-  totpSecret:
-    process.env.ADMIN_PWD_RESET_TARGET_TOTP_SECRET ?? 'JBSWY3DPEHPK3PXP',
+  totpSecret: process.env.ADMIN_PWD_RESET_TARGET_TOTP_SECRET ?? SHARED_TOTP_SECRET,
 };
 
-// A unique strong password for the forced-change step — random enough to
-// avoid HIBP hits and policy collisions between runs.
-const NEW_PASSWORD = `E2E-Chg-${Date.now()}-Aa1!`;
+// The new password set during the forced-change flow.
+// Set to the suite default so the TARGET account is restored after the test.
+const NEW_PASSWORD = process.env.ADMIN_PWD_RESET_NEW_PASSWORD ?? E2E_PASSWORD;
+
+// ---------------------------------------------------------------------------
+// C-4: Module-scope recovery state shared between Scenario 3 and afterAll.
+// ---------------------------------------------------------------------------
+
+/** Tracks the temp password issued in Scenario 3 so afterAll can recover if needed. */
+let _tempPasswordIssuedInScenario3: string | null = null;
+/** Set to true once Scenario 3 successfully restores TARGET to NEW_PASSWORD. */
+let _targetPasswordRestored = false;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,47 +89,104 @@ function stripLocale(pathname: string): string {
 }
 
 /**
- * Log in via the UI, completing the TOTP 2FA challenge if presented.
- * Mirrors the pattern from admin-superusers.spec.ts.
+ * C-4: Best-effort recovery — perform an admin reset of TARGET + forced-change
+ * to restore the account to `NEW_PASSWORD` (suite default).
+ *
+ * This is called by afterAll when Scenario 3 left TARGET in an unknown state.
+ * Logs a CLEAR FAILURE warning if it cannot restore — so the account is never
+ * silently left broken.
  */
-async function login(
-  page: Page,
-  email: string,
-  password: string,
-  totpSecret: string,
-): Promise<void> {
-  await page.goto('/en/login');
-  await page.fill('input[name="email"]', email);
-  await page.fill('input[name="password"]', password);
-  await page.click('button[type="submit"]');
+async function restoreTargetPassword(browser: Browser): Promise<void> {
+  console.log('[C-4 recovery] Attempting to restore TARGET password…');
 
-  const twoFactorForm = page.locator('[data-testid="two-factor-form"]');
-  const offLoginRedirect = page.waitForURL(
-    (url) => !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-    { timeout: 15000 },
-  );
+  try {
+    // Step 1: ACTOR logs in and issues a new admin reset.
+    const actorCtx = await browser.newContext();
+    const actorPage = await actorCtx.newPage();
 
-  await Promise.race([
-    twoFactorForm.waitFor({ state: 'visible', timeout: 15000 }),
-    offLoginRedirect.catch(() => undefined),
-  ]);
+    try {
+      await loginWithSharedTotp(actorPage, { email: ACTOR.email, password: ACTOR.password });
+      await actorPage.goto('/en/admin/users');
+      await actorPage.waitForLoadState('networkidle');
 
-  if (await twoFactorForm.isVisible().catch(() => false)) {
-    if (!totpSecret) {
-      test.skip(true, '2FA challenge appeared but TOTP secret is not configured.');
-      return;
+      // Search for TARGET.
+      const searchInput = actorPage.locator('input[type="search"]');
+      await expect(searchInput).toBeVisible({ timeout: 5000 });
+      await searchInput.fill(TARGET.email);
+      await actorPage.waitForTimeout(600);
+
+      const targetRow = actorPage.locator('tbody tr', { hasText: TARGET.email });
+      const rowCount = await targetRow.count();
+      if (rowCount === 0) {
+        console.error(
+          `[C-4 recovery] FAILURE: TARGET ${TARGET.email} not found on /admin/users — ` +
+            `account may be left with an unknown password. Manual intervention required.`
+        );
+        return;
+      }
+
+      const resetButton = targetRow.locator('[data-testid^="admin-reset-password-"]');
+      await expect(resetButton).toBeVisible({ timeout: 5000 });
+      await resetButton.click();
+
+      const stepUpModal = actorPage.locator('[data-testid="step-up-modal"]');
+      await expect(stepUpModal).toBeVisible({ timeout: 5000 });
+
+      await actorPage.fill('[data-testid="step-up-password-input"]', ACTOR.password);
+      await waitForFreshTotpWindow();
+      const actorTotp = generateTotpCode(ACTOR.totpSecret);
+      await actorPage.fill('[data-testid="step-up-totp-input"]', actorTotp);
+      await actorPage.click('[data-testid="step-up-submit"]');
+
+      const revealInput = actorPage.locator('[data-testid="temp-password-reveal"]');
+      await expect(revealInput).toBeVisible({ timeout: 15000 });
+      const recoveryTempPassword = await revealInput.inputValue();
+
+      if (!recoveryTempPassword) {
+        console.error('[C-4 recovery] FAILURE: Could not read recovery temp password.');
+        return;
+      }
+
+      console.log('[C-4 recovery] Got recovery temp password. Logging in as TARGET…');
+
+      // Step 2: TARGET logs in with recovery temp password + forced-change to NEW_PASSWORD.
+      const targetCtx = await browser.newContext();
+      const targetPage = await targetCtx.newPage();
+
+      try {
+        await loginWithSharedTotp(targetPage, {
+          email: TARGET.email,
+          password: recoveryTempPassword,
+        });
+
+        await expect(targetPage).toHaveURL(
+          (url) => stripLocale(url.pathname) === '/change-password',
+          { timeout: 15000 }
+        );
+
+        await targetPage.fill('[data-testid="change-password-current-input"]', recoveryTempPassword);
+        await targetPage.fill('[data-testid="change-password-new-input"]', NEW_PASSWORD);
+        await targetPage.fill('[data-testid="change-password-confirm-input"]', NEW_PASSWORD);
+        await targetPage.click('[data-testid="change-password-submit"]');
+
+        await expect(targetPage).toHaveURL(
+          (url) => stripLocale(url.pathname).startsWith('/dashboard'),
+          { timeout: 15000 }
+        );
+
+        _targetPasswordRestored = true;
+        console.log('[C-4 recovery] SUCCESS: TARGET password restored to suite default.');
+      } finally {
+        await targetCtx.close();
+      }
+    } finally {
+      await actorCtx.close();
     }
-    await waitForFreshTotpWindow();
-    const code = generateTotpCode(totpSecret);
-    await page.fill('[data-testid="two-factor-code-input"]', code);
-    await Promise.all([
-      page.waitForURL(
-        (url) =>
-          !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      ),
-      page.click('[data-testid="two-factor-submit"]'),
-    ]);
+  } catch (err) {
+    console.error(
+      `[C-4 recovery] FAILURE: could not restore TARGET ${TARGET.email} password: ${err}. ` +
+        `Manual intervention required.`
+    );
   }
 }
 
@@ -161,27 +195,36 @@ async function login(
 // ---------------------------------------------------------------------------
 
 test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
-  // Skip the entire suite when the env gate is not set.
-  test.beforeEach(() => {
-    test.skip(!SUITE_ENABLED, 'ADMIN_PWD_RESET_E2E_ENABLED is not set');
-    test.skip(!ACTOR.email, 'ADMIN_PWD_RESET_ACTOR_EMAIL is not configured');
-    test.skip(!ACTOR.password, 'ADMIN_PWD_RESET_ACTOR_PASSWORD is not configured');
-    test.skip(!ACTOR.totpSecret, 'ADMIN_PWD_RESET_ACTOR_TOTP_SECRET is not configured');
-    test.skip(!TARGET.email, 'ADMIN_PWD_RESET_TARGET_EMAIL is not configured');
-    test.skip(!TARGET.totpSecret, 'ADMIN_PWD_RESET_TARGET_TOTP_SECRET is not configured');
+  // C-4: afterAll recovery — if Scenario 3 left TARGET in an unknown state, restore it.
+  test.afterAll(async ({ browser }) => {
+    if (_targetPasswordRestored) {
+      // Scenario 3 already restored — nothing to do.
+      return;
+    }
+
+    if (_tempPasswordIssuedInScenario3 !== null) {
+      // Scenario 3 clicked reset (marker set) but did NOT complete the
+      // forced-change (test failed mid-way). We need to recover.
+      // Note: marker may be 'pending' (reset clicked, reveal not yet seen) or
+      // the actual temp password string.
+      console.warn(
+        '[C-4 afterAll] Scenario 3 did not complete password restore. Triggering recovery…' +
+          ` (marker: ${_tempPasswordIssuedInScenario3 === 'pending' ? 'pending (pre-reveal)' : 'temp-password-known'})`
+      );
+      await restoreTargetPassword(browser);
+    }
+    // If _tempPasswordIssuedInScenario3 is null, Scenario 3 never reached the
+    // reset button click — TARGET's password was not changed and no recovery is needed.
   });
 
   // -------------------------------------------------------------------------
   // Scenario 1: ACTOR opens /admin/users — page renders with the user roster
   // -------------------------------------------------------------------------
   test('admin/users page loads and displays at least one user row', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
 
-    // Wait for the page heading.
     await expect(page.locator('h1')).toBeVisible({ timeout: 15000 });
-
-    // The user table must be present (at least ACTOR themselves).
     await expect(page.locator('table')).toBeVisible({ timeout: 10000 });
     const rows = page.locator('tbody tr');
     await expect(rows.first()).toBeVisible({ timeout: 10000 });
@@ -191,23 +234,18 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 2: Step-up modal appears when ACTOR clicks "Reset password"
   // -------------------------------------------------------------------------
   test('clicking Reset password for a user opens the step-up modal', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
 
-    // Wait for the table to populate.
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
 
-    // Find a Reset password button (any row is acceptable for this assertion).
     const resetBtn = page.locator('[data-testid^="admin-reset-password-"]').first();
     await expect(resetBtn).toBeVisible({ timeout: 10000 });
     await resetBtn.click();
 
-    // The step-up modal must appear.
     await expect(page.locator('[data-testid="step-up-modal"]')).toBeVisible({
       timeout: 5000,
     });
-
-    // Both credential inputs must be present — no WebAuthn branch.
     await expect(page.locator('[data-testid="step-up-password-input"]')).toBeVisible();
     await expect(page.locator('[data-testid="step-up-totp-input"]')).toBeVisible();
     await expect(page.locator('[data-testid="step-up-submit"]')).toBeVisible();
@@ -217,53 +255,57 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 3: Full happy-path
   //   ACTOR resets TARGET → reveal dialog shows temp password →
   //   TARGET logs in → auto-routed to /change-password →
-  //   TARGET changes password → lands on /dashboard (session alive)
+  //   TARGET changes password to suite default → lands on /dashboard (session alive)
+  //
+  // C-4: module-scope state is updated so afterAll can recover if this test fails.
   // -------------------------------------------------------------------------
   test('full admin-reset flow: reset → forced-change → dashboard', async ({ page, browser }) => {
+    test.setTimeout(90000);
+
     // ---- Step A: ACTOR logs in and navigates to /admin/users ----
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
-    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('table')).toBeVisible({ timeout: 15000 });
 
-    // ---- Step B: Find the TARGET user row by email ----
-    // Look for the reset button in a row that also contains TARGET's email.
-    // Strategy: iterate visible reset buttons and find the nearest email cell.
-    // We search the entire table text for TARGET's email, then locate the
-    // reset button in that same row.
-    const targetRow = page.locator('tbody tr', {
-      hasText: TARGET.email,
-    });
+    // ---- Step B: Search for TARGET ----
+    const searchInput = page.locator('input[type="search"]');
+    await expect(searchInput).toBeVisible({ timeout: 5000 });
+    await searchInput.fill(TARGET.email);
+    await page.waitForTimeout(600);
 
+    const targetRow = page.locator('tbody tr', { hasText: TARGET.email });
     const targetRowCount = await targetRow.count();
-    if (targetRowCount === 0) {
-      // TARGET is not visible on the current page — the test cannot continue
-      // without the seeded TARGET account. Skip gracefully.
-      test.skip(
-        true,
-        `Target user ${TARGET.email} not found on /admin/users. Ensure the e2e seed has been run.`,
-      );
-      return;
-    }
+    // Seeded e2e accounts are a required precondition — a missing account means
+    // the test harness is broken, not a condition to skip gracefully.
+    expect(
+      targetRowCount,
+      `Seeded target user ${TARGET.email} must exist on /admin/users. ` +
+        `A missing seeded account indicates a broken harness — re-run the e2e seed script.`
+    ).toBeGreaterThan(0);
 
     const resetButton = targetRow.locator('[data-testid^="admin-reset-password-"]');
     await expect(resetButton).toBeVisible({ timeout: 5000 });
+
+    // C-4: Set the marker BEFORE clicking reset — this ensures afterAll will
+    // trigger the recovery path even if a later assertion throws. The marker
+    // is the sentinel value "pending" (not the actual temp password yet).
+    // It will be overwritten with the real temp password once revealed.
+    _tempPasswordIssuedInScenario3 = 'pending';
+
     await resetButton.click();
 
-    // ---- Step C: Step-up modal appears ----
+    // ---- Step C: Step-up modal ----
     const stepUpModal = page.locator('[data-testid="step-up-modal"]');
     await expect(stepUpModal).toBeVisible({ timeout: 5000 });
 
-    // ---- Step D: Fill operator credentials and submit ----
+    // ---- Step D: Fill operator credentials ----
     await page.fill('[data-testid="step-up-password-input"]', ACTOR.password);
-
-    // Generate a fresh TOTP code close to the window boundary.
     await waitForFreshTotpWindow();
     const actorTotp = generateTotpCode(ACTOR.totpSecret);
     await page.fill('[data-testid="step-up-totp-input"]', actorTotp);
-
     await page.click('[data-testid="step-up-submit"]');
 
-    // ---- Step E: Reveal dialog appears with the temporary password ----
+    // ---- Step E: Reveal dialog ----
     const revealInput = page.locator('[data-testid="temp-password-reveal"]');
     await expect(revealInput).toBeVisible({ timeout: 15000 });
 
@@ -271,57 +313,27 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
     expect(tempPassword, 'Temp password must be non-empty').toBeTruthy();
     expect(tempPassword.length, 'Temp password should be at least 12 chars').toBeGreaterThanOrEqual(12);
 
-    // Copy button must also be present.
+    // C-4: update with the actual temp password now that we have it.
+    // afterAll uses this to log in as TARGET and complete forced-change.
+    _tempPasswordIssuedInScenario3 = tempPassword;
+
     await expect(page.locator('[data-testid="temp-password-copy"]')).toBeVisible();
 
-    // ---- Step F: TARGET logs in with the temp password in a fresh context ----
-    // Use an isolated browser context so the ACTOR's session does not
-    // interfere with TARGET's session.
+    // ---- Step F: TARGET logs in with the temp password ----
     const targetContext = await browser.newContext();
     const targetPage = await targetContext.newPage();
 
     try {
-      await targetPage.goto('/en/login');
-      await targetPage.fill('input[name="email"]', TARGET.email);
-      await targetPage.fill('input[name="password"]', tempPassword);
-      await targetPage.click('button[type="submit"]');
-
-      // TARGET may be presented with a 2FA challenge (seeded accounts have 2FA).
-      const targetTwoFactor = targetPage.locator('[data-testid="two-factor-form"]');
-      const targetOffLogin = targetPage.waitForURL(
-        (url) =>
-          !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-        { timeout: 15000 },
-      );
-
-      await Promise.race([
-        targetTwoFactor.waitFor({ state: 'visible', timeout: 15000 }),
-        targetOffLogin.catch(() => undefined),
-      ]);
-
-      if (await targetTwoFactor.isVisible().catch(() => false)) {
-        await waitForFreshTotpWindow();
-        const targetTotp = generateTotpCode(TARGET.totpSecret);
-        await targetPage.fill('[data-testid="two-factor-code-input"]', targetTotp);
-        await Promise.all([
-          targetPage.waitForURL(
-            (url) =>
-              !url.pathname.replace(/^\/[a-z]{2}(?=\/)/, '').startsWith('/login'),
-            { timeout: 15000 },
-          ),
-          targetPage.click('[data-testid="two-factor-submit"]'),
-        ]);
-      }
+      await loginWithSharedTotp(targetPage, { email: TARGET.email, password: tempPassword });
 
       // ---- Step G: TARGET is auto-routed to /change-password ----
       await expect(targetPage).toHaveURL(
         (url) => stripLocale(url.pathname) === '/change-password',
-        { timeout: 15000 },
+        { timeout: 15000 }
       );
 
-      // The change-password form must be visible.
       await expect(
-        targetPage.locator('[data-testid="change-password-form"]'),
+        targetPage.locator('[data-testid="change-password-form"]')
       ).toBeVisible({ timeout: 10000 });
 
       // ---- Step H: TARGET completes the forced-change ----
@@ -333,24 +345,25 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
       // ---- Step I: TARGET lands on /dashboard ----
       await expect(targetPage).toHaveURL(
         (url) => stripLocale(url.pathname).startsWith('/dashboard'),
-        { timeout: 15000 },
+        { timeout: 15000 }
       );
 
-      // No error banner must be visible after redirect.
       const errorBanner = targetPage.locator('[data-testid="change-password-error"]');
       await expect(errorBanner).not.toBeVisible();
 
-      // ---- Step J: Session is alive — a protected page loads ----
-      // Navigate to /dashboard directly to confirm the session is not bounced.
+      // ---- Step J: Session is alive ----
       await targetPage.goto('/en/dashboard');
       await expect(targetPage).toHaveURL(
         (url) => stripLocale(url.pathname).startsWith('/dashboard'),
-        { timeout: 10000 },
+        { timeout: 10000 }
       );
-      // Ensure we are not bounced back to /login.
       await expect(targetPage).not.toHaveURL((url) =>
-        stripLocale(url.pathname).startsWith('/login'),
+        stripLocale(url.pathname).startsWith('/login')
       );
+
+      // C-4: mark as restored so afterAll knows no recovery is needed.
+      _targetPasswordRestored = true;
+      _tempPasswordIssuedInScenario3 = null;
     } finally {
       await targetContext.close();
     }
@@ -360,11 +373,10 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
   // Scenario 4: Step-up modal — invalid credentials surface an error
   // -------------------------------------------------------------------------
   test('step-up modal shows error when wrong password or TOTP is supplied', async ({ page }) => {
-    await login(page, ACTOR.email, ACTOR.password, ACTOR.totpSecret);
+    await loginWithSharedTotp(page, { email: ACTOR.email, password: ACTOR.password });
     await page.goto('/en/admin/users');
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 15000 });
 
-    // Click any reset button.
     const resetBtn = page.locator('[data-testid^="admin-reset-password-"]').first();
     await expect(resetBtn).toBeVisible({ timeout: 10000 });
     await resetBtn.click();
@@ -372,35 +384,25 @@ test.describe('spec/011 US4 admin password reset @e2e-admin', () => {
     const stepUpModal = page.locator('[data-testid="step-up-modal"]');
     await expect(stepUpModal).toBeVisible({ timeout: 5000 });
 
-    // Supply deliberately wrong credentials.
     await page.fill('[data-testid="step-up-password-input"]', 'DefinitelyWrong!');
     await page.fill('[data-testid="step-up-totp-input"]', '000000');
     await page.click('[data-testid="step-up-submit"]');
 
-    // An error message must appear inside the modal.
     await expect(page.locator('[data-testid="step-up-error"]')).toBeVisible({
       timeout: 10000,
     });
 
-    // The reveal dialog must NOT have appeared (no temp password was issued).
     await expect(page.locator('[data-testid="temp-password-reveal"]')).not.toBeVisible();
   });
 
   // -------------------------------------------------------------------------
   // Scenario 5 (fixme): 24h TTL-expiry of the temporary password
   // -------------------------------------------------------------------------
-  // The spec/011 US4 acceptance criterion requires that a temp password
-  // expire after 24 hours and be rejected on login. This cannot be exercised
-  // in real-time Playwright tests without backend time-mocking.
-  //
-  // Coverage location: apps/api/tests/integration/test_admin_password_reset.py
-  //   — the backend integration suite fast-forwards the clock to 24h+1s and
-  //     asserts a 401 "credentials_expired" response.
   test.fixme(
     'temp password is rejected after its 24h TTL expires (backend integration test coverage)',
     async () => {
       // This scenario is intentionally not implemented here.
       // See: apps/api/tests/integration/test_admin_password_reset.py
-    },
+    }
   );
 });
