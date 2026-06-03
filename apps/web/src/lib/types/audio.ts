@@ -198,6 +198,20 @@ export const ALL_SPEED_OPTIONS: SpeedOption[] = [
 
 /** Get speed options valid for the given sample rate */
 export function getSpeedOptions(samplerate: number): SpeedOption[] {
+  // Ultrasonic sources cannot be sped/slowed purely client-side, so the
+  // playback model differs:
+  //  - 1x (real-time): the backend resamples the audio down into the audible
+  //    range. This is the default and is ALWAYS valid, so it must be offered so
+  //    users can return to real-time after picking a slower speed.
+  //  - <1x (time-expansion): the backend time-expands the audio server-side,
+  //    making the inaudible spectrum audible at the chosen factor.
+  // Faster-than-real-time speeds are not meaningful for ultrasonic playback.
+  if (samplerate > HIGHEST_PLAYBACK_SAMPLERATE) {
+    return ALL_SPEED_OPTIONS.filter(
+      (option) => option.value === 1 || option.value < 1
+    );
+  }
+
   return ALL_SPEED_OPTIONS.filter((option) => {
     const effectiveRate = samplerate * option.value;
     return (

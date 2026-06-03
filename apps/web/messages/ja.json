@@ -1006,6 +1006,8 @@
   "recording_detail_breadcrumb_recordings": "録音",
   "recording_detail_loading": "録音データを読み込み中...",
   "recording_detail_ultrasonic": "超音波",
+  "audio_player_seek_position": "再生位置",
+  "audio_player_playback_speed": "再生速度",
   "recording_detail_settings": "設定",
   "recording_detail_filters": "フィルター",
   "recording_detail_download": "ダウンロード",

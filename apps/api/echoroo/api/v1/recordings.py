@@ -952,13 +952,23 @@ async def stream_audio_legacy(
 
 
 # T062: Playback endpoint with resampling and HTTP Range support
+# Browser-friendly target sample rate for real-time ultrasonic playback.
+# A standard browser cannot play raw 192/256/384 kHz PCM, so ultrasonic
+# recordings are resampled down to this rate for default (real-time) playback.
+PLAYBACK_TARGET_SAMPLERATE = 48000
+
+
 @router.get(
     "/{recording_id}/playback",
     summary="Get playback audio with Range support",
     description=(
         "Stream audio for browser playback with HTTP Range support. "
-        "Ultrasonic recordings are automatically slowed down for audible playback "
-        "by adjusting the WAV header sample rate (zero-cost, no resampling). "
+        "Ultrasonic recordings play back in real time by default: the audio is "
+        "resampled down to ~48 kHz (anti-aliased) so the original duration is "
+        "preserved (content above ~24 kHz is discarded). When an explicit slower "
+        "speed is requested (speed < 1.0), the legacy time-expansion behavior is "
+        "used instead, shifting the full ultrasonic spectrum into the audible "
+        "band (the bat-detector use case). "
         "Delegates to the /audio endpoint internally. "
         "Accepts auth via Authorization header or ?token query parameter."
     ),
@@ -981,10 +991,29 @@ async def get_playback_audio(
     via the underlying :func:`stream_audio` handler. Restricted projects gate
     raw audio access via ``restricted_config.allow_media`` (FR-016).
 
-    For ultrasonic recordings (samplerate > 48 kHz), the playback speed is
-    automatically adjusted so that the audio is audible in a standard browser
-    without any resampling cost. The adjustment is encoded in the WAV header's
-    sample rate field.
+    Playback rule for ultrasonic recordings (samplerate > 96 kHz):
+
+    - **Default (speed == 1.0): real-time playback.** The audio is genuinely
+      resampled down to :data:`PLAYBACK_TARGET_SAMPLERATE` (~48 kHz) with
+      anti-aliasing, so the output duration equals the original recording
+      duration. Content above ~24 kHz is intentionally discarded — this is the
+      accepted trade-off for real-time-by-default. (Previously the default
+      rewrote the WAV header to a low rate, which played the PCM ~5.3× slower
+      and pitch-shifted; that is no longer the default.)
+    - **Explicit slower speed (speed < 1.0): time-expansion.** The legacy
+      WAV-header-rewrite path is kept, shifting the *full* ultrasonic spectrum
+      down into the audible band (so ultrasonic calls become hearable — the
+      bat-detector use case). No resampling is done here, to avoid losing the
+      ultrasonic content.
+
+    Non-ultrasonic recordings are unchanged: passthrough at speed 1.0, and the
+    existing per-speed header handling for explicit speeds.
+
+    .. note::
+        The contract exposes a single ``speed`` query parameter defaulting to
+        1.0, so "default" and "explicit speed == 1.0" are indistinguishable.
+        We therefore treat ultrasonic + ``speed == 1.0`` as the real-time
+        resample case and ultrasonic + ``speed < 1.0`` as time-expansion.
 
     Supports the HTTP ``Range`` header so the browser can seek within the
     audio without re-downloading the whole file.
@@ -1011,26 +1040,40 @@ async def get_playback_audio(
     if not recording:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
 
-    # For ultrasonic recordings adjust speed so audio is audible in a browser.
-    # This is handled transparently by encoding a reduced samplerate in the WAV
-    # header — no actual resampling is performed.
-    #
-    # The header samplerate formula in load_clip_bytes is:
-    #   header_sr = output_sr * speed * time_expansion
-    #
-    # For ultrasonic playback we want a low header rate (e.g. ~48 kHz) so the
-    # browser plays the high-samplerate PCM slowly, making the audio audible.
-    # We achieve this by setting speed to 1/time_expansion (which cancels out
-    # the time_expansion multiplication), effectively giving header_sr ≈ output_sr.
-    # For full-spectrum recordings (time_expansion=1), we target ~48 kHz.
     effective_speed = speed
     effective_te = recording.time_expansion
-    if service.is_ultrasonic(recording) and speed == 1.0:
-        # Target a browser-friendly samplerate for the WAV header
-        target_browser_rate = 48000
-        # header_sr = samplerate * effective_speed * effective_te = target_browser_rate
-        # => effective_speed = target_browser_rate / (samplerate * effective_te)
-        effective_speed = target_browser_rate / (recording.samplerate * effective_te)
+    target_samplerate: int | None = None
+
+    if service.is_ultrasonic(recording):
+        if speed == 1.0:
+            # Default ultrasonic playback: REAL-TIME. Resample the (clip-bounded)
+            # audio down to a browser-playable rate. With speed=1.0 and
+            # time_expansion=1.0 the WAV header in load_clip_bytes resolves to
+            # exactly PLAYBACK_TARGET_SAMPLERATE, so the output plays at original
+            # speed/duration. This actually decodes + resamples (anti-aliased),
+            # discarding content above ~24 kHz.
+            #
+            # Time-expansion semantics (intentional): for ultrasonic real-time
+            # playback we intentionally ignore any stored ``time_expansion`` and
+            # target 48 kHz at the file's wall-clock duration, so the output
+            # duration matches ``recording.duration`` and the UI seek bar stays
+            # consistent. Even when a recording carries a stored
+            # ``time_expansion != 1.0`` (an independent field) we force
+            # ``effective_te = 1.0`` here; the stored time_expansion is only
+            # applied for acoustic time-expansion on the explicit slow-speed
+            # path below (speed < 1.0). This is deliberate, not a regression.
+            target_samplerate = PLAYBACK_TARGET_SAMPLERATE
+            effective_speed = 1.0
+            effective_te = 1.0
+        else:
+            # Explicit slower speed: keep the legacy time-expansion / header
+            # rewrite so the full ultrasonic spectrum is shifted into the
+            # audible band. The recording's stored time_expansion and the
+            # requested speed feed the header formula in load_clip_bytes
+            # (header_sr = output_sr * speed * time_expansion); no resampling.
+            # ``target_samplerate`` is already ``None`` from the default above.
+            effective_speed = speed
+            effective_te = recording.time_expansion
 
     return await stream_audio(
         project_id=project_id,
@@ -1043,7 +1086,7 @@ async def get_playback_audio(
         time_expansion=effective_te,
         start=start,
         end=end,
-        target_samplerate=None,
+        target_samplerate=target_samplerate,
         range=range,
     )
 
