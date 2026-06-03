@@ -6,25 +6,28 @@ Tests verify that endpoints conform to the data management specification.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
+from echoroo.models.enums import (
+    DatasetStatus,
+    DatasetVisibility,
+    ProjectStatus,
+    ProjectVisibility,
+)
+from echoroo.models.project import Project
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
-
-if TYPE_CHECKING:
-    from echoroo.models.project import Project
-    from echoroo.models.user import User
+from echoroo.models.user import User
 
 
 @pytest.fixture
 async def test_site_for_recordings(
     db_session: AsyncSession,
-    test_project: Project,  # noqa: F821
+    test_project: Project,
 ) -> Site:
     """Create a test site for recording tests.
 
@@ -49,9 +52,9 @@ async def test_site_for_recordings(
 @pytest.fixture
 async def test_dataset_for_recordings(
     db_session: AsyncSession,
-    test_project: Project,  # noqa: F821
+    test_project: Project,
     test_site_for_recordings: Site,
-    test_user: User,  # noqa: F821
+    test_user: User,
 ) -> Dataset:
     """Create a test dataset for recording tests.
 
@@ -112,6 +115,106 @@ async def test_recording(
     return recording
 
 
+# ---------------------------------------------------------------------------
+# Public-project fixture chain (WS7 Phase 3 — Guest projection contract).
+#
+# The Guest-aware BFF endpoint ``GET /web-api/v1/projects/{id}/recordings``
+# only returns 200 to a signed-out caller when the project is PUBLIC + ACTIVE
+# (FR-016 / FR-018); any other visibility/status collapses to 404 for
+# anti-enumeration. We therefore need a dedicated PUBLIC + ACTIVE project with
+# a recording attached to a dataset/site so the guest projection can be
+# asserted. This mirrors the ``t310_public_project`` chain in
+# ``test_guest_authenticated_vote.py``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def public_project(db_session: AsyncSession, test_user: User) -> Project:
+    """Create a PUBLIC + ACTIVE project (Guest-listable)."""
+    project = Project(
+        name="Public Recordings Project",
+        description="WS7 Phase 3 guest projection contract",
+        visibility=ProjectVisibility.PUBLIC,
+        license_id="cc-by",
+        owner_id=test_user.id,
+        status=ProjectStatus.ACTIVE,
+        # Public projects do not use restricted_config toggles.
+        restricted_config={},
+    )
+    db_session.add(project)
+    await db_session.commit()
+    await db_session.refresh(project)
+    return project
+
+
+@pytest.fixture
+def public_project_id(public_project: Project) -> str:
+    """Get public project ID as a string."""
+    return str(public_project.id)
+
+
+@pytest.fixture
+async def public_site(db_session: AsyncSession, public_project: Project) -> Site:
+    """Create a site under the public project."""
+    site = Site(
+        project_id=public_project.id,
+        name="Public Site",
+        h3_index_member="89283082803ffff",
+    )
+    db_session.add(site)
+    await db_session.commit()
+    await db_session.refresh(site)
+    return site
+
+
+@pytest.fixture
+async def public_dataset(
+    db_session: AsyncSession,
+    public_project: Project,
+    public_site: Site,
+    test_user: User,
+) -> Dataset:
+    """Create a PUBLIC + COMPLETED dataset under the public project."""
+    dataset = Dataset(
+        project_id=public_project.id,
+        site_id=public_site.id,
+        created_by_id=test_user.id,
+        name="Public Dataset",
+        audio_dir="public/audio",
+        visibility=DatasetVisibility.PUBLIC,
+        status=DatasetStatus.COMPLETED,
+    )
+    db_session.add(dataset)
+    await db_session.commit()
+    await db_session.refresh(dataset)
+    return dataset
+
+
+@pytest.fixture
+async def public_recording(
+    db_session: AsyncSession,
+    public_dataset: Dataset,
+) -> Recording:
+    """Create a recording (with audio metadata) under the public project."""
+    recording = Recording(
+        dataset_id=public_dataset.id,
+        filename="public_recording.wav",
+        path="public_recording.wav",
+        hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        duration=12.0,
+        samplerate=48000,
+        channels=2,
+        bit_depth=16,
+        datetime=datetime.now(UTC),
+        datetime_parse_status="success",
+        time_expansion=1.0,
+    )
+    db_session.add(recording)
+    await db_session.commit()
+    await db_session.refresh(recording)
+    return recording
+
+
 @pytest.mark.asyncio
 class TestRecordingEndpoints:
     """Test recording list and detail endpoints."""
@@ -138,6 +241,75 @@ class TestRecordingEndpoints:
         assert "page_size" in data
         assert "pages" in data
         assert isinstance(data["items"], list)
+
+    async def test_list_recordings_member_includes_metadata(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_recording: Recording,
+    ) -> None:
+        """WS7 Phase 3 (A.1): member projection includes technical metadata.
+
+        The Guest-aware BFF endpoint
+        ``GET /web-api/v1/projects/{id}/recordings`` POPULATES the
+        member-only fields (``samplerate`` / ``channels`` / ``datetime`` /
+        ``datetime_parse_status``) for member-level callers. ``test_user`` is
+        the project owner (member-level) on the RESTRICTED ``test_project``,
+        so all four fields MUST be present and non-null.
+        """
+        response = await client.get(
+            f"/web-api/v1/projects/{test_project_id}/recordings",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+
+        assert data["items"], "Member listing should return the seeded recording"
+        item = data["items"][0]
+
+        # Member-only technical metadata is populated for the owner.
+        assert item["samplerate"] is not None
+        assert item["samplerate"] == test_recording.samplerate
+        assert item["channels"] is not None
+        assert item["channels"] == test_recording.channels
+        assert item["datetime"] is not None
+        assert item["datetime_parse_status"] is not None
+
+    async def test_list_recordings_guest_excludes_metadata(
+        self,
+        client: AsyncClient,
+        public_project_id: str,
+        public_recording: Recording,
+    ) -> None:
+        """WS7 Phase 3 (A.2): guest projection excludes technical metadata.
+
+        A signed-out caller listing a PUBLIC + ACTIVE project's recordings
+        gets 200 with the Guest-minimal projection: the member-only fields
+        (``samplerate`` / ``channels`` / ``datetime`` /
+        ``datetime_parse_status``) are withheld (``None``), while the
+        Guest-visible identity/label fields remain present.
+        """
+        response = await client.get(
+            f"/web-api/v1/projects/{public_project_id}/recordings",
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+
+        assert data["items"], "Guest listing of a Public project should return rows"
+        item = data["items"][0]
+
+        # Member-only technical metadata is withheld from the guest.
+        assert item["samplerate"] is None
+        assert item["channels"] is None
+        assert item["datetime"] is None
+        assert item["datetime_parse_status"] is None
+
+        # Guest-visible identity / label fields remain present.
+        for key in ("id", "project_id", "name", "duration_seconds", "site_h3_index"):
+            assert key in item, f"Guest projection is missing key {key!r}"
 
     async def test_list_recordings_with_filters(
         self,
