@@ -1224,3 +1224,101 @@ async def test_bulk_invitation_rate_limit_error_does_not_leak_internal_identifie
             "Rate limit reached for this issuer; retry after the per-hour "
             "or per-day window."
         ), r
+
+
+# ===========================================================================
+# Per-row already_member — middle row is an active member; siblings persist
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_bulk_invitation_per_row_already_member(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """preview issue #4: a row whose recipient is already an active member.
+
+    The middle entry's email belongs to a user who already holds an active
+    membership on the project. That row reports ``status='already_member'``
+    (DISTINCT from ``duplicate_pending``) and is NOT issued, while the
+    surrounding fresh-email rows persist normally — proof the SAVEPOINT
+    rollback only affected the middle row.
+    """
+    owner = await _create_user(
+        db_session, email="t291-am-owner@example.com",
+    )
+    member = await _create_user(
+        db_session, email="t291-am-member@example.com",
+    )
+    project = await _create_project(db_session, owner)
+
+    # Seed an active membership for ``member``.
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=member.id,
+            role=ProjectMemberRole.MEMBER,
+            invited_by_id=owner.id,
+        )
+    )
+    await db_session.commit()
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    leading = f"t291-am-leading-{uuid4().hex[:8]}@example.com"
+    trailing = f"t291-am-trailing-{uuid4().hex[:8]}@example.com"
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations/bulk",
+        headers=owner_headers,
+        json={
+            "role": "member",
+            "emails": [leading, member.email, trailing],
+        },
+    )
+    assert response.status_code == 207, response.text
+    rows = response.json()
+    assert len(rows) == 3
+    assert rows[0]["email"] == leading
+    assert rows[0]["status"] == "issued"
+    assert rows[1]["email"] == member.email
+    assert rows[1]["status"] == "already_member"
+    assert rows[1].get("invitation_url") is None
+    assert rows[1].get("invitation_id") is None
+    assert rows[2]["email"] == trailing
+    assert rows[2]["status"] == "issued"
+
+    # DB-side: leading + trailing rows persisted; the already-member row
+    # produced NO invitation.
+    leading_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(
+                ProjectInvitation.project_id == project.id,
+                ProjectInvitation.email == leading,
+            ),
+        )
+    ).scalar_one()
+    assert leading_count == 1
+    trailing_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(
+                ProjectInvitation.project_id == project.id,
+                ProjectInvitation.email == trailing,
+            ),
+        )
+    ).scalar_one()
+    assert trailing_count == 1
+    member_inv_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(
+                ProjectInvitation.project_id == project.id,
+                ProjectInvitation.email == member.email,
+            ),
+        )
+    ).scalar_one()
+    assert member_inv_count == 0

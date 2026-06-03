@@ -24,31 +24,86 @@
   let { open, url, onClose }: Props = $props();
 
   let copied = $state(false);
+  // Set when both the async clipboard API and the legacy execCommand
+  // fallback fail — prompts the user to select-and-copy manually.
+  let copyFailed = $state(false);
 
   /**
-   * Copy the invitation URL to the clipboard with the shared 2s "Copied"
-   * feedback pattern (TokenDialog lines ~77-89).
+   * Copy `url` to the clipboard robustly.
+   *
+   * Tries `navigator.clipboard.writeText` first (modern, async, requires a
+   * secure context). When that API is unavailable (e.g. non-HTTPS host) or
+   * throws, falls back to selecting the readonly input and the legacy
+   * `document.execCommand('copy')`. Either way we surface visible feedback:
+   * a 2s "Copied!" on success, or a persistent "couldn't copy" hint on
+   * failure so the user knows to select-and-copy by hand.
    */
   async function copyToClipboard() {
     if (!url) return;
 
+    copyFailed = false;
+
+    // 1) Modern async clipboard API (preferred).
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(url);
+        flashCopied();
+        return;
+      } catch (err) {
+        console.error('navigator.clipboard.writeText failed, falling back:', err);
+      }
+    }
+
+    // 2) Legacy fallback: select the input text + execCommand('copy').
+    if (legacyCopy()) {
+      flashCopied();
+      return;
+    }
+
+    // 3) Both paths failed — ask the user to copy manually.
+    copyFailed = true;
+  }
+
+  /**
+   * Show the transient 2s "Copied!" confirmation and clear any prior
+   * failure hint.
+   */
+  function flashCopied() {
+    copyFailed = false;
+    copied = true;
+    setTimeout(() => {
+      copied = false;
+    }, 2000);
+  }
+
+  /**
+   * Legacy clipboard copy via input selection + `document.execCommand`.
+   * Returns `true` when the copy command reportedly succeeded.
+   */
+  function legacyCopy(): boolean {
+    if (typeof document === 'undefined') return false;
+    const input = document.getElementById('invitation-url-value');
+    if (!(input instanceof HTMLInputElement)) return false;
     try {
-      await navigator.clipboard.writeText(url);
-      copied = true;
-      setTimeout(() => {
-        copied = false;
-      }, 2000);
+      input.focus();
+      input.select();
+      input.setSelectionRange(0, input.value.length);
+      const ok = document.execCommand('copy');
+      // Leave the text selected so a manual Ctrl/Cmd-C is one step away.
+      return ok;
     } catch (err) {
-      console.error('Failed to copy invitation URL:', err);
+      console.error('Legacy execCommand copy failed:', err);
+      return false;
     }
   }
 
   /**
    * Handle dialog close — reset the transient copy feedback so a
-   * re-open does not flash a stale "Copied" state.
+   * re-open does not flash a stale "Copied" / failure state.
    */
   function handleClose() {
     copied = false;
+    copyFailed = false;
     onClose();
   }
 </script>
@@ -123,6 +178,11 @@
           {copied ? m.invitation_url_dialog_copied() : m.invitation_url_dialog_copy()}
         </button>
       </div>
+      {#if copyFailed}
+        <p class="mt-2 text-sm text-danger" data-testid="invitation-url-copy-failed">
+          {m.invitation_url_dialog_copy_failed()}
+        </p>
+      {/if}
     </div>
 
     <!-- Close button -->
