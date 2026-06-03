@@ -596,51 +596,28 @@ async def transfer_ownership(
     member.removed_at = now_eff
 
     # (a) Ensure the previous owner has an ACTIVE Admin membership row.
-    # Look up ANY existing row for (project, previous_owner) — including a
-    # soft-removed one — so we reactivate/upgrade rather than INSERT a
-    # second active row that would violate ``ux_project_members_active``.
-    prev_owner_stmt = (
-        sa.select(ProjectMember)
-        .options(
-            lazyload(ProjectMember.user),
-            lazyload(ProjectMember.project),
-            lazyload(ProjectMember.invited_by),
-        )
-        .where(
-            ProjectMember.project_id == project_id,
-            ProjectMember.user_id == previous_owner_id,
-        )
-        .order_by(ProjectMember.removed_at.is_(None).desc())
-        .with_for_update()
+    #
+    # Race-safety (preview-fixes/ws4-su-redesign H1): the prior
+    # implementation did a pre-flight ``SELECT ... FOR UPDATE`` and, when
+    # it found NO row, issued a plain INSERT. That is NOT safe against the
+    # partial unique index ``ux_project_members_active`` (one active row
+    # per (project_id, user_id) WHERE removed_at IS NULL): a
+    # ``FOR UPDATE`` that returns zero rows locks NOTHING, so a concurrent
+    # transaction (e.g. an invitation-accept granting the previous owner
+    # an active membership) could INSERT an active row in the window
+    # between our SELECT and our INSERT → unique-index violation → 500 /
+    # rollback. We now wrap the INSERT in a SAVEPOINT and, on the unique
+    # violation, fall back to a re-query + in-place UPGRADE — matching the
+    # SAVEPOINT-nested ProjectMember upsert used by the invitation-accept
+    # path (``services.invitation_service`` FR-011-123) and the bulk
+    # member SAVEPOINT loop.
+    await _ensure_previous_owner_admin_member(
+        session,
+        project_id=project_id,
+        previous_owner_id=previous_owner_id,
+        new_owner_user_id=new_owner_user_id,
+        now_eff=now_eff,
     )
-    prev_owner_result = await session.execute(prev_owner_stmt)
-    prev_owner_member = prev_owner_result.scalars().first()
-    if prev_owner_member is None:
-        # Normal case: the previous owner never had a membership row
-        # (Owner tracked solely via ``owner_id``). Insert a fresh active
-        # Admin row matching how the rest of the code seeds ProjectMember
-        # rows (joined_at set, removed_at NULL, role=Admin). The new owner
-        # (who just transferred ownership to the previous owner's
-        # successor) is recorded as the inviter for audit lineage.
-        session.add(
-            ProjectMember(
-                project_id=project_id,
-                user_id=previous_owner_id,
-                role=ProjectMemberRole.ADMIN,
-                joined_at=now_eff,
-                removed_at=None,
-                invited_by_id=new_owner_user_id,
-            )
-        )
-    else:
-        # An existing row was found. Reactivate it if it was soft-removed
-        # and upgrade the role to Admin so the former owner retains a
-        # privileged role (matching the transfer UI's "You will become an
-        # Admin" promise).
-        if prev_owner_member.removed_at is not None:
-            prev_owner_member.removed_at = None
-            prev_owner_member.joined_at = now_eff
-        prev_owner_member.role = ProjectMemberRole.ADMIN
 
     await session.flush()
 
@@ -655,6 +632,117 @@ async def transfer_ownership(
         ip=ip,
         user_agent=user_agent,
     )
+
+
+async def _ensure_previous_owner_admin_member(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    previous_owner_id: UUID,
+    new_owner_user_id: UUID,
+    now_eff: datetime,
+) -> None:
+    """Race-safely guarantee the previous owner has ONE active Admin row.
+
+    End state: exactly one active ``project_members`` row for
+    ``(project_id, previous_owner_id)`` at ``role=ADMIN`` with
+    ``removed_at IS NULL`` — never two, and never a unique-index
+    violation under concurrency.
+
+    Strategy (matches the SAVEPOINT-nested ProjectMember upsert in
+    :mod:`echoroo.services.invitation_service`, FR-011-123, and the bulk
+    member SAVEPOINT loop): first try to UPGRADE any existing row found
+    for the pair (the common reactivation / role-bump path); when NO row
+    exists, attempt the INSERT inside a ``begin_nested()`` SAVEPOINT. If a
+    concurrent transaction inserted an active row in the window between
+    our lookup and our INSERT, the partial unique index
+    ``ux_project_members_active`` raises :class:`IntegrityError`; we roll
+    the SAVEPOINT back, re-query the now-existing active row, and UPGRADE
+    it in place to ``role=ADMIN``. The whole sequence stays inside the
+    caller's transaction so it remains atomic with the ``owner_id``
+    mutation, the audit chain, and idempotency replay.
+    """
+    # Look up ANY existing row for (project, previous_owner) — including a
+    # soft-removed one — so we reactivate/upgrade rather than INSERT a
+    # second active row that would violate ``ux_project_members_active``.
+    # The ordering surfaces an active row (removed_at IS NULL) first so a
+    # stale soft-removed row never shadows a live one.
+    prev_owner_stmt = (
+        sa.select(ProjectMember)
+        .options(
+            lazyload(ProjectMember.user),
+            lazyload(ProjectMember.project),
+            lazyload(ProjectMember.invited_by),
+        )
+        .where(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == previous_owner_id,
+        )
+        .order_by(ProjectMember.removed_at.is_(None).desc())
+        .with_for_update()
+    )
+    prev_owner_member = (
+        await session.execute(prev_owner_stmt)
+    ).scalars().first()
+
+    if prev_owner_member is not None:
+        # An existing row was found and is locked FOR UPDATE. Reactivate
+        # it if it was soft-removed and upgrade the role to Admin so the
+        # former owner retains a privileged role (matching the transfer
+        # UI's "You will become an Admin" promise).
+        _upgrade_member_to_active_admin(prev_owner_member, now_eff=now_eff)
+        return
+
+    # Normal case: no row was found. Because a ``FOR UPDATE`` that returns
+    # zero rows locks NOTHING, a concurrent transaction can still INSERT
+    # an active row for the same pair before us; insert inside a SAVEPOINT
+    # so a unique-index collision is recoverable rather than fatal.
+    try:
+        async with session.begin_nested():
+            session.add(
+                ProjectMember(
+                    project_id=project_id,
+                    user_id=previous_owner_id,
+                    role=ProjectMemberRole.ADMIN,
+                    joined_at=now_eff,
+                    removed_at=None,
+                    # The new owner (who just received ownership) is
+                    # recorded as the inviter for audit lineage.
+                    invited_by_id=new_owner_user_id,
+                )
+            )
+            # Force the INSERT to hit the DB inside the SAVEPOINT so the
+            # ``ux_project_members_active`` violation surfaces HERE (and is
+            # rolled back to the savepoint) rather than poisoning the
+            # outer transaction at the caller's ``flush()``.
+            await session.flush()
+        return
+    except IntegrityError:
+        # A concurrent transaction won the INSERT race for the active row.
+        # The SAVEPOINT was rolled back, so the outer transaction is still
+        # usable. Re-query the now-existing row (FOR UPDATE locks it this
+        # time — it exists) and upgrade it in place to ADMIN.
+        racing_member = (
+            await session.execute(prev_owner_stmt)
+        ).scalars().first()
+        if racing_member is None:  # pragma: no cover - defensive
+            # Should be unreachable: the IntegrityError proves a row now
+            # exists for the pair. Re-raise so the caller rolls back
+            # rather than silently leaving the previous owner roleless.
+            raise
+        _upgrade_member_to_active_admin(racing_member, now_eff=now_eff)
+
+
+def _upgrade_member_to_active_admin(
+    member: ProjectMember,
+    *,
+    now_eff: datetime,
+) -> None:
+    """Reactivate (if soft-removed) and upgrade ``member`` to active Admin."""
+    if member.removed_at is not None:
+        member.removed_at = None
+        member.joined_at = now_eff
+    member.role = ProjectMemberRole.ADMIN
 
 
 # ---------------------------------------------------------------------------

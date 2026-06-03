@@ -51,7 +51,7 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -360,6 +360,112 @@ async def test_transfer_reconciles_membership_rows(db_session: AsyncSession) -> 
             )
             assert new_owner_role == "owner"
             assert prev_owner_role == "admin"
+    finally:
+        ownership_mod.AsyncSessionLocal = original_asl  # type: ignore[assignment]
+        await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_transfer_prev_owner_grant_is_race_safe_when_member_preexists(
+    db_session: AsyncSession,
+) -> None:
+    """preview-fixes ws4 H1: previous-owner Admin grant is race-safe.
+
+    Regression for the race-unsafe ``SELECT ... FOR UPDATE`` + plain
+    ``INSERT`` that used to seed the previous owner's Admin row. A
+    ``FOR UPDATE`` that returns NO rows locks nothing, so a concurrent
+    transaction (e.g. an invitation-accept granting the previous owner an
+    active membership) could INSERT an active ``(project_id, user_id)``
+    row in the window before our INSERT → ``ux_project_members_active``
+    partial-unique violation → 500 / rollback.
+
+    This test simulates the post-race / pre-existing-membership state: the
+    previous owner ALREADY has an ACTIVE (non-removed) ``project_members``
+    row at transfer time. The transfer must UPGRADE that row to Admin
+    in-place WITHOUT raising ``IntegrityError`` and WITHOUT creating a
+    second active row. (The insert-when-absent path is covered by
+    ``test_transfer_reconciles_membership_rows`` above.)
+    """
+    import echoroo.services.ownership_service as ownership_mod
+
+    owner = await _create_user(db_session, email="t703_h1_owner@example.com")
+    admin = await _create_user(db_session, email="t703_h1_admin@example.com")
+    project = await _create_project(db_session, owner=owner)
+    # The future-new-owner Admin (the transfer target).
+    await _add_admin(db_session, project=project, user=admin)
+    # The previous owner ALREADY holds an ACTIVE membership row at transfer
+    # time — as if a concurrent invitation-accept granted it just before
+    # the transfer's previous-owner grant fired. Seed it as a plain MEMBER
+    # so the test also proves the role is upgraded to ADMIN.
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=owner.id,
+            role=ProjectMemberRole.MEMBER,
+            invited_by_id=admin.id,
+        )
+    )
+    await db_session.commit()
+
+    key = f"t703-h1-{uuid4()}"
+
+    test_engine = create_async_engine(TEST_DATABASE_URL, echo=False, poolclass=NullPool)
+    test_factory = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    @asynccontextmanager  # type: ignore[arg-type]
+    async def _test_session_local() -> Any:
+        async with test_factory() as s:
+            yield s
+
+    original_asl = ownership_mod.AsyncSessionLocal
+    ownership_mod.AsyncSessionLocal = _test_session_local  # type: ignore[assignment]
+
+    try:
+        async with test_factory() as session:
+            try:
+                outcome = await transfer_ownership(
+                    session,
+                    project_id=project.id,
+                    new_owner_user_id=admin.id,
+                    requester_id=owner.id,
+                    idempotency_key=key,
+                )
+                await session.commit()
+            except IntegrityError as exc:  # pragma: no cover - regression guard
+                pytest.fail(
+                    "previous-owner Admin grant must be race-safe against "
+                    "ux_project_members_active (pre-existing active member "
+                    f"row), but raised IntegrityError: {exc}"
+                )
+        assert not outcome.replayed
+
+        async with test_factory() as verify_session:
+            # owner_id moved to the new owner.
+            project_row = (
+                await verify_session.execute(
+                    sa.select(Project).where(Project.id == project.id)
+                )
+            ).scalar_one()
+            assert project_row.owner_id == admin.id
+
+            # The previous owner has EXACTLY ONE active membership row, and
+            # it was upgraded in-place to ADMIN (no duplicate insert).
+            active_prev_rows = (
+                await verify_session.execute(
+                    sa.select(ProjectMember).where(
+                        ProjectMember.project_id == project.id,
+                        ProjectMember.user_id == owner.id,
+                        ProjectMember.removed_at.is_(None),
+                    )
+                )
+            ).scalars().all()
+            assert len(active_prev_rows) == 1, (
+                "previous owner must have EXACTLY ONE active member row "
+                f"after the race-safe grant, got {len(active_prev_rows)}"
+            )
+            assert active_prev_rows[0].role == ProjectMemberRole.ADMIN
     finally:
         ownership_mod.AsyncSessionLocal = original_asl  # type: ignore[assignment]
         await test_engine.dispose()

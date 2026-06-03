@@ -504,42 +504,12 @@ paths:
           description: Access denied
         '404':
           description: Project not found
-
-    post:
-      tags: [projects]
-      summary: Add project member
-      description: Invite user to project (admin only)
-      operationId: addProjectMember
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ProjectMemberAddRequest'
-      responses:
-        '201':
-          description: Member added or invitation sent
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ProjectMemberResponse'
-        '400':
-          description: User already member
-        '401':
-          description: Not authenticated
-        '403':
-          description: Not project admin
-        '404':
-          description: Project not found
+    # NOTE: the direct member-add route (``POST
+    # /projects/{projectId}/members``, formerly operationId
+    # ``addProjectMember``) and its ``ProjectMemberAddRequest`` schema have
+    # been REMOVED. Adding a user to a project now goes exclusively through
+    # the invitation flow (see ``projects.yaml`` / the invitations
+    # endpoints). Only the ``get`` (list members) operation remains here.
 
   /projects/{projectId}/members/{userId}:
     patch:
@@ -920,17 +890,9 @@ components:
           type: string
           enum: [private, public]
 
-    ProjectMemberAddRequest:
-      type: object
-      required: [email, role]
-      properties:
-        email:
-          type: string
-          format: email
-        role:
-          type: string
-          enum: [admin, member, viewer]
-          default: member
+    # NOTE: ``ProjectMemberAddRequest`` was removed alongside the
+    # ``POST /projects/{projectId}/members`` direct-add operation. Members
+    # are now added exclusively through the invitation flow.
 
     ProjectMemberUpdateRequest:
       type: object
