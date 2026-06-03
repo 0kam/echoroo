@@ -193,7 +193,7 @@ test.describe('No email-verification UI — logged-in screens', () => {
     // The email field is read-only on the profile page — it is NOT a
     // "verify your email" prompt. Confirm the hint text is the "cannot change"
     // message, not a verification prompt.
-    const emailHint = page.locator('p').filter({ hasText: /cannot change|change.*email/i });
+    const _emailHint = page.locator('p').filter({ hasText: /cannot change|change.*email/i });
     // (hint may or may not be present depending on locale; it should NOT say "verify")
 
     await assertNoEmailVerificationUI(page, 'profile page (logged-in)');

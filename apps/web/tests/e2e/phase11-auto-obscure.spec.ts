@@ -292,7 +292,7 @@ test.describe('Phase 11 US6 — Taxon-driven auto-obscure CSV export (T652)', ()
     // We check that the DOM does NOT contain a field labelled "latitude"
     // or "longitude" (case-insensitive).
     const pageText = await page.textContent('body') ?? '';
-    const lowerText = pageText.toLowerCase();
+    const _lowerText = pageText.toLowerCase();
 
     // These specific label strings should not appear as data labels in the UI.
     // A false positive could occur if the word appears in a heading or help text;

@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "messages": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
     "test": "vitest",
     "test:e2e": "playwright test"
   },

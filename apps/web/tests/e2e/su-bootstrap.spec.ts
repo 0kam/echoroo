@@ -114,7 +114,7 @@ interface ActivityPageResponse {
  *
  * Returns all items from the first page (limit=100).
  */
-async function fetchActivityFromBrowser(page: Page): Promise<ActivityItem[]> {
+async function _fetchActivityFromBrowser(page: Page): Promise<ActivityItem[]> {
   const headers = await refreshAndBuildHeaders(page, 'fetchActivityFromBrowser');
   const result = await page.evaluate(
     async (hdrs: Record<string, string>): Promise<ActivityPageResponse> => {
@@ -235,7 +235,7 @@ async function fetchMeFromBrowser(page: Page): Promise<MeResponse> {
 // Helper: fetch first available license id from the authenticated licenses API
 // ---------------------------------------------------------------------------
 
-async function fetchFirstLicenseId(page: Page): Promise<string> {
+async function _fetchFirstLicenseId(page: Page): Promise<string> {
   // Note: uses inline boilerplate (not refreshAndBuildHeaders) intentionally —
   // this is called while the project-creation form is mounted on suPage, and
   // the extra refresh POST is avoided to prevent potential SvelteKit page-reload
