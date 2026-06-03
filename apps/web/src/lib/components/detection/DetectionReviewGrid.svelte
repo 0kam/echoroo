@@ -201,6 +201,7 @@
       vote: VoteValue;
       signalQuality?: SignalQuality;
     }) => castVote(projectId, detectionId, vote, signalQuality),
+    // eslint-disable-next-line svelte/valid-compile
     meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
@@ -219,6 +220,7 @@
   const removeVoteMutation = createMutation({
     mutationFn: ({ detectionId }: { detectionId: string }) =>
       deleteVote(projectId, detectionId),
+    // eslint-disable-next-line svelte/valid-compile
     meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;
@@ -236,6 +238,7 @@
   const changeSpeciesMutation = createMutation({
     mutationFn: ({ detectionId, newTagId }: { detectionId: string; newTagId: string }) =>
       changeDetectionSpecies(projectId, detectionId, { new_tag_id: newTagId }),
+    // eslint-disable-next-line svelte/valid-compile
     meta: { projectId },
     onMutate: ({ detectionId }) => {
       mutatingId = detectionId;

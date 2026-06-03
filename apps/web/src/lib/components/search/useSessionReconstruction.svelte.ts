@@ -65,8 +65,8 @@ export function useSessionReconstruction(
   // Internal models-loading flags — not exposed on the API surface because
   // the pre-refactor component kept them private (underscore-prefixed). If
   // a caller needs them later, add them to SessionReconstructionHookApi.
-  let isLoadingModels = $state(false);
-  let modelsLoadError = $state<string | null>(null);
+  let _isLoadingModels = $state(false);
+  let _modelsLoadError = $state<string | null>(null);
 
   // Set true by `dispose()`. `isStale()` treats a disposed hook as stale so
   // late async continuations can never write back into the closed-over
@@ -198,8 +198,8 @@ export function useSessionReconstruction(
     const capturedPid = pid;
     const capturedSid = sid;
 
-    isLoadingModels = true;
-    modelsLoadError = null;
+    _isLoadingModels = true;
+    _modelsLoadError = null;
     // Clear prior models eagerly so a navigation to a session with zero
     // linked models does not briefly show the previous session's list
     // (plan.md §4.2 Codex v2 Med-2).
@@ -211,10 +211,10 @@ export function useSessionReconstruction(
       sessionModels = res.models;
     } catch (e) {
       if (isStale(capturedPid, capturedSid)) return;
-      modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
+      _modelsLoadError = e instanceof Error ? e.message : 'Failed to load models';
     } finally {
       if (!isStale(capturedPid, capturedSid)) {
-        isLoadingModels = false;
+        _isLoadingModels = false;
       }
     }
   }

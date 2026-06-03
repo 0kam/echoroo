@@ -49,6 +49,75 @@ on:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Frontend type-check and lint gate.
+  #
+  # Runs `svelte-check` (zero TypeScript / Svelte type errors) and `eslint`
+  # (zero errors — warnings are allowed) on every push/PR. These are
+  # intentionally self-contained: no backend services are required.
+  #
+  # Both steps are hard gates (no `continue-on-error`). The lint gate was
+  # made blocking because the pre-existing 8 lint errors were small and were
+  # fixed in the same PR that introduced this gate (all in the same error
+  # category: unused variables / reactive-state reference in non-reactive
+  # context). The ~4876 remaining warning-level issues (paraglide generated
+  # files, no-explicit-any in e2e specs) do not block CI.
+  # ---------------------------------------------------------------------------
+  frontend-check:
+    name: Frontend type-check + lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Type-check (svelte-check)
+        working-directory: apps/web
+        run: npm run check
+
+      - name: Lint (eslint — zero errors required)
+        working-directory: apps/web
+        run: npm run lint
+
+  # ---------------------------------------------------------------------------
+  # Frontend unit tests gate.
+  #
+  # Runs the full vitest suite (~1302 unit tests across 12 test files) on
+  # every push/PR. Self-contained — no backend/services required.
+  # Hard gate (no `continue-on-error`).
+  # ---------------------------------------------------------------------------
+  frontend-tests:
+    name: Frontend unit tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Run unit tests (vitest)
+        working-directory: apps/web
+        run: npm run test -- --run
+
+  # ---------------------------------------------------------------------------
   # T100a-T100d: permission / response / search / raw-coordinate / KMS
   # isolation lints in warn mode. Each lint exits 0 unless its strict flag is
   # set, so step-level continue-on-error is belt-and-suspenders.

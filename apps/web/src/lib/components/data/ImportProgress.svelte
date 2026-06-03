@@ -41,6 +41,7 @@
 
   const startImportMutation = createMutation({
     mutationFn: () => startImport(projectId, datasetId),
+    // eslint-disable-next-line svelte/valid-compile
     meta: { projectId },
     onSuccess: () => {
       mutationError = null;
@@ -54,6 +55,7 @@
 
   const rescanMutation = createMutation({
     mutationFn: () => rescanDataset(projectId, datasetId),
+    // eslint-disable-next-line svelte/valid-compile
     meta: { projectId },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });

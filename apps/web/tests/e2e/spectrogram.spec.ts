@@ -522,7 +522,7 @@ test.describe('SpectrogramViewer smoke tests', () => {
     await expect(canvas).toBeVisible({ timeout: 10000 });
     const box = await canvas.boundingBox();
     expect(box).not.toBeNull();
-    const cy = box!.y + box!.height / 2;
+    const _cy = box!.y + box!.height / 2;
 
     // Enter zooming mode via keyboard.
     await sharedPage.evaluate(() => {
