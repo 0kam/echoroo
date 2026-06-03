@@ -1,0 +1,282 @@
+# Allowlist for scripts/lint_hardcoded_paraglide_strings.py (WS7 Phase 2).
+#
+# Detection: the linter region-strips each .svelte file (blanking <script> /
+# <style> blocks and <!-- --> comments length-preservingly) and then scans the
+# WHOLE source. It detects MULTI-LINE markup text nodes (text Prettier wraps
+# onto its own line), text ADJACENT to a {interpolation}, and localizable
+# attributes in single- OR double-quoted AND expression form
+# (title={cond ? 'A' : 'B'}). Out of scope: .ts / .svelte.ts strings.
+#
+# FAIL-CLOSED BASELINE. CONTENT-level fingerprint format. Each non-comment line
+# is one fingerprint of the form:
+#
+#     <file>:<normalized-text>:hardcoded-ui-string  # justification
+#
+# The fingerprint is keyed by (file, normalized-text) and OMITS the line
+# number on purpose. For this lint the meaningful identity of a hardcoded
+# string is its free-form CONTENT, not its position in the file. Keying on
+# content means MOVING a line (or editing unrelated lines above it) does NOT
+# re-surface an already-accepted entry — which matters because this baseline is
+# large and clusters many entries per file, so a line-pinned key would fail CI
+# on strings the developer never touched. Conversely, ANY new or changed string
+# CONTENT produces a different fingerprint and still fails the gate.
+#
+# Accepted trade-off: a brand-new DUPLICATE of an already-allowlisted string in
+# the SAME file is not re-flagged (it collapses to the existing entry). That is
+# acceptable — the identical string is already an accepted hardcode in that
+# file. (Contrast the license lint, whose token is a tiny enum where a per-line
+# discriminator is both cheap and meaningful.)
+#
+# This file is a GENERATED snapshot of the untranslated strings that existed
+# when the gate was introduced. Regenerate with:
+#
+#     python scripts/lint_hardcoded_paraglide_strings.py --write-allowlist
+#
+# DO NOT add NEW entries by hand to silence a freshly-introduced label. A new
+# genuinely user-facing English string must be TRANSLATED via a Paraglide
+# `m.*()` call (and a key added to apps/web/messages/{en,ja}.json) — NOT
+# allowlisted. The baseline below only exists to make the gate green on the
+# pre-existing tree; it should shrink over time, never grow.
+#
+# Inline comments use TWO SPACES + ``#``. Lines beginning with ``#`` are
+# full-line comments. See scripts/allowlists/README.md.
+
+
+apps/web/src/lib/components/annotation-sets/SegmentNavigator.svelte:Segment navigator:hardcoded-ui-string
+apps/web/src/lib/components/annotation/AnnotationCanvas.svelte:Annotation canvas:hardcoded-ui-string
+apps/web/src/lib/components/annotation/AnnotationCanvas.svelte:Annotation:hardcoded-ui-string
+apps/web/src/lib/components/annotation/AnnotationList.svelte:Sound event annotations:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add Note:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add a note... (Ctrl+Enter to submit):hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add note:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Annotator:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Applied clip tags:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Clip notes:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:No notes yet.:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:No tags configured for this project.:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Note content:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Remove tag:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Remove:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:User ID::hardcoded-ui-string
+apps/web/src/lib/components/annotation/ReviewPanel.svelte:Review comment:hardcoded-ui-string
+apps/web/src/lib/components/annotation/ReviewPanel.svelte:Review status::hardcoded-ui-string
+apps/web/src/lib/components/annotation/ReviewPanel.svelte:Reviewer ID::hardcoded-ui-string
+apps/web/src/lib/components/annotation/TagSelector.svelte:Remove:hardcoded-ui-string
+apps/web/src/lib/components/annotation/TagSelector.svelte:Tag suggestions:hardcoded-ui-string
+apps/web/src/lib/components/annotation/TaskNavigator.svelte:Task navigation:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Audio Filters:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Filter order:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Frequency Range:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Highpass (low cut) Hz:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Highpass frequency must be less than lowpass frequency.:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Lowpass (high cut) Hz:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Resample audio:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Target sample rate (Hz):hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Disable loop:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Enable loop:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Loop:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Pause:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Play:hardcoded-ui-string
+apps/web/src/lib/components/audio/AudioPlayer.svelte:Volume:hardcoded-ui-string
+apps/web/src/lib/components/audio/PlaybackSpeedControl.svelte:Speed:hardcoded-ui-string
+apps/web/src/lib/components/audio/ScaleControls.svelte:Freq scale:hardcoded-ui-string
+apps/web/src/lib/components/audio/ScaleControls.svelte:Time scale:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramCanvas.svelte:Spectrogram visualization:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Amplitude:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Clamp:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Color:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:De-noise:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Display:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Height (px):hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Max dB:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Min dB:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Normalize:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Overlap:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:PCEN normalization:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:STFT Parameters:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Spectrogram Settings:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Window function:hardcoded-ui-string
+apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Window size (s):hardcoded-ui-string
+apps/web/src/lib/components/audio/ViewportBar.svelte:Viewport position:hardcoded-ui-string
+apps/web/src/lib/components/audio/ViewportToolbar.svelte:Pan mode (X):hardcoded-ui-string
+apps/web/src/lib/components/audio/ViewportToolbar.svelte:Previous view (B):hardcoded-ui-string
+apps/web/src/lib/components/audio/ViewportToolbar.svelte:Reset to full view:hardcoded-ui-string
+apps/web/src/lib/components/audio/ViewportToolbar.svelte:Zoom to selection (Z):hardcoded-ui-string
+apps/web/src/lib/components/common/MiniSpectrogram.svelte:Spectrogram to:hardcoded-ui-string
+apps/web/src/lib/components/common/ReviewCard.svelte:Review card::hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Auto-Generate Clips:hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Clip Length (seconds):hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:End Time (leave blank for end):hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Estimated clips::hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Generate Clips:hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Generating...:hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Overlap (seconds):hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Start Time (seconds):hardcoded-ui-string
+apps/web/src/lib/components/data/AutoClipGenerator.svelte:Successfully created clip:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Add a note about this clip...:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Clip spectrogram:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Download:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Failed to save note::hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Pause:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Play:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipDetail.svelte:Time range::hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Actions:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Clip preview loading:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Clip preview:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Delete Clip:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Delete clip:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Duration:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Edit clip:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Error::hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Next:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Note:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Page of:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Preview:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Previous:hardcoded-ui-string
+apps/web/src/lib/components/data/ClipList.svelte:Time Range:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Date Range:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Error::hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:File Formats:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Hz:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Loading statistics...:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Recordings by Date:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Recordings by Hour of Day:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Recordings:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Sample Rates:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Showing first 30 days:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Statistics:hardcoded-ui-string
+apps/web/src/lib/components/data/DatasetStatistics.svelte:Total Duration:hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimeConfigModal.svelte:Close:hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimeConfigModal.svelte:Format::hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimeConfigModal.svelte:Pattern::hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimePreviewTable.svelte:Failed:hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimePreviewTable.svelte:Success:hardcoded-ui-string
+apps/web/src/lib/components/data/DatetimePreviewTable.svelte:Times shown in:hardcoded-ui-string
+apps/web/src/lib/components/data/DownloadButton.svelte:Downloading...:hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Failed to load embedding status::hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Finished:hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Loading...:hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Processing recordings:hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Queued, waiting to start:hardcoded-ui-string
+apps/web/src/lib/components/data/EmbeddingStatus.svelte:Recent Runs:hardcoded-ui-string
+apps/web/src/lib/components/data/ExportDialog.svelte:Close:hardcoded-ui-string
+apps/web/src/lib/components/data/ExportDialog.svelte:Export:hardcoded-ui-string
+apps/web/src/lib/components/data/FileDropZone.svelte:Drop audio files here or click to browse:hardcoded-ui-string
+apps/web/src/lib/components/data/FilenameCharGrid.svelte:Remove assignment:hardcoded-ui-string
+apps/web/src/lib/components/data/ImportProgress.svelte:Import Error:hardcoded-ui-string
+apps/web/src/lib/components/data/ImportProgress.svelte:Import Status:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Failed to load detection status::hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Finished:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Loading...:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Processing recordings:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Queued, waiting to start:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Recent Runs:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:Run ML analysis to automatically detect species in the recordings.:hardcoded-ui-string
+apps/web/src/lib/components/data/MLAnalysisStatus.svelte:View Detections:hardcoded-ui-string
+apps/web/src/lib/components/data/NoteEditor.svelte:Cancel:hardcoded-ui-string
+apps/web/src/lib/components/data/NoteEditor.svelte:Click to edit:hardcoded-ui-string
+apps/web/src/lib/components/data/NoteEditor.svelte:Save:hardcoded-ui-string
+apps/web/src/lib/components/data/SelectedFileList.svelte:Clear all:hardcoded-ui-string
+apps/web/src/lib/components/data/SelectedFileList.svelte:Remove:hardcoded-ui-string
+apps/web/src/lib/components/data/SelectedFileList.svelte:Upload File:hardcoded-ui-string
+apps/web/src/lib/components/data/UploadProgressPanel.svelte:Uploading file &mdash; up to at a time:hardcoded-ui-string
+apps/web/src/lib/components/data/UploadProgressPanel.svelte:Uploading files:hardcoded-ui-string
+apps/web/src/lib/components/data/VisibilitySelector.svelte:Visibility:hardcoded-ui-string
+apps/web/src/lib/components/map/H3MapPicker.svelte:Resolution::hardcoded-ui-string
+apps/web/src/lib/components/map/H3MapPicker.svelte:Selected H3::hardcoded-ui-string
+apps/web/src/lib/components/models/ALRoundView.svelte:Score distribution:hardcoded-ui-string
+apps/web/src/lib/components/models/ReviewTab.svelte:Seed sampling in progress...:hardcoded-ui-string
+apps/web/src/lib/components/models/ScoreHistogram.svelte:Score distribution:hardcoded-ui-string
+apps/web/src/lib/components/search/AddSourcePanel.svelte:Decoding audio...:hardcoded-ui-string
+apps/web/src/lib/components/search/SearchConfigBar.svelte:Perch v2.0:hardcoded-ui-string
+apps/web/src/lib/components/search/SearchSessionList.svelte:New Search:hardcoded-ui-string
+apps/web/src/lib/components/search/SearchSessionList.svelte:Start a new search to find similar sounds across your recordings.:hardcoded-ui-string
+apps/web/src/lib/components/search/SearchTimeHeatmap.svelte:Center::hardcoded-ui-string
+apps/web/src/lib/components/search/SearchTimeHeatmap.svelte:Edge::hardcoded-ui-string
+apps/web/src/lib/components/search/SessionActionPanel.svelte:Exporting...:hardcoded-ui-string
+apps/web/src/lib/components/search/SourceCard.svelte:Loading spectrogram...:hardcoded-ui-string
+apps/web/src/lib/components/search/SourceCard.svelte:Remove source:hardcoded-ui-string
+apps/web/src/lib/components/search/SourceInfo.svelte:Hide spectrogram:hardcoded-ui-string
+apps/web/src/lib/components/search/SourceInfo.svelte:Show spectrogram:hardcoded-ui-string
+apps/web/src/lib/components/search/SourcePlayButton.svelte:Pause:hardcoded-ui-string
+apps/web/src/lib/components/search/SourcePlayButton.svelte:Play preview:hardcoded-ui-string
+apps/web/src/lib/components/search/SourcePlayButton.svelte:Playback failed:hardcoded-ui-string
+apps/web/src/lib/components/search/SpeciesCard.svelte:Remove species:hardcoded-ui-string
+apps/web/src/lib/components/search/SpeciesSelector.svelte:Add:hardcoded-ui-string
+apps/web/src/lib/components/search/SpectrogramClipEditor.svelte:End time:hardcoded-ui-string
+apps/web/src/lib/components/search/SpectrogramClipEditor.svelte:Start time:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Pause:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Play preview:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Play:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Playback failed:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Select XC:hardcoded-ui-string
+apps/web/src/lib/components/search/XenoCantoSearchPanel.svelte:Sonogram for XC:hardcoded-ui-string
+apps/web/src/lib/components/ui/DarkModeToggle.svelte:Switch to dark mode:hardcoded-ui-string
+apps/web/src/lib/components/ui/DarkModeToggle.svelte:Switch to light mode:hardcoded-ui-string
+apps/web/src/lib/components/ui/DeleteConfirmDialog.svelte:Cancel:hardcoded-ui-string
+apps/web/src/lib/components/ui/Toast.svelte:Close:hardcoded-ui-string
+apps/web/src/routes/(admin)/admin/licenses/+page.svelte:License description...:hardcoded-ui-string
+apps/web/src/routes/(app)/__test__/spectrogram-readonly/+page.svelte:SpectrogramViewer fixture — readonly=true:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Created:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Current device:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Devices you trusted during two-factor sign-in can skip 2FA until they expire.:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Expires:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Last used:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Loading trusted devices...:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:No trusted devices.:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/+page.svelte:Trusted devices:hardcoded-ui-string
+apps/web/src/routes/(app)/profile/api-tokens/+page.svelte:Close modal:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/+page.svelte:Close dialog:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotation-sets/new/+page.svelte:Wizard progress:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/+page.svelte:Batch actions:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/review/+page.svelte:Clip ID::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/review/+page.svelte:Priority:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/tasks/[taskId]/+page.svelte:Annotation tools:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/tasks/[taskId]/+page.svelte:Drawing tools:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/collaborators/+page.svelte:Close dialog:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/data/+page.svelte:Tabs:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/datasets/+page.svelte:Close:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/datasets/[datasetId]/+page.svelte:Close:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/datasets/[datasetId]/+page.svelte:Error::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Admin::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Are you sure you want to change 's role from:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Are you sure you want to remove from this project? They will lose access to all project data.:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Close dialog:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Member::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Show role descriptions:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Viewer::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Close dialog:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Continue in Search:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Dataset:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Failed to load models. Please refresh the page.:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Go to Search:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Internal Validation:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Loading...:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:No trained models yet:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Origin::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Polling for updates every 3 seconds...:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Source: Search Session:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Audio filter settings:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Ch:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Download original file:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Error::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Recording clips:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Seek:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Spectrogram settings:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Close:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Create New Site:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Delete Site:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Error loading sites::hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Loading sites...:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Manage geographic locations for your recordings:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:New Site:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Project:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Showing of sites:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Sites | Project:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/+page.svelte:Sites:hardcoded-ui-string
+apps/web/src/routes/(app)/projects/[id]/sites/[siteId]/+page.svelte:Error::hardcoded-ui-string
+apps/web/src/routes/(auth)/2fa-setup/+page.svelte:Trust this device for 30 days:hardcoded-ui-string
+apps/web/src/routes/(auth)/login/+page.svelte:Trust this device for 30 days:hardcoded-ui-string
+apps/web/src/routes/+layout.svelte:Dismiss error:hardcoded-ui-string
+apps/web/src/routes/+page.svelte:Bioacoustic Analysis Platform:hardcoded-ui-string
+apps/web/src/routes/+page.svelte:Welcome to Echoroo:hardcoded-ui-string
