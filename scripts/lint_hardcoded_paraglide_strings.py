@@ -9,25 +9,53 @@ function so the URL-routed locale (``/en/*`` / ``/ja/*``) renders the
 translated catalogue value. A reintroduced literal silently desynchronises the
 non-English locale from the English UI.
 
-Detection strategy (per line, ``apps/web/src/**/*.svelte`` only):
+Detection strategy (whole-source region-stripping, ``apps/web/src/**/*.svelte``
+only). The scanner operates on the ENTIRE file source — NOT line by line — after
+blanking out the regions that must never be scanned. This is what lets it find
+text that Prettier wraps onto its own line and static text adjacent to
+interpolation, both of which a per-line scanner silently missed.
 
-    * (A) Markup text nodes: text captured by ``>([^<>{}]+)<`` (text between a
-      closing ``>`` and the next opening ``<`` on the same line). The capture
-      excludes nested tags and svelte expressions (``{...}``) by construction.
-    * (B) Localizable attribute values: ONLY ``aria-label`` / ``placeholder``
-      / ``title`` / ``alt``, captured by a quote-delimited regex whose body
-      excludes ``{`` and ``}`` so already-dynamic interpolated values
-      (``aria-label="{m.foo()} {x}"``) are not flagged. A negative lookbehind
-      anchors the attribute name so prefixed look-alikes (``data-title=`` /
-      ``subtitle=`` / ``data-alt=``) are NOT matched.
+Step 1 — Region stripping (offset/line-number preserving). The whole source is
+first cleaned by replacing each ``<script ...>...</script>`` block, each
+``<style ...>...</style>`` block, and each ``<!-- ... -->`` comment with
+same-length whitespace (newlines preserved). Because the replacement keeps the
+exact character/newline count, every offset and line number in the cleaned
+string still maps to the original source. This single step:
 
-A line-based block state machine skips ``<script ...>...</script>`` and
-``<style ...>...</style>`` regions entirely (both markup-text AND attribute
-detection). This eliminates systematic false positives from TypeScript
-generics inside ``<script>`` (``() => Promise<void>`` would otherwise match
-``>Promise<``; likewise ``Array<Item>`` / ``Map<K,V>`` / ``Record<...>`` /
-``Ref<T>`` / ``Set<...>``) and from CSS rules inside ``<style>``. The opening
-``<script``/``<style`` line is skipped wholesale, as is the closing line.
+    * eliminates TypeScript-generics false positives inside ``<script>``
+      (``() => Promise<void>`` would otherwise match ``>Promise<``; likewise
+      ``Array<Item>`` / ``Map<K,V>`` / ``Record<...>`` / ``Ref<T>``), and CSS
+      rules inside ``<style>``; AND
+    * fixes comment poisoning: a ``<!-- mention <script> -->`` no longer makes
+      the old line state machine skip the rest of the file to EOF; markup that
+      FOLLOWS a comment is still scanned; AND
+    * ignores commented-out markup entirely.
+
+Step 2 — Markup text nodes (whole cleaned source). Text captured by
+``>([^<>]+)<`` (between a closing ``>`` and the next opening ``<``), now
+allowing ``{`` / ``}`` inside the run so static text ADJACENT to an
+interpolation is captured (``>Estimated clips: {n}<`` → ``Estimated clips:``)
+and so a run spanning multiple lines (``<button>\n  Add Note\n</button>``) is
+detected. Svelte ``{...}`` interpolations (one level of nesting) are then
+length-preservingly blanked so only the STATIC remainder is post-filtered; a
+pure-interpolation node collapses to empty and is skipped. ``<kbd>...</kbd>``
+content (keyboard keys) is excluded by inspecting the opening tag.
+
+Step 3 — Localizable attribute values (whole cleaned source). ONLY
+``aria-label`` / ``placeholder`` / ``title`` / ``alt`` are in scope. Both
+quote styles are matched (``title="..."`` AND ``placeholder='...'``), AND
+expression attributes (``title={cond ? 'A' : 'B'}``) are scanned for their
+string literals. A negative lookbehind anchors the attribute name so prefixed
+look-alikes (``data-title=`` / ``subtitle=`` / ``data-alt=``) are NOT matched.
+
+Known limitations (accepted; future follow-ups):
+
+    * ``.ts`` / ``.svelte.ts`` strings are out of scope — only ``.svelte``
+      templates are scanned.
+    * A same-file DUPLICATE of an already-allowlisted string is not re-flagged
+      (the fingerprint is content-keyed; see below).
+    * Allowlist GROWTH is not yet CI-enforced; a ``--no-grow`` /
+      base-branch-diff guard is a future follow-up.
 
 Each candidate is post-filtered to keep the false-positive rate low; a
 candidate is only a violation when, after collapsing whitespace, it:
@@ -88,35 +116,55 @@ import re
 import sys
 from pathlib import Path
 
-# (A) Markup text node between a closing ``>`` and the next opening ``<`` on the
-# same line. The character class excludes nested tags (``<>``) and svelte
-# expressions (``{}``) so pure ``{...}`` interpolation and multi-tag lines never
-# match a localizable run.
-_MARKUP_TEXT_RE = re.compile(r">([^<>{}]+)<")
+# --- Step 1: region-stripping markers ------------------------------------
+# Non-markup regions that must be blanked (length/newline-preserving) BEFORE
+# scanning the whole source. ``re.DOTALL`` lets each block span many lines;
+# ``re.IGNORECASE`` tolerates ``<SCRIPT>`` etc. The closing-tag pattern allows
+# whitespace before ``>`` (``</script >``).
+_SCRIPT_BLOCK_RE = re.compile(
+    r"<script\b[^>]*>.*?</script\s*>", re.DOTALL | re.IGNORECASE
+)
+_STYLE_BLOCK_RE = re.compile(
+    r"<style\b[^>]*>.*?</style\s*>", re.DOTALL | re.IGNORECASE
+)
+_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
-# (B) Localizable attribute values. ONLY these four attributes are in scope;
-# the value body excludes ``{`` / ``}`` so already-interpolated values are
-# skipped intentionally. ``class`` / ``style`` / ``href`` / ``src`` / ``d`` /
-# ``viewBox`` / ``transform`` / ``fill`` / ``stroke`` / ``width`` / ``height``
-# are out of scope by NOT being in this alternation.
+# --- Step 2: markup text node --------------------------------------------
+# Text captured between a closing ``>`` and the next opening ``<``. Unlike the
+# old per-line scanner this allows ``{`` / ``}`` in the run (so static text
+# adjacent to an interpolation is captured) and, by scanning the WHOLE source,
+# matches runs that Prettier wraps across multiple lines.
+_MARKUP_TEXT_RE = re.compile(r">([^<>]+)<")
+
+# A svelte ``{...}`` interpolation (one level of brace nesting). Applied
+# iteratively, length-preservingly blanking it to spaces, so only the STATIC
+# remainder of a text node survives the post-filter. ``<kbd>`` opening-tag
+# detection.
+_INTERP_RE = re.compile(r"\{[^{}]*\}")
+_KBD_OPEN_RE = re.compile(r"<kbd[\s>]", re.IGNORECASE)
+
+# --- Step 3: localizable attribute values --------------------------------
+# ONLY these four attributes are in scope. ``class`` / ``style`` / ``href`` /
+# ``src`` / ``d`` / ``viewBox`` / ``transform`` / ``fill`` / ``stroke`` /
+# ``width`` / ``height`` are out of scope by NOT being in the alternation.
 #
 # The ``(?<![\w-])`` negative lookbehind anchors the attribute name to a left
 # boundary so prefixed look-alikes are NOT matched: ``data-title="..."`` /
 # ``subtitle="..."`` / ``data-alt="..."`` are skipped while ``title="..."`` /
 # ``alt="..."`` are still flagged.
-_ATTR_TEXT_RE = re.compile(
-    r"""(?<![\w-])(?:aria-label|placeholder|title|alt)\s*=\s*"([^"{}]+)\""""
+#
+# ``_ATTR_QUOTED_RE`` matches BOTH quote styles (``"..."`` and ``'...'``) via a
+# back-referenced delimiter; ``_ATTR_EXPR_RE`` matches expression attributes
+# (``title={cond ? 'A' : 'B'}``) whose body is then scanned for string literals
+# by ``_STR_LIT_RE``.
+_ATTR_QUOTED_RE = re.compile(
+    r"""(?<![\w-])(?:aria-label|placeholder|title|alt)\s*=\s*"""
+    r"""(['"])((?:(?!\1).)*)\1"""
 )
-
-# Block-region markers for the per-file <script>/<style> state machine. A line
-# matching the OPEN regex enters the region (and is itself skipped); a line
-# matching the CLOSE regex exits it (and is itself skipped). Single-line
-# ``<script>...</script>`` is rare in .svelte and is acceptably skipped
-# wholesale (the open marker is checked first).
-_SCRIPT_OPEN_RE = re.compile(r"<script\b")
-_SCRIPT_CLOSE_RE = re.compile(r"</script>")
-_STYLE_OPEN_RE = re.compile(r"<style\b")
-_STYLE_CLOSE_RE = re.compile(r"</style>")
+_ATTR_EXPR_RE = re.compile(
+    r"""(?<![\w-])(?:aria-label|placeholder|title|alt)\s*=\s*\{([^{}]*)\}"""
+)
+_STR_LIT_RE = re.compile(r"""(['"])((?:(?!\1).)*)\1""")
 
 # Brand / proper-noun denylist. A single-token candidate that exactly matches
 # one of these (case-sensitive) is skipped. Kept deliberately small and
@@ -174,6 +222,13 @@ _SELF_PATHS: tuple[str, ...] = (
 
 _ALLOWLIST_HEADER = """\
 # Allowlist for scripts/lint_hardcoded_paraglide_strings.py (WS7 Phase 2).
+#
+# Detection: the linter region-strips each .svelte file (blanking <script> /
+# <style> blocks and <!-- --> comments length-preservingly) and then scans the
+# WHOLE source. It detects MULTI-LINE markup text nodes (text Prettier wraps
+# onto its own line), text ADJACENT to a {interpolation}, and localizable
+# attributes in single- OR double-quoted AND expression form
+# (title={cond ? 'A' : 'B'}). Out of scope: .ts / .svelte.ts strings.
 #
 # FAIL-CLOSED BASELINE. CONTENT-level fingerprint format. Each non-comment line
 # is one fingerprint of the form:
@@ -332,83 +387,134 @@ def _is_localizable(normalized: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _blank_match(m: re.Match[str]) -> str:
+    """Replace a matched region with same-length whitespace, keeping newlines.
+
+    Every non-newline character becomes a single space; newlines are preserved.
+    The result therefore has the EXACT character count and line breaks of the
+    original match, so offsets and line numbers in the cleaned string still map
+    back onto the original source.
+    """
+    return re.sub(r"[^\n]", " ", m.group(0))
+
+
+def _strip_non_markup(source: str) -> str:
+    """Blank ``<script>``/``<style>`` blocks and ``<!-- -->`` comments.
+
+    Returns a same-length, same-line-structure copy of ``source`` in which the
+    three non-markup regions are replaced by whitespace. This eliminates
+    TypeScript-generics / CSS false positives AND comment poisoning (markup
+    after a comment is still scanned) in one pass, while preserving offsets so
+    line numbers reported against the cleaned string match the original file.
+    """
+    cleaned = _SCRIPT_BLOCK_RE.sub(_blank_match, source)
+    cleaned = _STYLE_BLOCK_RE.sub(_blank_match, cleaned)
+    cleaned = _COMMENT_RE.sub(_blank_match, cleaned)
+    return cleaned
+
+
+def _blank_interpolations(content: str) -> str:
+    """Length-preservingly blank ``{...}`` runs (one level of nesting) to spaces.
+
+    Iterates so a leftover ``{`` after an inner blank still gets consumed;
+    finally replaces any stray ``{`` / ``}`` with a space. The static remainder
+    is what the post-filter judges, so a pure-interpolation node collapses to
+    whitespace and is skipped.
+    """
+    while _INTERP_RE.search(content):
+        content = _INTERP_RE.sub(lambda mm: " " * len(mm.group(0)), content)
+    return content.replace("{", " ").replace("}", " ")
+
+
+def _record(
+    rel_str: str,
+    normalized: str,
+    line_no: int,
+    where: str,
+    allowlist: frozenset[str],
+    violations: list[tuple[str, str]],
+) -> None:
+    """Append a ``(message, fingerprint)`` violation unless allowlisted.
+
+    ``where`` is ``"markup"`` or ``"attribute"`` for the human-readable
+    message. The fingerprint is content-keyed (no line number); the MESSAGE
+    still carries the line number so a developer can locate the occurrence.
+    """
+    fp = _violation_fingerprint(rel_str, normalized)
+    if fp in allowlist:
+        return
+    message = (
+        f"{rel_str}:{line_no}  hardcoded UI string "
+        f"'{normalized}' in {where} (use a Paraglide m.*() call)  "
+        f"[fingerprint: {fp}]"
+    )
+    violations.append((message, fp))
+
+
 def _scan_text(
     rel_str: str, source: str, allowlist: frozenset[str]
 ) -> list[tuple[str, str]]:
     """Return ``(message, fingerprint)`` pairs for one Svelte source file.
 
-    Each markup text node (A) and each localizable attribute value (B) that
+    The whole source is first region-stripped (``<script>`` / ``<style>`` /
+    ``<!-- -->`` blanked length-preservingly), then scanned as a single string
+    for markup text nodes (multi-line + interpolation-adjacent) and localizable
+    attribute values (single/double-quoted + expression). Each candidate that
     survives the post-filter and is not allowlisted produces one violation.
-
-    Lines inside a ``<script ...>...</script>`` or ``<style ...>...</style>``
-    region are skipped entirely (both detectors) via a line-based state
-    machine, so TypeScript generics (``Promise<void>`` / ``Array<Item>`` /
-    ``Map<K,V>`` / ``Record<...>``) and CSS rules never produce false
-    positives. The opening and closing marker lines are themselves skipped.
     """
     violations: list[tuple[str, str]] = []
-    in_script = False
-    in_style = False
-    for line_no, line in enumerate(source.splitlines(), start=1):
-        # --- block state machine (skip <script>/<style> regions) ---------
-        if in_script:
-            # Inside a script region: scan nothing; exit AFTER a closing tag.
-            if _SCRIPT_CLOSE_RE.search(line):
-                in_script = False
-            continue
-        if in_style:
-            if _STYLE_CLOSE_RE.search(line):
-                in_style = False
-            continue
-        # Set the flag BEFORE scanning so the opening line itself is skipped.
-        # A single-line <script>...</script> closes on the same line and is
-        # acceptably skipped wholesale.
-        if _SCRIPT_OPEN_RE.search(line):
-            if not _SCRIPT_CLOSE_RE.search(line):
-                in_script = True
-            continue
-        if _STYLE_OPEN_RE.search(line):
-            if not _STYLE_CLOSE_RE.search(line):
-                in_style = True
-            continue
+    cleaned = _strip_non_markup(source)
 
-        # --- (A) markup text nodes ---------------------------------------
-        for match in _MARKUP_TEXT_RE.finditer(line):
-            raw = match.group(1)
-            normalized = _normalize(raw)
+    # --- (A) markup text nodes (whole cleaned source) --------------------
+    for match in _MARKUP_TEXT_RE.finditer(cleaned):
+        content = match.group(1)
+        # Skip <kbd>TEXT</kbd> (keyboard keys): inspect the opening tag that
+        # immediately precedes this ">...<" run.
+        prev_lt = cleaned.rfind("<", 0, match.start())
+        if prev_lt != -1:
+            opening = cleaned[prev_lt : match.start() + 1]
+            if _KBD_OPEN_RE.match(opening):
+                continue
+        content = _blank_interpolations(content)
+        normalized = _normalize(content)
+        if not _is_localizable(normalized):
+            continue
+        line_no = cleaned.count("\n", 0, match.start(1)) + 1
+        _record(rel_str, normalized, line_no, "markup", allowlist, violations)
+
+    # --- (B) quoted localizable attribute values -------------------------
+    # The value body may carry svelte ``{...}`` interpolations
+    # (``aria-label="Annotation {annotation.id}"``); blank them so only the
+    # STATIC remainder is judged and the fingerprint stays interpolation-free.
+    for match in _ATTR_QUOTED_RE.finditer(cleaned):
+        value = _blank_interpolations(match.group(2))
+        normalized = _normalize(value)
+        if not _is_localizable(normalized):
+            continue
+        line_no = cleaned.count("\n", 0, match.start(2)) + 1
+        _record(
+            rel_str, normalized, line_no, "attribute", allowlist, violations
+        )
+
+    # --- (B) expression localizable attribute values ---------------------
+    for match in _ATTR_EXPR_RE.finditer(cleaned):
+        expr = match.group(1)
+        expr_offset = match.start(1)
+        for lit in _STR_LIT_RE.finditer(expr):
+            normalized = _normalize(lit.group(2))
             if not _is_localizable(normalized):
                 continue
-            # Skip <kbd>TEXT</kbd> (keyboard keys): the match captures
-            # ">TEXT<", so check the immediate surroundings on the line.
-            before = line[: match.start()]
-            after = line[match.end() :]
-            if before.endswith("<kbd") and after.startswith("/kbd>"):
-                continue
-            fp = _violation_fingerprint(rel_str, normalized)
-            if fp in allowlist:
-                continue
-            message = (
-                f"{rel_str}:{line_no}  hardcoded UI string "
-                f"'{normalized}' in markup (use a Paraglide m.*() call)  "
-                f"[fingerprint: {fp}]"
+            abs_offset = expr_offset + lit.start(2)
+            line_no = cleaned.count("\n", 0, abs_offset) + 1
+            _record(
+                rel_str,
+                normalized,
+                line_no,
+                "attribute",
+                allowlist,
+                violations,
             )
-            violations.append((message, fp))
 
-        # --- (B) localizable attribute values ----------------------------
-        for match in _ATTR_TEXT_RE.finditer(line):
-            raw = match.group(1)
-            normalized = _normalize(raw)
-            if not _is_localizable(normalized):
-                continue
-            fp = _violation_fingerprint(rel_str, normalized)
-            if fp in allowlist:
-                continue
-            message = (
-                f"{rel_str}:{line_no}  hardcoded UI string "
-                f"'{normalized}' in attribute (use a Paraglide m.*() call)  "
-                f"[fingerprint: {fp}]"
-            )
-            violations.append((message, fp))
     return violations
 
 
