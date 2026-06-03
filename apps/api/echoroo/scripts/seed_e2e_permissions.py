@@ -1491,6 +1491,14 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
 
             await session.commit()
 
+            # `session.commit()` expires all attributes (expire_on_commit=True),
+            # so the `Project.license_record` relationship is unloaded. Eager-load
+            # it here (awaited) before `_project_payload` reads `project.license`,
+            # which dereferences the relationship; a lazy-load there would attempt
+            # synchronous IO inside the async session and raise MissingGreenlet.
+            for project in projects.values():
+                await session.refresh(project, ["license_record"])
+
             return {
                 "users": {
                     role: _user_payload(
