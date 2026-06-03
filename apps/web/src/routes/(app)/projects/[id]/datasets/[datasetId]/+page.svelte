@@ -267,7 +267,12 @@
 
     <!-- Import Progress (not shown when pending - FileUpload handles the full flow) -->
     {#if dataset.status !== 'pending'}
-      <ImportProgress {projectId} {datasetId} currentStatus={dataset.status} />
+      <ImportProgress
+        {projectId}
+        {datasetId}
+        currentStatus={dataset.status}
+        importedCount={dataset.recording_count}
+      />
     {/if}
 
     <!-- File Upload (available when dataset is pending or completed) -->

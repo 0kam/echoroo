@@ -1077,16 +1077,36 @@ class TestGuestPublicRecordingList:
             it for it in body["items"] if it["id"] == str(public_recording.id)
         )
         # Allowed keys — exact contract for the public recording shape.
-        assert set(item.keys()) <= {
+        # preview-feedback #11 added member-only technical/timing fields
+        # (samplerate / channels / datetime / datetime_parse_status). They are
+        # part of the wire shape but MUST be ``None`` for a Guest (asserted
+        # below), so they are valid keys here but carry no value.
+        _allowed_keys = {
             "id",
             "project_id",
             "name",
             "duration_seconds",
             "site_h3_index",
-        }, (
+            "samplerate",
+            "channels",
+            "datetime",
+            "datetime_parse_status",
+        }
+        assert set(item.keys()) <= _allowed_keys, (
             f"PublicRecordingItem leaked unexpected fields: "
-            f"{set(item.keys()) - {'id', 'project_id', 'name', 'duration_seconds', 'site_h3_index'}}"
+            f"{set(item.keys()) - _allowed_keys}"
         )
+
+        # preview-feedback #11 privacy gate: a Guest is NOT a member, so the
+        # member-only technical metadata — and especially the TIMING-SENSITIVE
+        # ``datetime`` — must be withheld (None). This keeps the spec/006
+        # Guest-minimal contract: a sensitive species' presence time can never
+        # be inferred by an outsider.
+        for member_only in ("samplerate", "channels", "datetime", "datetime_parse_status"):
+            assert item.get(member_only) is None, (
+                f"PublicRecordingItem must withhold member-only field "
+                f"'{member_only}' from Guests (got {item.get(member_only)!r})"
+            )
 
         # Forbidden keys (S3 object key, content hash, free-form notes).
         for forbidden in ("path", "hash", "note", "filename_full", "s3_key"):
@@ -1186,6 +1206,360 @@ class TestGuestPublicRecordingList:
         assert body["limit"] == 5
         assert body["items"] == [], (
             "Out-of-range page should return empty items list"
+        )
+
+
+# ---------------------------------------------------------------------------
+# preview-feedback #11: member-vs-outsider technical/timing metadata gate on
+# the recording list. Member-level callers (Member/Admin/Owner/Superuser) see
+# samplerate / channels / datetime / datetime_parse_status so the Web UI table
+# renders; Guest / Authenticated / Viewer outsiders keep the Guest-minimal
+# projection and NEVER receive the timing-sensitive ``datetime``.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def public_recording_with_datetime(
+    db_session: AsyncSession, public_dataset: Dataset
+) -> Recording:
+    """Recording carrying populated technical + parsed-datetime metadata."""
+    from datetime import UTC, datetime as _dt
+
+    from echoroo.models.enums import DatetimeParseStatus
+
+    rec_id = uuid.uuid4()
+    recording = Recording(
+        id=rec_id,
+        dataset_id=public_dataset.id,
+        filename="meta_t11.wav",
+        path=(
+            f"recordings/{public_dataset.project_id}"
+            f"/{public_dataset.id}/{rec_id}.wav"
+        ),
+        duration=7.5,
+        samplerate=96_000,
+        channels=2,
+        datetime=_dt(2026, 5, 13, 9, 30, tzinfo=UTC),
+        datetime_parse_status=DatetimeParseStatus.SUCCESS,
+    )
+    db_session.add(recording)
+    await db_session.commit()
+    await db_session.refresh(recording)
+    return recording
+
+
+@pytest.mark.asyncio
+class TestRecordingListMemberMetadataGate:
+    """preview-feedback #11 — member sees full metadata, outsiders do not."""
+
+    async def test_owner_sees_full_recording_metadata(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+        project_owner: User,
+    ) -> None:
+        """Member-level Owner gets samplerate/channels/datetime/parse status."""
+        from datetime import UTC, datetime as _dt
+
+        token = create_access_token({"sub": str(project_owner.id)})
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        item = next(
+            it
+            for it in response.json()["items"]
+            if it["id"] == str(public_recording_with_datetime.id)
+        )
+        assert item["samplerate"] == 96_000
+        assert item["channels"] == 2
+        assert item["datetime_parse_status"] == "success"
+        assert item["datetime"] is not None
+        assert _dt.fromisoformat(
+            item["datetime"].replace("Z", "+00:00")
+        ) == _dt(2026, 5, 13, 9, 30, tzinfo=UTC)
+
+    async def test_authenticated_non_member_does_not_see_datetime(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+    ) -> None:
+        """A logged-in outsider (not a member) is still denied timing metadata.
+
+        This proves the gate is by *membership*, not merely by the presence of
+        a Bearer token: an Authenticated non-member on a Public project keeps
+        the Guest-minimal projection, so the TIMING-SENSITIVE ``datetime`` (and
+        the other member-only fields) stays withheld.
+        """
+        outsider = User(
+            email="t11-outsider@example.com",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
+            display_name="T11 Outsider",
+            security_stamp="o" * 64,
+        )
+        db_session.add(outsider)
+        await db_session.commit()
+        await db_session.refresh(outsider)
+
+        token = create_access_token({"sub": str(outsider.id)})
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        item = next(
+            it
+            for it in response.json()["items"]
+            if it["id"] == str(public_recording_with_datetime.id)
+        )
+        # Timing-sensitive + technical metadata withheld from the outsider.
+        for member_only in (
+            "datetime",
+            "datetime_parse_status",
+            "samplerate",
+            "channels",
+        ):
+            assert item.get(member_only) is None, (
+                f"Authenticated non-member must NOT see member-only field "
+                f"'{member_only}' (got {item.get(member_only)!r})"
+            )
+        # Non-sensitive playable fields remain available.
+        assert item["name"] == "meta_t11.wav"
+        assert item["duration_seconds"] == 7.5
+
+
+# ---------------------------------------------------------------------------
+# WS5 privacy gate (count/timing oracle): ``datetime_from`` / ``datetime_to`` /
+# ``samplerate`` filters and hidden-field sorts must be honoured ONLY for
+# member-level callers. For outsiders they would turn the response ``total`` /
+# pagination / ordering into a binary-search oracle for fields those callers
+# cannot otherwise see (datetime can reveal when a sensitive species was
+# present). Non-members get the filter/sort IGNORED; members keep full power.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestRecordingListTimingOracleGate:
+    """Sensitive filters/sorts are member-only — no count oracle for outsiders."""
+
+    async def test_guest_datetime_filter_is_ignored_no_count_oracle(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+    ) -> None:
+        """A Guest's datetime window cannot shrink the result (no oracle).
+
+        The fixture recording is at 2026-05-13. A window of 2030 would exclude
+        it if the filter were honoured. For a Guest it must be IGNORED, so the
+        count/items are identical with and without the window.
+        """
+        base = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert base.status_code == 200, base.text
+        base_body = base.json()
+
+        filtered = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?datetime_from=2030-01-01T00:00:00Z"
+            "&datetime_to=2030-12-31T23:59:59Z",
+        )
+        assert filtered.status_code == 200, filtered.text
+        filtered_body = filtered.json()
+
+        assert filtered_body["total"] == base_body["total"], (
+            "Guest datetime filter must NOT change total (count oracle leak)"
+        )
+        assert {it["id"] for it in filtered_body["items"]} == {
+            it["id"] for it in base_body["items"]
+        }, "Guest datetime filter must NOT change the item set"
+        # The excluded-by-window recording is still present for the Guest.
+        assert str(public_recording_with_datetime.id) in {
+            it["id"] for it in filtered_body["items"]
+        }
+
+    async def test_guest_samplerate_filter_is_ignored_no_count_oracle(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+    ) -> None:
+        """A Guest's samplerate filter must not shrink the result either."""
+        base = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+        )
+        assert base.status_code == 200, base.text
+        base_total = base.json()["total"]
+
+        # 11_025 matches no recording in the fixture set; if honoured it would
+        # drop total to 0 — a clear oracle. For a Guest it must be ignored.
+        filtered = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?samplerate=11025",
+        )
+        assert filtered.status_code == 200, filtered.text
+        assert filtered.json()["total"] == base_total, (
+            "Guest samplerate filter must NOT change total (count oracle leak)"
+        )
+
+    async def test_authenticated_non_member_datetime_filter_ignored(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+    ) -> None:
+        """A logged-in non-member is also denied the filter (membership gate)."""
+        outsider = User(
+            email="ws5-oracle-outsider@example.com",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
+            display_name="WS5 Oracle Outsider",
+            security_stamp="x" * 64,
+        )
+        db_session.add(outsider)
+        await db_session.commit()
+        await db_session.refresh(outsider)
+        token = create_access_token({"sub": str(outsider.id)})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        base = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers=headers,
+        )
+        assert base.status_code == 200, base.text
+        base_total = base.json()["total"]
+
+        filtered = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?datetime_from=2030-01-01T00:00:00Z",
+            headers=headers,
+        )
+        assert filtered.status_code == 200, filtered.text
+        assert filtered.json()["total"] == base_total, (
+            "Authenticated non-member datetime filter must NOT change total"
+        )
+
+    async def test_owner_datetime_filter_is_honoured(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording: Recording,
+        public_recording_with_datetime: Recording,
+        project_owner: User,
+    ) -> None:
+        """A member-level Owner keeps the filter — it still narrows the result.
+
+        With two recordings present (``public_recording`` has NULL datetime,
+        ``public_recording_with_datetime`` is at 2026-05-13), a window that ends
+        before 2026-05-13 excludes BOTH the dated row (out of range) and the
+        NULL-datetime row (NULL never satisfies a range predicate). The Owner's
+        filtered total is therefore strictly smaller than the unfiltered total.
+        """
+        token = create_access_token({"sub": str(project_owner.id)})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        base = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers=headers,
+        )
+        assert base.status_code == 200, base.text
+        base_total = base.json()["total"]
+        assert base_total >= 2, "fixture should provide at least two recordings"
+
+        filtered = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?datetime_from=2020-01-01T00:00:00Z"
+            "&datetime_to=2020-12-31T23:59:59Z",
+            headers=headers,
+        )
+        assert filtered.status_code == 200, filtered.text
+        filtered_total = filtered.json()["total"]
+        assert filtered_total < base_total, (
+            "Owner datetime filter MUST still narrow the result (filter works "
+            f"for insiders): base={base_total} filtered={filtered_total}"
+        )
+        # The 2026 recording is excluded by the 2020 window for the Owner.
+        assert str(public_recording_with_datetime.id) not in {
+            it["id"] for it in filtered.json()["items"]
+        }
+
+    async def test_guest_sort_by_datetime_neutralised_to_default(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        public_active_project: Project,
+        public_dataset: Dataset,
+        project_owner: User,
+    ) -> None:
+        """A Guest's ``sort_by=datetime`` is neutralised to the visible sort.
+
+        Two recordings are crafted so the filename ordering and the datetime
+        ordering DIVERGE:
+
+        * ``aaa.wav`` — datetime 2026-06-01 (later)
+        * ``zzz.wav`` — datetime 2026-01-01 (earlier)
+
+        ``filename asc`` → [aaa, zzz];  ``datetime asc`` → [zzz, aaa].
+
+        A Guest requesting ``sort_by=datetime`` must receive the filename order
+        (neutralised), NOT the datetime order — otherwise the hidden datetime
+        ordering would leak. The Owner (member) must receive the datetime order.
+        """
+        from datetime import UTC, datetime as _dt
+
+        recs: dict[str, uuid.UUID] = {}
+        for fname, when in (
+            ("ws5_aaa.wav", _dt(2026, 6, 1, tzinfo=UTC)),
+            ("ws5_zzz.wav", _dt(2026, 1, 1, tzinfo=UTC)),
+        ):
+            rid = uuid.uuid4()
+            recs[fname] = rid
+            db_session.add(
+                Recording(
+                    id=rid,
+                    dataset_id=public_dataset.id,
+                    filename=fname,
+                    path=(
+                        f"recordings/{public_dataset.project_id}"
+                        f"/{public_dataset.id}/{rid}.wav"
+                    ),
+                    duration=3.0,
+                    samplerate=44100,
+                    channels=1,
+                    datetime=when,
+                )
+            )
+        await db_session.commit()
+        aaa, zzz = recs["ws5_aaa.wav"], recs["ws5_zzz.wav"]
+
+        # Guest: sort_by=datetime must be neutralised → filename order [aaa, zzz].
+        guest = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?sort_by=datetime&sort_order=asc&limit=100",
+        )
+        assert guest.status_code == 200, guest.text
+        guest_order = [it["id"] for it in guest.json()["items"]]
+        assert guest_order.index(str(aaa)) < guest_order.index(str(zzz)), (
+            "Guest sort_by=datetime must be neutralised to filename order "
+            "(aaa before zzz); the hidden datetime ordering must NOT leak"
+        )
+
+        # Owner: sort_by=datetime is honoured → datetime order [zzz, aaa].
+        token = create_access_token({"sub": str(project_owner.id)})
+        owner = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings"
+            "?sort_by=datetime&sort_order=asc&limit=100",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert owner.status_code == 200, owner.text
+        owner_order = [it["id"] for it in owner.json()["items"]]
+        assert owner_order.index(str(zzz)) < owner_order.index(str(aaa)), (
+            "Owner sort_by=datetime must be honoured (zzz before aaa)"
         )
 
 

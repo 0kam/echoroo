@@ -3,14 +3,24 @@
   import { fetchImportStatus, startImport, rescanDataset } from '$lib/api/datasets';
   import type { DatasetStatus } from '$lib/types/data';
   import { getDatasetStatusClass, getDatasetStatusMessage } from '$lib/utils/statusFormatters';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     projectId: string;
     datasetId: string;
     currentStatus: DatasetStatus;
+    /**
+     * Persisted count of successfully imported recordings (from the
+     * dataset object). The import-status poll query below is disabled
+     * once `currentStatus` flips to 'completed', so `statusData` is
+     * frequently `undefined` at that point. Sourcing the completed
+     * banner count from this persisted value avoids showing 0 (see
+     * preview-feedback #10).
+     */
+    importedCount?: number;
   }
 
-  let { projectId, datasetId, currentStatus }: Props = $props();
+  let { projectId, datasetId, currentStatus, importedCount = 0 }: Props = $props();
 
   const queryClient = useQueryClient();
 
@@ -100,7 +110,7 @@
         ✓
       </div>
       <span class="font-medium text-success">
-        Successfully imported {totalFiles} audio file{totalFiles !== 1 ? 's' : ''}
+        {m.import_progress_success({ count: importedCount })}
       </span>
     </div>
   {/if}

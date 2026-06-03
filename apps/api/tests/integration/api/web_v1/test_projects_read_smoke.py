@@ -247,13 +247,24 @@ async def test_projects_read_smoke_accepts_session_and_rejects_api_key(
     assert recordings.status_code == 200, recordings.text
     recordings_body = recordings.json()
     assert recordings_body["total"] == 1
-    assert recordings_body["items"][0] == {
-        "id": str(recording.id),
-        "project_id": str(public_project.id),
-        "name": "t021-recording.wav",
-        "duration_seconds": 12.5,
-        "site_h3_index": "8928308280fffff",
-    }
+    # preview-feedback #11: the project owner is a member-level caller, so the
+    # recordings row carries the full technical + timing metadata the table
+    # renders (Sample Rate / Channels / Date-Time / parse Status).
+    owner_item = recordings_body["items"][0]
+    assert owner_item["id"] == str(recording.id)
+    assert owner_item["project_id"] == str(public_project.id)
+    assert owner_item["name"] == "t021-recording.wav"
+    assert owner_item["duration_seconds"] == 12.5
+    assert owner_item["site_h3_index"] == "8928308280fffff"
+    assert owner_item["samplerate"] == 48_000
+    assert owner_item["channels"] == 2
+    assert owner_item["datetime_parse_status"] == "success"
+    assert owner_item["datetime"] is not None
+    # The timing-sensitive datetime round-trips to the seeded value regardless
+    # of the +00:00 vs Z suffix Pydantic emits.
+    assert datetime.fromisoformat(
+        owner_item["datetime"].replace("Z", "+00:00")
+    ) == datetime(2026, 5, 13, 9, 30, tzinfo=UTC)
 
     client.cookies.clear()
     bearer_only_restricted_detail = await client.get(
@@ -267,7 +278,21 @@ async def test_projects_read_smoke_accepts_session_and_rejects_api_key(
         f"/web-api/v1/projects/{public_project.id}/recordings",
     )
     assert guest_recordings.status_code == 200, guest_recordings.text
-    assert guest_recordings.json()["total"] == 1
+    guest_body = guest_recordings.json()
+    assert guest_body["total"] == 1
+    # preview-feedback #11 privacy gate: a Guest (no auth) keeps the spec/006
+    # Guest-minimal projection. The non-sensitive playable fields are present,
+    # but the member-only technical + TIMING-SENSITIVE metadata is withheld.
+    # ``datetime`` in particular MUST be None so a sensitive species' presence
+    # time can never be inferred by an outsider.
+    guest_item = guest_body["items"][0]
+    assert guest_item["id"] == str(recording.id)
+    assert guest_item["name"] == "t021-recording.wav"
+    assert guest_item["duration_seconds"] == 12.5
+    assert guest_item["datetime"] is None
+    assert guest_item["datetime_parse_status"] is None
+    assert guest_item["samplerate"] is None
+    assert guest_item["channels"] is None
 
     await assert_api_key_cross_rejected(client, "GET", "/web-api/v1/projects")
     await assert_api_key_cross_rejected(
