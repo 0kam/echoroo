@@ -8,8 +8,8 @@ import type {
   ProjectSummaryListResponse,
   ProjectCreateRequest,
   ProjectUpdateRequest,
-  ProjectMemberAddRequest,
   ProjectMemberUpdateRequest,
+  TransferOwnershipResponse,
   ProjectOverviewResponse,
   RestrictedConfigUpdateRequest,
   TrustedUserInviteRequest,
@@ -247,22 +247,40 @@ export const projectsApi = {
   /**
    * Create a new project.
    *
-   * Returns `ProjectCreateResponse`, which extends `Project` with the
-   * one-shot superuser-bootstrap invitation fields (`invitation_url` /
-   * `invitation_id`). For non-superusers, or when `intended_owner_email`
-   * is absent, both are `null` and the response is otherwise the regular
-   * project shape — so existing callers reading `.id` / `.name` / etc.
-   * stay source-compatible.
-   *
-   * spec/011 US6: when the caller is a superuser and `data` carries a
-   * non-empty `intended_owner_email`, the backend issues a `kind=member`,
-   * `role=ADMIN`, `ownership_transfer_on_accept=true` invitation and
-   * returns its one-shot URL here. The field is silently dropped
-   * server-side for non-superusers. An invalid email surfaces as a 422
-   * `ApiError(code='ERR_INVALID_INTENDED_OWNER_EMAIL')`.
+   * The SU-bootstrap redesign (preview feedback #1) dropped the create-time
+   * `intended_owner_email` flow, so the response is now the plain `Project`
+   * shape (`ProjectCreateResponse = Project`). Post-creation ownership
+   * transfer is handled separately via `transferOwnership()`.
    */
   create: async (data: ProjectCreateRequest): Promise<ProjectCreateResponse> => {
     return callWebApi<ProjectCreateResponse>('POST', '/projects/', data);
+  },
+
+  /**
+   * Transfer project ownership to an active project Admin (preview
+   * feedback #2 / SU-bootstrap redesign).
+   *
+   * `POST /web-api/v1/projects/{id}/transfer-ownership` — Owner-only.
+   * The body carries the target `new_owner_user_id`; the required
+   * `X-Idempotency-Key` header makes the call replay-safe (a double-click
+   * cannot transfer twice). On success the previous owner is demoted to
+   * Admin and the target is promoted to Owner.
+   *
+   * Backend error codes surface via `ApiError`:
+   * - 400 `ERR_INVALID_TRANSFER_TARGET` — target is no longer an active Admin.
+   * - 409 — idempotency conflict / concurrent transfer.
+   */
+  transferOwnership: async (
+    projectId: string,
+    newOwnerUserId: string,
+    idempotencyKey: string
+  ): Promise<TransferOwnershipResponse> => {
+    return callWebApi<TransferOwnershipResponse>(
+      'POST',
+      `/projects/${projectId}/transfer-ownership`,
+      { new_owner_user_id: newOwnerUserId },
+      { 'X-Idempotency-Key': idempotencyKey }
+    );
   },
 
   /**
@@ -284,13 +302,6 @@ export const projectsApi = {
    */
   listMembers: async (projectId: string): Promise<ProjectMember[]> => {
     return callWebApi<ProjectMember[]>('GET', `/projects/${projectId}/members`);
-  },
-
-  /**
-   * Add a member to the project (admin only)
-   */
-  addMember: async (projectId: string, data: ProjectMemberAddRequest): Promise<ProjectMember> => {
-    return callWebApi<ProjectMember>('POST', `/projects/${projectId}/members`, data);
   },
 
   /**

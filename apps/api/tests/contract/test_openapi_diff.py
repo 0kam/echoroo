@@ -94,9 +94,11 @@ _SPEC_011_LIVE_CONTRACT_STEMS: frozenset[str] = frozenset(
         # POST revoke) and the stem is promoted to live so the harness
         # subset-asserts every path / method / requestBody.
         "member-invitations",
-        # spec/011 Step 9 (T540): the project-create endpoint now
-        # accepts ``intended_owner_email`` (SU bootstrap) and the
-        # YAML's single path/method is live.
+        # spec/011 Step 9 (T540): the project-create endpoint's single
+        # path/method (``POST /web-api/v1/projects``) is live. NOTE
+        # (2026-06-03, preview feedback #1): the SU-bootstrap
+        # ``intended_owner_email`` extension was removed; the stem +
+        # YAML are retained but now describe the plain create response.
         "su-bootstrap-project-create",
         # spec/011 US7 (T660): the in-app banner + activity read
         # endpoints (``GET /me/banners``, ``POST /me/banners/dismiss``,

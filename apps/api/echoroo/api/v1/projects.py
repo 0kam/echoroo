@@ -30,7 +30,6 @@ from echoroo.core.actions import (
     PROJECT_GET_ACTION,
     PROJECT_LICENSE_HISTORY_ACTION,
     PROJECT_LICENSE_UPDATE_ACTION,
-    PROJECT_MEMBER_INVITE_ACTION,
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
     PROJECT_MEMBER_UPDATE_ROLE_ACTION,
@@ -48,7 +47,6 @@ from echoroo.schemas.project import (
     ProjectLicenseHistoryEntry,
     ProjectLicenseHistoryResponse,
     ProjectLicenseUpdateRequest,
-    ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
     ProjectOverviewResponse,
@@ -671,62 +669,12 @@ async def list_project_members(
     return await service.list_members(current_user.id, project_id)
 
 
-@router.post(
-    "/{project_id}/members",
-    response_model=ProjectMemberResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Add project member",
-    description="Invite user to project (admin only)",
-    responses={
-        # Phase 17 contract drift — declare 202 alongside the 201 wire status
-        # for parity with ``contracts/projects.yaml`` ``inviteMember`` (FR-055
-        # async invite-mail variant). The runtime wire status remains 201
-        # (synchronous member create) — clients are not affected.
-        202: {"description": "Invitation email queued (FR-055 async path)"},
-    },
-)
-async def add_project_member(
-    project_id: UUID,
-    request: ProjectMemberAddRequest,
-    http_request: Request,
-    current_user: CurrentUser,
-    service: ProjectServiceDep,
-    db: DbSession,
-) -> ProjectMemberResponse:
-    """Add a member to a project.
-
-    Guarded by :data:`PROJECT_MEMBER_INVITE_ACTION`
-    (:data:`Permission.MANAGE_MEMBERS`).
-
-    Only project admins / owner can add members.
-
-    Args:
-        project_id: Project's UUID
-        request: Member data (email and role)
-        http_request: FastAPI request used by the Stage-1 gate
-        current_user: Current authenticated user
-        service: Project service instance
-        db: Database session
-
-    Returns:
-        Created project member
-
-    Raises:
-        400: User already member
-        401: Not authenticated
-        403: Permission denied
-        404: Project or user not found
-    """
-    await gate_action(
-        action=PROJECT_MEMBER_INVITE_ACTION,
-        project_id=project_id,
-        current_user=current_user,
-        request=http_request,
-        db=db,
-    )
-    member = await service.add_member(current_user.id, project_id, request)
-    await db.commit()
-    return member
+# NOTE (2026-06-03, preview feedback #7): the direct member-add route
+# (``POST /{project_id}/members``) has been removed here too — adding a
+# user to a project is invitation-only. The Web UI BFF surface
+# (``echoroo.api.web_v1.projects._members``) and this programmatic mirror
+# both drop the direct add; issue an invitation instead. Members LIST /
+# role-change / remove remain.
 
 
 @router.patch(

@@ -1,6 +1,5 @@
 """Project service for business logic."""
 
-from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -18,7 +17,6 @@ from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.project import (
     ProjectCreateRequest,
-    ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
     ProjectOverviewResponse,
@@ -615,67 +613,11 @@ class ProjectService:
         members = await self.project_repo.list_members(project_id)
         return [ProjectMemberResponse.model_validate(m) for m in members]
 
-    async def add_member(
-        self, user_id: UUID, project_id: UUID, request: ProjectMemberAddRequest
-    ) -> ProjectMemberResponse:
-        """Add a member to a project.
-
-        Only project admins can add members.
-
-        Args:
-            user_id: Current user's UUID (must be admin)
-            project_id: Project's UUID
-            request: Member data (email and role)
-
-        Returns:
-            Created project member
-
-        Raises:
-            HTTPException: If project not found, user not admin, target user not found,
-                          or user already member
-        """
-        project = await self.project_repo.get_by_id(project_id)
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found",
-            )
-
-        # Check if current user is admin
-        is_admin = await self.project_repo.is_project_admin(project_id, user_id)
-        if not is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not project admin",
-            )
-
-        # Find target user by email
-        target_user = await self.user_repo.get_by_email(request.email)
-        if not target_user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
-
-        # Check if user is already a member
-        existing_member = await self.project_repo.get_member(project_id, target_user.id)
-        if existing_member:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User already member",
-            )
-
-        # Create member
-        member = ProjectMember(
-            user_id=target_user.id,
-            project_id=project_id,
-            role=request.role,
-            joined_at=datetime.now(UTC),
-            invited_by_id=user_id,
-        )
-
-        created_member = await self.project_repo.add_member(member)
-        return ProjectMemberResponse.model_validate(created_member)
+    # NOTE (2026-06-03, preview feedback #7): the ``add_member`` direct-add
+    # service method has been removed. Adding a user to a project is
+    # invitation-only — see ``echoroo.services.invitation_service`` and the
+    # ``POST /projects/{id}/invitations`` endpoints. The members
+    # list / role-change / remove service methods below remain.
 
     async def update_member_role(
         self,

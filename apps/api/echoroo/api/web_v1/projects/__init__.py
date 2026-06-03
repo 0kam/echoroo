@@ -11,7 +11,9 @@ concern stays small enough to review in isolation:
   (``GET /``, ``POST /``, ``GET /{id}``, ``PUT /{id}``, ``DELETE /{id}``;
   T126).
 * :mod:`._members` — membership + invitation handling
-  (``GET/POST/PATCH/DELETE /{id}/members``,
+  (``GET/PATCH/DELETE /{id}/members`` — direct add removed 2026-06-03,
+  invitation-only per preview feedback #7,
+  ``POST /{id}/invitations`` issue,
   ``POST /{id}/invitations/{token}/accept``,
   ``DELETE /{id}/invitations/{token}``).
 * :mod:`._restricted_config` — restricted-mode flag toggles

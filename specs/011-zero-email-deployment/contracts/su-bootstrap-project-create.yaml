@@ -1,19 +1,28 @@
 openapi: 3.0.3
 info:
-  title: Echoroo Zero-email Deployment — SU Project Bootstrap (intended_owner_email)
-  version: "0.1.0"
+  title: Echoroo Zero-email Deployment — Project Create (plain owner-is-creator)
+  version: "0.2.0"
   description: |
-    Project creation extension for system superuser bootstrap (FR-011-120..125).
-    The existing project-creation endpoint accepts an optional `intended_owner_email`
-    field; the field is silently dropped server-side for non-superuser callers
-    (anti-enumeration). On superuser submit, the create-project transaction
-    atomically creates the project and issues an Admin invitation with
-    ownership_transfer_on_accept=true.
+    Project-creation endpoint contract for the Web UI BFF surface.
+
+    AMENDMENT (2026-06-03, preview feedback #1/#2): the create-time system
+    superuser bootstrap (`intended_owner_email` request field +
+    `invitation_url` / `invitation_id` response fields, formerly
+    FR-011-120..125) has been REMOVED. The creator always becomes the
+    project owner. Ownership transfer is now a post-creation operation —
+    the owner uses `POST /web-api/v1/projects/{project_id}/transfer-ownership`
+    to hand the project to an existing Admin member (no contract change to
+    that endpoint, which is user_id-based and already exists). Adding a
+    user to a project is invitation-only (the direct member-add route was
+    removed); issue a Member-kind invitation instead.
+
+    The filename / stem is retained so the OpenAPI-diff harness inventory
+    stays stable; the contract now documents the plain create response.
 
 paths:
   /web-api/v1/projects:
     post:
-      summary: Create a project (extended with intended_owner_email)
+      summary: Create a project (creator becomes owner)
       operationId: createProject
       tags: [projects]
       requestBody:
@@ -22,84 +31,36 @@ paths:
           application/json:
             schema:
               type: object
-              required: [name, visibility]
+              required: [name, visibility, license_id]
               properties:
                 name: { type: string, maxLength: 200 }
                 visibility:
                   type: string
                   enum: [public, restricted]
-                # ... other existing fields ...
-                intended_owner_email:
+                license_id:
                   type: string
-                  format: email
-                  nullable: true
-                  description: |
-                    Optional. **System superuser only.** For non-superuser callers,
-                    this field is silently dropped at the handler (no 403, no
-                    audit-log mention, no response-shape difference). When
-                    supplied by the system superuser, the create-project
-                    transaction additionally issues an Admin-role invitation with
-                    ownership_transfer_on_accept=true; the response's
-                    invitation_url field is populated.
-                  x-superuser-only-field: true
+                  description: Project data license id (licenses.id primary key).
+                # ... other existing fields ...
       responses:
         "201":
           description: |
-            Project created. When intended_owner_email was supplied by the system
-            superuser, response also includes the bootstrap invitation URL.
-            Anti-enumeration: when a non-superuser sends `intended_owner_email`,
-            the field is silently dropped server-side, the response has the SAME
-            shape (`invitation_url: null` and the same Cache-Control header) as the
-            no-bootstrap case. Non-superusers cannot learn the field exists via the
-            response shape.
+            Project created, owned by the authenticated creator. The
+            response is the plain project resource (no bootstrap-invitation
+            fields). `Cache-Control: no-store` is always set on this
+            endpoint.
           headers:
             Cache-Control:
               schema:
                 type: string
                 enum: ["no-store, no-cache, must-revalidate, private"]
               description: |
-                Cache-Control no-store is ALWAYS set on this endpoint (not only
-                when invitation_url is present). Setting it uniformly prevents the
-                header itself from leaking whether intended_owner_email was
-                accepted.
+                Cache-Control no-store is ALWAYS set on this endpoint so a
+                cached 201 cannot replay project metadata through a shared
+                proxy.
           content:
             application/json:
               schema:
-                # spec/011 Step 9 R1 P1-4 — flat shape (matches the live
-                # ``ProjectCreateResponse`` Pydantic model, which extends
-                # ``ProjectResponse`` with the two bootstrap fields at the
-                # top level alongside ``id``, ``name``, ``visibility``,
-                # etc.). Both ``invitation_url`` and ``invitation_id`` are
-                # ``required: true`` + ``nullable: true`` (anti-enumeration,
-                # FR-011-125): the keys ALWAYS appear in the response so a
-                # non-superuser cannot detect via key presence whether the
-                # bootstrap branch fired. Only the values differ (null vs.
-                # populated).
-                allOf:
-                  - $ref: "#/components/schemas/ProjectResponse"
-                  - type: object
-                    required: [invitation_url, invitation_id]
-                    properties:
-                      invitation_url:
-                        type: string
-                        format: uri
-                        nullable: true
-                        description: |
-                          Present (non-null) only when intended_owner_email was
-                          supplied by the system superuser. The key is always
-                          emitted (null on the non-bootstrap branch) so
-                          response-shape inspection cannot enumerate the SU
-                          bootstrap feature (FR-011-125). One-shot; not
-                          recoverable; scrub from telemetry / access logs.
-                      invitation_id:
-                        type: string
-                        format: uuid
-                        nullable: true
-                        description: |
-                          ID of the bootstrap invitation row, paired with
-                          ``invitation_url``. Always emitted; null on the
-                          non-bootstrap branch (same anti-enumeration
-                          rationale as ``invitation_url``).
+                $ref: "#/components/schemas/ProjectResponse"
         "422": { description: Validation failure }
       security:
         - sessionCookie: []
@@ -107,15 +68,12 @@ paths:
 
 components:
   schemas:
-    # spec/011 Step 9 R1 P1-4 — minimal shape stub for the live
-    # ``ProjectCreateResponse`` Pydantic model. The full surface is
-    # owned by ``specs/006-permissions-redesign/contracts/projects.yaml``
-    # (``ProjectResponse``); this stub names the most stable subset the
-    # bootstrap contract depends on. The flat top-level layout of
-    # ``invitation_url`` / ``invitation_id`` is asserted by the ``allOf``
-    # composition above; this schema's enumeration is purely
-    # documentation — the harness validates the path / method /
-    # requestBody set rather than every field name.
+    # Minimal shape stub for the live ``ProjectCreateResponse`` Pydantic
+    # model, which (after the 2026-06-03 amendment) is a plain subclass of
+    # ``ProjectResponse`` with no extra fields. The full surface is owned
+    # by ``specs/006-permissions-redesign/contracts/projects.yaml``; the
+    # harness validates path / method / requestBody / response-code rather
+    # than every field name.
     ProjectResponse:
       type: object
       properties:

@@ -239,7 +239,39 @@ Several flows previously sent notification emails: a new device logged in, your 
 
 ### Addition — System Superuser Project Bootstrap (FR-011-120..125)
 
-- **FR-011-120**: The project creation endpoint MUST accept an optional `intended_owner_email` field. The field MUST be silently ignored unless the requesting user has `users.is_superuser = true`. Silent ignoring (not 403) denies field-existence enumeration to non-superusers.
+> **AMENDMENT — 2026-06-03 (preview feedback #1 / #2 / #7): the create-time
+> SU bootstrap is SUPERSEDED / REMOVED.**
+>
+> Preview testing showed the create-time `intended_owner_email` flow was
+> confusing and redundant with the existing post-creation ownership
+> transfer. The following design now applies, replacing FR-011-120..125:
+>
+> - **Project creation does NOT accept `intended_owner_email`.** The
+>   authenticated creator always becomes the project owner. The request
+>   field and the `invitation_url` / `invitation_id` response fields have
+>   been removed from `POST /web-api/v1/projects` (#1).
+> - **Ownership transfer is a post-creation operation.** The owner uses
+>   the existing `POST /web-api/v1/projects/{project_id}/transfer-ownership`
+>   endpoint (Phase 12 / FR-011-124 fallback path) to hand the project to
+>   an **existing Admin member** selected by `user_id`. That endpoint is
+>   user_id-based and unchanged; no new backend surface is required (#2).
+> - **Adding a user to a project is invitation-only.** The direct
+>   member-add route (`POST /projects/{id}/members`) has been removed on
+>   both the Web UI BFF and the programmatic mirror; issue a Member-kind
+>   invitation via `POST /projects/{id}/invitations` and let the recipient
+>   accept it (#7).
+>
+> The `project_invitations.ownership_transfer_on_accept` column
+> (FR-011-122) and the `accept_invitation` ownership-transfer logic
+> (FR-011-123) remain in place but **dormant** — no create-time path now
+> sets `ownership_transfer_on_accept = true`. They are retained (no
+> migration) so a future re-introduction or an externally-seeded
+> invitation can still exercise the transfer-on-accept machinery.
+>
+> The FR text below (FR-011-120..125) is retained for historical
+> traceability only and is **no longer normative**.
+
+- **FR-011-120** *(superseded 2026-06-03)*: The project creation endpoint MUST accept an optional `intended_owner_email` field. The field MUST be silently ignored unless the requesting user has `users.is_superuser = true`. Silent ignoring (not 403) denies field-existence enumeration to non-superusers.
 - **FR-011-121**: When the system superuser supplies `intended_owner_email`, the create-project transaction MUST atomically: (a) create the project with `owner_id = superuser.id`, (b) issue a `kind=member, role=ADMIN` invitation for the supplied email with `ownership_transfer_on_accept = true`, (c) include the `invitation_url` in the create-project response alongside the new project record.
 - **FR-011-122**: A new boolean column `project_invitations.ownership_transfer_on_accept BOOLEAN NOT NULL DEFAULT false` MUST be added in the additive migration `0021_zero_email_additive` to support FR-011-121.
 - **FR-011-123**: When `accept_invitation` processes a row with `ownership_transfer_on_accept = true`, the same transaction (FR-011-106) MUST perform the following inside a nested SAVEPOINT:

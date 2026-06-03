@@ -190,13 +190,21 @@ class TestOpenAPISpecValidation:
         project_methods = {
             "/projects": ["get", "post"],
             "/projects/{projectId}": ["get", "patch", "delete"],
-            "/projects/{projectId}/members": ["get", "post"],
+            # The direct member-add operation (``POST
+            # /projects/{projectId}/members``) was removed; members are now
+            # added exclusively through the invitation flow. Only the list
+            # (``get``) operation remains on this path.
+            "/projects/{projectId}/members": ["get"],
         }
 
         for endpoint, methods in project_methods.items():
             assert endpoint in paths
             for method in methods:
                 assert method.lower() in paths[endpoint]
+
+        # Assert the removed direct-add operation is GONE so the contract
+        # cannot silently re-declare it (preview-fixes/ws4-su-redesign H2).
+        assert "post" not in paths["/projects/{projectId}/members"]
 
     def test_endpoints_with_path_parameters(
         self, openapi_spec: dict[str, Any]

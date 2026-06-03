@@ -197,6 +197,12 @@ paths:
           description: unknown key / invalid value
 
   /projects/{id}/members:
+    # AMENDMENT (2026-06-03, preview feedback #7): the direct member-add /
+    # invite-here route (``POST /projects/{id}/members``, formerly
+    # operationId ``inviteMember``) has been REMOVED. Adding a user to a
+    # project is invitation-only — issue a Member-kind invitation via
+    # ``POST /projects/{id}/invitations`` and let the recipient accept it.
+    # Only the GET (list) operation remains on this path.
     get:
       operationId: listProjectMembers
       parameters:
@@ -207,30 +213,6 @@ paths:
       responses:
         "200":
           description: メンバー一覧（Admin / Owner のみ、MANAGE_MEMBERS）
-
-    post:
-      summary: メンバー招待（Owner / Admin、FR-050）
-      operationId: inviteMember
-      security:
-        - apiKeyAuth: []
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MemberInviteRequest'
-      responses:
-        "202":
-          description: 招待メール送信（enumeration 対策で成功/失敗同じレスポンス、FR-055）
-        "422":
-          description: ERR_VIEWER_ON_PUBLIC_PROJECT（Public に Viewer 招待）
 
   /projects/{id}/members/{userId}:
     delete:

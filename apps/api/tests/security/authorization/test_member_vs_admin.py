@@ -78,21 +78,6 @@ async def admin_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture
-async def invite_target_user(db_session: AsyncSession) -> User:
-    """Create a user to be invited (for member invite tests)."""
-    user = User(
-        email="t132invite@example.com",
-        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
-        display_name="T132 Invite Target",
-        security_stamp="g" * 64,
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
-
-
-@pytest_asyncio.fixture
 async def test_project(db_session: AsyncSession, owner_user: User) -> Project:
     """Create a RESTRICTED project owned by owner_user."""
     project = Project(
@@ -198,27 +183,15 @@ class TestMemberForbidden:
     response confirms the gate is wired correctly.
     """
 
-    async def test_invite_member_is_403(
-        self,
-        client: AsyncClient,
-        member_headers: dict[str, str],
-        member_membership: ProjectMember,
-        test_project: Project,
-        invite_target_user: User,
-    ) -> None:
-        """POST /projects/{id}/members (MANAGE_MEMBERS) → 403 for Member."""
-        response = await client.post(
-            f"/api/v1/projects/{test_project.id}/members",
-            headers=member_headers,
-            json={
-                "email": invite_target_user.email,
-                "role": "viewer",
-            },
-        )
-        assert response.status_code == 403, (
-            f"Expected 403 for Member on POST /members, got {response.status_code}: "
-            f"{response.text}"
-        )
+    # NOTE (2026-06-03, preview feedback #7 — SU-bootstrap redesign): the
+    # direct member-add route ``POST /projects/{id}/members`` was removed —
+    # adding a user is now invitation-only (see
+    # ``echoroo.api.v1.projects`` / ``echoroo.api.web_v1.projects._members``).
+    # The MANAGE_MEMBERS gate on the ``/api/v1`` member surface is still
+    # covered by ``test_update_member_role_is_403`` (PATCH) and
+    # ``test_remove_member_is_403`` (DELETE) below. The dedicated
+    # invitation-issue gate lives on the BFF surface and is exercised by
+    # ``tests/contract/test_permissions.py`` / ``test_projects.py``.
 
     async def test_update_member_role_is_403(
         self,
@@ -368,27 +341,12 @@ class TestAdminAllowed:
       Any 4xx / 5xx that is NOT 401 / 403 is acceptable here.
     """
 
-    async def test_invite_member_not_forbidden(
-        self,
-        client: AsyncClient,
-        admin_headers: dict[str, str],
-        admin_membership: ProjectMember,
-        test_project: Project,
-        invite_target_user: User,
-    ) -> None:
-        """POST /projects/{id}/members (MANAGE_MEMBERS) → not 401/403 for Admin."""
-        response = await client.post(
-            f"/api/v1/projects/{test_project.id}/members",
-            headers=admin_headers,
-            json={
-                "email": invite_target_user.email,
-                "role": "viewer",
-            },
-        )
-        assert response.status_code not in (401, 403), (
-            f"Admin should not be blocked on POST /members, got {response.status_code}: "
-            f"{response.text}"
-        )
+    # NOTE (2026-06-03, preview feedback #7 — SU-bootstrap redesign): the
+    # direct member-add route ``POST /projects/{id}/members`` was removed
+    # (invitation-only). Admin's MANAGE_MEMBERS access on the ``/api/v1``
+    # member surface remains exercised by the PATCH/DELETE member tests and
+    # by the BFF invitation contract tests; the obsolete direct-add
+    # not-forbidden assertion has been dropped.
 
     async def test_create_custom_model_not_forbidden(
         self,
@@ -485,23 +443,7 @@ class TestOwnerAllowed:
             f"got {response.status_code}: {response.text}"
         )
 
-    async def test_invite_member_not_forbidden(
-        self,
-        client: AsyncClient,
-        owner_headers: dict[str, str],
-        test_project: Project,
-        invite_target_user: User,
-    ) -> None:
-        """POST /projects/{id}/members (MANAGE_MEMBERS) → not 401/403 for Owner."""
-        response = await client.post(
-            f"/api/v1/projects/{test_project.id}/members",
-            headers=owner_headers,
-            json={
-                "email": invite_target_user.email,
-                "role": "viewer",
-            },
-        )
-        assert response.status_code not in (401, 403), (
-            f"Owner should not be blocked on POST /members, got {response.status_code}: "
-            f"{response.text}"
-        )
+    # NOTE (2026-06-03, preview feedback #7 — SU-bootstrap redesign): the
+    # direct member-add route ``POST /projects/{id}/members`` was removed
+    # (invitation-only). Owner's MANAGE_MEMBERS access is covered elsewhere;
+    # the obsolete direct-add not-forbidden assertion has been dropped.

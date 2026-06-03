@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import ProjectVisibility
-from echoroo.models.project import Project
+from echoroo.models.project import Project, ProjectMember, ProjectMemberRole
 from echoroo.models.user import User
 from echoroo.services.project import DEFAULT_RESTRICTED_CONFIG
 from tests.integration.api.web_v1._helpers import (
@@ -396,33 +397,27 @@ async def test_project_member_mutations_bff_contract(
     test_user: User,
     member_user: User,
 ) -> None:
+    # NOTE (preview-fixes/ws4-su-redesign): the direct-add endpoint
+    # ``POST /web-api/v1/projects/{id}/members`` was removed. Adding a user to
+    # a project is now invitation-only via
+    # ``POST /web-api/v1/projects/{id}/invitations``. We seed the target member
+    # directly in the DB here so the PATCH / DELETE BFF contract can be
+    # exercised without depending on the removed endpoint.
     target_user = await _create_user(
         db_session,
         email=f"a2-member-{uuid.uuid4()}@example.com",
     )
-    owner_headers = await _bff_session_headers(client, db_session, test_user)
+    db_member = ProjectMember(
+        project_id=test_project.id,
+        user_id=target_user.id,
+        role=ProjectMemberRole.VIEWER,
+        joined_at=datetime.now(UTC),
+        invited_by_id=test_user.id,
+    )
+    db_session.add(db_member)
+    await db_session.commit()
 
-    add_body = {"email": target_user.email, "role": "viewer"}
-    await assert_csrf_required(
-        client,
-        "POST",
-        f"/web-api/v1/projects/{test_project.id}/members",
-        body=add_body,
-        headers=owner_headers,
-    )
-    add = await client.post(
-        f"/web-api/v1/projects/{test_project.id}/members",
-        json=add_body,
-        headers=owner_headers,
-    )
-    assert add.status_code == 201, add.text
-    assert add.json()["user"]["id"] == str(target_user.id)
-    add_audit = await assert_audit_actor_kind_session(
-        db_session,
-        {"action": "project.member.invite", "project_id": test_project.id},
-    )
-    assert add_audit["detail"]["user_id"] == str(target_user.id)
-    assert add_audit["after"]["role"] == "viewer"
+    owner_headers = await _bff_session_headers(client, db_session, test_user)
 
     member_headers = await _bff_session_headers(client, db_session, member_user)
     await assert_permission_denial_returns_403(

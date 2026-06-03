@@ -13,7 +13,6 @@ from httpx import AsyncClient
 
 if TYPE_CHECKING:
     from echoroo.models.project import ProjectMember
-    from echoroo.models.user import User
 
 
 @pytest.mark.asyncio
@@ -404,79 +403,12 @@ class TestProjectMemberEndpoints:
         # Verify response is an array
         assert isinstance(data, list)
 
-    async def test_add_member(
-        self,
-        client: AsyncClient,
-        auth_headers: dict[str, str],
-        test_project_id: str,
-        member_user: User,  # noqa: F821
-    ) -> None:
-        """Test POST /api/v1/projects/{projectId}/members - Add member."""
-        member_data = {
-            "email": member_user.email,
-            "role": "member",
-        }
-
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers,
-            json=member_data,
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-
-        # Verify response structure matches ProjectMemberResponse
-        assert "id" in data
-        assert "user" in data
-        assert data["user"]["email"] == member_user.email
-        assert data["role"] == "member"
-        assert "joined_at" in data
-
-    async def test_add_member_already_exists(
-        self,
-        client: AsyncClient,
-        auth_headers: dict[str, str],
-        test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
-        member_user: User,  # noqa: F821
-    ) -> None:
-        """Test POST /api/v1/projects/{projectId}/members with existing member."""
-        member_data = {
-            "email": member_user.email,
-            "role": "member",
-        }
-
-        # Try to add same member again (already added via fixture)
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers,
-            json=member_data,
-        )
-
-        assert response.status_code == 400
-
-    async def test_add_member_not_admin(
-        self,
-        client: AsyncClient,
-        auth_headers_member: dict[str, str],
-        test_project_id: str,
-        test_member: ProjectMember,  # noqa: F821
-        admin_user: User,  # noqa: F821
-    ) -> None:
-        """Test POST /api/v1/projects/{projectId}/members requires admin."""
-        member_data = {
-            "email": admin_user.email,
-            "role": "member",
-        }
-
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers_member,
-            json=member_data,
-        )
-
-        assert response.status_code == 403
+    # NOTE (2026-06-03, preview feedback #7): the direct member-add tests
+    # (test_add_member / test_add_member_already_exists /
+    # test_add_member_not_admin) were removed alongside the
+    # ``POST /api/v1/projects/{id}/members`` endpoint. Adding a user to a
+    # project is invitation-only; the invitation flow is covered by the
+    # member-invitation suites.
 
     async def test_update_member_role(
         self,

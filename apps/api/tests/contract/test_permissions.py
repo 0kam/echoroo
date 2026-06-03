@@ -556,32 +556,12 @@ class TestViewerPermissions:
         data = response.json()
         assert data["id"] == test_project_id
 
-    async def test_viewer_cannot_add_members(
-        self,
-        client: AsyncClient,
-        auth_headers_viewer: dict[str, str],
-        test_project_id: str,
-        test_viewer_member: ProjectMember,  # Ensure viewer is a member
-        other_user: User,
-    ) -> None:
-        """Test that viewer cannot add members to project.
-
-        Verifies:
-        - Viewer role user cannot POST to members endpoint
-        - Response returns 403 Forbidden
-        """
-        member_data = {
-            "email": other_user.email,
-            "role": "member",
-        }
-
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers_viewer,
-            json=member_data,
-        )
-
-        assert response.status_code == 403
+    # NOTE (2026-06-03, preview feedback #7): test_viewer_cannot_add_members
+    # was removed alongside the direct member-add endpoint
+    # (POST /api/v1/projects/{id}/members). Adding a user to a project is
+    # invitation-only; the MANAGE_MEMBERS boundary for viewers is still
+    # covered by test_viewer_cannot_remove_members (DELETE gate) and the
+    # update-role gate tests.
 
     async def test_viewer_cannot_remove_members(
         self,
@@ -658,68 +638,23 @@ class TestMemberPermissions:
 
         assert response.status_code == 200
 
-    async def test_member_cannot_add_members(
-        self,
-        client: AsyncClient,
-        auth_headers_member: dict[str, str],
-        test_project_id: str,
-        test_member: ProjectMember,  # Ensure member exists and is authenticated
-        other_user: User,
-    ) -> None:
-        """Test that member cannot add other members.
-
-        Verifies:
-        - Member role user cannot POST to members endpoint
-        - Response returns 403 Forbidden
-        """
-        member_data = {
-            "email": other_user.email,
-            "role": "member",
-        }
-
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers_member,
-            json=member_data,
-        )
-
-        assert response.status_code == 403
+    # NOTE (2026-06-03, preview feedback #7): test_member_cannot_add_members
+    # was removed alongside the direct member-add endpoint
+    # (POST /api/v1/projects/{id}/members). Adding a user to a project is
+    # invitation-only; the MANAGE_MEMBERS boundary for members is still
+    # covered by the update-role / remove gate tests.
 
 
 @pytest.mark.asyncio
 class TestAdminPermissions:
     """Test that admins can manage members and settings."""
 
-    async def test_admin_can_manage_members(
-        self,
-        client: AsyncClient,
-        auth_headers_admin: dict[str, str],
-        test_project_id: str,
-        test_admin_member: ProjectMember,  # Ensure admin is a member
-        other_user: User,
-    ) -> None:
-        """Test that admin can add members to project.
-
-        Verifies:
-        - Admin role user can POST to members endpoint
-        - Response returns 201 Created
-        - New member is successfully added
-        """
-        member_data = {
-            "email": other_user.email,
-            "role": "viewer",
-        }
-
-        response = await client.post(
-            f"/api/v1/projects/{test_project_id}/members",
-            headers=auth_headers_admin,
-            json=member_data,
-        )
-
-        assert response.status_code == 201
-        data = response.json()
-        assert data["user"]["email"] == other_user.email
-        assert data["role"] == "viewer"
+    # NOTE (2026-06-03, preview feedback #7): test_admin_can_manage_members
+    # (direct add via POST /api/v1/projects/{id}/members) was removed with
+    # the endpoint. Admin MANAGE_MEMBERS is still covered by
+    # test_admin_can_update_member_roles (PATCH) and
+    # test_admin_can_remove_members (DELETE) below; admin invitation
+    # issuance is covered by the member-invitation flow suites.
 
     async def test_admin_can_update_member_roles(
         self,
