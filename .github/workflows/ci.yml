@@ -134,6 +134,312 @@ jobs:
         run: npm run test -- --run
 
   # ---------------------------------------------------------------------------
+  # WS7 Phase 4: Playwright end-to-end tests.
+  #
+  # The repository carries ~38 Playwright specs under apps/web/tests/e2e/ but,
+  # until this job, none of them ran in CI. Phase 4 closes that gap.
+  #
+  # Two-tier design was evaluated:
+  #
+  #   TIER 1 — a zero-backend BLOCKING smoke job (Playwright starts only its own
+  #   Vite dev server, no FastAPI). This was empirically REJECTED. Every spec we
+  #   tested fails without a real backend because SvelteKit SSR `load` functions
+  #   (and the root `/` → /login redirect) reach the backend during server
+  #   render, and `page.route` interceptors do NOT intercept SvelteKit
+  #   server-side fetches. Even the "mock-based" permissions/smoke-matrix.spec.ts
+  #   fails 17/29 scenarios with no backend (the /projects/{id}/* routes
+  #   SSR-fetch the API). Specs measured with no backend
+  #   (CI=true, ECHOROO_API_URL=http://127.0.0.1:9):
+  #       home.spec.ts                        FAIL (1/1)  — `/` redirects to /login
+  #       setup.spec.ts                       FAIL (9/9)
+  #       tokens.spec.ts                      FAIL (7/7)
+  #       projects.spec.ts                    FAIL (all)
+  #       annotation-editor.spec.ts           FAIL (all)
+  #       search-session-detail.spec.ts       FAIL (all) — needs real login
+  #       permissions/smoke-matrix.spec.ts    FAIL (17/29 — SSR fetch ECONNREFUSED)
+  #   Conclusion: a deterministic zero-backend blocking tier is not viable for
+  #   this codebase, so Phase 4 ships only the opt-in full-stack tier below. A
+  #   new flaky e2e job would be worse than none (cf. PR #143 flake cleanup).
+  #
+  #   TIER 2 — this `e2e-full` job: a full-stack, seeded smoke run. It is OPT-IN
+  #   so it never flakes a normal PR — it executes ONLY on `workflow_dispatch` or
+  #   when the `run-e2e` label is attached to a PR. It provisions Postgres +
+  #   Redis + LocalStack (S3 + KMS), runs alembic, provisions the dev S3 bucket
+  #   and the 4 isolated KMS CMK aliases via the existing
+  #   scripts/init-localstack.sh, boots the FastAPI backend on :8002 (matching
+  #   the SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
+  #   fixtures via `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,
+  #   stable subset of specs that use the TEST_MODE shared-TOTP login helper
+  #   (helpers/spec011-auth.ts → loginWithSharedTotp). TEST_MODE=true +
+  #   TEST_TOTP_SECRET_BASE32 lets any seeded e2e-* account log in with the one
+  #   shared secret, so no per-user TOTP plumbing is needed.
+  #
+  # Security note: no untrusted `github.event.*` inputs are interpolated into
+  # any `run:` block. The `run-e2e` label gate appears only inside the `if:`
+  # expression. Seeded TOTP secrets / API keys are exported via $GITHUB_ENV by
+  # scripts/export_e2e_seed_env.py, which logs NAMES only (never values).
+  # ---------------------------------------------------------------------------
+  e2e-full:
+    name: E2E full-stack (Playwright, seeded)
+    runs-on: ubuntu-latest
+    # Opt-in only: manual dispatch OR the `run-e2e` PR label. This keeps the
+    # job off the default PR critical path so it can never flake a normal
+    # build while the seeded full-stack flow is stabilised in CI.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    timeout-minutes: 30
+    env:
+      # Backend env — mirrors the backend-tests job for Postgres/Redis plus the
+      # LocalStack S3 + KMS wiring and the TEST_MODE shared-TOTP contract that
+      # the e2e login helper depends on. The backend listens on :8002 (host)
+      # which is the SvelteKit BFF default (ECHOROO_API_URL fallback in
+      # apps/web/src/hooks.server.ts), so the frontend needs no override.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET_KEY: ci-test-secret
+      INVITATION_TOKEN_KID_NEW: ci-test-kid-001
+      INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
+      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
+      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
+      ENVIRONMENT: development
+      # TEST_MODE shared-TOTP contract (memory/preview-test-accounts.md): the
+      # helper helpers/spec011-auth.ts defaults E2E_SHARED_TOTP_SECRET to this
+      # exact base32 value, and the backend accepts it for any seeded e2e-*
+      # account only when TEST_MODE=true. Do NOT substitute the unit-test value
+      # JBSWY3DPEHPK3PXP here.
+      TEST_MODE: "true"
+      TEST_TOTP_SECRET_BASE32: VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
+      # S3 / LocalStack. S3_ENDPOINT_URL is the API↔S3 path; S3_PUBLIC_ENDPOINT_URL
+      # is the browser-facing presign host routed through the Vite /s3-proxy on
+      # the Playwright dev server (:5173).
+      S3_ENDPOINT_URL: http://localhost:4566
+      S3_PUBLIC_ENDPOINT_URL: http://localhost:5173/s3-proxy
+      S3_ACCESS_KEY: echoroo
+      S3_SECRET_KEY: echoroo-dev
+      S3_BUCKET: echoroo
+      AUDIO_ROOT: /tmp/echoroo-audio
+      # AWS / KMS (LocalStack). AWS_ENDPOINT_URL_KMS points the KMS client at
+      # LocalStack; the four CMK aliases are provisioned below by
+      # scripts/init-localstack.sh and default to the app's expected names
+      # (alias/echoroo-totp-dek, …) — see apps/api/echoroo/core/settings.py.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_KMS_REGION: us-east-1
+      AWS_ENDPOINT_URL_KMS: http://localhost:4566
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: echoroo_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+      localstack:
+        image: localstack/localstack:latest
+        env:
+          SERVICES: s3,kms
+          DEFAULT_REGION: us-east-1
+        options: >-
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health || exit 1"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 8
+          --health-start-period 30s
+        ports:
+          - 4566:4566
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Backend toolchain (uv) ---------------------------------------------
+      - name: Install uv + Python 3.11
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: "apps/api/uv.lock"
+          pyproject-file: "apps/api/pyproject.toml"
+
+      - name: Install backend dependencies
+        working-directory: apps/api
+        run: uv sync --all-extras --dev
+
+      # --- Frontend toolchain (node) ------------------------------------------
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      # Paraglide message modules are generated + gitignored — compile before
+      # Playwright boots Vite (mirrors frontend-check / frontend-tests).
+      - name: Compile i18n messages (paraglide)
+        working-directory: apps/web
+        run: npm run messages
+
+      - name: Install Playwright browsers
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      # --- Database provisioning (mirrors backend-tests verbatim) -------------
+      - name: Provision echoroo_app role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app') THEN
+                CREATE ROLE echoroo_app WITH LOGIN PASSWORD 'echoroo_app_test';
+              END IF;
+            END \$\$;
+            GRANT ALL PRIVILEGES ON DATABASE echoroo_ci TO echoroo_app;
+            GRANT ALL PRIVILEGES ON SCHEMA public TO echoroo_app;
+            GRANT echoroo_app TO postgres;
+          "
+
+      - name: Apply alembic migrations
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
+        run: uv run alembic upgrade head
+
+      - name: Re-grant on tables/sequences after migration
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d echoroo_ci -c "
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app;
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
+          "
+
+      # --- LocalStack S3 bucket + KMS aliases ---------------------------------
+      # Reuse the existing dev bootstrap script verbatim. It is idempotent and
+      # provisions the `echoroo` S3 bucket (+ CORS) and the four isolated KMS
+      # CMK aliases (alias/echoroo-totp-dek, alias/echoroo-invitation-hmac,
+      # alias/echoroo-pii-hash-hmac, alias/echoroo-audit-chain-hmac) that the
+      # backend needs at login / seed time. The script invokes `awslocal`, so
+      # install awscli-local and point it at the CI LocalStack endpoint.
+      - name: Install awscli-local
+        run: pip install awscli-local==0.22.0
+
+      - name: Provision LocalStack S3 bucket + KMS aliases
+        env:
+          # awslocal honours AWS_ENDPOINT_URL / region; LocalStack is on :4566.
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+        run: bash scripts/init-localstack.sh
+
+      # --- Boot the FastAPI backend on :8002 ----------------------------------
+      # Port 8002 matches the SvelteKit BFF default (ECHOROO_API_URL fallback in
+      # apps/web/src/hooks.server.ts), so the Playwright dev server reaches it
+      # without an override. AUDIO_ROOT must exist for the seed media fallback.
+      - name: Start backend (uvicorn :8002)
+        working-directory: apps/api
+        run: |
+          mkdir -p /tmp/echoroo-audio
+          nohup uv run uvicorn echoroo.main:app \
+            --host 0.0.0.0 --port 8002 \
+            > /tmp/backend.log 2>&1 &
+          echo "backend started (pid $!)"
+
+      - name: Wait for backend /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8002/health >/dev/null 2>&1; then
+              echo "backend healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend did not become healthy within 60s"
+          echo "=== last 100 lines of backend.log ==="
+          tail -100 /tmp/backend.log || true
+          exit 1
+
+      # --- Seed deterministic permission fixtures -----------------------------
+      # DATABASE_URL host is `localhost`, which is inside the seeder's local
+      # allowlist, so --confirm alone suffices (no --allow-non-local-database).
+      # The seeder prints a JSON document whose `env` block carries every
+      # fixture identifier the specs read; capture it to a file and export the
+      # `env` block to $GITHUB_ENV.
+      - name: Seed E2E permission fixtures
+        working-directory: apps/api
+        run: |
+          uv run python -m echoroo.scripts.seed_e2e_permissions --confirm \
+            > /tmp/e2e-seed.json
+          echo "seed completed ($(wc -c < /tmp/e2e-seed.json) bytes of JSON)"
+
+      - name: Export seeded fixture identifiers to env
+        run: |
+          python scripts/export_e2e_seed_env.py --seed-json /tmp/e2e-seed.json
+          # The shared TEST_MODE secret the login helper falls back to — set it
+          # explicitly so the spec helper does not depend on its hardcoded
+          # default. NAME logged, value not echoed.
+          echo "E2E_SHARED_TOTP_SECRET=VUO4R45DU5RTBODG63FN7KOE6OOCKCJE" >> "$GITHUB_ENV"
+
+      # --- Run the stable seeded smoke subset ---------------------------------
+      # Chosen specs use the shared-TOTP login helper (loginWithSharedTotp) and
+      # the lowest-dependency seeded accounts. They have NO `*_E2E_ENABLED`
+      # opt-in gates, do not require GPU / Celery worker / ML inference, and
+      # exercise login + core authenticated screens / banner stack:
+      #   - no-email-ui-fresh-deployment.spec.ts  (e2e-owner: login + dashboard/
+      #     profile/settings; logged-out login page; deleted-route smoke)
+      #   - banner-stack.spec.ts                  (e2e-member: notification stack)
+      # Playwright starts its own Vite (CI=true → reuseExistingServer:false).
+      - name: Run seeded smoke specs (Playwright)
+        working-directory: apps/web
+        env:
+          CI: "true"
+        run: |
+          npx playwright test \
+            tests/e2e/no-email-ui-fresh-deployment.spec.ts \
+            tests/e2e/banner-stack.spec.ts \
+            --reporter=line
+
+      # --- Artifacts on failure -----------------------------------------------
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-e2e-full
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+
+      - name: Upload backend log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-full-backend-log
+          path: /tmp/backend.log
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
   # WS7 Phase 2: forbid hardcoded English UI strings in *.svelte markup. The
   # generated fail-closed baseline
   # (scripts/allowlists/hardcoded_paraglide_strings_allowlist.txt) keeps this
