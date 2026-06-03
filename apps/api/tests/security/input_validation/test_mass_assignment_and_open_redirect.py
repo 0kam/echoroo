@@ -43,7 +43,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from echoroo.schemas.project import ProjectMemberAddRequest, ProjectMemberRole
+from echoroo.schemas.member_invitations import MemberInvitationIssueRequest
+from echoroo.schemas.project import ProjectMemberRole
 from echoroo.schemas.user import UserUpdateRequest
 
 # ---------------------------------------------------------------------------
@@ -131,15 +132,23 @@ def test_user_update_request_extra_fields_are_rejected_or_ignored() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_project_member_add_request_rejects_owner_role() -> None:
-    """``ProjectMemberAddRequest`` schema MUST NOT accept ``role="owner"``.
+# NOTE (2026-06-03, preview feedback #7): the direct member-add schema
+# (``ProjectMemberAddRequest``) was removed — adding a user to a project
+# is invitation-only. The same role-escalation mass-assignment guard now
+# applies to the invitation-issue request (``MemberInvitationIssueRequest``),
+# which is the only role-bearing member-add surface that remains.
 
-    The ``ProjectMemberRole`` enum contains ``viewer``, ``member``, and
-    ``admin``. The string ``"owner"`` is not a valid enum value, so Pydantic
-    must raise ``ValidationError`` when it appears in the request body.
+
+def test_member_invitation_request_rejects_owner_role() -> None:
+    """``MemberInvitationIssueRequest`` MUST NOT accept ``role="owner"``.
+
+    The invitation role Literal contains ``viewer``, ``member``, and
+    ``admin``. The string ``"owner"`` is not a valid value, so Pydantic
+    must raise ``ValidationError`` when it appears in the request body —
+    blocking ownership escalation via the only remaining member-add path.
     """
     with pytest.raises(ValidationError) as exc_info:
-        ProjectMemberAddRequest(
+        MemberInvitationIssueRequest(
             email="attacker@example.com",
             role="owner",  # type: ignore[arg-type]
         )
@@ -151,10 +160,10 @@ def test_project_member_add_request_rejects_owner_role() -> None:
     )
 
 
-def test_project_member_add_request_accepts_valid_roles() -> None:
-    """``ProjectMemberAddRequest`` accepts valid role values without error."""
-    for role in ProjectMemberRole:
-        req = ProjectMemberAddRequest(email="user@example.com", role=role)
+def test_member_invitation_request_accepts_valid_roles() -> None:
+    """``MemberInvitationIssueRequest`` accepts viewer/member/admin roles."""
+    for role in ("viewer", "member", "admin"):
+        req = MemberInvitationIssueRequest(email="user@example.com", role=role)
         assert req.role == role
 
 

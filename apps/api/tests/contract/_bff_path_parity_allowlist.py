@@ -65,7 +65,9 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id} PATCH",
     "/web-api/v1/projects/{project_id} DELETE",
     "/web-api/v1/projects/{project_id}/members GET",
-    "/web-api/v1/projects/{project_id}/members POST",
+    # NOTE (2026-06-03, preview feedback #7): the direct member-add route
+    # ("/web-api/v1/projects/{project_id}/members POST") was removed —
+    # adding a user to a project is invitation-only.
     "/web-api/v1/projects/{project_id}/members/{user_id} PATCH",
     "/web-api/v1/projects/{project_id}/members/{user_id} DELETE",
     "/web-api/v1/projects/{project_id}/overview GET",

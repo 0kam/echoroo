@@ -193,45 +193,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-    post:
-      operationId: addProjectMember
-      summary: Add project member
-      description: Add existing user to project (admin only)
-      tags: [Project Members]
-      security:
-        - cookieAuth: []
-      parameters:
-        - name: project_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AddMemberRequest'
-      responses:
-        '201':
-          description: Member added
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MemberResponse'
-        '400':
-          description: User already member
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+    # AMENDMENT (2026-06-03, preview feedback #7): the direct member-add
+    # route (POST /api/v1/projects/{project_id}/members, formerly
+    # operationId addProjectMember) has been REMOVED. Adding a user to a
+    # project is invitation-only. Only the GET (list) operation remains
+    # on this path.
 
   /api/v1/projects/{project_id}/members/{user_id}:
     patch:

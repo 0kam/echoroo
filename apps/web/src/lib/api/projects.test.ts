@@ -235,27 +235,24 @@ describe('projectsApi BFF public-read behaviour', () => {
   });
 
   it('routes member mutations through BFF with CSRF', async () => {
+    // SU-bootstrap redesign (preview feedback #7): direct member-add was
+    // removed (POST /projects/{id}/members no longer exists). Only the
+    // role-change + remove mutations remain on the members page.
     apiClient.setAccessToken('valid-jwt');
     const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
     document.cookie = 'echoroo_csrf=test-csrf; path=/';
     fetchMock.mockResolvedValue(jsonResponse({ id: 'member-1', role: 'member' }));
 
-    await projectsApi.addMember('project-1', { email: 'member@example.com', role: 'viewer' });
     await projectsApi.updateMemberRole('project-1', 'user-1', { role: 'member' });
     await projectsApi.removeMember('project-1', 'user-1');
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/web-api/v1/projects/project-1/members',
-      expect.objectContaining({ method: 'POST', credentials: 'include' })
-    );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
       '/web-api/v1/projects/project-1/members/user-1',
       expect.objectContaining({ method: 'PATCH', credentials: 'include' })
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+      2,
       '/web-api/v1/projects/project-1/members/user-1',
       expect.objectContaining({ method: 'DELETE', credentials: 'include' })
     );
@@ -264,5 +261,35 @@ describe('projectsApi BFF public-read behaviour', () => {
       expect(init.headers.Authorization).toBe('Bearer valid-jwt');
       expect(init.headers['X-CSRF-Token']).toBe('test-csrf');
     }
+  });
+
+  it('routes transfer-ownership through BFF with CSRF and idempotency key', async () => {
+    apiClient.setAccessToken('valid-jwt');
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    document.cookie = 'echoroo_csrf=test-csrf; path=/';
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        project_id: 'project-1',
+        previous_owner_id: 'owner-1',
+        new_owner_id: 'user-1',
+        replayed: false,
+      })
+    );
+
+    await projectsApi.transferOwnership('project-1', 'user-1', 'idem-key-123');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/web-api/v1/projects/project-1/transfer-ownership',
+      expect.objectContaining({ method: 'POST', credentials: 'include' })
+    );
+    const firstCall = fetchMock.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    const init = firstCall![1] as RequestInit & {
+      headers: Record<string, string>;
+    };
+    expect(init.headers.Authorization).toBe('Bearer valid-jwt');
+    expect(init.headers['X-CSRF-Token']).toBe('test-csrf');
+    expect(init.headers['X-Idempotency-Key']).toBe('idem-key-123');
+    expect(init.body).toBe(JSON.stringify({ new_owner_user_id: 'user-1' }));
   });
 });

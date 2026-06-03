@@ -460,21 +460,15 @@ export interface Project {
 export type ProjectResponse = Project;
 
 /**
- * Response from `POST /web-api/v1/projects/` (spec/011 US6).
+ * Response from `POST /web-api/v1/projects/`.
  *
- * Extends the standard `Project` create response with the one-shot
- * superuser-bootstrap invitation fields. `invitation_url` /
- * `invitation_id` are non-null **only** when a superuser supplied a
- * valid `intended_owner_email`; in that case the backend issues a
- * `kind=member`, `role=ADMIN`, `ownership_transfer_on_accept=true`
- * invitation and returns the one-shot URL here (served with
- * `Cache-Control: no-store`). For non-superusers, or when no email was
- * supplied, both fields are `null` and the caller redirects normally.
+ * The SU-bootstrap redesign (preview feedback #1) dropped the create-time
+ * `intended_owner_email` flow, so project creation no longer issues a
+ * one-shot invitation. The response is now the plain `Project` shape;
+ * post-creation ownership transfer is handled separately via
+ * `transferOwnership()` (preview feedback #2).
  */
-export interface ProjectCreateResponse extends Project {
-  invitation_url: string | null;
-  invitation_id: string | null;
-}
+export type ProjectCreateResponse = Project;
 
 /**
  * Project create request.
@@ -496,16 +490,6 @@ export interface ProjectCreateRequest {
   target_taxa?: string;
   visibility: ProjectVisibility;
   license_id: string;
-  /**
-   * spec/011 US6 superuser bootstrap: when the caller is a superuser and
-   * supplies a valid email here, the backend creates the project and
-   * issues a one-shot `kind=member`, `role=ADMIN`,
-   * `ownership_transfer_on_accept=true` invitation, returning the
-   * resulting URL in `ProjectCreateResponse.invitation_url`. Silently
-   * dropped server-side for non-superusers. An invalid email yields a
-   * 422 `ERR_INVALID_INTENDED_OWNER_EMAIL` (superuser only).
-   */
-  intended_owner_email?: string;
 }
 
 /**
@@ -904,6 +888,22 @@ export interface ProjectMemberAddRequest {
  */
 export interface ProjectMemberUpdateRequest {
   role: ProjectMemberRole;
+}
+
+/**
+ * Response from `POST /web-api/v1/projects/{id}/transfer-ownership`
+ * (SU-bootstrap redesign / preview feedback #2).
+ *
+ * Owner-only, idempotent under `X-Idempotency-Key`. The target must be
+ * an active project Admin; on success the previous owner is demoted to
+ * Admin and the new owner is promoted to Owner. `replayed` is `true`
+ * when the same idempotency key resolved to an already-applied transfer.
+ */
+export interface TransferOwnershipResponse {
+  project_id: string;
+  previous_owner_id: string;
+  new_owner_id: string;
+  replayed: boolean;
 }
 
 // ============================================

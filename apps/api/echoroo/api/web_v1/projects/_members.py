@@ -72,7 +72,6 @@ from echoroo.api.web_v1.projects._core import ProjectServiceDep
 from echoroo.core.actions import (
     PROJECT_MEMBER_INVITATION_ISSUE_ACTION,
     PROJECT_MEMBER_INVITATION_REVOKE_ACTION,
-    PROJECT_MEMBER_INVITE_ACTION,
     PROJECT_MEMBER_LIST_ACTION,
     PROJECT_MEMBER_REMOVE_ACTION,
     PROJECT_MEMBER_UPDATE_ROLE_ACTION,
@@ -98,7 +97,6 @@ from echoroo.schemas.member_invitations import (
     ProjectInvitationListResponse,
 )
 from echoroo.schemas.project import (
-    ProjectMemberAddRequest,
     ProjectMemberResponse,
     ProjectMemberUpdateRequest,
 )
@@ -276,57 +274,11 @@ async def list_project_members(
     return await service.list_members(current_user.id, project_id)
 
 
-@router.post(
-    "/{project_id}/members",
-    response_model=ProjectMemberResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Add project member (Web UI)",
-    description=(
-        "Cookie + CSRF Web UI surface mirroring the programmatic member "
-        "add route. Owner / Admin only via the canonical MANAGE_MEMBERS gate."
-    ),
-    responses={
-        202: {"description": "Invitation email queued (FR-055 async path)"},
-    },
-)
-async def add_project_member(
-    project_id: UUID,
-    payload: ProjectMemberAddRequest,
-    request: Request,
-    current_user: OptionalCurrentUser,
-    service: ProjectServiceDep,
-    db: DbSession,
-) -> ProjectMemberResponse:
-    """Add a member through the first-party BFF surface."""
-    if current_user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-        )
-
-    await gate_action(
-        action=PROJECT_MEMBER_INVITE_ACTION,
-        project_id=project_id,
-        current_user=current_user,
-        request=request,
-        db=db,
-    )
-    member = await service.add_member(current_user.id, project_id, payload)
-    await db.commit()
-    await write_project_bff_audit_soft(
-        actor_user_id=current_user.id,
-        project_id=project_id,
-        action=PROJECT_MEMBER_INVITE_ACTION.name,
-        request=request,
-        detail={
-            "project_id": str(project_id),
-            "user_id": str(member.user.id),
-            "role": member.role.value,
-        },
-        before=None,
-        after=_member_audit_snapshot(member, project_id=project_id),
-    )
-    return member
+# NOTE (2026-06-03, preview feedback #7): the direct member-add route
+# (``POST /{project_id}/members``) has been removed. Adding a user to a
+# project is invitation-only — issue a Member-kind invitation via
+# ``POST /{project_id}/invitations`` and let the recipient accept it. The
+# members LIST / role-change / remove endpoints below remain intact.
 
 
 @router.patch(

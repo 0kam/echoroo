@@ -16,6 +16,13 @@ absent. Skip both tests at module level — the project-CRUD parts are
 covered by ``tests/contract/test_projects.py`` and the auth flow is
 covered by ``tests/integration/test_auth_*.py``. Track the cleanup
 ticket in ``specs/006-permissions-redesign/tasks.md`` Batch 6f.
+
+NOTE (2026-06-03, preview feedback #7): these (already-skipped) flows
+also exercise the now-removed direct member-add endpoint
+(``POST /api/v1/projects/{id}/members``). Adding a user to a project is
+invitation-only; if this suite is ever un-skipped it MUST be reworked to
+seed members via the invitation flow (or direct DB seeding) rather than
+the removed direct-add route.
 """
 
 import pytest

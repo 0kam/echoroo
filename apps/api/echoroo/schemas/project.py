@@ -7,7 +7,6 @@ from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
-    EmailStr,
     Field,
     StrictBool,
     StrictInt,
@@ -178,32 +177,11 @@ class ProjectCreateRequest(BaseModel):
         default_factory=dict,
         description="Restricted visibility capability toggles",
     )
-    # spec/011 FR-011-120..125 — system superuser project bootstrap.
-    # The field is OPTIONAL at the schema layer for every caller (so
-    # ``extra="forbid"`` does not 422 a non-superuser submission).
-    #
-    # spec/011 Step 9 R1 P0-2 (anti-enumeration): the field is typed as
-    # ``str | None`` instead of ``EmailStr | None`` so Pydantic does NOT
-    # run email-format validation at schema-decode time. Without this
-    # weakening a non-superuser submitting ``intended_owner_email="x"``
-    # would receive a 422 "value is not a valid email address" response,
-    # leaking that the server recognises the field. Format validation is
-    # moved into the handler AFTER the SU check so non-SU callers' values
-    # are silently dropped without ANY validation feedback (FR-011-125).
-    intended_owner_email: str | None = Field(
-        default=None,
-        description=(
-            "Optional system-superuser-only field. When supplied by a "
-            "superuser, the project is created with the superuser as "
-            "the placeholder owner and an Admin-role invitation is "
-            "issued for the supplied email with ownership_transfer_on_"
-            "accept=true. Silently ignored for non-superuser callers "
-            "(FR-011-125). Format validation runs inside the handler "
-            "AFTER the superuser check so non-superuser submissions "
-            "of malformed values are silently dropped without leaking "
-            "the field's existence via a 422 email-format error."
-        ),
-    )
+    # NOTE (2026-06-03, preview feedback #1): the create-time
+    # ``intended_owner_email`` superuser-bootstrap field has been removed.
+    # The creator always becomes the owner; ownership transfer is now a
+    # post-creation operation (``POST /projects/{id}/transfer-ownership``,
+    # owner selects an existing Admin member). See spec/011 amendment.
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -288,43 +266,15 @@ class ProjectResponse(BaseModel):
 class ProjectCreateResponse(ProjectResponse):
     """Project response shape returned by ``POST /web-api/v1/projects``.
 
-    spec/011 FR-011-121: extends :class:`ProjectResponse` with two
-    optional bootstrap-invitation fields. Both fields appear on EVERY
-    create response (as ``null`` for non-superuser callers and for
-    superuser submissions that omit ``intended_owner_email``) so the
-    response shape is identical between superuser and non-superuser
-    callers — the field's existence alone MUST NOT let a non-superuser
-    enumerate the SU bootstrap feature (FR-011-125).
-
-    When the system superuser supplies ``intended_owner_email`` on the
-    create request, the create-project transaction atomically issues
-    a Member-kind ADMIN-role invitation with
-    ``ownership_transfer_on_accept=True`` and surfaces the 4-part
-    signed envelope under ``invitation_url`` (one-shot — NOT
-    recoverable past this single HTTP turn). The endpoint mirrors the
-    Step 6 / Step 7 invitation surface by setting
-    ``Cache-Control: no-store, no-cache, must-revalidate, private`` on
-    EVERY create response so the header alone cannot reveal whether
-    the bootstrap branch fired.
+    NOTE (2026-06-03, preview feedback #1): the create-time superuser
+    bootstrap (``intended_owner_email`` request field +
+    ``invitation_url`` / ``invitation_id`` response fields) has been
+    removed. The create response is now identical to
+    :class:`ProjectResponse` — the project owned by the creator. The
+    subclass is retained as a stable name for the create endpoint's
+    ``response_model``; ownership transfer is a post-creation operation
+    (``POST /projects/{id}/transfer-ownership``).
     """
-
-    invitation_url: str | None = Field(
-        default=None,
-        description=(
-            "spec/011 FR-011-121: one-shot signed envelope returned only "
-            "when the system superuser supplied ``intended_owner_email``. "
-            "MUST NOT be logged or telemetered past this single HTTP "
-            "turn (FR-011-102 token confidentiality)."
-        ),
-    )
-    invitation_id: UUID | None = Field(
-        default=None,
-        description=(
-            "spec/011 FR-011-121: id of the bootstrap invitation row, "
-            "populated alongside ``invitation_url``. ``None`` for the "
-            "non-bootstrap branch (anti-enumeration: same shape)."
-        ),
-    )
 
 
 class ProjectListResponse(BaseModel):
@@ -554,13 +504,6 @@ class ProjectLicenseHistoryResponse(BaseModel):
     """Sorted list of license-history rows (oldest → newest, contract:357)."""
 
     items: list[ProjectLicenseHistoryEntry]
-
-
-class ProjectMemberAddRequest(BaseModel):
-    """Request to add a member to a project."""
-
-    email: EmailStr = Field(..., description="User's email address")
-    role: ProjectMemberRole = Field(default=ProjectMemberRole.MEMBER, description="Member role")
 
 
 class ProjectMemberUpdateRequest(BaseModel):

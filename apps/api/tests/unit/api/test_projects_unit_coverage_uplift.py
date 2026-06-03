@@ -22,7 +22,6 @@ from echoroo.models.enums import (
 )
 from echoroo.schemas.project import (
     ProjectCreateRequest,
-    ProjectMemberAddRequest,
     ProjectMemberUpdateRequest,
     ProjectUpdateRequest,
 )
@@ -136,36 +135,10 @@ async def test_get_project_overview_invokes_service(
     service.get_project_overview.assert_awaited_once_with(current_user.id, project_id)
 
 
-@pytest.mark.asyncio
-async def test_add_project_member_commits_and_returns(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """add_project_member commits and returns the new member (line 706)."""
-    sentinel = MagicMock()
-    service = MagicMock()
-    service.add_member = AsyncMock(return_value=sentinel)
-    db = MagicMock()
-    db.commit = AsyncMock()
-    monkeypatch.setattr(mod, "gate_action", AsyncMock())
-
-    current_user = MagicMock()
-    current_user.id = uuid4()
-    http_request = MagicMock()
-
-    request = ProjectMemberAddRequest(
-        email="member@example.com",
-        role=ProjectMemberRole.MEMBER,
-    )
-    result = await mod.add_project_member(
-        project_id=uuid4(),
-        request=request,
-        http_request=http_request,
-        current_user=current_user,
-        service=service,
-        db=db,
-    )
-    assert result is sentinel
-    db.commit.assert_awaited_once()
+# NOTE (2026-06-03, preview feedback #7): test_add_project_member_commits_
+# and_returns was removed alongside the ``add_project_member`` endpoint +
+# ``add_member`` service method. Adding a user to a project is
+# invitation-only.
 
 
 @pytest.mark.asyncio

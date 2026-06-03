@@ -23,13 +23,6 @@
   let isLoading = $state(true);
   let error = $state<string | null>(null);
 
-  // Add member form
-  let showAddMemberForm = $state(false);
-  let newMemberEmail = $state('');
-  let newMemberRole = $state<'admin' | 'member' | 'viewer'>('member');
-  let isAdding = $state(false);
-  let addError = $state<string | null>(null);
-
   // Remove member state
   let memberToRemove = $state<ProjectMember | null>(null);
   let isRemoving = $state(false);
@@ -101,53 +94,6 @@
   $effect(() => {
     loadData();
   });
-
-  /**
-   * Toggle add member form
-   */
-  function toggleAddMemberForm() {
-    showAddMemberForm = !showAddMemberForm;
-    if (!showAddMemberForm) {
-      newMemberEmail = '';
-      newMemberRole = 'member';
-      addError = null;
-    }
-  }
-
-  /**
-   * Add member
-   */
-  async function handleAddMember(e: Event) {
-    e.preventDefault();
-    addError = null;
-
-    // Validate email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(newMemberEmail)) {
-      addError = 'Please enter a valid email address';
-      return;
-    }
-
-    isAdding = true;
-
-    try {
-      const newMember = await projectsApi.addMember(projectId, {
-        email: newMemberEmail,
-        role: newMemberRole,
-      });
-
-      members = [...members, newMember];
-      toggleAddMemberForm();
-    } catch (err) {
-      if (err instanceof ApiError) {
-        addError = err.detail || err.message;
-      } else {
-        addError = m.members_error_add();
-      }
-    } finally {
-      isAdding = false;
-    }
-  }
 
   /**
    * Show role change confirmation
@@ -334,115 +280,30 @@
       </div>
     {/if}
 
-    <!-- Add Member Section -->
-    <div class="mb-6 rounded-lg bg-surface-card shadow">
-      <div class="p-6">
-        {#if !showAddMemberForm}
-          <button
-            onclick={toggleAddMemberForm}
-            class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
+    <!-- Invite-only helper (SU-bootstrap redesign / preview feedback #7).
+         Direct member-add was removed; new people join exclusively via the
+         invitation flow on the Collaborators tab. This page now manages
+         roles and removals for existing members only. -->
+    <div class="mb-6 rounded-md bg-info-light p-4">
+      <div class="flex items-start">
+        <div class="flex-shrink-0">
+          <svg class="h-5 w-5 text-info" fill="currentColor" viewBox="0 0 20 20">
+            <path
+              fill-rule="evenodd"
+              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        </div>
+        <div class="ml-3 text-sm text-stone-700">
+          <p>{m.members_invite_only_hint()}</p>
+          <a
+            href={localizeHref(`/projects/${projectId}/collaborators`)}
+            class="mt-1 inline-block font-medium text-primary-600 hover:text-primary-500"
           >
-            <svg class="mr-2 h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-            {m.members_add_button()}
-          </button>
-        {:else}
-          <form onsubmit={handleAddMember} class="space-y-4">
-            <div class="flex items-end space-x-4">
-              <div class="flex-1">
-                <label for="email" class="block text-sm font-medium text-stone-700">
-                  {m.members_email_label()}
-                </label>
-                <input
-                  id="email"
-                  type="email"
-                  required
-                  bind:value={newMemberEmail}
-                  disabled={isAdding}
-                  class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                  placeholder={m.members_email_placeholder()}
-                />
-              </div>
-
-              <div class="w-48">
-                <label for="role" class="block text-sm font-medium text-stone-700">
-                  {m.members_role_label()}
-                  <button
-                    type="button"
-                    aria-label="Show role descriptions"
-                    class="ml-1 inline-flex items-center text-stone-400 hover:text-stone-500"
-                    onmouseenter={() => (showRoleTooltip = 'add-role')}
-                    onmouseleave={() => (showRoleTooltip = null)}
-                  >
-                    <svg class="h-4 w-4" fill="currentColor" viewBox="0 0 20 20">
-                      <path
-                        fill-rule="evenodd"
-                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                </label>
-                <div class="relative">
-                  <select
-                    id="role"
-                    bind:value={newMemberRole}
-                    disabled={isAdding}
-                    class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                  >
-                    <option value="viewer">{m.role_viewer()}</option>
-                    <option value="member">{m.role_member()}</option>
-                    <option value="admin">{m.role_admin()}</option>
-                  </select>
-                  {#if showRoleTooltip === 'add-role'}
-                    <div
-                      class="absolute z-10 mt-2 w-64 rounded-md bg-stone-900 p-3 text-xs text-white shadow-lg"
-                    >
-                      <div class="space-y-2">
-                        <div>
-                          <strong>Admin:</strong> {getRoleDescription('admin')}
-                        </div>
-                        <div>
-                          <strong>Member:</strong> {getRoleDescription('member')}
-                        </div>
-                        <div>
-                          <strong>Viewer:</strong> {getRoleDescription('viewer')}
-                        </div>
-                      </div>
-                    </div>
-                  {/if}
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isAdding}
-                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-              >
-                {isAdding ? m.members_adding() : m.members_add_submit()}
-              </button>
-
-              <button
-                type="button"
-                onclick={toggleAddMemberForm}
-                disabled={isAdding}
-                class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
-              >
-                {m.members_cancel()}
-              </button>
-            </div>
-
-            {#if addError}
-              <p class="text-sm text-danger">{addError}</p>
-            {/if}
-          </form>
-        {/if}
+            {m.members_invite_only_link()}
+          </a>
+        </div>
       </div>
     </div>
 
