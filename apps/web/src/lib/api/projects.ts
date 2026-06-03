@@ -29,6 +29,37 @@ import type {
   InvitationRevokeResponse,
 } from '$lib/types';
 import { ApiError, apiClient } from './client';
+import { localizeHref } from '$lib/paraglide/runtime';
+
+/**
+ * Build the full, user-facing invitation acceptance URL from a raw signed
+ * token envelope.
+ *
+ * The issue endpoints (`issueInvitation` / `bulkInvite`) return
+ * `invitation_url` as a RAW signed token string (e.g.
+ * `c_AbC...1781056121.preview-v1.XyZ...`), NOT a full URL: behind SSH
+ * port-forwarding the backend cannot know the user-facing host, so the
+ * admin's own browser `origin` is the only correct shareable host.
+ *
+ * The path resolves to the public `(public)/invite/[token]` acceptance
+ * page. We run the relative path through `localizeHref` first so the URL
+ * respects the project's URL-based locale routing (`/en/...` | `/ja/...`),
+ * then prefix the current `window.location.origin` to produce an absolute,
+ * copy-pasteable link.
+ *
+ * On the server (no `window`) we fall back to the relative localized path;
+ * in practice this helper is only ever called in the browser after an
+ * invitation is issued.
+ */
+export function buildInviteUrl(token: string): string {
+  const localizedPath = localizeHref(`/invite/${encodeURIComponent(token)}`);
+  if (typeof window === 'undefined') {
+    return localizedPath;
+  }
+  // `localizedPath` is relative (starts with `/`); `URL` resolves it
+  // against the origin to yield an absolute, shareable URL.
+  return new URL(localizedPath, window.location.origin).href;
+}
 
 /**
  * CSRF cookie name shared with the backend

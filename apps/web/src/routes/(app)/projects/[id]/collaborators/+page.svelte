@@ -15,12 +15,13 @@
    */
 
   import { page } from '$app/stores';
-  import { projectsApi } from '$lib/api/projects';
+  import { projectsApi, buildInviteUrl } from '$lib/api/projects';
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import type {
     Project,
     ProjectInvitationListItem,
+    ProjectMember,
     MemberInvitationRole,
     MemberInvitationIssueResponse,
     BulkInvitationResultItem,
@@ -36,6 +37,9 @@
   // State
   let project = $state<Project | null>(null);
   let invitations = $state<ProjectInvitationListItem[]>([]);
+  // Current members (#4): used to warn before inviting an email that
+  // already belongs to an active member.
+  let members = $state<ProjectMember[]>([]);
   let isLoading = $state(true);
   let error = $state<string | null>(null);
 
@@ -60,6 +64,41 @@
   // --- Revoke confirmation (T222) ---
   let invitationToRevoke = $state<ProjectInvitationListItem | null>(null);
   let isRevoking = $state(false);
+
+  // --- Revoke & re-issue (#6) ---
+  // The one-shot token is hash-stored server-side and cannot be
+  // re-displayed, so "re-share" is implemented as revoke + fresh issue.
+  let invitationToReissue = $state<ProjectInvitationListItem | null>(null);
+  let isReissuing = $state(false);
+  let reissueError = $state<string | null>(null);
+  // Tracks whether the revoke half of a revoke-&-re-issue has already
+  // succeeded (H-1). On a retry after a partial failure (revoke ok, issue
+  // failed) we must NOT re-revoke the now-revoked row (backend 404s an
+  // already-revoked invitation) — we skip straight to the fresh issue.
+  let revokeDone = $state(false);
+
+  // Lowercase set of active member emails for the inline already-member
+  // warning (#4). Recomputed whenever the members list changes.
+  const memberEmails = $derived(
+    new Set(members.map((mem) => mem.user.email.trim().toLowerCase()))
+  );
+
+  // True when the email currently typed in the single-invite form already
+  // belongs to an active member.
+  const inviteEmailIsMember = $derived(
+    inviteEmail.trim().length > 0 && memberEmails.has(inviteEmail.trim().toLowerCase())
+  );
+
+  /**
+   * Localized role of the active member matching `email`, or `null` when
+   * none. Drives the role-aware already-member message.
+   */
+  function matchingMemberRoleLabel(email: string): string | null {
+    const normalized = email.trim().toLowerCase();
+    const match = members.find((mem) => mem.user.email.trim().toLowerCase() === normalized);
+    if (!match) return null;
+    return roleLabel(match.role);
+  }
 
   // Permission gating goes through the canonical `manage_members`
   // permission. This page does NOT use TanStack Query for its loads, so
@@ -86,13 +125,18 @@
     error = null;
 
     try {
-      const [projectData, invResponse] = await Promise.all([
+      const [projectData, invResponse, memberList] = await Promise.all([
         projectsApi.get(projectId),
         projectsApi.listInvitations(projectId, { kind: 'member' }),
+        // Members feed the already-member warning (#4). A failure here is
+        // non-fatal — fall back to an empty list rather than blocking the
+        // whole page (the backend 409/bulk status still guard the submit).
+        projectsApi.listMembers(projectId).catch(() => [] as ProjectMember[]),
       ]);
 
       project = projectData;
       invitations = invResponse.items;
+      members = memberList;
     } catch (err) {
       if (err instanceof ApiError) {
         error = err.detail || err.message;
@@ -149,13 +193,24 @@
         email,
         role: inviteRole,
       });
-      issuedUrl = res.invitation_url; // open the one-shot dialog
+      // The backend returns a RAW signed token; build the full, shareable
+      // URL against the admin's own browser origin (#5/#8).
+      issuedUrl = buildInviteUrl(res.invitation_url); // open the one-shot dialog
       inviteEmail = '';
       inviteRole = 'member';
       await loadData(); // refresh listing so the new pending row appears
     } catch (err) {
-      issueError =
-        err instanceof ApiError ? err.detail || err.message : m.collaborators_error_issue();
+      // #4: a 409 ERR_ALREADY_MEMBER means the email already belongs to an
+      // active member — surface the friendly, role-aware message.
+      if (err instanceof ApiError && err.status === 409 && err.code === 'ERR_ALREADY_MEMBER') {
+        const roleText = matchingMemberRoleLabel(email);
+        issueError = roleText
+          ? m.collaborators_already_member_with_role({ role: roleText })
+          : m.collaborators_already_member();
+      } else {
+        issueError =
+          err instanceof ApiError ? err.detail || err.message : m.collaborators_error_issue();
+      }
     } finally {
       isIssuing = false;
     }
@@ -219,7 +274,10 @@
 
     const header = 'email,status,invitation_url';
     const rows = bulkResults.map(
-      (r) => `${csvEscape(r.email)},${r.status},${csvEscape(r.invitation_url ?? '')}`
+      (r) =>
+        `${csvEscape(r.email)},${r.status},${csvEscape(
+          r.invitation_url ? buildInviteUrl(r.invitation_url) : ''
+        )}`
     );
     const csv = [header, ...rows].join('\n');
 
@@ -267,6 +325,79 @@
         err instanceof ApiError ? err.detail || err.message : m.collaborators_error_revoke();
     } finally {
       isRevoking = false;
+    }
+  }
+
+  /**
+   * Show the revoke-&-re-issue confirmation for a pending invitation (#6).
+   */
+  function showReissueConfirmation(invitation: ProjectInvitationListItem) {
+    reissueError = null;
+    // Opening the confirm for a (possibly new) target starts a fresh
+    // revoke-&-re-issue cycle (H-1).
+    revokeDone = false;
+    invitationToReissue = invitation;
+  }
+
+  /**
+   * Cancel the revoke-&-re-issue confirmation.
+   */
+  function cancelReissue() {
+    if (isReissuing) return;
+    invitationToReissue = null;
+    reissueError = null;
+    revokeDone = false;
+  }
+
+  /**
+   * Revoke a pending invitation and immediately issue a fresh one with the
+   * same email + role, then surface the NEW one-shot URL in the dialog (#6).
+   *
+   * The original token is hash-stored server-side and cannot be
+   * re-displayed, so re-sharing necessarily mints a new invitation. We
+   * revoke first (so the old link stops working) and issue second; the
+   * listing is refreshed so the superseded row drops and the new pending
+   * row appears.
+   */
+  async function confirmReissue() {
+    const target = invitationToReissue;
+    if (!target) return;
+
+    // A non-member-role row (trusted kind) has no member role to re-issue.
+    const role = target.role;
+    if (!role) {
+      reissueError = m.collaborators_error_reissue();
+      return;
+    }
+
+    isReissuing = true;
+    reissueError = null;
+
+    try {
+      // H-1: only revoke once. If a previous attempt revoked successfully
+      // but the subsequent issue failed (429/5xx/409), retrying must skip
+      // the revoke — the row is already revoked and the backend 404s it.
+      if (!revokeDone) {
+        await projectsApi.revokeInvitation(projectId, target.id);
+        revokeDone = true;
+      }
+      const res: MemberInvitationIssueResponse = await projectsApi.issueInvitation(projectId, {
+        email: target.bound_email,
+        role,
+      });
+      invitationToReissue = null;
+      revokeDone = false; // full success — reset for the next cycle
+      issuedUrl = buildInviteUrl(res.invitation_url); // open the one-shot dialog
+      await loadData(); // refresh listing (old row gone, new pending row in)
+    } catch (err) {
+      reissueError =
+        err instanceof ApiError ? err.detail || err.message : m.collaborators_error_reissue();
+      // M-1: refresh the listing so a successful-revoke/failed-issue partial
+      // failure no longer shows the revoked row as `pending` with live
+      // (now-404ing) buttons.
+      await loadData();
+    } finally {
+      isReissuing = false;
     }
   }
 
@@ -333,6 +464,8 @@
         return m.collaborators_bulk_status_issued();
       case 'duplicate_pending':
         return m.collaborators_bulk_status_duplicate_pending();
+      case 'already_member':
+        return m.collaborators_bulk_status_already_member();
       case 'rate_limited':
         return m.collaborators_bulk_status_rate_limited();
       case 'internal_error':
@@ -349,6 +482,7 @@
       case 'issued':
         return 'bg-success-light text-success';
       case 'duplicate_pending':
+      case 'already_member':
         return 'bg-warning-light text-warning';
       case 'rate_limited':
       case 'internal_error':
@@ -513,12 +647,24 @@
 
               <button
                 type="submit"
-                disabled={isIssuing}
+                disabled={isIssuing || inviteEmailIsMember}
                 class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
               >
                 {isIssuing ? m.collaborators_issuing() : m.collaborators_issue_button()}
               </button>
             </div>
+
+            {#if inviteEmailIsMember}
+              <p class="text-sm text-warning" data-testid="invite-already-member-warning">
+                {#if matchingMemberRoleLabel(inviteEmail)}
+                  {m.collaborators_already_member_with_role({
+                    role: matchingMemberRoleLabel(inviteEmail) ?? '',
+                  })}
+                {:else}
+                  {m.collaborators_already_member()}
+                {/if}
+              </p>
+            {/if}
 
             {#if issueError}
               <p class="text-sm text-danger">{issueError}</p>
@@ -649,7 +795,7 @@
                           {#if result.invitation_url}
                             <input
                               type="text"
-                              value={result.invitation_url}
+                              value={buildInviteUrl(result.invitation_url)}
                               readonly
                               class="w-full rounded-md border border-stone-300 bg-stone-50 px-3 py-2 font-mono text-sm"
                             />
@@ -722,13 +868,23 @@
                     </td>
                     <td class="px-4 py-2 text-right text-sm">
                       {#if invitation.status === 'pending'}
-                        <button
-                          type="button"
-                          onclick={() => showRevokeConfirmation(invitation)}
-                          class="rounded-md border border-danger/30 bg-surface-card px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger-light"
-                        >
-                          {m.collaborators_revoke_button()}
-                        </button>
+                        <div class="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onclick={() => showReissueConfirmation(invitation)}
+                            class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-700 hover:bg-stone-50"
+                            data-testid="reissue-invitation-button"
+                          >
+                            {m.collaborators_reissue_button()}
+                          </button>
+                          <button
+                            type="button"
+                            onclick={() => showRevokeConfirmation(invitation)}
+                            class="rounded-md border border-danger/30 bg-surface-card px-3 py-1.5 text-sm font-medium text-danger hover:bg-danger-light"
+                          >
+                            {m.collaborators_revoke_button()}
+                          </button>
+                        </div>
                       {/if}
                     </td>
                   </tr>
@@ -815,6 +971,91 @@
             type="button"
             onclick={cancelRevoke}
             disabled={isRevoking}
+            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
+          >
+            {m.collaborators_revoke_cancel()}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Revoke & re-issue Confirmation Dialog (#6) -->
+{#if invitationToReissue}
+  <div class="fixed inset-0 z-50 overflow-y-auto" role="dialog">
+    <div
+      class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0"
+    >
+      <!-- Background overlay -->
+      <div
+        role="button"
+        tabindex="0"
+        aria-label="Close dialog"
+        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
+        onclick={cancelReissue}
+        onkeydown={(e) => e.key === 'Escape' && cancelReissue()}
+      ></div>
+
+      <!-- Modal panel -->
+      <div
+        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
+      >
+        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
+          <div class="sm:flex sm:items-start">
+            <div
+              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-warning-light sm:mx-0 sm:h-10 sm:w-10"
+            >
+              <svg
+                class="h-6 w-6 text-warning"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+            </div>
+            <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
+              <h3 class="text-lg font-medium leading-6 text-stone-900">
+                {m.collaborators_reissue_confirm_title()}
+              </h3>
+              <div class="mt-2 space-y-2">
+                <p class="text-sm text-stone-500">
+                  {m.collaborators_reissue_confirm_message({
+                    email: invitationToReissue.bound_email,
+                  })}
+                </p>
+                <p class="text-sm font-medium text-warning">
+                  {m.collaborators_reissue_confirm_warning()}
+                </p>
+                {#if reissueError}
+                  <p class="text-sm text-danger" data-testid="reissue-error">{reissueError}</p>
+                {/if}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
+          <button
+            type="button"
+            onclick={confirmReissue}
+            disabled={isReissuing}
+            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400 sm:ml-3 sm:w-auto sm:text-sm"
+            data-testid="reissue-confirm-button"
+          >
+            {isReissuing
+              ? m.collaborators_reissuing()
+              : m.collaborators_reissue_confirm_button()}
+          </button>
+          <button
+            type="button"
+            onclick={cancelReissue}
+            disabled={isReissuing}
             class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
           >
             {m.collaborators_revoke_cancel()}

@@ -94,8 +94,24 @@ class _FakeRedis:
         return True
 
 
+class _NullResult:
+    """Stub SQLAlchemy result whose ``scalar_one_or_none`` is always ``None``."""
+
+    def scalar_one_or_none(self) -> Any:
+        return None
+
+
 class _FakeSession:
-    """Minimal AsyncSession stub that captures ``add`` / ``flush`` calls."""
+    """Minimal AsyncSession stub that captures ``add`` / ``flush`` calls.
+
+    ``execute`` is stubbed to return an empty result (``scalar_one_or_none``
+    → ``None``). This models the unit-scope assumption that the recipient
+    email does NOT resolve to any registered user, so the preview issue #4
+    existing-active-member guard in ``create_invitation`` is a no-op and the
+    happy-path INSERT proceeds — exactly what these outcome-surface tests
+    exercise. Tests that need a hydrated membership row use a dedicated
+    stub session further down (see the REUSE-branch tests).
+    """
 
     def __init__(self) -> None:
         self.added: list[Any] = []
@@ -107,6 +123,9 @@ class _FakeSession:
         # outcome dataclasses can serialise it.
         if getattr(obj, "id", None) is None:
             obj.id = uuid4()
+
+    async def execute(self, *_a: Any, **_k: Any) -> _NullResult:
+        return _NullResult()
 
     async def flush(self) -> None:
         self.flush_calls += 1

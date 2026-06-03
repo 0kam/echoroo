@@ -104,6 +104,7 @@ from echoroo.schemas.project import (
 )
 from echoroo.services import invitation_service
 from echoroo.services.invitation_service import (
+    InvitationActiveMemberError,
     InvitationConflictError,
     InvitationCreateOutcome,
     InvitationEmailMismatchError,
@@ -549,6 +550,18 @@ async def issue_project_member_invitation(
                 "message": str(exc),
             },
         ) from exc
+    except InvitationActiveMemberError as exc:
+        # preview issue #4 — the recipient already holds an active
+        # membership. 409 with a DISTINCT error code so the operator can
+        # tell this from a pending-duplicate (ERR_INVITATION_PENDING). The
+        # message carries the existing member's current role.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "ERR_ALREADY_MEMBER",
+                "message": str(exc),
+            },
+        ) from exc
     except InvitationConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -860,6 +873,22 @@ async def bulk_issue_project_member_invitations(
                     ip=_client_ip(request),
                     user_agent=_user_agent(request),
                 )
+        except InvitationActiveMemberError:
+            # preview issue #4 — the recipient already holds an active
+            # membership. Report it with a DISTINCT per-row status so an
+            # operator can tell it from a ``duplicate_pending`` row (a
+            # pending invitation that has not yet been accepted). The
+            # SAVEPOINT exit already rolled back this row; sibling rows
+            # persist. The role is intentionally NOT surfaced in the
+            # per-row body — the status discriminator is enough for the
+            # operator and keeps the bulk surface uniform.
+            results.append(
+                BulkInvitationResultItem(
+                    email=original_email,
+                    status="already_member",
+                )
+            )
+            continue
         except InvitationConflictError:
             # SAVEPOINT exit already rolled back this row's INSERT; the
             # outer TX retains the previously-issued rows intact.

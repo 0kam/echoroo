@@ -541,19 +541,18 @@ async def test_existing_user_already_member_returns_409(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Accept fails with 409 when caller already holds same/higher role."""
+    """Accept fails with 409 when caller already holds same/higher role.
+
+    The invitation is issued while ``other`` is NOT yet a member (so the
+    preview issue #4 issue-time guard does not fire), then ``other`` gains
+    an active ADMIN membership out-of-band BEFORE accepting. This exercises
+    the accept-path existing-member guard (FR-011-106 step 3) for the
+    realistic race where the recipient becomes a member between issue and
+    accept.
+    """
     owner = await _create_user(db_session, email="t243-owner-4@example.com")
     other = await _create_user(db_session, email="t243-other-4@example.com")
     project = await _create_project(db_session, owner)
-    db_session.add(
-        ProjectMember(
-            project_id=project.id,
-            user_id=other.id,
-            role=ProjectMemberRole.ADMIN,
-            invited_by_id=owner.id,
-        )
-    )
-    await db_session.commit()
 
     owner_headers = await _bff_session_headers(client, db_session, owner)
     body = await _issue_member_invitation(
@@ -564,6 +563,18 @@ async def test_existing_user_already_member_returns_409(
         role="member",
     )
     token = body["invitation_url"]
+
+    # Out-of-band: ``other`` becomes an active ADMIN member AFTER the
+    # invitation was issued but BEFORE they accept it.
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=other.id,
+            role=ProjectMemberRole.ADMIN,
+            invited_by_id=owner.id,
+        )
+    )
+    await db_session.commit()
 
     other_headers = await _bff_session_headers(client, db_session, other)
     accept = await client.post(
@@ -1085,3 +1096,134 @@ async def test_listing_endpoint_emits_no_store_cache_control(
         "spec/011 step 7 R1 P1-2 regression: listing endpoint did "
         f"not emit no-store; got {cache_control!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# preview issue #4 — issue-time existing-active-member guard (409 already_member)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_issue_invitation_for_active_member_returns_409_already_member(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Inviting an email that already belongs to an active member → 409.
+
+    preview issue #4: the issuer surface rejects AT ISSUE TIME with a
+    distinct ``ERR_ALREADY_MEMBER`` code instead of letting the duplicate
+    invitation linger and fail later at accept. The message includes the
+    existing member's current role and NO invitation row is persisted.
+    """
+    owner = await _create_user(db_session, email="t243-issue4-owner@example.com")
+    member = await _create_user(db_session, email="t243-issue4-member@example.com")
+    project = await _create_project(db_session, owner)
+
+    # Seed an ACTIVE membership for ``member`` at the ADMIN role.
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=member.id,
+            role=ProjectMemberRole.ADMIN,
+            invited_by_id=owner.id,
+        )
+    )
+    await db_session.commit()
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={"email": member.email, "role": "member"},
+    )
+    assert response.status_code == 409, response.text
+    text = response.text
+    assert "ERR_ALREADY_MEMBER" in text, text
+    # The message surfaces the existing member's current role.
+    assert "admin" in text.lower(), text
+    # Distinct from the pending-duplicate code.
+    assert "ERR_INVITATION_PENDING" not in text, text
+
+    # No invitation row was persisted for this recipient.
+    inv_count = (
+        await db_session.execute(
+            sa.select(sa.func.count())
+            .select_from(ProjectInvitation)
+            .where(
+                ProjectInvitation.project_id == project.id,
+                ProjectInvitation.email == member.email,
+            ),
+        )
+    ).scalar_one()
+    assert inv_count == 0
+
+
+@pytest.mark.asyncio
+async def test_issue_invitation_for_removed_member_succeeds(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A previously-removed (``removed_at`` set) member is NOT an active member.
+
+    preview issue #4 regression guard: the existing-member check filters on
+    ``removed_at IS NULL`` so re-inviting someone whose membership was
+    revoked still issues normally.
+    """
+    owner = await _create_user(db_session, email="t243-issue4-rm-owner@example.com")
+    member = await _create_user(db_session, email="t243-issue4-rm-member@example.com")
+    project = await _create_project(db_session, owner)
+
+    db_session.add(
+        ProjectMember(
+            project_id=project.id,
+            user_id=member.id,
+            role=ProjectMemberRole.MEMBER,
+            invited_by_id=owner.id,
+            removed_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+    response = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={"email": member.email, "role": "member"},
+    )
+    assert response.status_code == 201, response.text
+
+
+@pytest.mark.asyncio
+async def test_issue_invitation_brand_new_email_succeeds_and_pending_dup_still_409(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Regression: fresh email → 201; a second issue → 409 pending-duplicate.
+
+    Confirms the new existing-member guard does NOT interfere with the
+    happy path (brand-new email succeeds) nor the pre-existing
+    pending-duplicate guard (``ERR_INVITATION_PENDING``).
+    """
+    owner = await _create_user(db_session, email="t243-issue4-fresh-owner@example.com")
+    project = await _create_project(db_session, owner)
+    owner_headers = await _bff_session_headers(client, db_session, owner)
+
+    fresh_email = f"t243-issue4-fresh-{uuid4().hex[:8]}@example.com"
+
+    # First issue: brand-new email, no membership, no pending invite → 201.
+    first = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={"email": fresh_email, "role": "member"},
+    )
+    assert first.status_code == 201, first.text
+
+    # Second issue for the SAME email: pending-duplicate guard fires → 409.
+    second = await client.post(
+        f"/web-api/v1/projects/{project.id}/invitations",
+        headers=owner_headers,
+        json={"email": fresh_email, "role": "member"},
+    )
+    assert second.status_code == 409, second.text
+    assert "ERR_INVITATION_PENDING" in second.text, second.text
+    assert "ERR_ALREADY_MEMBER" not in second.text, second.text

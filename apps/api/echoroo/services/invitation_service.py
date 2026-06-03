@@ -84,7 +84,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,6 +102,7 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
+from echoroo.models.user import User
 from echoroo.services.audit_service import (
     AuditLogService,
     build_pre_transfer_action_summary,
@@ -234,6 +235,29 @@ class InvitationAlreadyMemberError(InvitationError):
     response intentionally reveals that the caller IS the right recipient —
     it just has nothing new to grant.
     """
+
+
+class InvitationActiveMemberError(InvitationError):
+    """Issue-time guard — the target email already belongs to an active member.
+
+    Raised by :func:`create_invitation` when the recipient email resolves to
+    a registered user that already holds an active :class:`ProjectMember` row
+    on the target project. The endpoint maps this to HTTP 409 with the
+    ``already_member`` error code so an operator gets immediate feedback at
+    issue time instead of the duplicate silently failing later at accept.
+
+    The error carries the existing member's :class:`ProjectMemberRole` so the
+    handler can surface the current role in the message. This branch only
+    fires for emails that resolve to a known user — an unregistered email has
+    no membership row and proceeds through the normal pending-duplicate guard.
+    The conflict signal is therefore no stronger an enumeration oracle than
+    the existing :class:`InvitationConflictError` pending path, which already
+    distinguishes a pending-invited email from a fresh one.
+    """
+
+    def __init__(self, message: str, *, role: ProjectMemberRole) -> None:
+        super().__init__(message)
+        self.role = role
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +818,61 @@ async def check_rate_limits(
 
 
 # ---------------------------------------------------------------------------
+# Existing-active-member guard (preview issue #4)
+# ---------------------------------------------------------------------------
+
+
+async def _reject_if_active_member(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    email: str,
+) -> None:
+    """Raise :class:`InvitationActiveMemberError` when ``email`` is a member.
+
+    Resolves the plain-text ``email`` to a registered :class:`User` (case-
+    insensitive, mirroring :meth:`UserRepository.get_by_email`) and checks
+    whether that user already holds an *active* (``removed_at IS NULL``)
+    :class:`ProjectMember` row on ``project_id``. When such a row exists the
+    function raises with the member's current role attached so the handler
+    can surface it.
+
+    No-op when the email does not map to any user — an unregistered recipient
+    cannot already be a member, so issuance proceeds to the normal
+    pending-duplicate guard. Raw emails are never logged here; the email
+    arrives already-canonicalised at the boundary and is matched via a
+    ``func.lower`` comparison, the same shape the user repository uses.
+    """
+    user_id = (
+        await session.execute(
+            select(User.id).where(
+                func.lower(User.email) == func.lower(email),
+            ),
+        )
+    ).scalar_one_or_none()
+    if user_id is None:
+        return
+
+    existing_member = (
+        await session.execute(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project_id,
+                ProjectMember.user_id == user_id,
+                ProjectMember.removed_at.is_(None),
+            ),
+        )
+    ).scalar_one_or_none()
+    if existing_member is None:
+        return
+
+    raise InvitationActiveMemberError(
+        "User is already a member of this project "
+        f"(role: {existing_member.role.value})",
+        role=existing_member.role,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Public API: create_invitation
 # ---------------------------------------------------------------------------
 
@@ -877,6 +956,9 @@ async def create_invitation(
         InvitationInfraUnavailableError: Redis is unreachable.
         InvitationConflictError: A pending invitation already exists for
             ``(project_id, email_hash)``.
+        InvitationActiveMemberError: The recipient email resolves to a user
+            that already holds an active membership on ``project_id``
+            (preview issue #4 — issue-time existing-member guard).
     """
     now_eff = now or datetime.now(UTC)
 
@@ -941,6 +1023,21 @@ async def create_invitation(
     # 2. rate limit (FR-056) — fail-closed
     await check_rate_limits(
         redis, actor_user_id=invited_by_id, project_id=project_id,
+    )
+
+    # 2.5. Existing-active-member guard (preview issue #4). If the recipient
+    # email resolves to a registered user that already holds an active
+    # ProjectMember row on this project, reject AT ISSUE TIME with a typed
+    # conflict instead of letting the duplicate invitation linger and only
+    # fail later at accept (FR-011-106). An unregistered email has no
+    # membership row, so this branch is skipped and the normal
+    # pending-duplicate guard (the partial unique index) takes over. The
+    # check runs AFTER the rate limiter so a rejected attempt counts toward
+    # the issuer's quota exactly like the pending-duplicate path.
+    await _reject_if_active_member(
+        session,
+        project_id=project_id,
+        email=email,
     )
 
     # 3. token + hash (FR-051 / FR-052 / FR-055)
@@ -2534,6 +2631,7 @@ __all__ = [
     "INVITATION_MAX_TTL_SECONDS",
     "INVITATION_TTL_SECONDS",
     "InvitationAcceptOutcome",
+    "InvitationActiveMemberError",
     "InvitationAlreadyMemberError",
     "InvitationConflictError",
     "InvitationCreateOutcome",

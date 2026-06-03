@@ -137,6 +137,7 @@ class ProjectInvitationListResponse(BaseModel):
 BulkInvitationRowStatus = Literal[
     "issued",
     "duplicate_pending",
+    "already_member",
     "rate_limited",
     "internal_error",
 ]
@@ -145,7 +146,10 @@ BulkInvitationRowStatus = Literal[
 Distinct from the contract YAML's narrower
 ``[issued | duplicate_pending | rate_limited | error]`` set: the live shape
 uses ``internal_error`` so an operator scanning the response can tell a
-malformed-input cause from a per-row infra fault. Both shapes are subset-
+malformed-input cause from a per-row infra fault, and ``already_member``
+(preview issue #4) so a row whose recipient already holds an active
+membership is reported distinctly from a ``duplicate_pending`` row (a
+pending invitation that has not yet been accepted). Both shapes are subset-
 asserted by ``tests/contract/test_openapi_diff.py`` (FR-011-113).
 """
 

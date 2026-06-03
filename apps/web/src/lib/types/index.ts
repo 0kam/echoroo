@@ -806,7 +806,9 @@ export interface BulkInvitationRequest {
  */
 export interface BulkInvitationResultItem {
   email: string;
-  status: 'issued' | 'duplicate_pending' | 'rate_limited' | 'internal_error';
+  // `already_member`: the email already belongs to an active project member
+  // (no invitation issued) — rendered distinctly rather than as a hard error.
+  status: 'issued' | 'duplicate_pending' | 'already_member' | 'rate_limited' | 'internal_error';
   invitation_id: string | null;
   invitation_url: string | null;
   expires_at: string | null;
