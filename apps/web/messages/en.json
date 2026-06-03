@@ -1006,6 +1006,8 @@
   "recording_detail_breadcrumb_recordings": "Recordings",
   "recording_detail_loading": "Loading recording...",
   "recording_detail_ultrasonic": "Ultrasonic",
+  "audio_player_seek_position": "Seek position",
+  "audio_player_playback_speed": "Playback speed",
   "recording_detail_settings": "Settings",
   "recording_detail_filters": "Filters",
   "recording_detail_download": "Download",

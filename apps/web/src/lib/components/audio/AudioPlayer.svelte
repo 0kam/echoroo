@@ -5,11 +5,13 @@
     getPlaybackUrl,
   } from '$lib/api/recordings';
   import type { SpeedOption } from '$lib/types/audio';
+  import { HIGHEST_PLAYBACK_SAMPLERATE } from '$lib/types/audio';
   import type { SpectrogramWindow } from '$lib/types/audio';
   import {
     adjustWindowToBounds,
     centerWindowOn,
   } from '$lib/utils/viewport';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     projectId: string;
@@ -19,11 +21,20 @@
     speedOptions: SpeedOption[];
     viewport: SpectrogramWindow;
     bounds: SpectrogramWindow;
+    /**
+     * Native sample rate of the recording (Hz). Used to decide whether the
+     * playback speed is applied client-side (audioEl.playbackRate) or
+     * server-side (re-fetch with a `speed` query param). Ultrasonic recordings
+     * require server-side time-expansion to become audible.
+     */
+    samplerate?: number;
     /** When this value changes, the audio element will seek to this time (seconds). */
     seekTo?: number;
     onViewportChange?: (viewport: SpectrogramWindow) => void;
     onTimeUpdate?: (time: number) => void;
     onSeek?: (time: number) => void;
+    /** Invoked when the user picks a playback speed from the speed menu. */
+    onSpeedChange?: (speed: number) => void;
   }
 
   let {
@@ -34,10 +45,12 @@
     speedOptions,
     viewport,
     bounds,
+    samplerate,
     seekTo,
     onViewportChange,
     onTimeUpdate,
     onSeek,
+    onSpeedChange,
   }: Props = $props();
 
   // Audio element reference
@@ -52,6 +65,30 @@
   let lockPlay = false;
   let animFrameId: number | null = null;
 
+  // Actual duration of the loaded media, populated from the audio element once
+  // metadata is known. This is authoritative for the seek slider because it
+  // accounts for backend resampling / time-expansion (the static `duration`
+  // prop only reflects the original recording length). Falls back to the prop
+  // until the media reports a finite duration.
+  let mediaDuration = $state<number | null>(null);
+  const effectiveDuration = $derived(
+    mediaDuration !== null && isFinite(mediaDuration) && mediaDuration > 0
+      ? mediaDuration
+      : duration
+  );
+
+  // Whether the media is loaded enough to seek (HAVE_CURRENT_DATA or better).
+  let canSeek = $state(false);
+
+  // Ultrasonic recordings cannot be sped/slowed purely client-side: shifting an
+  // inaudible spectrum into the audible range requires the backend to
+  // time-expand and resample the audio. We detect this from the native sample
+  // rate and, for ultrasonic sources, send the chosen speed to the playback
+  // endpoint instead of using audioEl.playbackRate.
+  const useServerSpeed = $derived(
+    samplerate !== undefined && samplerate > HIGHEST_PLAYBACK_SAMPLERATE
+  );
+
   let _audioLoadError = $state(false);
 
   // Track whether we have already attempted to re-issue a media token for the
@@ -65,9 +102,20 @@
   // Build the playback URL with a scoped media token. The native <audio>
   // element still owns Range requests and buffering; the full access JWT never
   // appears in the URL.
-  async function buildAudioSrc(pid: string, rid: string): Promise<string> {
-    // Build the base URL without speed; speed is applied via audioEl.playbackRate.
-    const fullUrl = getPlaybackUrl(pid, rid);
+  //
+  // For ultrasonic sources we thread the selected speed into the playback
+  // endpoint so the backend time-expands the audio (making it audible). For
+  // normal sources speed is applied client-side via audioEl.playbackRate, so
+  // the URL omits it and the file does not need re-fetching on speed change.
+  async function buildAudioSrc(
+    pid: string,
+    rid: string,
+    serverSpeed?: number
+  ): Promise<string> {
+    const fullUrl =
+      serverSpeed !== undefined && serverSpeed !== 1
+        ? getPlaybackUrl(pid, rid, { speed: serverSpeed })
+        : getPlaybackUrl(pid, rid);
     return getAuthenticatedRecordingMediaUrl(pid, rid, 'playback', fullUrl);
   }
 
@@ -77,23 +125,37 @@
     const _projectId = projectId;
     const _recordingId = recordingId;
     const _audioEl = audioEl;
+    // Track the server-side speed inputs so ultrasonic speed changes re-request
+    // the backend-time-expanded audio. For non-ultrasonic sources `useServerSpeed`
+    // is false and the URL ignores `speed`, so changing speed must NOT re-run this
+    // effect (it would needlessly re-fetch a media token and reset the element).
+    // We therefore only treat `speed` as a tracked dependency when the speed is
+    // applied server-side; otherwise we read it untracked.
+    const _useServerSpeed = useServerSpeed;
+    const _speed = _useServerSpeed ? speed : untrack(() => speed);
 
     if (!_projectId || !_recordingId || !_audioEl) return;
 
-    // Keep this effect scoped to source identity only.
     // `currentTime` and `isPlaying` are read untracked so time updates during
     // playback do not re-run this effect and reset audio src repeatedly.
     const savedTime = untrack(() => currentTime);
     const wasPlaying = untrack(() => isPlaying);
 
     _audioLoadError = false;
+    // The newly assigned src has no metadata yet; gate seeking until it loads.
+    canSeek = false;
+    mediaDuration = null;
     // Reset the retry flag whenever we load a new recording
     hasRetriedAfterMediaTokenRefresh = false;
     const requestId = ++audioSrcRequestId;
 
     void (async () => {
       try {
-        const src = await buildAudioSrc(_projectId, _recordingId);
+        const src = await buildAudioSrc(
+          _projectId,
+          _recordingId,
+          _useServerSpeed ? _speed : undefined
+        );
         if (requestId !== audioSrcRequestId || audioEl !== _audioEl) return;
 
         // Set src directly; the browser handles Range requests and buffering.
@@ -110,11 +172,13 @@
     })();
   });
 
-  // Sync playbackRate whenever the speed prop changes.
-  // This avoids re-fetching the entire audio file just to change speed.
+  // Sync playbackRate whenever the speed prop changes — but ONLY for sources
+  // where speed is handled client-side. For ultrasonic sources the backend has
+  // already time-expanded the audio, so we keep playbackRate at 1 and let the
+  // re-fetched media play at its natural (now-audible) rate.
   $effect(() => {
     if (!audioEl) return;
-    audioEl.playbackRate = speed;
+    audioEl.playbackRate = useServerSpeed ? 1 : speed;
   });
 
   // When the parent requests a seek (e.g., after a spectrogram click), apply it
@@ -210,20 +274,48 @@
     }
   }
 
+  // True once the media reports a finite, seekable duration. Until then the
+  // slider is a no-op so we never write an out-of-range currentTime.
+  function isSeekable(): boolean {
+    if (!audioEl) return false;
+    return (
+      audioEl.readyState >= 2 &&
+      isFinite(audioEl.duration) &&
+      audioEl.duration > 0
+    );
+  }
+
   function handleSliderInput(e: Event) {
+    if (!isSeekable()) return;
     const target = e.target as HTMLInputElement;
     currentTime = parseFloat(target.value);
     _isDragging = true;
   }
 
   function handleSliderChange() {
-    if (!audioEl) return;
-    audioEl.currentTime = currentTime;
-    onSeek?.(currentTime);
+    if (!audioEl || !isSeekable()) {
+      _isDragging = false;
+      return;
+    }
+    // Clamp to the actual media duration before writing currentTime.
+    const clamped = Math.max(0, Math.min(currentTime, audioEl.duration));
+    currentTime = clamped;
+    audioEl.currentTime = clamped;
+    onSeek?.(clamped);
     onViewportChange?.(
-      adjustWindowToBounds(centerWindowOn(viewport, { time: currentTime }), bounds)
+      adjustWindowToBounds(centerWindowOn(viewport, { time: clamped }), bounds)
     );
     _isDragging = false;
+  }
+
+  // Refresh the cached media duration / seekable state from the audio element.
+  // Driven by loadedmetadata + durationchange so the slider always reflects the
+  // real loaded media (including resampled / time-expanded ultrasonic audio).
+  function refreshMediaMetadata() {
+    if (!audioEl) return;
+    mediaDuration =
+      isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : null;
+    canSeek = isSeekable();
   }
 
   function handleVolumeChange(e: Event) {
@@ -258,6 +350,15 @@
   function onAudioCanPlay() {
     hasRetriedAfterMediaTokenRefresh = false;
     _audioLoadError = false;
+    refreshMediaMetadata();
+  }
+
+  function onAudioLoadedMetadata() {
+    refreshMediaMetadata();
+  }
+
+  function onAudioDurationChange() {
+    refreshMediaMetadata();
   }
 
   async function onAudioError() {
@@ -388,30 +489,41 @@
   <div class="timeline ml-2 w-48">
     <div class="flex justify-between text-xs text-stone-500 dark:text-stone-400 mb-0.5 font-mono">
       <span>{formatTime(currentTime)}</span>
-      <span>{formatTime(duration)}</span>
+      <span>{formatTime(effectiveDuration)}</span>
     </div>
-    <div class="relative w-full h-3 flex items-center cursor-pointer">
+    <div
+      class="relative w-full h-3 flex items-center {canSeek
+        ? 'cursor-pointer'
+        : 'cursor-progress opacity-60'}"
+    >
       <div class="absolute w-full h-1 rounded-full bg-stone-300 dark:bg-stone-600">
         <div
           class="h-1 bg-primary-500 rounded-full dark:bg-primary-400"
-          style="width: {Math.min((currentTime / duration) * 100, 100)}%"
+          style="width: {effectiveDuration > 0
+            ? Math.min((currentTime / effectiveDuration) * 100, 100)
+            : 0}%"
         ></div>
       </div>
       <input
         type="range"
         min="0"
-        max={duration}
+        max={effectiveDuration}
         step="0.01"
         value={currentTime}
+        disabled={!canSeek}
         oninput={handleSliderInput}
         onchange={handleSliderChange}
-        class="timeline-input absolute w-full opacity-0 cursor-pointer h-3"
-        aria-label="Seek position"
+        class="timeline-input absolute w-full opacity-0 h-3 {canSeek
+          ? 'cursor-pointer'
+          : 'cursor-progress'}"
+        aria-label={m.audio_player_seek_position()}
       />
       <!-- Thumb indicator -->
       <div
         class="absolute w-3 h-3 bg-primary-500 rounded-full shadow pointer-events-none"
-        style="left: calc({Math.min((currentTime / duration) * 100, 100)}% - 6px)"
+        style="left: calc({effectiveDuration > 0
+          ? Math.min((currentTime / effectiveDuration) * 100, 100)
+          : 0}% - 6px)"
       ></div>
     </div>
   </div>
@@ -422,7 +534,7 @@
       type="button"
       class="player-btn flex items-center gap-1 text-stone-600 hover:text-stone-800 dark:text-stone-400 dark:hover:text-stone-200 text-xs font-mono"
       onclick={() => (showSpeedMenu = !showSpeedMenu)}
-      aria-label="Playback speed"
+      aria-label={m.audio_player_playback_speed()}
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
@@ -442,10 +554,12 @@
         {#each speedOptions as option}
           <button
             type="button"
+            aria-pressed={speed === option.value}
             class="block w-full px-3 py-1.5 text-left text-sm font-mono hover:bg-primary-100 dark:hover:bg-primary-900 {speed === option.value
               ? 'text-primary-600 dark:text-primary-400 font-semibold'
               : 'text-stone-700 dark:text-stone-300'}"
             onclick={() => {
+              onSpeedChange?.(option.value);
               showSpeedMenu = false;
             }}
           >
@@ -485,6 +599,8 @@
     bind:this={audioEl}
     preload="auto"
     oncanplay={onAudioCanPlay}
+    onloadedmetadata={onAudioLoadedMetadata}
+    ondurationchange={onAudioDurationChange}
     onplay={onAudioPlay}
     onpause={onAudioPause}
     onended={onAudioEnded}

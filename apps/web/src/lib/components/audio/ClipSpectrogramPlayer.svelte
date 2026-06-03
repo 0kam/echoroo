@@ -81,10 +81,15 @@
   let interactionMode = $state<InteractionMode>('idle');
 
   const spectrogramSettings = DEFAULT_SPECTROGRAM_SETTINGS;
-  const audioSettings = DEFAULT_AUDIO_SETTINGS;
 
   const speedOptions = $derived(getSpeedOptions(recording.samplerate));
-  const speed = $derived(audioSettings.speed);
+  // Local playback speed, seeded from defaults. Updated when the user picks a
+  // speed in the AudioPlayer menu so the selection persists for this clip.
+  let speed = $state(DEFAULT_AUDIO_SETTINGS.speed);
+
+  function handleSpeedChange(newSpeed: number) {
+    speed = newSpeed;
+  }
 
   function handleViewportChange(newViewport: SpectrogramWindow) {
     viewport = adjustWindowToBounds(newViewport, bounds);
@@ -121,12 +126,14 @@
       duration={clipDuration}
       {speed}
       {speedOptions}
+      samplerate={recording.samplerate}
       {viewport}
       {bounds}
       seekTo={currentTime}
       onViewportChange={handleViewportChange}
       onTimeUpdate={handleTimeUpdate}
       onSeek={handleSeek}
+      onSpeedChange={handleSpeedChange}
     />
   </div>
 </div>

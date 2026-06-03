@@ -423,12 +423,14 @@
           duration={recording.duration}
           speed={audioSettings.speed}
           {speedOptions}
+          samplerate={recording.samplerate}
           {viewport}
           {bounds}
           seekTo={currentTime}
           onViewportChange={handleViewportChange}
           onTimeUpdate={handleTimeUpdate}
           onSeek={handleSeek}
+          onSpeedChange={(s) => (audioSettings = { ...audioSettings, speed: s })}
         />
 
         <PlaybackSpeedControl
