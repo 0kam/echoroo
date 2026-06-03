@@ -1077,16 +1077,36 @@ class TestGuestPublicRecordingList:
             it for it in body["items"] if it["id"] == str(public_recording.id)
         )
         # Allowed keys — exact contract for the public recording shape.
-        assert set(item.keys()) <= {
+        # preview-feedback #11 added member-only technical/timing fields
+        # (samplerate / channels / datetime / datetime_parse_status). They are
+        # part of the wire shape but MUST be ``None`` for a Guest (asserted
+        # below), so they are valid keys here but carry no value.
+        _allowed_keys = {
             "id",
             "project_id",
             "name",
             "duration_seconds",
             "site_h3_index",
-        }, (
+            "samplerate",
+            "channels",
+            "datetime",
+            "datetime_parse_status",
+        }
+        assert set(item.keys()) <= _allowed_keys, (
             f"PublicRecordingItem leaked unexpected fields: "
-            f"{set(item.keys()) - {'id', 'project_id', 'name', 'duration_seconds', 'site_h3_index'}}"
+            f"{set(item.keys()) - _allowed_keys}"
         )
+
+        # preview-feedback #11 privacy gate: a Guest is NOT a member, so the
+        # member-only technical metadata — and especially the TIMING-SENSITIVE
+        # ``datetime`` — must be withheld (None). This keeps the spec/006
+        # Guest-minimal contract: a sensitive species' presence time can never
+        # be inferred by an outsider.
+        for member_only in ("samplerate", "channels", "datetime", "datetime_parse_status"):
+            assert item.get(member_only) is None, (
+                f"PublicRecordingItem must withhold member-only field "
+                f"'{member_only}' from Guests (got {item.get(member_only)!r})"
+            )
 
         # Forbidden keys (S3 object key, content hash, free-form notes).
         for forbidden in ("path", "hash", "note", "filename_full", "s3_key"):
@@ -1187,6 +1207,129 @@ class TestGuestPublicRecordingList:
         assert body["items"] == [], (
             "Out-of-range page should return empty items list"
         )
+
+
+# ---------------------------------------------------------------------------
+# preview-feedback #11: member-vs-outsider technical/timing metadata gate on
+# the recording list. Member-level callers (Member/Admin/Owner/Superuser) see
+# samplerate / channels / datetime / datetime_parse_status so the Web UI table
+# renders; Guest / Authenticated / Viewer outsiders keep the Guest-minimal
+# projection and NEVER receive the timing-sensitive ``datetime``.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def public_recording_with_datetime(
+    db_session: AsyncSession, public_dataset: Dataset
+) -> Recording:
+    """Recording carrying populated technical + parsed-datetime metadata."""
+    from datetime import UTC, datetime as _dt
+
+    from echoroo.models.enums import DatetimeParseStatus
+
+    rec_id = uuid.uuid4()
+    recording = Recording(
+        id=rec_id,
+        dataset_id=public_dataset.id,
+        filename="meta_t11.wav",
+        path=(
+            f"recordings/{public_dataset.project_id}"
+            f"/{public_dataset.id}/{rec_id}.wav"
+        ),
+        duration=7.5,
+        samplerate=96_000,
+        channels=2,
+        datetime=_dt(2026, 5, 13, 9, 30, tzinfo=UTC),
+        datetime_parse_status=DatetimeParseStatus.SUCCESS,
+    )
+    db_session.add(recording)
+    await db_session.commit()
+    await db_session.refresh(recording)
+    return recording
+
+
+@pytest.mark.asyncio
+class TestRecordingListMemberMetadataGate:
+    """preview-feedback #11 — member sees full metadata, outsiders do not."""
+
+    async def test_owner_sees_full_recording_metadata(
+        self,
+        client: AsyncClient,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+        project_owner: User,
+    ) -> None:
+        """Member-level Owner gets samplerate/channels/datetime/parse status."""
+        from datetime import UTC, datetime as _dt
+
+        token = create_access_token({"sub": str(project_owner.id)})
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        item = next(
+            it
+            for it in response.json()["items"]
+            if it["id"] == str(public_recording_with_datetime.id)
+        )
+        assert item["samplerate"] == 96_000
+        assert item["channels"] == 2
+        assert item["datetime_parse_status"] == "success"
+        assert item["datetime"] is not None
+        assert _dt.fromisoformat(
+            item["datetime"].replace("Z", "+00:00")
+        ) == _dt(2026, 5, 13, 9, 30, tzinfo=UTC)
+
+    async def test_authenticated_non_member_does_not_see_datetime(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        public_active_project: Project,
+        public_recording_with_datetime: Recording,
+    ) -> None:
+        """A logged-in outsider (not a member) is still denied timing metadata.
+
+        This proves the gate is by *membership*, not merely by the presence of
+        a Bearer token: an Authenticated non-member on a Public project keeps
+        the Guest-minimal projection, so the TIMING-SENSITIVE ``datetime`` (and
+        the other member-only fields) stays withheld.
+        """
+        outsider = User(
+            email="t11-outsider@example.com",
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
+            display_name="T11 Outsider",
+            security_stamp="o" * 64,
+        )
+        db_session.add(outsider)
+        await db_session.commit()
+        await db_session.refresh(outsider)
+
+        token = create_access_token({"sub": str(outsider.id)})
+        response = await client.get(
+            f"/web-api/v1/projects/{public_active_project.id}/recordings",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200, response.text
+        item = next(
+            it
+            for it in response.json()["items"]
+            if it["id"] == str(public_recording_with_datetime.id)
+        )
+        # Timing-sensitive + technical metadata withheld from the outsider.
+        for member_only in (
+            "datetime",
+            "datetime_parse_status",
+            "samplerate",
+            "channels",
+        ):
+            assert item.get(member_only) is None, (
+                f"Authenticated non-member must NOT see member-only field "
+                f"'{member_only}' (got {item.get(member_only)!r})"
+            )
+        # Non-sensitive playable fields remain available.
+        assert item["name"] == "meta_t11.wav"
+        assert item["duration_seconds"] == 7.5
 
 
 # ---------------------------------------------------------------------------

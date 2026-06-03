@@ -2010,6 +2010,7 @@
   "file_upload_validation_warning": "一部のファイルの検証に失敗しました:",
   "file_upload_complete": "アップロードとインポートが完了しました",
   "file_upload_success": "{count}件の録音を正常にインポートしました。",
+  "import_progress_success": "{count}件の音声ファイルを正常にインポートしました",
   "file_upload_import_warning": "{count}件のファイルをインポートできませんでした:",
   "file_upload_more": "追加ファイルをアップロード",
   "file_upload_error": "アップロードエラー",

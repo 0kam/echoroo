@@ -154,6 +154,16 @@ def _public_recording_filter_resource(
     )
 
 
+# Member-level normalized roles — callers that ``response_filter`` treats as
+# project insiders (no species masking, member-resolution H3). preview-feedback
+# #11: only these roles observe the recording's technical + timing metadata
+# (samplerate / channels / datetime / datetime_parse_status). Outsiders
+# (Guest / Authenticated / Viewer) keep the spec/006 Guest-minimal projection.
+_MEMBER_LEVEL_ROLES: Final[frozenset[str]] = frozenset(
+    {"Member", "Admin", "Owner", "Superuser"}
+)
+
+
 router = APIRouter()
 
 
@@ -956,6 +966,17 @@ async def list_public_recordings(
         "Guest" if current_user is None else "Authenticated",
     )
 
+    # preview-feedback #11: member-level callers (a real ProjectMember,
+    # Owner, Admin, or Superuser) may observe the recording's technical +
+    # timing metadata so the Web UI table can render Sample Rate / Channels
+    # / Date-Time / parse Status. Outsiders (Guest / Authenticated / Viewer)
+    # keep the spec/006 Guest-minimal projection — in particular ``datetime``
+    # is timing-sensitive (it can reveal when a sensitive species was
+    # present) and MUST stay withheld, consistent with the existing H3
+    # location obscuring. ``_MEMBER_LEVEL_ROLES`` mirrors the member set used
+    # by ``response_filter`` (species masking + H3 generalisation bypass).
+    is_member_level = normalized_role in _MEMBER_LEVEL_ROLES
+
     items: list[PublicRecordingItem] = []
     for recording, site_h3_index in rows:
         # Apply time_expansion to the raw duration so callers see playback
@@ -991,6 +1012,15 @@ async def list_public_recordings(
             name=recording.filename,
             duration_seconds=duration_seconds,
             site_h3_index=generalised_h3,
+            # Member-only technical + timing metadata (preview-feedback #11).
+            # Outsiders receive None so the projection stays Guest-minimal and
+            # the timing-sensitive datetime never reaches them.
+            samplerate=recording.samplerate if is_member_level else None,
+            channels=recording.channels if is_member_level else None,
+            datetime=recording.datetime if is_member_level else None,
+            datetime_parse_status=(
+                recording.datetime_parse_status if is_member_level else None
+            ),
         )
         # Defence-in-depth: re-route the assembled item through the filter so
         # FORBIDDEN_RAW_LOCATION_FIELDS scrubbing still applies if a future

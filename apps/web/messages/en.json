@@ -2010,6 +2010,7 @@
   "file_upload_validation_warning": "Some files failed validation:",
   "file_upload_complete": "Upload and import complete",
   "file_upload_success": "Successfully imported {count} recording(s).",
+  "import_progress_success": "Successfully imported {count} audio file(s)",
   "file_upload_import_warning": "{count} file(s) could not be imported:",
   "file_upload_more": "Upload More Files",
   "file_upload_error": "Upload Error",

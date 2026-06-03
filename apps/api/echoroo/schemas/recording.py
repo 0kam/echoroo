@@ -128,6 +128,53 @@ class PublicRecordingItem(BaseModel):
         ),
     )
 
+    # ------------------------------------------------------------------
+    # Member-only technical metadata (preview-feedback #11).
+    #
+    # These four fields are populated ONLY for member-level callers
+    # (Member / Admin / Owner / Superuser) so the project recordings table
+    # can render Sample Rate / Channels / Date-Time / parse Status. They
+    # stay ``None`` (omitted projection) for Guest / Authenticated / Viewer
+    # outsiders, preserving the spec/006 Guest-minimal contract.
+    #
+    # ``datetime`` is TIMING-SENSITIVE — it can reveal when a (potentially
+    # sensitive) species was present — so it MUST never reach a non-member
+    # caller, exactly like the location obscuring already enforced above.
+    # ``samplerate`` / ``channels`` / ``datetime_parse_status`` are
+    # technical, but are gated behind member access too for a consistent
+    # member-vs-outsider boundary (the spec/006 ``PublicRecordingItem``
+    # docstring withholds *all* audio metadata from Guests).
+    # ------------------------------------------------------------------
+    samplerate: int | None = Field(
+        None,
+        description=(
+            "Audio sample rate in Hz. Member-only — None for Guest/"
+            "Authenticated/Viewer callers."
+        ),
+    )
+    channels: int | None = Field(
+        None,
+        description=(
+            "Number of audio channels. Member-only — None for Guest/"
+            "Authenticated/Viewer callers."
+        ),
+    )
+    datetime: DatetimeType | None = Field(  # noqa: A003
+        None,
+        description=(
+            "Recording start datetime. TIMING-SENSITIVE — Member-only. "
+            "Always None for Guest/Authenticated/Viewer callers so the "
+            "presence-time of a sensitive species is never leaked."
+        ),
+    )
+    datetime_parse_status: DatetimeParseStatus | None = Field(
+        None,
+        description=(
+            "Outcome of parsing the recording datetime from its filename. "
+            "Member-only — None for Guest/Authenticated/Viewer callers."
+        ),
+    )
+
     model_config = {"from_attributes": True}
 
 
