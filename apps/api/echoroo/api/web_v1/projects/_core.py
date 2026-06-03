@@ -163,6 +163,15 @@ _MEMBER_LEVEL_ROLES: Final[frozenset[str]] = frozenset(
     {"Member", "Admin", "Owner", "Superuser"}
 )
 
+# Recording-list sort columns that map onto fields withheld from non-members in
+# the response projection (datetime / samplerate / channels). Sorting on these
+# for an outsider would let them reorder rows by an attribute they cannot see,
+# leaking the relative magnitude of that hidden dimension — so non-members fall
+# back to the default visible sort (WS5 privacy gate).
+_SENSITIVE_RECORDING_SORTS: Final[frozenset[str]] = frozenset(
+    {"datetime", "samplerate", "channels"}
+)
+
 
 router = APIRouter()
 
@@ -903,6 +912,23 @@ async def list_public_recordings(
 
     offset = (page - 1) * limit
 
+    # Resolve member-level status up-front: it gates not only the response-field
+    # projection below but also which query FILTERS/SORTS are honoured. The
+    # timing-sensitive filters (``datetime_from`` / ``datetime_to`` /
+    # ``samplerate``) and the hidden-field sorts must NOT be applied for
+    # outsiders, otherwise a Guest / Authenticated non-member / Viewer could
+    # vary them and watch ``total`` (or pagination) change — a binary-search
+    # count oracle that leaks when recordings exist along a privacy-sensitive
+    # dimension (datetime can reveal when a sensitive species was present).
+    normalized_role = getattr(
+        request.state,
+        "normalized_role",
+        "Guest" if current_user is None else "Authenticated",
+    )
+    # ``_MEMBER_LEVEL_ROLES`` mirrors the member set used by ``response_filter``
+    # (species masking + H3 generalisation bypass).
+    is_member_level = normalized_role in _MEMBER_LEVEL_ROLES
+
     # Recording does not carry project_id directly — join via Dataset to keep
     # the BOLA / IDOR boundary explicit (Recording UUIDs from Project B must
     # never leak into Project A's list).
@@ -930,13 +956,23 @@ async def list_public_recordings(
     if site_id is not None:
         filters.append(Dataset.site_id == site_id)
     if search:
+        # ``search`` (filename) and ``duration`` are already visible to Guests
+        # via the response projection, so honouring them for everyone is not an
+        # oracle.
         filters.append(Recording.filename.ilike(f"%{search}%"))
-    if datetime_from is not None:
-        filters.append(Recording.datetime >= datetime_from)
-    if datetime_to is not None:
-        filters.append(Recording.datetime <= datetime_to)
-    if samplerate is not None:
-        filters.append(Recording.samplerate == samplerate)
+    # Privacy gate (WS5): ``datetime_from`` / ``datetime_to`` / ``samplerate``
+    # target fields that are withheld from non-members in the response. Applying
+    # them to ``base_query`` / ``count_query`` for outsiders would turn the
+    # result ``total`` / pagination into a binary-search count oracle for those
+    # hidden dimensions. Only member-level callers (who legitimately see
+    # datetime + samplerate) get to filter on them.
+    if is_member_level:
+        if datetime_from is not None:
+            filters.append(Recording.datetime >= datetime_from)
+        if datetime_to is not None:
+            filters.append(Recording.datetime <= datetime_to)
+        if samplerate is not None:
+            filters.append(Recording.samplerate == samplerate)
     if filters:
         base_query = base_query.where(*filters)
         count_query = count_query.where(*filters)
@@ -948,7 +984,16 @@ async def list_public_recordings(
         "samplerate": Recording.samplerate,
         "channels": Recording.channels,
     }
-    sort_column = sort_columns.get(sort_by, Recording.datetime)
+    # Privacy gate (WS5): sorting on a hidden field would leak the hidden
+    # dimension's ordering to outsiders (see ``_SENSITIVE_RECORDING_SORTS``).
+    # Non-members fall back to the default visible sort (``filename``); members
+    # keep the requested sort.
+    effective_sort_by = (
+        "filename"
+        if (not is_member_level and sort_by in _SENSITIVE_RECORDING_SORTS)
+        else sort_by
+    )
+    sort_column = sort_columns.get(effective_sort_by, Recording.datetime)
     if sort_order == "asc":
         base_query = base_query.order_by(sort_column.asc().nulls_last())
     else:
@@ -960,23 +1005,16 @@ async def list_public_recordings(
     rows_result = await db.execute(base_query.offset(offset).limit(limit))
     rows = rows_result.all()
 
-    normalized_role = getattr(
-        request.state,
-        "normalized_role",
-        "Guest" if current_user is None else "Authenticated",
-    )
-
-    # preview-feedback #11: member-level callers (a real ProjectMember,
-    # Owner, Admin, or Superuser) may observe the recording's technical +
-    # timing metadata so the Web UI table can render Sample Rate / Channels
-    # / Date-Time / parse Status. Outsiders (Guest / Authenticated / Viewer)
-    # keep the spec/006 Guest-minimal projection — in particular ``datetime``
-    # is timing-sensitive (it can reveal when a sensitive species was
-    # present) and MUST stay withheld, consistent with the existing H3
-    # location obscuring. ``_MEMBER_LEVEL_ROLES`` mirrors the member set used
-    # by ``response_filter`` (species masking + H3 generalisation bypass).
-    is_member_level = normalized_role in _MEMBER_LEVEL_ROLES
-
+    # ``normalized_role`` / ``is_member_level`` were resolved before query
+    # building (they gate the timing-sensitive filters/sort). The same flag now
+    # drives the response projection: preview-feedback #11 — member-level
+    # callers (real ProjectMember / Owner / Admin / Superuser) may observe the
+    # recording's technical + timing metadata so the Web UI table can render
+    # Sample Rate / Channels / Date-Time / parse Status. Outsiders (Guest /
+    # Authenticated / Viewer) keep the spec/006 Guest-minimal projection — in
+    # particular ``datetime`` is timing-sensitive (it can reveal when a
+    # sensitive species was present) and stays withheld, consistent with the H3
+    # location obscuring.
     items: list[PublicRecordingItem] = []
     for recording, site_h3_index in rows:
         # Apply time_expansion to the raw duration so callers see playback
