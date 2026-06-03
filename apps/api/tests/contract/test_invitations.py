@@ -15,6 +15,14 @@ dependency chain. It mirrors the established
 
 * ``get_redis_connection`` is patched to a process-local ``fakeredis`` so the
   rate-limit / idempotency paths run without a live Redis container.
+* A moto-backed KMS is provisioned (via :func:`tests._kms_moto.provision_moto_kms`)
+  so the issue path's email PII-hash (``compute_pii_hash_dual`` →
+  ``kms:GenerateMac``) succeeds deterministically without a live KMS endpoint.
+  The CI ``backend-tests`` job has no working KMS (moto/isolation creds), and
+  unlike ``tests/integration/conftest.py`` the contract conftest does NOT carry
+  an autouse moto fixture — hence the module-local one below. (Token *signing*
+  itself uses a local Python HMAC keyed by ``INVITATION_TOKEN_HMAC_KEY`` and
+  needs no KMS; the only KMS call in the issue path is the PII hash.)
 * The issuer authenticates via the BFF refresh bootstrap
   (``/web-api/v1/auth/refresh``) to obtain a Bearer access token + CSRF token.
 * The owner is seeded as an ADMIN ``ProjectMember`` so the
@@ -54,8 +62,36 @@ _RESTRICTED_CONFIG: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# Fixtures — Redis + timing patches (mirror the integration harness).
+# Fixtures — Redis + KMS patches (mirror the integration harness).
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _moto_kms_for_invitation_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Any:
+    """Provide a moto-backed KMS to the invitation contract test.
+
+    The issue endpoint dual-writes a KMS-keyed email PII hash
+    (``invitation_service.hash_email_dual`` → ``echoroo.core.kms``
+    ``compute_pii_hash_dual`` → ``kms:GenerateMac``). The CI
+    ``backend-tests`` job has no working KMS (moto/isolation creds with no
+    provisioned CMKs), so that ``GenerateMac`` 500s with
+    ``UnrecognizedClientException``.
+
+    Unlike ``tests/integration/conftest.py`` — whose autouse
+    ``_integration_moto_kms`` fixture handles this for the integration
+    suite — the ``tests/contract/`` conftest carries no moto fixture. We
+    therefore provision a fresh in-process moto KMS here, mirroring
+    ``_integration_moto_kms`` verbatim, so the PII hash succeeds
+    deterministically with NO live KMS endpoint. This does not weaken the
+    contract assertion: the real endpoint + real signing path still run
+    and emit the genuine 4-part envelope.
+    """
+    from tests._kms_moto import provision_moto_kms
+
+    with provision_moto_kms(monkeypatch) as ids:
+        yield ids
 
 
 @pytest.fixture(autouse=True)
