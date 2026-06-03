@@ -134,6 +134,27 @@ jobs:
         run: npm run test -- --run
 
   # ---------------------------------------------------------------------------
+  # WS7 Phase 2: forbid hardcoded English UI strings in *.svelte markup. The
+  # generated fail-closed baseline
+  # (scripts/allowlists/hardcoded_paraglide_strings_allowlist.txt) keeps this
+  # green today, so it only fails when a NEW untranslated label is introduced
+  # without a Paraglide m.*() call. Hard gate (no `continue-on-error`). The
+  # script is pure-stdlib Python, so no `uv sync` of app deps is needed; a
+  # pinned 3.11 interpreter on PATH (via actions/setup-python) is sufficient.
+  # ---------------------------------------------------------------------------
+  frontend-paraglide-lint:
+    name: Frontend paraglide hardcoded-string lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Lint - paraglide hardcoded strings
+        run: python scripts/lint_hardcoded_paraglide_strings.py --fail-on-violation
+
+  # ---------------------------------------------------------------------------
   # T100a-T100d: permission / response / search / raw-coordinate / KMS
   # isolation lints in warn mode. Each lint exits 0 unless its strict flag is
   # set, so step-level continue-on-error is belt-and-suspenders.
