@@ -423,6 +423,7 @@
   "common_retry": "Retry",
   "common_previous": "Previous",
   "common_next": "Next",
+  "common_close": "Close",
   "common_error_unexpected": "An unexpected error occurred",
 
   "language_english": "English",
@@ -1943,6 +1944,7 @@
   "sites_data_dataset_delete_warning_clips": "All associated clips and annotations",
   "sites_data_dataset_delete_warning_all": "All associated data",
   "sites_data_dataset_delete_warning_fallback": "All associated recordings and clips",
+  "sites_data_dataset_error_delete": "Failed to delete dataset",
   "sites_data_recordings_description": "All recordings in this project",
 
   "common_delete": "Delete",
@@ -2056,6 +2058,8 @@
   "auto_clip_generate": "Generate Clips",
   "auto_clip_success": "Successfully created {count} clip(s)",
 
+  "recording_list_error": "Error: {message}",
+  "recording_list_delete_aria": "Delete recording",
   "recording_list_search_placeholder": "Search recordings...",
   "recording_list_from_date": "From date",
   "recording_list_to_date": "To date",

@@ -2,6 +2,7 @@
   import type { Dataset, DatasetStatus, DatasetVisibility } from '$lib/types/data';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getDatasetStatusClass, getDatasetStatusLabel } from '$lib/utils/statusFormatters';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     datasets: Dataset[];
@@ -35,7 +36,7 @@
   <div class="mb-4 flex flex-wrap gap-3">
     <input
       type="text"
-      placeholder="Search datasets..."
+      placeholder={m.dataset_list_search_placeholder()}
       bind:value={search}
       oninput={onFilterChange}
       class="min-w-[200px] flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
@@ -46,12 +47,12 @@
       onchange={onFilterChange}
       class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
     >
-      <option value="">All Statuses</option>
-      <option value="pending">Pending</option>
-      <option value="scanning">Scanning</option>
-      <option value="processing">Processing</option>
-      <option value="completed">Ready</option>
-      <option value="failed">Failed</option>
+      <option value="">{m.dataset_list_filter_all_statuses()}</option>
+      <option value="pending">{m.dataset_list_status_pending()}</option>
+      <option value="scanning">{m.dataset_list_status_scanning()}</option>
+      <option value="processing">{m.dataset_list_status_processing()}</option>
+      <option value="completed">{m.dataset_list_status_ready()}</option>
+      <option value="failed">{m.dataset_list_status_failed()}</option>
     </select>
 
     <select
@@ -59,9 +60,9 @@
       onchange={onFilterChange}
       class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
     >
-      <option value="">All Visibility</option>
-      <option value="private">Private</option>
-      <option value="public">Public</option>
+      <option value="">{m.dataset_list_filter_all_visibility()}</option>
+      <option value="private">{m.dataset_list_visibility_private()}</option>
+      <option value="public">{m.dataset_list_visibility_public()}</option>
     </select>
   </div>
 
@@ -71,7 +72,7 @@
       <svg class="mx-auto mb-3 h-10 w-10 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
       </svg>
-      <p class="text-sm text-stone-500">No datasets found. Create your first dataset to get started.</p>
+      <p class="text-sm text-stone-500">{m.dataset_list_empty()}</p>
     </div>
   {:else}
     <ul class="flex flex-col gap-2 p-0 list-none">
@@ -102,20 +103,20 @@
 
             <div class="mb-1 flex flex-wrap gap-4">
               <span class="text-xs text-stone-500">
-                <span class="font-medium">Files:</span> {dataset.processed_files} / {dataset.total_files}
+                <span class="font-medium">{m.dataset_list_files_label()}</span> {dataset.processed_files} / {dataset.total_files}
               </span>
             </div>
 
-            <p class="m-0 text-xs text-stone-400">Created: {formatDate(dataset.created_at)}</p>
+            <p class="m-0 text-xs text-stone-400">{m.dataset_list_created_label()} {formatDate(dataset.created_at)}</p>
           </div>
 
           <div class="ml-2 flex-shrink-0">
             <button
               class="rounded border border-danger/20 bg-surface-card px-2 py-1 text-xs font-medium text-danger transition-colors hover:border-danger/30 hover:bg-danger-light"
               onclick={(e) => { e.stopPropagation(); onDelete(dataset); }}
-              aria-label="Delete dataset"
+              aria-label={m.dataset_list_delete_aria()}
             >
-              Delete
+              {m.common_delete()}
             </button>
           </div>
         </li>

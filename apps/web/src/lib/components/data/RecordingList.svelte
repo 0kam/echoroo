@@ -135,7 +135,7 @@
   <div class="mb-4 flex flex-wrap gap-3">
     <input
       type="text"
-      placeholder="Search recordings..."
+      placeholder={m.recording_list_search_placeholder()}
       bind:value={search}
       oninput={handleSearchInput}
       class="min-w-[200px] flex-1 rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
@@ -146,14 +146,14 @@
         type="datetime-local"
         bind:value={datetimeFrom}
         oninput={handleSearchInput}
-        title="From date"
+        title={m.recording_list_from_date()}
         class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
       />
       <input
         type="datetime-local"
         bind:value={datetimeTo}
         oninput={handleSearchInput}
-        title="To date"
+        title={m.recording_list_to_date()}
         class="rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
       />
     </div>
@@ -162,8 +162,8 @@
       bind:value={sortOrder}
       class="rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm focus:border-primary-500 focus:outline-none"
     >
-      <option value="desc">Descending</option>
-      <option value="asc">Ascending</option>
+      <option value="desc">{m.recording_list_sort_desc()}</option>
+      <option value="asc">{m.recording_list_sort_asc()}</option>
     </select>
   </div>
 
@@ -178,7 +178,7 @@
     </div>
   {:else if $recordingsQuery.error}
     <div class="rounded-lg bg-danger-light px-4 py-3 text-sm text-danger">
-      Error: {$recordingsQuery.error.message}
+      {m.recording_list_error({ message: $recordingsQuery.error.message })}
     </div>
   {:else if $recordingsQuery.data}
     {@const recordings = $recordingsQuery.data.items}
@@ -188,7 +188,7 @@
         <svg class="mx-auto mb-3 h-10 w-10 text-stone-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
         </svg>
-        <p class="text-sm text-stone-500">No recordings found.</p>
+        <p class="text-sm text-stone-500">{m.recording_list_empty()}</p>
       </div>
     {:else}
       <!-- Recordings table -->
@@ -201,7 +201,7 @@
                 onclick={() => handleSort('filename')}
               >
                 <span class="flex items-center gap-1">
-                  Filename
+                  {m.recording_list_col_filename()}
                   {#if sortBy === 'filename'}
                     <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
@@ -214,7 +214,7 @@
                 onclick={() => handleSort('datetime')}
               >
                 <span class="flex items-center gap-1">
-                  Date/Time
+                  {m.recording_list_col_datetime()}
                   {#if sortBy === 'datetime'}
                     <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
@@ -227,7 +227,7 @@
                 onclick={() => handleSort('duration')}
               >
                 <span class="flex items-center gap-1">
-                  Duration
+                  {m.recording_list_col_duration()}
                   {#if sortBy === 'duration'}
                     <svg class="h-3 w-3 {sortOrder === 'desc' ? 'rotate-180' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7" />
@@ -236,16 +236,16 @@
                 </span>
               </th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Sample Rate
+                {m.recording_list_col_sample_rate()}
               </th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Ch
+                {m.recording_list_col_channels()}
               </th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Status
+                {m.recording_list_col_status()}
               </th>
               <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-stone-500">
-                Actions
+                {m.recording_list_col_actions()}
               </th>
             </tr>
           </thead>
@@ -277,9 +277,9 @@
                     class="rounded border border-danger/20 bg-surface-card px-2 py-1 text-xs font-medium text-danger transition-colors hover:bg-danger-light hover:border-danger/30"
                     onclick={(e) => { e.stopPropagation(); handleDeleteClick(recording); }}
                     disabled={$deleteMutation.isPending}
-                    aria-label="Delete recording"
+                    aria-label={m.recording_list_delete_aria()}
                   >
-                    Delete
+                    {m.common_delete()}
                   </button>
                 </td>
               </tr>
@@ -295,18 +295,17 @@
           disabled={page <= 1}
           class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Previous
+          {m.common_previous()}
         </button>
         <span class="text-sm text-stone-500">
-          Page {$recordingsQuery.data.page} of {$recordingsQuery.data.pages}
-          ({$recordingsQuery.data.total} total)
+          {m.recording_list_page_info({ page: $recordingsQuery.data.page, pages: $recordingsQuery.data.pages, total: $recordingsQuery.data.total })}
         </span>
         <button
           onclick={nextPage}
           disabled={page >= $recordingsQuery.data.pages}
           class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Next
+          {m.common_next()}
         </button>
       </div>
     {/if}
@@ -316,10 +315,10 @@
 <!-- Delete confirmation dialog -->
 <DeleteConfirmDialog
   isOpen={showDeleteDialog}
-  title="Delete Recording"
-  message={recordingToDelete ? `Are you sure you want to delete "${recordingToDelete.name}"? This will also delete all associated clips.` : ''}
-  warnings={['All associated clips and annotations']}
-  confirmText="Delete Recording"
+  title={m.recording_list_delete_title()}
+  message={recordingToDelete ? m.recording_list_delete_message({ filename: recordingToDelete.name }) : ''}
+  warnings={[m.recording_list_delete_warnings()]}
+  confirmText={m.recording_list_delete_confirm()}
   isDeleting={$deleteMutation.isPending}
   onConfirm={confirmDelete}
   onCancel={cancelDelete}

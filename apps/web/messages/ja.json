@@ -423,6 +423,7 @@
   "common_retry": "再試行",
   "common_previous": "前へ",
   "common_next": "次へ",
+  "common_close": "閉じる",
   "common_error_unexpected": "予期しないエラーが発生しました",
 
   "language_english": "English",
@@ -1943,6 +1944,7 @@
   "sites_data_dataset_delete_warning_clips": "関連するすべてのクリップとアノテーション",
   "sites_data_dataset_delete_warning_all": "関連するすべてのデータ",
   "sites_data_dataset_delete_warning_fallback": "関連するすべての録音とクリップ",
+  "sites_data_dataset_error_delete": "データセットの削除に失敗しました",
   "sites_data_recordings_description": "プロジェクト内のすべての録音",
 
   "common_delete": "削除",
@@ -2056,11 +2058,13 @@
   "auto_clip_generate": "クリップを生成",
   "auto_clip_success": "{count}件のクリップを作成しました",
 
+  "recording_list_error": "エラー: {message}",
+  "recording_list_delete_aria": "録音を削除",
   "recording_list_search_placeholder": "録音を検索...",
   "recording_list_from_date": "開始日",
   "recording_list_to_date": "終了日",
-  "recording_list_sort_desc": "新しい順",
-  "recording_list_sort_asc": "古い順",
+  "recording_list_sort_desc": "降順",
+  "recording_list_sort_asc": "昇順",
   "recording_list_empty": "録音が見つかりません。",
   "recording_list_col_filename": "ファイル名",
   "recording_list_col_datetime": "日時",

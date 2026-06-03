@@ -101,7 +101,7 @@
       datasetDeleteError = null;
     },
     onError: (error: Error) => {
-      datasetDeleteError = error.message || 'Failed to delete dataset';
+      datasetDeleteError = error.message || m.sites_data_dataset_error_delete();
     },
   });
 
@@ -122,11 +122,11 @@
         warnings.push(m.common_recordings_count({ count: siteDetail.recording_count }));
       }
       if (warnings.length === 0) {
-        warnings.push('All associated data');
+        warnings.push(m.sites_data_site_delete_warning_all());
       }
       siteDeleteWarningItems = warnings;
     } catch {
-      siteDeleteWarningItems = ['All associated datasets and recordings'];
+      siteDeleteWarningItems = [m.sites_data_site_delete_warning_fallback()];
     }
     showSiteDeleteDialog = true;
   }
@@ -162,15 +162,15 @@
       const warnings: string[] = [];
       const recordingCount = datasetDetail.processed_files || 0;
       if (recordingCount > 0) {
-        warnings.push(`${recordingCount} recording${recordingCount > 1 ? 's' : ''}`);
-        warnings.push('All associated clips and annotations');
+        warnings.push(m.sites_data_dataset_delete_warning_recordings({ count: recordingCount }));
+        warnings.push(m.sites_data_dataset_delete_warning_clips());
       }
       if (warnings.length === 0) {
-        warnings.push('All associated data');
+        warnings.push(m.sites_data_dataset_delete_warning_all());
       }
       datasetDeleteWarningItems = warnings;
     } catch {
-      datasetDeleteWarningItems = ['All associated recordings and clips'];
+      datasetDeleteWarningItems = [m.sites_data_dataset_delete_warning_fallback()];
     }
     showDatasetDeleteDialog = true;
   }
@@ -208,28 +208,28 @@
     goto(localizeHref(`/projects/${projectId}/recordings/${recordingId}`));
   }
 
-  // Tab labels map
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'sites', label: 'Sites' },
-    { id: 'datasets', label: 'Datasets' },
-    { id: 'recordings', label: 'Recordings' },
-  ];
+  // Tab labels map (derived so labels react to locale changes)
+  const tabs = $derived<{ id: Tab; label: string }[]>([
+    { id: 'sites', label: m.sites_data_tab_sites() },
+    { id: 'datasets', label: m.sites_data_tab_datasets() },
+    { id: 'recordings', label: m.sites_data_tab_recordings() },
+  ]);
 </script>
 
 <svelte:head>
-  <title>Sites & Data | Project</title>
+  <title>{m.sites_data_page_title()}</title>
 </svelte:head>
 
 <div class="mx-auto max-w-6xl px-6 py-8">
   <!-- Page header -->
   <header class="mb-6">
     <nav class="mb-2 flex items-center gap-2 text-sm text-stone-500">
-      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">Project</a>
+      <a href={localizeHref(`/projects/${projectId}`)} class="hover:text-stone-900">{m.dataset_list_breadcrumb_project()}</a>
       <span>/</span>
-      <span class="font-medium text-stone-900">Sites & Data</span>
+      <span class="font-medium text-stone-900">{m.sites_data_breadcrumb()}</span>
     </nav>
-    <h1 class="text-2xl font-bold text-stone-900">Sites & Data</h1>
-    <p class="mt-1 text-sm text-stone-500">Manage sites, datasets, and recordings for this project</p>
+    <h1 class="text-2xl font-bold text-stone-900">{m.sites_data_heading()}</h1>
+    <p class="mt-1 text-sm text-stone-500">{m.sites_data_description()}</p>
   </header>
 
   <!-- Tab bar -->
@@ -253,7 +253,7 @@
   {#if activeTab === 'sites'}
     <div>
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-sm text-stone-500">Manage geographic locations for your recordings</p>
+        <p class="text-sm text-stone-500">{m.sites_data_site_description()}</p>
         {#if !showSiteCreateForm}
           <button
             onclick={() => (showSiteCreateForm = true)}
@@ -263,7 +263,7 @@
               <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
               <line x1="5" y1="12" x2="19" y2="12" stroke-width="2" />
             </svg>
-            New Site
+            {m.sites_data_site_new_button()}
           </button>
         {/if}
       </div>
@@ -271,11 +271,11 @@
       {#if showSiteCreateForm}
         <div class="mb-6 rounded-lg border border-card bg-surface-card p-6">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-stone-900">Create New Site</h2>
+            <h2 class="text-lg font-semibold text-stone-900">{m.sites_data_site_create_heading()}</h2>
             <button
               onclick={() => (showSiteCreateForm = false)}
               class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
-              aria-label="Close"
+              aria-label={m.common_close()}
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
@@ -286,7 +286,7 @@
           <SiteForm onSubmit={handleSiteCreateSubmit} onCancel={() => (showSiteCreateForm = false)} />
           {#if $siteCreateMutation.isError}
             <div class="mt-4 rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
-              {$siteCreateMutation.error?.message || 'Failed to create site'}
+              {$siteCreateMutation.error?.message || m.sites_data_site_error_create()}
             </div>
           {/if}
         </div>
@@ -296,11 +296,11 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          Loading sites...
+          {m.common_loading_sites()}
         </div>
       {:else if $sitesQuery.isError}
         <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-sm text-danger">
-          Error loading sites: {$sitesQuery.error?.message}
+          {m.site_list_error_load({ message: $sitesQuery.error?.message ?? '' })}
         </div>
       {:else if $sitesQuery.data}
         <SiteList
@@ -310,7 +310,7 @@
         />
         {#if $sitesQuery.data.total > 0}
           <p class="mt-3 text-center text-sm text-stone-400">
-            Showing {$sitesQuery.data.items.length} of {$sitesQuery.data.total} sites
+            {m.sites_data_site_showing({ showing: $sitesQuery.data.items.length, total: $sitesQuery.data.total })}
           </p>
         {/if}
       {/if}
@@ -321,7 +321,7 @@
   {#if activeTab === 'datasets'}
     <div>
       <div class="mb-6 flex items-center justify-between">
-        <p class="text-sm text-stone-500">Manage collections of audio recordings</p>
+        <p class="text-sm text-stone-500">{m.sites_data_dataset_description()}</p>
         {#if !showDatasetCreateForm}
           <button
             onclick={() => (showDatasetCreateForm = true)}
@@ -331,7 +331,7 @@
               <line x1="12" y1="5" x2="12" y2="19" stroke-width="2" />
               <line x1="5" y1="12" x2="19" y2="12" stroke-width="2" />
             </svg>
-            New Dataset
+            {m.dataset_list_new_button()}
           </button>
         {/if}
       </div>
@@ -339,11 +339,11 @@
       {#if showDatasetCreateForm}
         <div class="mb-6 rounded-lg border border-card bg-surface-card p-6">
           <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-lg font-semibold text-stone-900">Create New Dataset</h2>
+            <h2 class="text-lg font-semibold text-stone-900">{m.dataset_list_create_heading()}</h2>
             <button
               onclick={() => (showDatasetCreateForm = false)}
               class="rounded p-1 text-stone-400 hover:bg-stone-100 hover:text-stone-600"
-              aria-label="Close"
+              aria-label={m.common_close()}
             >
               <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" />
@@ -359,7 +359,7 @@
           />
           {#if $datasetCreateMutation.isError}
             <div class="mt-4 rounded-md border border-danger/20 bg-danger-light px-3 py-2 text-sm text-danger">
-              {$datasetCreateMutation.error?.message || 'Failed to create dataset'}
+              {$datasetCreateMutation.error?.message || m.dataset_list_error_create()}
             </div>
           {/if}
         </div>
@@ -371,11 +371,11 @@
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
           </svg>
-          Loading datasets...
+          {m.dataset_list_loading()}
         </div>
       {:else if $datasetsQuery.isError}
         <div class="rounded-md border border-danger/20 bg-danger-light px-4 py-3 text-sm text-danger">
-          Error loading datasets: {$datasetsQuery.error?.message}
+          {m.sites_data_dataset_error_load({ message: $datasetsQuery.error?.message ?? '' })}
         </div>
       {:else if $datasetsQuery.data}
         <DatasetList
@@ -395,24 +395,24 @@
               disabled={datasetCurrentPage === 1}
               class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Previous
+              {m.common_previous()}
             </button>
             <span class="text-sm text-stone-500">
-              Page {datasetCurrentPage} of {$datasetsQuery.data.pages}
+              {m.sites_data_dataset_page_info({ page: datasetCurrentPage, total: $datasetsQuery.data.pages })}
             </span>
             <button
               onclick={() => (datasetCurrentPage = Math.min($datasetsQuery.data!.pages, datasetCurrentPage + 1))}
               disabled={datasetCurrentPage === $datasetsQuery.data.pages}
               class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Next
+              {m.common_next()}
             </button>
           </div>
         {/if}
 
         {#if $datasetsQuery.data.total > 0}
           <p class="mt-3 text-center text-sm text-stone-400">
-            Showing {$datasetsQuery.data.items.length} of {$datasetsQuery.data.total} datasets
+            {m.sites_data_dataset_showing({ showing: $datasetsQuery.data.items.length, total: $datasetsQuery.data.total })}
           </p>
         {/if}
       {/if}
@@ -423,7 +423,7 @@
   {#if activeTab === 'recordings'}
     <div>
       <div class="mb-6">
-        <p class="text-sm text-stone-500">All recordings in this project</p>
+        <p class="text-sm text-stone-500">{m.sites_data_recordings_description()}</p>
       </div>
       {#if projectId}
         <RecordingList {projectId} onSelect={handleRecordingSelect} />
@@ -435,10 +435,10 @@
 <!-- Site delete confirmation -->
 <ConfirmDialog
   isOpen={showSiteDeleteDialog}
-  title="Delete Site"
-  message={siteToDelete ? `Are you sure you want to delete "${siteToDelete.name}"? This action cannot be undone.` : ''}
-  confirmText="Delete Site"
-  cancelText="Cancel"
+  title={m.site_list_delete_title()}
+  message={siteToDelete ? m.site_list_delete_message({ name: siteToDelete.name }) : ''}
+  confirmText={m.site_list_delete_confirm()}
+  cancelText={m.site_list_delete_cancel()}
   isDanger={true}
   onConfirm={confirmSiteDelete}
   onCancel={cancelSiteDelete}
@@ -448,10 +448,10 @@
 <!-- Dataset delete confirmation -->
 <ConfirmDialog
   isOpen={showDatasetDeleteDialog}
-  title="Delete Dataset"
-  message={datasetToDelete ? `Are you sure you want to delete "${datasetToDelete.name}"? This action cannot be undone.` : ''}
-  confirmText="Delete Dataset"
-  cancelText="Cancel"
+  title={m.dataset_list_delete_title()}
+  message={datasetToDelete ? m.dataset_list_delete_message({ name: datasetToDelete.name }) : ''}
+  confirmText={m.dataset_list_delete_confirm()}
+  cancelText={m.dataset_list_delete_cancel()}
   isDanger={true}
   onConfirm={confirmDatasetDelete}
   onCancel={cancelDatasetDelete}
