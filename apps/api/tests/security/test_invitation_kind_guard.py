@@ -268,6 +268,12 @@ async def test_create_invitation_allows_member_with_transfer(
     above; this case is purely "happy path: service does NOT raise".
     """
 
+    class _NullResult:
+        """Stub SQLAlchemy result whose ``scalar_one_or_none`` is always ``None``."""
+
+        def scalar_one_or_none(self) -> Any:
+            return None
+
     class _StubSession:
         added: list[Any]
         flush_calls: int
@@ -280,6 +286,9 @@ async def test_create_invitation_allows_member_with_transfer(
             self.added.append(obj)
             if getattr(obj, "id", None) is None:
                 obj.id = uuid4()
+
+        async def execute(self, *_a: Any, **_k: Any) -> _NullResult:
+            return _NullResult()
 
         async def flush(self) -> None:
             self.flush_calls += 1
