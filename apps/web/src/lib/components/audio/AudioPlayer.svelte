@@ -28,10 +28,31 @@
      * require server-side time-expansion to become audible.
      */
     samplerate?: number;
-    /** When this value changes, the audio element will seek to this time (seconds). */
+    /**
+     * Opt-in CLIP mode. When both `clipStart` and `clipEnd` are provided the
+     * player requests a clip-bounded audio source (`?start&end`) from the
+     * backend, so the `<audio>` element loads only the clip and its media
+     * duration equals the clip length. The seek slider and time readout then
+     * operate in CLIP-LOCAL seconds (`0 .. clipDuration`), while all viewport /
+     * spectrogram interactions keep working in recording-ABSOLUTE seconds.
+     *
+     * When these are left `undefined` (the recording-detail use case) the
+     * player loads the full recording and behaves exactly as before (the
+     * ultrasonic real-time / `effectiveDuration` behaviour from PR #141 is
+     * unchanged).
+     */
+    clipStart?: number;
+    clipEnd?: number;
+    /**
+     * When this value changes, the audio element will seek to this time.
+     * In clip mode this is interpreted in recording-ABSOLUTE seconds (the
+     * spectrogram's native domain) and converted to clip-local internally.
+     */
     seekTo?: number;
     onViewportChange?: (viewport: SpectrogramWindow) => void;
+    /** Reports the current playback time. In clip mode this is recording-ABSOLUTE seconds. */
     onTimeUpdate?: (time: number) => void;
+    /** Reports a user seek. In clip mode this is recording-ABSOLUTE seconds. */
     onSeek?: (time: number) => void;
     /** Invoked when the user picks a playback speed from the speed menu. */
     onSpeedChange?: (speed: number) => void;
@@ -46,12 +67,34 @@
     viewport,
     bounds,
     samplerate,
+    clipStart,
+    clipEnd,
     seekTo,
     onViewportChange,
     onTimeUpdate,
     onSeek,
     onSpeedChange,
   }: Props = $props();
+
+  // Clip mode is active only when an explicit, valid clip window is provided.
+  // The audio element is clip-bounded, so `currentTime` is already clip-local
+  // (0 .. clipDuration); we only need the offset to translate to/from the
+  // recording-absolute domain used by the spectrogram + viewport.
+  const isClipMode = $derived(
+    clipStart !== undefined &&
+      clipEnd !== undefined &&
+      clipEnd > clipStart
+  );
+  /** Offset added to clip-local time to obtain recording-absolute time. */
+  const clipOffset = $derived(isClipMode ? (clipStart as number) : 0);
+  /** Convert a clip-local time to the recording-absolute domain. */
+  function toAbsolute(localTime: number): number {
+    return localTime + clipOffset;
+  }
+  /** Convert a recording-absolute time to the clip-local domain. */
+  function toLocal(absoluteTime: number): number {
+    return absoluteTime - clipOffset;
+  }
 
   // Audio element reference
   let audioEl: HTMLAudioElement | undefined = $state();
@@ -112,10 +155,19 @@
     rid: string,
     serverSpeed?: number
   ): Promise<string> {
-    const fullUrl =
-      serverSpeed !== undefined && serverSpeed !== 1
-        ? getPlaybackUrl(pid, rid, { speed: serverSpeed })
-        : getPlaybackUrl(pid, rid);
+    // In clip mode the backend already supports trimming via `start`/`end`, so
+    // the streamed media is bounded to the clip and reports a clip-length
+    // duration. The recording-detail (full-file) call site leaves the clip
+    // props undefined, producing the original full-recording URL.
+    const params: Parameters<typeof getPlaybackUrl>[2] = {};
+    if (serverSpeed !== undefined && serverSpeed !== 1) {
+      params.speed = serverSpeed;
+    }
+    if (isClipMode) {
+      params.start = clipStart;
+      params.end = clipEnd;
+    }
+    const fullUrl = getPlaybackUrl(pid, rid, params);
     return getAuthenticatedRecordingMediaUrl(pid, rid, 'playback', fullUrl);
   }
 
@@ -134,17 +186,34 @@
     const _useServerSpeed = useServerSpeed;
     const _speed = _useServerSpeed ? speed : untrack(() => speed);
 
+    // In clip mode the playback URL is bounded by `start`/`end`, so a change in
+    // the clip window must re-fetch a freshly trimmed source. Track these so a
+    // segment switch reloads the correct clip. (Full-file mode leaves them
+    // undefined; reading them is harmless and keeps the dependency explicit.)
+    const _isClipMode = isClipMode;
+    void clipStart;
+    void clipEnd;
+
     if (!_projectId || !_recordingId || !_audioEl) return;
 
     // `currentTime` and `isPlaying` are read untracked so time updates during
     // playback do not re-run this effect and reset audio src repeatedly.
-    const savedTime = untrack(() => currentTime);
+    // In clip mode the media is reloaded as a fresh clip, so playback restarts
+    // from the clip start (local 0); in full-file mode we preserve the position.
+    const savedTime = _isClipMode ? 0 : untrack(() => currentTime);
     const wasPlaying = untrack(() => isPlaying);
 
     _audioLoadError = false;
     // The newly assigned src has no metadata yet; gate seeking until it loads.
     canSeek = false;
     mediaDuration = null;
+    // In clip mode the fresh clip starts at local 0; reset the slider state so
+    // the thumb/progress reflect the new clip immediately (before metadata).
+    if (_isClipMode) {
+      untrack(() => {
+        currentTime = 0;
+      });
+    }
     // Reset the retry flag whenever we load a new recording
     hasRetriedAfterMediaTokenRefresh = false;
     const requestId = ++audioSrcRequestId;
@@ -186,12 +255,16 @@
   // every time-update tick during normal playback.
   $effect(() => {
     if (seekTo === undefined || !audioEl) return;
-    if (Math.abs(audioEl.currentTime - seekTo) > 0.05) {
-      audioEl.currentTime = seekTo;
+    // `seekTo` is recording-absolute; the clip-bounded media element is
+    // clip-local, so translate before writing currentTime. In full-file mode
+    // the offset is 0 and this is a no-op.
+    const localSeek = toLocal(seekTo);
+    if (Math.abs(audioEl.currentTime - localSeek) > 0.05) {
+      audioEl.currentTime = localSeek;
       // Keep local state in sync so the progress bar reflects the new position
       // immediately, even before the next animation frame fires.
       untrack(() => {
-        currentTime = seekTo as number;
+        currentTime = localSeek;
       });
     }
   });
@@ -216,7 +289,11 @@
     }
   }
 
-  function handleTimeUpdate(time: number) {
+  function handleTimeUpdate(localTime: number) {
+    // `localTime` is the (clip-local in clip mode) media position. The
+    // spectrogram, viewport and consumer callbacks all speak the
+    // recording-absolute domain, so translate once here.
+    const time = toAbsolute(localTime);
     onTimeUpdate?.(time);
 
     // Auto-center viewport during playback
@@ -297,13 +374,16 @@
       _isDragging = false;
       return;
     }
-    // Clamp to the actual media duration before writing currentTime.
+    // Clamp to the actual media duration before writing currentTime. The
+    // slider operates in the media's own (clip-local in clip mode) domain.
     const clamped = Math.max(0, Math.min(currentTime, audioEl.duration));
     currentTime = clamped;
     audioEl.currentTime = clamped;
-    onSeek?.(clamped);
+    // Consumer callbacks + viewport math use the recording-absolute domain.
+    const absolute = toAbsolute(clamped);
+    onSeek?.(absolute);
     onViewportChange?.(
-      adjustWindowToBounds(centerWindowOn(viewport, { time: clamped }), bounds)
+      adjustWindowToBounds(centerWindowOn(viewport, { time: absolute }), bounds)
     );
     _isDragging = false;
   }
@@ -376,7 +456,16 @@
     if (likelyAuthError && !hasRetriedAfterMediaTokenRefresh) {
       hasRetriedAfterMediaTokenRefresh = true;
       try {
-        const src = await buildAudioSrc(projectId, recordingId);
+        // Rebuild with the SAME arguments as the normal src effect so the two
+        // paths can't drift: the server-speed param (so ultrasonic/server-speed
+        // mode keeps its time-expansion) plus the clip start/end (preserved via
+        // the buildAudioSrc closure). Passing `useServerSpeed ? speed : undefined`
+        // mirrors the main effect exactly; non-clip behaviour is unchanged.
+        const src = await buildAudioSrc(
+          projectId,
+          recordingId,
+          useServerSpeed ? speed : undefined
+        );
         // Rebuild the src with a freshly issued scoped media token.
         if (audioEl && projectId && recordingId) {
           const savedTime = audioEl.currentTime;
@@ -399,11 +488,16 @@
     stopTimeTracking();
   }
 
-  // Expose seek for external control (parent can call this)
+  // Expose seek for external control (parent can call this).
+  // `time` is recording-ABSOLUTE seconds, matching the rest of the public
+  // boundary (seekTo, onSeek, onTimeUpdate). The clip-bounded media element is
+  // clip-local, so translate via toLocal before writing currentTime. In
+  // full-file mode the offset is 0 and toLocal is the identity.
   export function seek(time: number) {
-    currentTime = time;
+    const local = toLocal(time);
+    currentTime = local;
     if (audioEl) {
-      audioEl.currentTime = time;
+      audioEl.currentTime = local;
     }
   }
 
