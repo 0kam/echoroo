@@ -8,8 +8,7 @@ from typing import Annotated, cast
 from uuid import UUID
 
 from fastapi import Depends
-from sqlalchemy import bindparam, func, select, text, update
-from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import get_db
@@ -17,6 +16,7 @@ from echoroo.models.enums import DetectionStatus, SearchSessionStatus
 from echoroo.models.recording_annotation import (
     RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
 )
+from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
 
 
@@ -368,11 +368,16 @@ class SearchSessionService:
         species_config: list[dict[str, object]],
         reference_audio_keys: list[str] | None,
     ) -> SearchSession:
-        """Reset a session's fields for a re-run and delete its existing annotations.
+        """Reset a session's fields for a re-run and clear its prior run state.
 
-        Clears results, counters, error state, and prior annotations linked to
-        this session.  Updates the session with the new job ID, model, parameters,
-        and species configuration, then auto-generates a new name.
+        Clears stored results, counters, error state, the session's review
+        annotations, and the session's stored query embeddings (the reference-
+        audio vectors keyed by ``search_session_id``). The query embeddings are
+        regenerated from scratch by the dispatched re-run task, so clearing the
+        stale rows here prevents old and new reference vectors from accumulating
+        and corrupting downstream search/training reads. Updates the session with
+        the new job ID, model, parameters, and species configuration, then auto-
+        generates a new name.
 
         Args:
             session: SearchSession instance to reset
@@ -385,10 +390,24 @@ class SearchSessionService:
         Returns:
             Updated SearchSession (not yet committed)
         """
-        # Delete existing annotations linked to this session
+        # Delete existing annotations linked to this session. Use the ORM model
+        # (RecordingAnnotation → "recording_annotations_DEFERRED") that the rest
+        # of this service queries, so the generated DELETE targets the table that
+        # actually carries ``search_session_id``. Scoped to this session only.
         await self.db.execute(
-            text("DELETE FROM annotations WHERE search_session_id = :sid").bindparams(
-                bindparam("sid", value=session.id, type_=PGUUID())
+            delete(Annotation).where(Annotation.search_session_id == session.id)
+        )
+
+        # Clear the session's stored query embeddings (reference-audio vectors).
+        # The session row is reused across re-runs, and the re-run task only
+        # *appends* fresh vectors, so without this delete the old vectors would
+        # accumulate and later be mixed with the new ones by readers that load
+        # every row for this search_session_id (api/v1/custom_models.py seed
+        # sampling, workers/classifier_tasks.py training). Scoped to this session
+        # only; runs in the same transaction before the re-run regenerates them.
+        await self.db.execute(
+            delete(SearchQueryEmbedding).where(
+                SearchQueryEmbedding.search_session_id == session.id
             )
         )
 
