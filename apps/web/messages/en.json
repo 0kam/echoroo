@@ -2401,6 +2401,8 @@
   "annotation_editor_no_more_segments": "No more unannotated segments.",
   "annotation_editor_recording_loading": "Loading recording...",
   "annotation_editor_recording_error": "Failed to load recording.",
+  "annotation_editor_recording_recorded_at": "Recorded at",
+  "annotation_editor_recording_datetime_unknown": "Recording time unknown",
 
   "models_train_from_search_close_aria": "Close dialog",
   "models_train_target_species_label": "Target Species",

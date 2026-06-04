@@ -18,7 +18,7 @@
   import { goto } from '$app/navigation';
   import { createQuery } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
-  import { localizeHref } from '$lib/paraglide/runtime';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import { toasts } from '$lib/stores/toast';
   import ClipSpectrogramPlayer from '$lib/components/audio/ClipSpectrogramPlayer.svelte';
   import SegmentNavigator from '$lib/components/annotation-sets/SegmentNavigator.svelte';
@@ -402,6 +402,16 @@
   function annotationLabel(a: TimeRangeAnnotation): string {
     return a.species_common_name ?? a.species_scientific_name;
   }
+
+  /**
+   * Recording datetime formatted in the viewer's LOCAL timezone, matching the
+   * recording-detail page. `null` when the recording has no parsed datetime.
+   */
+  const recordingDatetimeLabel = $derived.by<string | null>(() => {
+    const dt = recording?.datetime;
+    if (!dt) return null;
+    return new Date(dt).toLocaleString(getLocale());
+  });
 </script>
 
 <div class="flex h-screen flex-col bg-surface-body">
@@ -474,6 +484,29 @@
             <p class="text-sm text-danger">{m.annotation_editor_recording_error()}</p>
           </div>
         {:else}
+          <!-- Recording metadata header: filename + recording datetime (local time) -->
+          <div
+            class="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-stone-200 bg-surface-card px-4 py-1.5 text-xs dark:border-stone-700"
+          >
+            <span class="truncate font-medium text-stone-700 dark:text-stone-200">
+              {recording.filename}
+            </span>
+            <span class="flex items-center gap-1 text-stone-500 dark:text-stone-400">
+              <svg class="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              <span class="sr-only">{m.annotation_editor_recording_recorded_at()}:</span>
+              {#if recordingDatetimeLabel}
+                <span class="tabular-nums">{recordingDatetimeLabel}</span>
+              {:else}
+                <span>{m.annotation_editor_recording_datetime_unknown()}</span>
+              {/if}
+            </span>
+          </div>
+
           <div class="relative">
             <ClipSpectrogramPlayer
               {projectId}

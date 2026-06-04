@@ -74,7 +74,10 @@
 
   let currentTime = $state(0);
 
-  // Sync currentTime initial value to clipStart reactively
+  // Sync currentTime initial value to clipStart reactively.
+  // Intentionally segment-switch-scoped: this depends ONLY on clipStart (the
+  // clip bound), so it re-runs to reset the playhead when the user switches to
+  // a different segment — not on every currentTime update during playback.
   $effect(() => {
     currentTime = clipStart;
   });
@@ -129,6 +132,8 @@
       samplerate={recording.samplerate}
       {viewport}
       {bounds}
+      {clipStart}
+      {clipEnd}
       seekTo={currentTime}
       onViewportChange={handleViewportChange}
       onTimeUpdate={handleTimeUpdate}

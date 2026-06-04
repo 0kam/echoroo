@@ -2401,6 +2401,8 @@
   "annotation_editor_no_more_segments": "未アノテーションのセグメントはもうありません。",
   "annotation_editor_recording_loading": "録音を読み込み中...",
   "annotation_editor_recording_error": "録音の読み込みに失敗しました。",
+  "annotation_editor_recording_recorded_at": "録音日時",
+  "annotation_editor_recording_datetime_unknown": "録音日時不明",
 
   "models_train_from_search_close_aria": "ダイアログを閉じる",
   "models_train_target_species_label": "対象種",
