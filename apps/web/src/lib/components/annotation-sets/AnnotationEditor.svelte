@@ -136,15 +136,33 @@
   let overlayEl: HTMLDivElement | undefined = $state();
 
   /**
+   * Requested playhead position (absolute recording seconds) for click-to-seek.
+   * `seekNonce` is bumped on every click so that clicking the SAME spot twice
+   * still re-triggers ClipSpectrogramPlayer's seek effect (a plain value prop
+   * would be deduplicated by Svelte when the value is unchanged).
+   */
+  let seekTime = $state<number | null>(null);
+  let seekNonce = $state(0);
+
+  /** Seek the playhead to an absolute recording time (click-to-seek). */
+  function seekTo(absoluteTime: number) {
+    seekTime = absoluteTime;
+    seekNonce += 1;
+  }
+
+  /**
    * Draft state machine + drag geometry. See
    * `./useAnnotationDraft.svelte.ts` for details; the hook owns window
    * mousemove / mouseup subscriptions and exposes the finalised draft range
-   * plus a transient drag-preview bar geometry.
+   * plus a transient drag-preview bar geometry. A trivial click (below the
+   * drag threshold) is reported via `onSeek` and moves the playhead instead
+   * of creating a draft range.
    */
   const draft = useAnnotationDraft({
     overlayEl: () => overlayEl,
     clipStart: () => clipStart,
     clipDuration: () => clipDuration,
+    onSeek: seekTo,
   });
 
   /**
@@ -164,6 +182,9 @@
     void segmentId;
     draft.clear();
     selectedAnnotationId = null;
+    // Drop any pending click-to-seek target so it cannot fire against the new
+    // clip; ClipSpectrogramPlayer already resets its own playhead to clipStart.
+    seekTime = null;
   });
 
   // A newly-committed draft should clear any previous annotation selection
@@ -518,6 +539,8 @@
               }}
               clipStart={clipStart}
               clipEnd={clipEnd}
+              seekTo={seekTime ?? undefined}
+              {seekNonce}
             />
 
             <!-- Drag-select + annotation overlay (absolute over the spectrogram area) -->

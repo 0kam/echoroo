@@ -36,11 +36,26 @@
     clipStart: number;
     /** Clip end time within the recording (seconds) */
     clipEnd: number;
+    /**
+     * Optional: target playhead position in recording-ABSOLUTE seconds,
+     * clamped to the clip range via `handleSeek`. Used by the annotation
+     * editor for click-to-seek on the overlay. Leave undefined
+     * (recording-detail) to keep prior behaviour.
+     */
+    seekTo?: number;
+    /**
+     * Optional: bump this counter to force a re-seek to `seekTo` even when the
+     * target time is unchanged (e.g. clicking the same spot twice after
+     * playback has moved on). Without it Svelte would dedupe the unchanged
+     * `seekTo` value and skip the effect.
+     */
+    seekNonce?: number;
     /** Optional: notified when playback time changes */
     onTimeUpdate?: (time: number) => void;
   }
 
-  let { projectId, recording, clipStart, clipEnd, onTimeUpdate }: Props = $props();
+  let { projectId, recording, clipStart, clipEnd, seekTo, seekNonce, onTimeUpdate }: Props =
+    $props();
 
   // Cast to RecordingDetail for SpectrogramViewer (it only uses id, samplerate, duration)
   const recordingForViewer = $derived(recording as unknown as RecordingDetail);
@@ -80,6 +95,20 @@
   // a different segment — not on every currentTime update during playback.
   $effect(() => {
     currentTime = clipStart;
+  });
+
+  // Parent-driven seek (annotation editor click-to-seek). When the parent
+  // requests a seek (new `seekTo` value, or a bumped `seekNonce` for a repeat
+  // request at the same spot), route it through the existing clamping path so
+  // the playhead respects the clip boundaries. Reading `seekNonce` registers
+  // it as a dependency so repeated identical-target clicks still re-seek.
+  // Depends ONLY on seek inputs — not on internal currentTime updates during
+  // playback.
+  $effect(() => {
+    void seekNonce;
+    const target = seekTo;
+    if (target === undefined) return;
+    handleSeek(target);
   });
   let interactionMode = $state<InteractionMode>('idle');
 

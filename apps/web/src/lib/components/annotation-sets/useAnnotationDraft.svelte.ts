@@ -28,6 +28,15 @@ import type { DraftHookApi, DraftHookInput, DraftRange } from './types';
  */
 const TRIVIAL_DRAG_SECONDS = 0.05;
 
+/**
+ * Pointer movement (in CSS px) below which a press-release is treated as a
+ * CLICK rather than a drag. A click moves the playhead via `onSeek`; a drag
+ * beyond this produces a draft range. Using a pixel threshold (instead of a
+ * seconds threshold) keeps the click/drag boundary stable across zoom levels,
+ * where the same pixel travel maps to very different time spans.
+ */
+const CLICK_MOVEMENT_PX = 5;
+
 export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
   // Finalised draft range in absolute recording seconds, or null when idle.
   let draftRange = $state<DraftRange | null>(null);
@@ -93,7 +102,23 @@ export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
     const t2 = clientXToTime(dragCurrentX);
     const start = Math.min(t1, t2);
     const end = Math.max(t1, t2);
-    // Ignore trivial clicks — a tap without drag should never produce a draft.
+    // Distinguish a trivial CLICK from a DRAG using pointer travel in CSS px.
+    // Pixel movement is the SOLE click/drag discriminator: it stays stable
+    // across zoom levels and is independent of how fast the gesture was. A
+    // click (movement below the threshold) seeks the playhead; any movement
+    // at or beyond the threshold is a drag and draws a draft.
+    const movedPx = Math.abs(dragCurrentX - dragStartX);
+    if (movedPx < CLICK_MOVEMENT_PX) {
+      // Seek to the press position (the click point). Use dragStartX so the
+      // playhead lands where the user pressed, independent of tiny jitter.
+      input.onSeek?.(clientXToTime(dragStartX));
+      return;
+    }
+    // Safety net for the draft-creation path only (NOT the click/seek
+    // decision): a real >=5px drag essentially always spans > 0 seconds, but
+    // guard against a degenerate zero-width range so we never produce an
+    // invalid draft. We deliberately do NOT fire `onSeek` here — the gesture
+    // was a drag, not a click.
     if (end - start < TRIVIAL_DRAG_SECONDS) {
       return;
     }

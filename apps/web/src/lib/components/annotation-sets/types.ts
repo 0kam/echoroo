@@ -38,6 +38,14 @@ export interface DraftHookInput {
   clipStart: () => number;
   /** Duration in seconds of the clip (segment). */
   clipDuration: () => number;
+  /**
+   * Optional: invoked when a press-release on the overlay is a trivial CLICK
+   * (movement below the drag threshold) rather than a drag. The argument is
+   * the clicked position in ABSOLUTE recording seconds. The parent uses this
+   * to move the audio playhead (seek), while a real drag still produces a
+   * draft range as before.
+   */
+  onSeek?: (time: number) => void;
 }
 
 /**
