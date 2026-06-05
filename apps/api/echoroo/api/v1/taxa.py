@@ -11,6 +11,7 @@ from echoroo.repositories.taxon import TaxonRepository
 from echoroo.schemas.taxon import (
     GBIFSpeciesResult,
     TaxonDetailResponse,
+    TaxonFromGBIFRequest,
     TaxonListResponse,
     TaxonSearchResult,
 )
@@ -139,6 +140,46 @@ async def gbif_search_taxa(
     gbif_service = GBIFService()
     raw_results = await gbif_service.search_species_full(query=q, limit=limit)
     return [GBIFSpeciesResult.model_validate(r) for r in raw_results]
+
+
+@router.post(
+    "/from-gbif",
+    response_model=TaxonSearchResult,
+    summary="Create a local taxon from a GBIF pick",
+    description=(
+        "Get-or-creates a local taxa row for a species picked from the live "
+        "GBIF search and returns it. Idempotent: repeated calls return the "
+        "same taxon without creating a duplicate."
+    ),
+)
+async def create_taxon_from_gbif(
+    current_user: CurrentUser,
+    service: TaxonServiceDep,
+    payload: TaxonFromGBIFRequest,
+    locale: str | None = None,
+) -> TaxonSearchResult:
+    """Materialise a GBIF search pick into a local taxon.
+
+    NOTE: This route must appear before /{taxon_id} to avoid routing conflicts.
+
+    Args:
+        current_user: Current authenticated user
+        service: Taxon service instance
+        payload: Scientific name + optional GBIF key / common name
+        locale: Optional display locale for the resolved common name
+
+    Returns:
+        The get-or-created taxon as a search-result shape
+
+    Raises:
+        401: Not authenticated
+    """
+    return await service.create_from_gbif(
+        scientific_name=payload.scientific_name,
+        gbif_taxon_key=payload.gbif_taxon_key,
+        common_name=payload.common_name,
+        locale=locale or "en",
+    )
 
 
 @router.get(

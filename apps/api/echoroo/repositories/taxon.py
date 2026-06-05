@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -33,6 +34,18 @@ class TaxonRepository(BaseRepository[Taxon]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_gbif_taxon_key(self, gbif_taxon_key: int) -> Taxon | None:
+        """Return the taxon that owns a GBIF key, if any.
+
+        Used to honour the partial-unique ``ix_taxa_gbif_taxon_key`` index
+        (``WHERE gbif_taxon_key IS NOT NULL``) before backfilling a key onto
+        another taxon.
+        """
+        result = await self.db.execute(
+            select(Taxon).where(Taxon.gbif_taxon_key == gbif_taxon_key)
+        )
+        return result.scalar_one_or_none()
+
     async def get_or_create_by_scientific_name(
         self,
         scientific_name: str,
@@ -43,6 +56,13 @@ class TaxonRepository(BaseRepository[Taxon]):
 
         If common_name is provided and the taxon is newly created,
         a vernacular name (en, source=birdnet) is also created.
+
+        Concurrency: the insert is wrapped in a SAVEPOINT so that a
+        concurrent first-time create of the same ``scientific_name`` (which
+        races the read-then-insert and trips the ``unique(scientific_name)``
+        constraint on flush) rolls back only the savepoint and re-queries to
+        return the row the winning transaction created — preserving
+        get-OR-create semantics instead of surfacing a 500.
         """
         existing = await self.get_by_scientific_name(scientific_name)
         if existing is not None:
@@ -52,10 +72,24 @@ class TaxonRepository(BaseRepository[Taxon]):
             scientific_name=scientific_name,
             is_non_biological=is_non_biological,
         )
-        self.db.add(taxon)
-        await self.db.flush()
+        created = False
+        try:
+            async with self.db.begin_nested():
+                self.db.add(taxon)
+                await self.db.flush()
+            created = True
+        except IntegrityError:
+            # Lost the race for the unique scientific_name — the savepoint is
+            # rolled back, leaving the surrounding transaction usable. Return
+            # the row the other transaction committed/flushed.
+            refetched = await self.get_by_scientific_name(scientific_name)
+            if refetched is not None:
+                return refetched
+            raise
 
-        if common_name:
+        if created and common_name:
+            # Only seed the en vernacular when THIS call created the row, so
+            # the race-lost path never duplicates the vernacular insert.
             vn = TaxonVernacularName(
                 taxon_id=taxon.id,
                 locale="en",

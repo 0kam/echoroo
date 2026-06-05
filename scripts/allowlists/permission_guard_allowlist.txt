@@ -152,6 +152,7 @@ apps/api/echoroo/api/v1/tags.py:get_statistics:missing-permission-guard  # legac
 apps/api/echoroo/api/v1/tags.py:get_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/tags.py:list_tags:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/tags.py:update_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/v1/taxa.py:create_taxon_from_gbif:missing-permission-guard  # WS-A: ungated global taxa reference write (auth-only, no project scope), like search_taxa/gbif_search_taxa
 apps/api/echoroo/api/v1/taxa.py:gbif_search_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/taxa.py:get_taxon:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/taxa.py:list_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx

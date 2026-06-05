@@ -10,7 +10,11 @@ from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.user import User
 from echoroo.repositories.taxon import TaxonRepository
-from echoroo.schemas.taxon import GBIFSpeciesResult, TaxonSearchResult
+from echoroo.schemas.taxon import (
+    GBIFSpeciesResult,
+    TaxonFromGBIFRequest,
+    TaxonSearchResult,
+)
 from echoroo.services.gbif import GBIFService
 from echoroo.services.taxon import TaxonService
 
@@ -76,6 +80,33 @@ async def gbif_search_taxa(
     gbif_service = GBIFService()
     raw_results = await gbif_service.search_species_full(query=q, limit=limit)
     return [GBIFSpeciesResult.model_validate(r) for r in raw_results]
+
+
+@router.post(
+    "/from-gbif",
+    response_model=TaxonSearchResult,
+    summary="Create a local taxon from a GBIF pick (Web UI)",
+    description=(
+        "Cookie/Bearer session mirror of the programmatic from-GBIF route. "
+        "Get-or-creates a local taxa row for a species picked from the live "
+        "GBIF search and returns it so the annotation-set palette can add the "
+        "species. Idempotent: repeated calls return the same taxon."
+    ),
+)
+async def create_taxon_from_gbif(
+    current_user: CurrentUser,
+    service: TaxonServiceDep,
+    payload: TaxonFromGBIFRequest,
+    locale: str | None = None,
+) -> TaxonSearchResult:
+    """Materialise a GBIF search pick into a local taxon for the Web UI."""
+    _require_authenticated(current_user)
+    return await service.create_from_gbif(
+        scientific_name=payload.scientific_name,
+        gbif_taxon_key=payload.gbif_taxon_key,
+        common_name=payload.common_name,
+        locale=locale or "en",
+    )
 
 
 __all__ = ["router"]
