@@ -28,6 +28,15 @@ import type { DraftHookApi, DraftHookInput, DraftRange } from './types';
  */
 const TRIVIAL_DRAG_SECONDS = 0.05;
 
+/**
+ * Pointer movement (in CSS px) below which a press-release is treated as a
+ * CLICK rather than a drag. A click moves the playhead via `onSeek`; a drag
+ * beyond this produces a draft range. Using a pixel threshold (instead of a
+ * seconds threshold) keeps the click/drag boundary stable across zoom levels,
+ * where the same pixel travel maps to very different time spans.
+ */
+const CLICK_MOVEMENT_PX = 5;
+
 export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
   // Finalised draft range in absolute recording seconds, or null when idle.
   let draftRange = $state<DraftRange | null>(null);
@@ -93,8 +102,15 @@ export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
     const t2 = clientXToTime(dragCurrentX);
     const start = Math.min(t1, t2);
     const end = Math.max(t1, t2);
-    // Ignore trivial clicks — a tap without drag should never produce a draft.
-    if (end - start < TRIVIAL_DRAG_SECONDS) {
+    // Distinguish a trivial CLICK from a DRAG using pointer travel in CSS px.
+    // A click (little/no movement) seeks the playhead; a drag draws a draft.
+    // The legacy seconds threshold is kept as a secondary guard so that a
+    // zero-width selection never produces an (invalid) draft range.
+    const movedPx = Math.abs(dragCurrentX - dragStartX);
+    if (movedPx < CLICK_MOVEMENT_PX || end - start < TRIVIAL_DRAG_SECONDS) {
+      // Seek to the press position (the click point). Use dragStartX so the
+      // playhead lands where the user pressed, independent of tiny jitter.
+      input.onSeek?.(clientXToTime(dragStartX));
       return;
     }
     const clipStart = input.clipStart();
