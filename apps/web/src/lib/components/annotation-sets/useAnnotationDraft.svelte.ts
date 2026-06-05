@@ -103,14 +103,23 @@ export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
     const start = Math.min(t1, t2);
     const end = Math.max(t1, t2);
     // Distinguish a trivial CLICK from a DRAG using pointer travel in CSS px.
-    // A click (little/no movement) seeks the playhead; a drag draws a draft.
-    // The legacy seconds threshold is kept as a secondary guard so that a
-    // zero-width selection never produces an (invalid) draft range.
+    // Pixel movement is the SOLE click/drag discriminator: it stays stable
+    // across zoom levels and is independent of how fast the gesture was. A
+    // click (movement below the threshold) seeks the playhead; any movement
+    // at or beyond the threshold is a drag and draws a draft.
     const movedPx = Math.abs(dragCurrentX - dragStartX);
-    if (movedPx < CLICK_MOVEMENT_PX || end - start < TRIVIAL_DRAG_SECONDS) {
+    if (movedPx < CLICK_MOVEMENT_PX) {
       // Seek to the press position (the click point). Use dragStartX so the
       // playhead lands where the user pressed, independent of tiny jitter.
       input.onSeek?.(clientXToTime(dragStartX));
+      return;
+    }
+    // Safety net for the draft-creation path only (NOT the click/seek
+    // decision): a real >=5px drag essentially always spans > 0 seconds, but
+    // guard against a degenerate zero-width range so we never produce an
+    // invalid draft. We deliberately do NOT fire `onSeek` here — the gesture
+    // was a drag, not a click.
+    if (end - start < TRIVIAL_DRAG_SECONDS) {
       return;
     }
     const clipStart = input.clipStart();
