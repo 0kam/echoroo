@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Tag, GBIFSuggestion } from '$lib/types/annotation';
   import { fetchGBIFSuggestions } from '$lib/api/tags';
+  import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
 
   let {
@@ -87,7 +88,7 @@
     gbifDebounceTimer = setTimeout(async () => {
       isLoadingGBIF = true;
       try {
-        gbifSuggestions = await fetchGBIFSuggestions(projectId, searchQuery);
+        gbifSuggestions = await fetchGBIFSuggestions(projectId, searchQuery, 10, getLocale());
       } catch {
         gbifSuggestions = [];
       } finally {

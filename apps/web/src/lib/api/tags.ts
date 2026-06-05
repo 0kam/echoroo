@@ -120,13 +120,18 @@ export async function deleteTag(projectId: string, tagId: string): Promise<void>
 
 /**
  * Fetch GBIF taxon suggestions for a search query.
+ *
+ * Pass `locale` (BCP-47, e.g. "en", "ja") so suggestion vernacular names can
+ * be resolved for the active UI language when supported by the backend.
  */
 export async function fetchGBIFSuggestions(
   projectId: string,
   query: string,
-  limit: number = 10
+  limit: number = 10,
+  locale?: string
 ): Promise<GBIFSuggestion[]> {
   const searchParams = new URLSearchParams({ q: query, limit: limit.toString() });
+  if (locale) searchParams.set('locale', locale);
   return apiClient.get<GBIFSuggestion[]>(
     `${WEB_API_BASE}/projects/${projectId}/tags/gbif-suggest?${searchParams}`
   );

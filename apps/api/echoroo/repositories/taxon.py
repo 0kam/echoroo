@@ -153,40 +153,44 @@ class TaxonRepository(BaseRepository[Taxon]):
     async def search(
         self,
         query: str,
-        locale: str | None = None,
         limit: int = 20,
-    ) -> list[tuple[Taxon, str | None]]:
+    ) -> list[Taxon]:
         """Search taxa by scientific name or vernacular name.
 
-        Returns list of (Taxon, matching_common_name_or_None).
+        Matching is locale-agnostic: a taxon matches when its scientific name
+        OR any of its vernacular names (in any locale) ILIKE the query. This
+        keeps English-name searches working even when the UI requests a
+        non-English display locale; the display name resolution is handled
+        separately by the service layer.
+
+        Returns the list of matching ``Taxon`` rows.
         """
         pattern = f"%{query}%"
 
-        # Subquery for vernacular name matches
-        vn_select = (
-            select(
-                TaxonVernacularName.taxon_id,
-                TaxonVernacularName.name.label("vn_name"),
-            )
+        # Subquery for vernacular name matches across ALL locales so that, for
+        # example, an English-name search still surfaces the taxon under a
+        # ``ja`` UI. The matched vernacular row itself is intentionally not
+        # returned here — the display name is resolved by the service using the
+        # requested locale (with ja→en fallback).
+        vn_subq = (
+            select(TaxonVernacularName.taxon_id)
             .where(TaxonVernacularName.name.ilike(pattern))
+            .subquery("vn_match")
         )
-        if locale:
-            vn_select = vn_select.where(TaxonVernacularName.locale == locale)
-        vn_subq = vn_select.subquery("vn_match")
 
         result = await self.db.execute(
-            select(Taxon, vn_subq.c.vn_name)
+            select(Taxon)
             .outerjoin(vn_subq, vn_subq.c.taxon_id == Taxon.id)
             .where(
                 or_(
                     Taxon.scientific_name.ilike(pattern),
-                    vn_subq.c.vn_name.isnot(None),
+                    vn_subq.c.taxon_id.isnot(None),
                 )
             )
             .order_by(Taxon.scientific_name.asc())
             .limit(limit)
         )
-        return [(row.Taxon, row.vn_name) for row in result.all()]
+        return list(result.scalars().all())
 
     async def update(self, taxon: Taxon) -> Taxon:
         """Flush changes to an existing taxon."""

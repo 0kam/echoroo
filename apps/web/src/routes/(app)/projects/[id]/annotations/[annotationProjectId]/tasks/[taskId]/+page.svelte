@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { fetchAnnotationTask, completeAnnotationTask, fetchNextAnnotationTask } from '$lib/api/annotation-tasks';
-  import { localizeHref } from '$lib/paraglide/runtime';
+  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import {
     getOrCreateClipAnnotation,
@@ -59,13 +59,17 @@
   // Queries
   // ============================================================
 
+  // Include the active locale in the query keys so cached task/clip data is
+  // separated per language (embedded tag/species names are locale-resolved).
+  $: locale = getLocale();
+
   $: taskQuery = createQuery({
-    queryKey: ['annotation-task', projectId, annotationProjectId, taskId],
+    queryKey: ['annotation-task', projectId, annotationProjectId, taskId, locale],
     queryFn: () => fetchAnnotationTask(projectId, annotationProjectId, taskId),
   });
 
   $: clipAnnotationQuery = createQuery({
-    queryKey: ['clip-annotation', projectId, taskId],
+    queryKey: ['clip-annotation', projectId, taskId, locale],
     queryFn: () => getOrCreateClipAnnotation(projectId, taskId),
     enabled: !!$taskQuery.data,
   });

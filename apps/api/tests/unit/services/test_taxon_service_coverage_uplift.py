@@ -102,17 +102,49 @@ async def test_get_detail_returns_taxon_detail() -> None:
 
 @pytest.mark.asyncio
 async def test_search_returns_list_of_results() -> None:
-    """search returns list of TaxonSearchResult (lines 91-100)."""
+    """search returns list of TaxonSearchResult with resolved display names.
+
+    Matching is decoupled from display: the repo returns bare ``Taxon`` rows
+    and the service resolves the display ``common_name`` via
+    ``resolve_vernacular_names`` (ja→en fallback).
+    """
     repo = _make_taxon_repo()
     taxon = _make_taxon()
-    repo.search = AsyncMock(return_value=[(taxon, "Great Tit")])
+    repo.search = AsyncMock(return_value=[taxon])
 
     service = TaxonService(taxon_repo=repo)
-    results = await service.search(query="Parus")
+
+    with patch(
+        "echoroo.services.taxon.resolve_vernacular_names",
+        new=AsyncMock(return_value={taxon.id: "Great Tit"}),
+    ) as mock_resolve:
+        results = await service.search(query="Parus", locale="en")
 
     assert len(results) == 1
     assert results[0].scientific_name == "Parus major"
     assert results[0].common_name == "Great Tit"
+    # Locale-agnostic matching: repo.search is called WITHOUT a locale arg.
+    repo.search.assert_awaited_once_with("Parus", limit=20)
+    mock_resolve.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_omits_common_name_when_no_vernacular() -> None:
+    """search leaves common_name None when no vernacular resolves (floor later)."""
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()
+    repo.search = AsyncMock(return_value=[taxon])
+
+    service = TaxonService(taxon_repo=repo)
+
+    with patch(
+        "echoroo.services.taxon.resolve_vernacular_names",
+        new=AsyncMock(return_value={}),
+    ):
+        results = await service.search(query="Parus", locale="ja")
+
+    assert len(results) == 1
+    assert results[0].common_name is None
 
 
 @pytest.mark.asyncio

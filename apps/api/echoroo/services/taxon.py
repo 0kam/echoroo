@@ -20,6 +20,7 @@ from echoroo.schemas.taxon import (
     VernacularNameResponse,
 )
 from echoroo.services.gbif import GBIFService
+from echoroo.services.vernacular import resolve_vernacular_names
 
 # Maximum number of concurrent GBIF HTTP calls during batch resolution.
 # GBIF rate limit is 10 req/s; keeping concurrency below that avoids 429s.
@@ -88,7 +89,26 @@ class TaxonService:
         locale: str | None = None,
         limit: int = 20,
     ) -> list[TaxonSearchResult]:
-        results = await self.taxon_repo.search(query, locale=locale, limit=limit)
+        """Search taxa, resolving each result's display ``common_name``.
+
+        Matching is locale-agnostic (an English-name query still works under a
+        ``ja`` UI). The ``locale`` argument controls only the display name:
+        each result's ``common_name`` is resolved with a requested-locale →
+        English fallback chain. When no vernacular row exists in either the
+        requested locale or English, ``common_name`` stays ``None`` (the
+        scientific-name floor is applied by the frontend display formatter).
+        """
+        taxa = await self.taxon_repo.search(query, limit=limit)
+
+        # Batch-resolve the display name for the requested locale (ja→en
+        # fallback). Default to English when no locale is supplied.
+        display_locale = locale or "en"
+        common_names = await resolve_vernacular_names(
+            self.taxon_repo.db,
+            [taxon.id for taxon in taxa],
+            display_locale,
+        )
+
         return [
             TaxonSearchResult(
                 id=taxon.id,
@@ -96,9 +116,9 @@ class TaxonService:
                 gbif_taxon_key=taxon.gbif_taxon_key,
                 rank=taxon.rank,
                 is_non_biological=taxon.is_non_biological,
-                common_name=common_name,
+                common_name=common_names.get(taxon.id),
             )
-            for taxon, common_name in results
+            for taxon in taxa
         ]
 
     async def get_or_create(
