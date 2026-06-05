@@ -233,6 +233,13 @@ class DatasetStatisticsResponse(BaseModel):
     format_distribution: dict[str, int] = {}
     recordings_by_date: list[RecordingsByDate] = []
     recordings_by_hour: list[RecordingsByHour] = []
+    timezone: str = Field(
+        default="UTC",
+        description=(
+            "IANA timezone (recording-site local) used to bucket the "
+            "by-date / by-hour aggregations. 'UTC' when the dataset has none."
+        ),
+    )
 
 
 class ExportRequest(BaseModel):

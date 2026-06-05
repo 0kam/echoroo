@@ -3,12 +3,14 @@
 Tests verify that endpoints conform to the data management specification.
 """
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 
 if TYPE_CHECKING:
@@ -619,6 +621,116 @@ class TestDatasetStatisticsEndpoints:
         assert "format_distribution" in data
         assert "recordings_by_date" in data
         assert "recordings_by_hour" in data
+        # Timezone field tells the frontend which tz the hour/date buckets use.
+        # Defaults to 'UTC' when the dataset has no datetime_timezone.
+        assert data["timezone"] == "UTC"
+
+    async def test_get_statistics_uses_dataset_timezone(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_site: Site,
+    ) -> None:
+        """Statistics response reports the dataset's local timezone for buckets."""
+        dataset_data = {
+            "site_id": str(test_site.id),
+            "name": "TZ Stats Dataset",
+            "audio_dir": "test/audio",
+            "datetime_timezone": "Asia/Tokyo",
+        }
+
+        create_response = await client.post(
+            f"/api/v1/projects/{test_project_id}/datasets",
+            headers=auth_headers,
+            json=dataset_data,
+        )
+        dataset_id = create_response.json()["id"]
+
+        response = await client.get(
+            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["timezone"] == "Asia/Tokyo"
+
+    async def test_get_statistics_timezone_bucket_values(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_site: Site,
+        db_session: AsyncSession,
+    ) -> None:
+        """Bucketing actually uses dataset-local time, not UTC.
+
+        Scenario: a recording stored at 2026-01-01T23:30:00Z (UTC) is
+        2026-01-02T08:30 JST (UTC+9).  With ``datetime_timezone='Asia/Tokyo'``
+        the statistics endpoint must return:
+          - ``recordings_by_hour``: hour == 8  (JST), not 23 (UTC)
+          - ``recordings_by_date``: date == '2026-01-02' (JST), not '2026-01-01' (UTC)
+        """
+        # Create a dataset with Asia/Tokyo timezone.
+        dataset_resp = await client.post(
+            f"/api/v1/projects/{test_project_id}/datasets",
+            headers=auth_headers,
+            json={
+                "site_id": str(test_site.id),
+                "name": "TZ Bucket Value Dataset",
+                "datetime_timezone": "Asia/Tokyo",
+            },
+        )
+        assert dataset_resp.status_code == 201, dataset_resp.text
+        dataset_id = dataset_resp.json()["id"]
+
+        # Insert a recording whose UTC datetime crosses a date boundary when
+        # converted to JST: 2026-01-01 23:30 UTC == 2026-01-02 08:30 JST.
+        utc_instant = datetime(2026, 1, 1, 23, 30, 0, tzinfo=timezone.utc)
+        recording = Recording(
+            dataset_id=dataset_id,
+            filename="tz_test_recording.wav",
+            path="tz_test_recording.wav",
+            duration=10.0,
+            samplerate=44100,
+            channels=1,
+            datetime=utc_instant,
+            datetime_parse_status="success",
+            time_expansion=1.0,
+        )
+        db_session.add(recording)
+        await db_session.commit()
+
+        # Fetch statistics and verify local-time buckets.
+        stats_resp = await client.get(
+            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=auth_headers,
+        )
+        assert stats_resp.status_code == 200, stats_resp.text
+        data = stats_resp.json()
+
+        # The timezone field must reflect the dataset's configured timezone.
+        assert data["timezone"] == "Asia/Tokyo"
+
+        # recordings_by_hour: must contain hour 8 (JST), not hour 23 (UTC).
+        hours = {bucket["hour"]: bucket["count"] for bucket in data["recordings_by_hour"]}
+        assert 8 in hours, (
+            f"Expected JST hour 8 in recordings_by_hour, got hours: {list(hours.keys())}"
+        )
+        assert hours[8] == 1
+        assert 23 not in hours, (
+            f"recordings_by_hour must NOT contain UTC hour 23; got hours: {list(hours.keys())}"
+        )
+
+        # recordings_by_date: must contain '2026-01-02' (JST), not '2026-01-01' (UTC).
+        dates = {bucket["date"]: bucket["count"] for bucket in data["recordings_by_date"]}
+        assert "2026-01-02" in dates, (
+            f"Expected JST date '2026-01-02' in recordings_by_date, got dates: {list(dates.keys())}"
+        )
+        assert dates["2026-01-02"] == 1
+        assert "2026-01-01" not in dates, (
+            f"recordings_by_date must NOT contain UTC date '2026-01-01'; got: {list(dates.keys())}"
+        )
 
     async def test_get_statistics_not_found(
         self,
