@@ -10,6 +10,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
+  import { getLocale } from '$lib/paraglide/runtime';
   import { searchTaxa } from '$lib/api/taxa';
   import type { PaletteEntry } from '$lib/types/annotation-set';
   import type { TaxonSearchResult } from '$lib/types/taxon';
@@ -57,7 +58,7 @@
     showDropdown = true;
     debounceTimer = setTimeout(async () => {
       try {
-        results = await searchTaxa(q, undefined, 10);
+        results = await searchTaxa(q, getLocale(), 10);
       } catch {
         results = [];
       } finally {

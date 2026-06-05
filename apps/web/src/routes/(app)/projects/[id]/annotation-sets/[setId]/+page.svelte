@@ -15,7 +15,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { localizeHref } from '$lib/paraglide/runtime';
+  import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import { fetchDataset } from '$lib/api/datasets';
   import { searchTaxa } from '$lib/api/taxa';
@@ -174,7 +174,7 @@
     paletteSearching = true;
     paletteDebounce = setTimeout(async () => {
       try {
-        paletteResults = await searchTaxa(q, undefined, 10);
+        paletteResults = await searchTaxa(q, getLocale(), 10);
       } catch {
         paletteResults = [];
       } finally {

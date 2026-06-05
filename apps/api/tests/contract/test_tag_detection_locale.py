@@ -620,8 +620,8 @@ async def test_resolve_vernacular_names_ignores_none_and_deduplicates(
 ) -> None:
     """``resolve_vernacular_names`` skips ``None`` and duplicate inputs.
 
-    Also verifies the function returns an empty mapping when no taxon
-    matches the requested locale instead of raising.
+    Also verifies that an unsupported locale falls back to the English
+    vernacular (ja→en fallback chain) rather than raising.
     """
     from echoroo.services.vernacular import resolve_vernacular_names
 
@@ -634,8 +634,80 @@ async def test_resolve_vernacular_names_ignores_none_and_deduplicates(
     mapping = await resolve_vernacular_names(db_session, random_ids, "ja")
     assert mapping == {seeded_taxon.id: "クロウタドリ"}
 
-    # Unknown locale returns an empty mapping rather than erroring.
+    # An unsupported locale with no own row falls back to the English
+    # vernacular (the seeded taxon has an ``en`` row).
     assert (
         await resolve_vernacular_names(db_session, [seeded_taxon.id], "de")
-        == {}
+        == {seeded_taxon.id: "Common Blackbird"}
     )
+
+
+@pytest.mark.asyncio
+async def test_resolve_vernacular_names_ja_en_fallback_chain(
+    db_session: AsyncSession,
+) -> None:
+    """ja→en fallback: ja present→ja, ja missing+en present→en, neither→omit."""
+    from echoroo.services.vernacular import resolve_vernacular_names
+
+    suffix = uuid4().hex[:12]
+
+    # 1. taxon with both ja + en → requested ``ja`` wins.
+    both = Taxon(scientific_name=f"Fallback Both {suffix}", rank="SPECIES")
+    # 2. taxon with en only → falls back to ``en`` under a ``ja`` request.
+    en_only = Taxon(scientific_name=f"Fallback EnOnly {suffix}", rank="SPECIES")
+    # 3. taxon with neither ja nor en → omitted from the mapping.
+    neither = Taxon(scientific_name=f"Fallback Neither {suffix}", rank="SPECIES")
+    db_session.add_all([both, en_only, neither])
+    await db_session.commit()
+    await db_session.refresh(both)
+    await db_session.refresh(en_only)
+    await db_session.refresh(neither)
+
+    db_session.add_all(
+        [
+            TaxonVernacularName(
+                taxon_id=both.id,
+                locale="en",
+                name="Both English",
+                source="gbif",
+                is_primary=True,
+            ),
+            TaxonVernacularName(
+                taxon_id=both.id,
+                locale="ja",
+                name="ニホンゴ",
+                source="gbif",
+                is_primary=True,
+            ),
+            TaxonVernacularName(
+                taxon_id=en_only.id,
+                locale="en",
+                name="English Only",
+                source="gbif",
+                is_primary=True,
+            ),
+            # ``neither`` intentionally gets a row only for an unrelated locale
+            # so it has no ja and no en candidate.
+            TaxonVernacularName(
+                taxon_id=neither.id,
+                locale="fr",
+                name="Francais",
+                source="gbif",
+                is_primary=True,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    mapping = await resolve_vernacular_names(
+        db_session,
+        [both.id, en_only.id, neither.id],
+        "ja",
+    )
+
+    # requested ja present → ja
+    assert mapping[both.id] == "ニホンゴ"
+    # ja missing + en present → en
+    assert mapping[en_only.id] == "English Only"
+    # neither ja nor en → omitted
+    assert neither.id not in mapping
