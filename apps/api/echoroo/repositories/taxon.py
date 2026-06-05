@@ -167,24 +167,30 @@ class TaxonRepository(BaseRepository[Taxon]):
         """
         pattern = f"%{query}%"
 
-        # Subquery for vernacular name matches across ALL locales so that, for
-        # example, an English-name search still surfaces the taxon under a
-        # ``ja`` UI. The matched vernacular row itself is intentionally not
-        # returned here — the display name is resolved by the service using the
-        # requested locale (with ja→en fallback).
-        vn_subq = (
-            select(TaxonVernacularName.taxon_id)
-            .where(TaxonVernacularName.name.ilike(pattern))
-            .subquery("vn_match")
+        # Correlated EXISTS for vernacular name matches across ALL locales so
+        # that, for example, an English-name search still surfaces the taxon
+        # under a ``ja`` UI. EXISTS (rather than a JOIN) guarantees each taxon
+        # is counted at most once even when several of its vernacular rows
+        # (e.g. both a ``ja`` and an ``en`` row, or multiple sources) match the
+        # query, so the ``limit`` counts distinct taxa instead of being
+        # consumed by duplicate rows. The matched vernacular row itself is
+        # intentionally not returned here — the display name is resolved by the
+        # service using the requested locale (with ja→en fallback).
+        vn_exists = (
+            select(TaxonVernacularName.id)
+            .where(
+                TaxonVernacularName.taxon_id == Taxon.id,
+                TaxonVernacularName.name.ilike(pattern),
+            )
+            .exists()
         )
 
         result = await self.db.execute(
             select(Taxon)
-            .outerjoin(vn_subq, vn_subq.c.taxon_id == Taxon.id)
             .where(
                 or_(
                     Taxon.scientific_name.ilike(pattern),
-                    vn_subq.c.taxon_id.isnot(None),
+                    vn_exists,
                 )
             )
             .order_by(Taxon.scientific_name.asc())
