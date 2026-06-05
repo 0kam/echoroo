@@ -91,3 +91,50 @@ async def test_get_taxon_delegates_to_service() -> None:
     result = await mod.get_taxon(taxon_id=taxon_id, current_user=user, service=service)
     assert result is sentinel
     service.get_detail.assert_awaited_once_with(taxon_id=taxon_id)
+
+
+@pytest.mark.asyncio
+async def test_create_taxon_from_gbif_delegates_to_service() -> None:
+    """create_taxon_from_gbif forwards the payload + locale to the service."""
+    from echoroo.schemas.taxon import TaxonFromGBIFRequest
+
+    sentinel = MagicMock()
+    service = MagicMock()
+    service.create_from_gbif = AsyncMock(return_value=sentinel)
+    user = MagicMock()
+    payload = TaxonFromGBIFRequest(
+        scientific_name="Quercus rubra",
+        gbif_taxon_key=12345,
+        common_name="Northern red oak",
+    )
+
+    result = await mod.create_taxon_from_gbif(
+        current_user=user, service=service, payload=payload, locale="ja"
+    )
+    assert result is sentinel
+    service.create_from_gbif.assert_awaited_once_with(
+        scientific_name="Quercus rubra",
+        gbif_taxon_key=12345,
+        common_name="Northern red oak",
+        locale="ja",
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_taxon_from_gbif_defaults_locale_to_en() -> None:
+    """A missing locale query param defaults to ``en``."""
+    from echoroo.schemas.taxon import TaxonFromGBIFRequest
+
+    service = MagicMock()
+    service.create_from_gbif = AsyncMock(return_value=MagicMock())
+    payload = TaxonFromGBIFRequest(scientific_name="Quercus rubra")
+
+    await mod.create_taxon_from_gbif(
+        current_user=MagicMock(), service=service, payload=payload, locale=None
+    )
+    service.create_from_gbif.assert_awaited_once_with(
+        scientific_name="Quercus rubra",
+        gbif_taxon_key=None,
+        common_name=None,
+        locale="en",
+    )

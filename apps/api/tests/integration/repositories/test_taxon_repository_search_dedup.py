@@ -146,3 +146,67 @@ async def test_search_matches_scientific_name_only(
 
     matching = [t for t in results if t.scientific_name == sci]
     assert len(matching) == 1
+
+
+async def test_get_or_create_race_loss_returns_existing_row(
+    db_session: AsyncSession,
+) -> None:
+    """A concurrent first-create race returns the winning row, not a 500.
+
+    Simulates the read-then-insert race: ``get_by_scientific_name`` misses
+    (the other transaction has not been observed yet), so this call proceeds
+    to insert and trips the ``unique(scientific_name)`` constraint on flush.
+    The SAVEPOINT-scoped insert must roll back only the savepoint, then
+    re-query and return the row the winning transaction created — preserving
+    get-OR-create semantics and never duplicating the en vernacular.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    sci = f"Raceus testus {suffix}"
+
+    # The "winning" transaction's row already exists (and already owns its en
+    # vernacular). This stands in for the row another concurrent create wrote.
+    winner = Taxon(scientific_name=sci, is_non_biological=False)
+    db_session.add(winner)
+    await db_session.flush()
+    db_session.add(
+        TaxonVernacularName(
+            taxon_id=winner.id,
+            locale="en",
+            name=f"Winner Name {suffix}",
+            source="birdnet",
+            is_primary=True,
+        )
+    )
+    await db_session.flush()
+
+    repo = TaxonRepository(db_session)
+
+    # Force the read-miss so the insert path runs and trips the unique index,
+    # exactly as a racing transaction that committed after our SELECT would.
+    original = repo.get_by_scientific_name
+    calls = {"n": 0}
+
+    async def _first_miss_then_real(scientific_name: str) -> Taxon | None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return None  # pre-insert read misses (race window)
+        return await original(scientific_name)  # post-conflict re-query hits
+
+    repo.get_by_scientific_name = _first_miss_then_real  # type: ignore[method-assign]
+
+    result = await repo.get_or_create_by_scientific_name(
+        scientific_name=sci,
+        common_name=f"Loser Name {suffix}",
+    )
+
+    # Returned the existing (winning) row rather than raising IntegrityError.
+    assert result.id == winner.id
+    # The race-lost path must NOT have seeded a duplicate en vernacular.
+    from sqlalchemy import func, select
+
+    vn_count = await db_session.execute(
+        select(func.count())
+        .select_from(TaxonVernacularName)
+        .where(TaxonVernacularName.taxon_id == winner.id)
+    )
+    assert int(vn_count.scalar_one()) == 1

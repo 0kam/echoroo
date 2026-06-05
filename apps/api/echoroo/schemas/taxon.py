@@ -63,6 +63,27 @@ class TaxonSearchResult(BaseModel):
     common_name: str | None = Field(None, description="Best matching vernacular name")
 
 
+class TaxonFromGBIFRequest(BaseModel):
+    """Request body for materialising a GBIF search pick into a local taxon.
+
+    The first-party annotation-set palette lets users pick a species from a
+    live GBIF search (``GBIFSpeciesResult``) and add it to the project. This
+    request carries the minimal fields needed to get-or-create the matching
+    local ``taxa`` row: the canonical scientific name, the optional GBIF
+    backbone key, and an optional vernacular (common) name.
+    """
+
+    scientific_name: str = Field(
+        ..., min_length=1, description="Canonical scientific name of the species"
+    )
+    gbif_taxon_key: int | None = Field(
+        None, description="GBIF backbone taxon key, when known"
+    )
+    common_name: str | None = Field(
+        None, description="Vernacular name to seed when creating a new taxon"
+    )
+
+
 class GBIFSpeciesResult(BaseModel):
     """A single species result from the GBIF real-time search API."""
 

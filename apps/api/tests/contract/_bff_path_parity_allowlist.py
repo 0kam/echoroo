@@ -74,6 +74,8 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # PR C — taxa search + GBIF lookup
     "/web-api/v1/taxa/search GET",
     "/web-api/v1/taxa/gbif-search GET",
+    # WS-A PR3a — materialise a GBIF pick into a local taxon (preview #2)
+    "/web-api/v1/taxa/from-gbif POST",
     # PR D — detection model discovery used by dataset export/status pages
     "/web-api/v1/detection-runs/available-models GET",
 ]
