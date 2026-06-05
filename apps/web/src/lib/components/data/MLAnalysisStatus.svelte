@@ -64,12 +64,18 @@
       queryKey: queryKey,
       queryFn: async () => {
         const result = await fetchDetectionRuns(projectId, datasetId);
-        // Detection UI shows detection runs only; embedding-only runs (Perch)
-        // live in EmbeddingStatus (#4). Note: result.total/pages still count
+        // Detection UI shows detector-model runs only (issue #4, Option C).
+        // Embedding/similarity runs (Perch) live in EmbeddingStatus. We require
+        // the run's model to be a detection model AND not flagged embedding_only,
+        // so any Perch run is excluded regardless of whether the (older) record
+        // carries the embedding_only flag. Note: result.total/pages still count
         // embedding runs, but this UI only consumes items.
         return {
           ...result,
-          items: result.items.filter((run) => run.parameters?.embedding_only !== true),
+          items: result.items.filter(
+            (run) =>
+              DETECTION_MODELS.includes(run.model_name) && run.parameters?.embedding_only !== true
+          ),
         };
       },
       refetchInterval: refetchInterval,
