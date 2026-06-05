@@ -20,6 +20,7 @@
   import * as m from '$lib/paraglide/messages';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import { toasts } from '$lib/stores/toast';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
   import ClipSpectrogramPlayer from '$lib/components/audio/ClipSpectrogramPlayer.svelte';
   import SegmentNavigator from '$lib/components/annotation-sets/SegmentNavigator.svelte';
   import SpeciesPalette from '$lib/components/annotation-sets/SpeciesPalette.svelte';
@@ -421,7 +422,7 @@
   }
 
   function annotationLabel(a: TimeRangeAnnotation): string {
-    return a.species_common_name ?? a.species_scientific_name;
+    return formatSpeciesName(a.species_common_name, a.species_scientific_name);
   }
 
   /**

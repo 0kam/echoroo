@@ -48,21 +48,59 @@ export function displayCommonName(tag: TagLike | null | undefined): string | nul
 }
 
 /**
+ * Placeholder shown when a species carries no human-readable label and the
+ * caller supplies no usable fallback.  Centralised so every surface degrades to
+ * the same non-empty text.
+ */
+export const UNIDENTIFIED_PLACEHOLDER = 'Unidentified';
+
+/**
+ * Combine an already-resolved common name and scientific name into the shared
+ * "Common name (Scientific name)" label used across every species surface.
+ *
+ * This is the single source of truth for the "併記" (common + scientific
+ * together) format.  Rules:
+ * - Both present and distinct (case-insensitive, trimmed) → "common (scientific)"
+ * - No common name, or common equals scientific → scientific alone
+ * - No scientific name → common alone
+ * - Neither present → the `fallback` (never an empty string)
+ *
+ * It never renders a duplicate such as "Robin (Robin)" and never returns an
+ * empty string while any field carries text.
+ */
+export function formatSpeciesName(
+  common: string | null | undefined,
+  scientific: string | null | undefined,
+  fallback: string = UNIDENTIFIED_PLACEHOLDER,
+): string {
+  const commonTrimmed = common?.trim() || null;
+  const scientificTrimmed = scientific?.trim() || null;
+
+  if (commonTrimmed && scientificTrimmed) {
+    // Collapse to the scientific name alone when the two are identical so we
+    // never render "X (X)". Comparison is case-insensitive.
+    if (commonTrimmed.toLowerCase() === scientificTrimmed.toLowerCase()) {
+      return scientificTrimmed;
+    }
+    return `${commonTrimmed} (${scientificTrimmed})`;
+  }
+  if (commonTrimmed) return commonTrimmed;
+  if (scientificTrimmed) return scientificTrimmed;
+  // Honour the "never empty" guarantee: an empty/whitespace-only fallback
+  // degrades to the shared placeholder.
+  return fallback.trim() || UNIDENTIFIED_PLACEHOLDER;
+}
+
+/**
  * Return the full species label: "Common name (Scientific name)".
  *
- * If no common name can be resolved the scientific name (or the provided
- * `fallback`) is returned on its own.  If neither a common name nor a
- * scientific name is available the `fallback` is returned.
+ * Delegates to {@link formatSpeciesName} after resolving the locale-preferred
+ * common name, so Tag-like inputs get the same duplicate-collapse and fallback
+ * behaviour as every other surface.
  */
 export function displaySpeciesName(
   tag: TagLike | null | undefined,
-  fallback: string = 'Unidentified',
+  fallback: string = UNIDENTIFIED_PLACEHOLDER,
 ): string {
-  const common = displayCommonName(tag);
-  const scientific = tag?.scientific_name?.trim() || null;
-
-  if (common && scientific) return `${common} (${scientific})`;
-  if (common) return common;
-  if (scientific) return scientific;
-  return fallback;
+  return formatSpeciesName(displayCommonName(tag), tag?.scientific_name, fallback);
 }

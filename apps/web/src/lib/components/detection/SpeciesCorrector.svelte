@@ -11,7 +11,7 @@
   import type { Tag } from '$lib/types/annotation';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { displayCommonName } from '$lib/utils/speciesFormatters';
+  import { displaySpeciesName } from '$lib/utils/speciesFormatters';
 
   let {
     currentTagId,
@@ -60,7 +60,7 @@
   }));
 
   const currentTag = $derived(allTags.find((t: Tag) => t.id === currentTagId) ?? null);
-  const currentTagLabel = $derived(currentTag ? displayCommonName(currentTag) ?? currentTag.name : null);
+  const currentTagLabel = $derived(currentTag ? displaySpeciesName(currentTag) : null);
 
   function handleInputFocus() {
     isOpen = true;
@@ -96,7 +96,7 @@
         class="rounded bg-success-light px-1.5 py-0.5 text-xs font-medium text-success"
         title={currentTag.scientific_name ?? undefined}
       >
-        {currentTagLabel ?? currentTag.name}
+        {currentTagLabel}
       </span>
     {:else}
       <span class="text-xs italic text-stone-400">{m.detection_species_unidentified()}</span>
@@ -136,17 +136,12 @@
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_interactive_supports_focus -->
               <div
-                class="flex cursor-pointer flex-col gap-0.5 px-3 py-1.5 hover:bg-stone-50"
+                class="flex cursor-pointer items-baseline gap-1 px-3 py-1.5 hover:bg-stone-50"
                 role="option"
                 aria-selected="false"
                 onclick={() => handleSelect(tag)}
               >
-                <span class="text-xs font-medium text-stone-800"
-                  >{displayCommonName(tag) ?? tag.name}</span
-                >
-                {#if tag.scientific_name}
-                  <span class="text-xs italic text-stone-500">{tag.scientific_name}</span>
-                {/if}
+                <span class="text-xs font-medium text-stone-800">{displaySpeciesName(tag)}</span>
               </div>
             {/each}
             {#if filteredTags.length > 20}

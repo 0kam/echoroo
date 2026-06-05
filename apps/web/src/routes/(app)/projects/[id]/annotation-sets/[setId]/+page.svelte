@@ -35,6 +35,7 @@
     PaletteEntry,
   } from '$lib/types/annotation-set';
   import type { TaxonSearchResult } from '$lib/types/taxon';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
   import EvaluationRunDialog from '$lib/components/annotation-sets/EvaluationRunDialog.svelte';
   import EvaluationRunList from '$lib/components/annotation-sets/EvaluationRunList.svelte';
 
@@ -289,13 +290,11 @@
   const paletteDisplay = $derived<PaletteEntry[]>(detail?.palette ?? []);
 
   function paletteDisplayName(entry: PaletteEntry): string {
-    return entry.common_name
-      ? `${entry.common_name} (${entry.scientific_name})`
-      : entry.scientific_name;
+    return formatSpeciesName(entry.common_name, entry.scientific_name);
   }
 
   function taxonDisplayName(t: TaxonSearchResult): string {
-    return t.common_name ? `${t.common_name} (${t.scientific_name})` : t.scientific_name;
+    return formatSpeciesName(t.common_name, t.scientific_name);
   }
 </script>
 

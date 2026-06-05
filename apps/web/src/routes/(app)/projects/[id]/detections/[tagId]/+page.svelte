@@ -13,7 +13,7 @@
   import { fetchSpeciesSummary, fetchTemporalData } from '$lib/api/detections';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { displayCommonName } from '$lib/utils/speciesFormatters';
+  import { displayCommonName, displaySpeciesName } from '$lib/utils/speciesFormatters';
   import DetectionReviewGrid from '$lib/components/detection/DetectionReviewGrid.svelte';
   import PolarHeatmap from '$lib/components/detection/PolarHeatmap.svelte';
 
@@ -35,17 +35,19 @@
   $: currentSpecies = speciesSummary.find((s) => s.tag_id === tagId) ?? null;
   // Prefer the locale-resolved vernacular name, then English common name,
   // then the raw tag label. Maps `tag_name` to the formatter's `name` field.
-  $: speciesName =
-    displayCommonName(
-      currentSpecies
-        ? {
-            vernacular_name: currentSpecies.vernacular_name,
-            common_name: currentSpecies.common_name,
-            name: currentSpecies.tag_name,
-          }
-        : null,
-    ) ?? m.detection_species_name_fallback();
+  $: speciesTag = currentSpecies
+    ? {
+        vernacular_name: currentSpecies.vernacular_name,
+        common_name: currentSpecies.common_name,
+        name: currentSpecies.tag_name,
+        scientific_name: currentSpecies.scientific_name,
+      }
+    : null;
+  // Heading: common name (h1) + scientific subtitle below. Both are always
+  // shown together (併記). The browser <title> uses the combined formatter.
+  $: speciesName = displayCommonName(speciesTag) ?? m.detection_species_name_fallback();
   $: scientificName = currentSpecies?.scientific_name ?? null;
+  $: speciesTitle = displaySpeciesName(speciesTag, m.detection_species_name_fallback());
 
   $: backUrl = localizeHref(`/projects/${projectId}/detections`);
 
@@ -64,7 +66,7 @@
 </script>
 
 <svelte:head>
-  <title>{speciesName} - {m.detection_heading()} - Echoroo</title>
+  <title>{speciesTitle} - {m.detection_heading()} - Echoroo</title>
 </svelte:head>
 
 <div class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">

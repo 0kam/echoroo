@@ -18,6 +18,7 @@
     getSearchSessionStatusLabel,
     isSearchSessionStatusAnimated,
   } from '$lib/utils/statusFormatters';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     projectId: string;
@@ -89,12 +90,7 @@
     if (session.name) return session.name;
     const config = session.species_config;
     if (!config || config.length === 0) return session.id.slice(0, 8);
-    const names = config.map((s) => {
-      if (s.common_name && s.common_name !== s.scientific_name) {
-        return `${s.common_name} (${s.scientific_name})`;
-      }
-      return s.scientific_name;
-    });
+    const names = config.map((s) => formatSpeciesName(s.common_name, s.scientific_name));
     if (names.length <= 2) return names.join(', ');
     return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
   }

@@ -11,7 +11,7 @@
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { getConsensusStatusBadgeClass, getConsensusStatusLabel } from '$lib/utils/statusFormatters';
-  import { displayCommonName } from '$lib/utils/speciesFormatters';
+  import { displaySpeciesName } from '$lib/utils/speciesFormatters';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import ReviewCard from '$lib/components/common/ReviewCard.svelte';
   import SpeciesCorrector from './SpeciesCorrector.svelte';
@@ -59,11 +59,14 @@
   const recordingName = $derived(
     detection.recording?.filename ?? detection.recording_id.slice(0, 8) + '...'
   );
-  // Resolve the species label in the following priority:
-  //   tag.vernacular_name → tag.common_name → tag.name → 'Unidentified'.
-  // `displayCommonName` reads the locale-resolved `vernacular_name` that the
-  // backend attaches when the `locale` query param is passed.
-  const tagName = $derived(displayCommonName(detection.tag) ?? m.detection_species_unidentified());
+  // Resolve the shared "common (scientific)" label. The common part follows
+  //   tag.vernacular_name → tag.common_name → tag.name; the backend attaches
+  // the locale-resolved `vernacular_name` when the `locale` query param is
+  // passed. Falls back to the localized "unidentified" label when no name
+  // resolves at all.
+  const tagName = $derived(
+    displaySpeciesName(detection.tag, m.detection_species_unidentified()),
+  );
 
   const confidenceBadgeClass = $derived(
     confidencePercent == null

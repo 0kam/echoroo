@@ -8,7 +8,7 @@
   import type { SpeciesSummary } from '$lib/types/detection';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import { displayCommonName } from '$lib/utils/speciesFormatters';
+  import { displaySpeciesName } from '$lib/utils/speciesFormatters';
 
   let {
     species,
@@ -22,15 +22,16 @@
     detectionRunId?: string;
   } = $props();
 
-  // Prefer the backend-resolved vernacular name for the active locale, then
-  // fall back to the English common name, then the raw tag label.
-  // `SpeciesSummary` uses `tag_name` instead of `name`, so we remap it here.
+  // Build the shared "common (scientific)" label. Prefer the backend-resolved
+  // vernacular name for the active locale, then the English common name, then
+  // the raw tag label. `SpeciesSummary` uses `tag_name`, so we remap it here.
   const displayName = $derived(
-    displayCommonName({
+    displaySpeciesName({
       vernacular_name: species.vernacular_name,
       common_name: species.common_name,
       name: species.tag_name,
-    }) ?? species.tag_name,
+      scientific_name: species.scientific_name,
+    }),
   );
 
   const confirmedPct = $derived(
@@ -71,13 +72,10 @@
   onclick={handleClick}
   onkeydown={handleKeydown}
 >
-  <!-- Species names -->
+  <!-- Species name (common + scientific via shared formatter) -->
   <div class="min-w-0 flex-1">
     <div class="flex items-baseline gap-2">
-      <span class="truncate text-sm font-semibold text-stone-900">{displayName}</span>
-      {#if species.scientific_name}
-        <span class="truncate text-xs italic text-stone-500">{species.scientific_name}</span>
-      {/if}
+      <span class="truncate text-sm font-semibold text-stone-900" title={displayName}>{displayName}</span>
     </div>
 
     <!-- Review progress bar -->

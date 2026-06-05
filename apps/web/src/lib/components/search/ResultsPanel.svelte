@@ -22,6 +22,7 @@
   import SearchPreviewCard from './SearchPreviewCard.svelte';
   import SearchTimeHeatmap from './SearchTimeHeatmap.svelte';
   import SimilarityHistogram from './SimilarityHistogram.svelte';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     projectId: string;
@@ -307,12 +308,7 @@
                 onclick={() => { selectedSpeciesKey = key; }}
               >
                 <span class="max-w-[240px] truncate">
-                  {#if sp.common_name && sp.common_name !== sp.scientific_name}
-                    {sp.common_name}
-                    <span class="ml-1 italic text-stone-400">({sp.scientific_name})</span>
-                  {:else}
-                    <span class="italic">{sp.scientific_name}</span>
-                  {/if}
+                  {formatSpeciesName(sp.common_name, sp.scientific_name)}
                 </span>
               </button>
             {/each}
