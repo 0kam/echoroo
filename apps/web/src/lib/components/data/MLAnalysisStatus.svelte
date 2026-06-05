@@ -19,6 +19,12 @@
 
   const queryClient = useQueryClient();
 
+  // Models that perform species DETECTION (write species annotations).
+  // Perch is an embedding/similarity-search model — it is intentionally
+  // excluded here and offered only through the embedding UI (issue #4,
+  // Option C). The detection dropdown must list BirdNET only.
+  const DETECTION_MODELS = ['birdnet'];
+
   // Currently selected model name
   let selectedModel = $state('birdnet');
 
@@ -31,11 +37,7 @@
 
   /** Short description for the selected model */
   const modelDescription = $derived(
-    selectedModel === 'birdnet'
-      ? m.ml_analysis_model_birdnet_desc()
-      : selectedModel === 'perch'
-        ? m.ml_analysis_model_perch_desc()
-        : ''
+    selectedModel === 'birdnet' ? m.ml_analysis_model_birdnet_desc() : ''
   );
 
   // Fetch available models from the server
@@ -44,6 +46,12 @@
     queryFn: fetchAvailableModels,
     staleTime: 5 * 60 * 1000,
   });
+
+  // The backend model list is shared with the embedding UI; restrict the
+  // detection dropdown to detection-capable models only (excludes Perch).
+  const detectionModels = $derived(
+    ($modelsQuery.data ?? []).filter((model) => DETECTION_MODELS.includes(model))
+  );
 
   const queryKey = $derived(['detection-runs', projectId, datasetId]);
 
@@ -54,7 +62,16 @@
   const runsQuery = $derived(
     createQuery({
       queryKey: queryKey,
-      queryFn: () => fetchDetectionRuns(projectId, datasetId),
+      queryFn: async () => {
+        const result = await fetchDetectionRuns(projectId, datasetId);
+        // Detection UI shows detection runs only; embedding-only runs (Perch)
+        // live in EmbeddingStatus (#4). Note: result.total/pages still count
+        // embedding runs, but this UI only consumes items.
+        return {
+          ...result,
+          items: result.items.filter((run) => run.parameters?.embedding_only !== true),
+        };
+      },
       refetchInterval: refetchInterval,
     })
   );
@@ -164,14 +181,13 @@
           bind:value={selectedModel}
           class="block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 shadow-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
         >
-          {#if $modelsQuery.data}
-            {#each $modelsQuery.data as model (model)}
+          {#if detectionModels.length > 0}
+            {#each detectionModels as model (model)}
               <option value={model}>{modelDisplayName(model)}</option>
             {/each}
           {:else}
-            <!-- Fallback options while loading -->
+            <!-- Fallback option while loading (detection = BirdNET only) -->
             <option value="birdnet">{m.ml_analysis_model_birdnet()}</option>
-            <option value="perch">{m.ml_analysis_model_perch()}</option>
           {/if}
         </select>
         {#if modelDescription}
