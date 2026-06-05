@@ -15,6 +15,7 @@
   import { createCustomModel, generateSeedSamples } from '$lib/api/custom-models';
   import type { SearchSession } from '$lib/types/search';
   import type { TagCreate } from '$lib/types/annotation';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface SpeciesConfig {
     tag_id: string | null;
@@ -186,14 +187,9 @@
             {m.models_train_target_species_label()}
           </div>
           <div class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 dark:border-stone-700 dark:bg-stone-800">
-            <p class="text-sm font-medium text-stone-800 dark:text-stone-200 italic">
-              {speciesConfig.scientific_name}
+            <p class="text-sm font-medium text-stone-800 dark:text-stone-200">
+              {formatSpeciesName(speciesConfig.common_name, speciesConfig.scientific_name)}
             </p>
-            {#if speciesConfig.common_name && speciesConfig.common_name !== speciesConfig.scientific_name}
-              <p class="text-xs text-stone-500 dark:text-stone-400">
-                {speciesConfig.common_name}
-              </p>
-            {/if}
           </div>
         </div>
 

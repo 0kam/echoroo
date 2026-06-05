@@ -9,6 +9,7 @@
   import * as m from '$lib/paraglide/messages.js';
   import type { SpeciesMatchResult } from '$lib/types/search';
   import ResultItem from './ResultItem.svelte';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     projectId: string;
@@ -43,10 +44,9 @@
           <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
         <div>
-          <p class="text-base font-semibold text-stone-900">{group.scientific_name}</p>
-          {#if group.common_name}
-            <p class="text-sm text-stone-500">{group.common_name}</p>
-          {/if}
+          <p class="text-base font-semibold text-stone-900">
+            {formatSpeciesName(group.common_name, group.scientific_name)}
+          </p>
         </div>
       </div>
 

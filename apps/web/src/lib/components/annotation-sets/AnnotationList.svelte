@@ -7,6 +7,7 @@
    */
   import * as m from '$lib/paraglide/messages';
   import type { TimeRangeAnnotation } from '$lib/types/annotation-set';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     annotations: TimeRangeAnnotation[];
@@ -41,9 +42,7 @@
   }
 
   function speciesLabel(a: TimeRangeAnnotation): string {
-    return a.species_common_name
-      ? `${a.species_common_name} (${a.species_scientific_name})`
-      : a.species_scientific_name;
+    return formatSpeciesName(a.species_common_name, a.species_scientific_name);
   }
 
   function colorForSpecies(id: string): string {

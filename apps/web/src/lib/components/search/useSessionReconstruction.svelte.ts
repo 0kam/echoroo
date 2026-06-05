@@ -40,6 +40,7 @@ import {
   getSearchSessionStatusTextClass,
   getSearchSessionStatusDetailDotClass,
 } from '$lib/utils/statusFormatters';
+import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 import type {
   SearchSession,
   TargetSpecies,
@@ -259,12 +260,7 @@ export function useSessionReconstruction(
     if (session.name) return session.name;
     if (session.species_config && session.species_config.length > 0) {
       return session.species_config
-        .map((sp) => {
-          if (sp.common_name && sp.common_name !== sp.scientific_name) {
-            return `${sp.common_name} (${sp.scientific_name})`;
-          }
-          return sp.scientific_name;
-        })
+        .map((sp) => formatSpeciesName(sp.common_name, sp.scientific_name))
         .join(', ');
     }
     return m.search_session_detail();

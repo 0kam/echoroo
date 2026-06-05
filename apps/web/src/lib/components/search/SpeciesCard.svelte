@@ -10,6 +10,7 @@
   import type { SoundSource, TargetSpecies } from '$lib/types/search';
   import AddSourcePanel from './AddSourcePanel.svelte';
   import SourceCard from './SourceCard.svelte';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     species: TargetSpecies;
@@ -70,15 +71,12 @@
   <!-- Header -->
   <div class="flex items-start justify-between p-3">
     <div class="min-w-0 flex-1">
-      <p class="text-base font-semibold italic text-stone-900">
-        {species.scientific_name}
+      <p class="text-base font-semibold text-stone-900">
+        {formatSpeciesName(species.common_name, species.scientific_name)}
       </p>
-      {#if species.common_name || species.sources.length > 0}
-        <p class="text-sm text-stone-500">
-          {species.common_name ?? ''}
-          {#if species.sources.length > 0}
-            <span class="ml-1 text-stone-400">({sourceCountLabel()})</span>
-          {/if}
+      {#if species.sources.length > 0}
+        <p class="text-sm text-stone-400">
+          {sourceCountLabel()}
         </p>
       {/if}
     </div>

@@ -21,6 +21,7 @@
   } from '$lib/types/annotation-set';
   import type { CustomModelListItem } from '$lib/types/custom-model';
   import { fetchCustomModels } from '$lib/api/custom-models';
+  import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface Props {
     evaluationRunId: string;
@@ -113,11 +114,11 @@
   }
 
   function speciesDisplay(row: SpeciesMetric): string {
-    if (row.common_name) {
-      return `${row.common_name} (${row.scientific_name ?? ''})`.trim();
-    }
-    if (row.scientific_name) return row.scientific_name;
-    return m.evaluation_dashboard_species_name_fallback();
+    return formatSpeciesName(
+      row.common_name,
+      row.scientific_name,
+      m.evaluation_dashboard_species_name_fallback(),
+    );
   }
 
   /** Map F1 [0,1] to a colour ramp red -> yellow -> green. */
