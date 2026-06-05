@@ -48,6 +48,13 @@ export function displayCommonName(tag: TagLike | null | undefined): string | nul
 }
 
 /**
+ * Placeholder shown when a species carries no human-readable label and the
+ * caller supplies no usable fallback.  Centralised so every surface degrades to
+ * the same non-empty text.
+ */
+export const UNIDENTIFIED_PLACEHOLDER = 'Unidentified';
+
+/**
  * Combine an already-resolved common name and scientific name into the shared
  * "Common name (Scientific name)" label used across every species surface.
  *
@@ -64,7 +71,7 @@ export function displayCommonName(tag: TagLike | null | undefined): string | nul
 export function formatSpeciesName(
   common: string | null | undefined,
   scientific: string | null | undefined,
-  fallback: string = 'Unidentified',
+  fallback: string = UNIDENTIFIED_PLACEHOLDER,
 ): string {
   const commonTrimmed = common?.trim() || null;
   const scientificTrimmed = scientific?.trim() || null;
@@ -79,7 +86,9 @@ export function formatSpeciesName(
   }
   if (commonTrimmed) return commonTrimmed;
   if (scientificTrimmed) return scientificTrimmed;
-  return fallback;
+  // Honour the "never empty" guarantee: an empty/whitespace-only fallback
+  // degrades to the shared placeholder.
+  return fallback.trim() || UNIDENTIFIED_PLACEHOLDER;
 }
 
 /**
@@ -91,7 +100,7 @@ export function formatSpeciesName(
  */
 export function displaySpeciesName(
   tag: TagLike | null | undefined,
-  fallback: string = 'Unidentified',
+  fallback: string = UNIDENTIFIED_PLACEHOLDER,
 ): string {
   return formatSpeciesName(displayCommonName(tag), tag?.scientific_name, fallback);
 }

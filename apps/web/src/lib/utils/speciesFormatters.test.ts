@@ -34,6 +34,17 @@ describe('formatSpeciesName', () => {
     expect(formatSpeciesName(null, undefined, 'Unknown species')).toBe('Unknown species');
   });
 
+  it('never returns an empty string even when the fallback is empty/whitespace', () => {
+    // Default fallback applies when omitted.
+    expect(formatSpeciesName(null, null)).toBe('Unidentified');
+    // An empty or whitespace-only fallback degrades to the placeholder rather
+    // than yielding an empty string.
+    expect(formatSpeciesName(null, null, '')).toBe('Unidentified');
+    expect(formatSpeciesName('', '   ', '   ')).toBe('Unidentified');
+    // A provided non-empty fallback is still honoured when both names are empty.
+    expect(formatSpeciesName('', '   ', 'No species')).toBe('No species');
+  });
+
   it('trims surrounding whitespace before formatting', () => {
     expect(formatSpeciesName('  European Robin ', ' Erithacus rubecula ')).toBe(
       'European Robin (Erithacus rubecula)',
