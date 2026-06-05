@@ -47,6 +47,9 @@ class DatasetStatisticsDict(TypedDict):
     format_distribution: dict[str, int]
     recordings_by_date: list[RecordingByDateDict]
     recordings_by_hour: list[RecordingByHourDict]
+    # IANA timezone (recording-site local) used to bucket the date/hour
+    # aggregations above. Falls back to 'UTC' when the dataset has none.
+    timezone: str
 
 
 class DatasetService:
@@ -591,6 +594,19 @@ class DatasetService:
         recording_count = await self.recording_repo.count_by_dataset(dataset_id)
         total_duration = await self.recording_repo.get_total_duration_by_dataset(dataset_id)
 
+        # Resolve the recording-site local timezone for the date/hour buckets.
+        # ``Recording.datetime`` is stored UTC-aware; we bucket by the dataset's
+        # local time so "by hour of day" / "by date" reflect local wall-clock.
+        timezone_query = select(
+            func.coalesce(Dataset.datetime_timezone, "UTC")
+        ).where(Dataset.id == dataset_id)
+        timezone = (await db.execute(timezone_query)).scalar_one_or_none() or "UTC"
+
+        # PostgreSQL ``AT TIME ZONE`` converts the stored ``timestamptz`` to a
+        # naive ``timestamp`` in the dataset-local zone, so ``date``/``extract``
+        # below operate on local wall-clock rather than UTC.
+        local_datetime = Recording.datetime.op("AT TIME ZONE")(timezone)
+
         # Get date range
         date_range_query = select(
             func.min(Recording.datetime).label("start"),
@@ -629,9 +645,9 @@ class DatasetService:
             if row.format:
                 format_distribution[row.format] = row.count  # type: ignore[assignment]
 
-        # Get recordings by date
+        # Get recordings by date (bucketed in dataset-local time)
         recordings_by_date_query = select(
-            func.date(Recording.datetime).label("date"),
+            func.date(local_datetime).label("date"),
             func.count(Recording.id).label("count"),
             func.sum(Recording.duration).label("duration"),
         ).where(
@@ -650,9 +666,9 @@ class DatasetService:
                 )
             )
 
-        # Get recordings by hour
+        # Get recordings by hour (bucketed in dataset-local time)
         recordings_by_hour_query = select(
-            func.extract("hour", Recording.datetime).label("hour"),
+            func.extract("hour", local_datetime).label("hour"),
             func.count(Recording.id).label("count"),
         ).where(
             Recording.dataset_id == dataset_id,
@@ -677,4 +693,5 @@ class DatasetService:
             format_distribution=format_distribution,
             recordings_by_date=recordings_by_date,
             recordings_by_hour=recordings_by_hour,
+            timezone=timezone,
         )

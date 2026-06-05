@@ -33,6 +33,7 @@ from datetime import UTC, datetime
 from datetime import time as dt_time
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 
@@ -84,6 +85,7 @@ def sample_annotation_segments(_self: Any, annotation_set_id: str) -> dict[str, 
 async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
     """Async implementation of the sampling task."""
     from echoroo.models.annotation_set import AnnotationSegment, AnnotationSet
+    from echoroo.models.dataset import Dataset
     from echoroo.models.enums import AnnotationSetStatus
     from echoroo.models.recording import Recording
 
@@ -128,6 +130,24 @@ async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
             date_filter = anno_set.filter_date_range
             tod_filter = anno_set.filter_time_of_day_range
 
+            # Resolve the recording-site local timezone so the time-of-day
+            # filter compares against dataset-local wall-clock, not UTC.
+            # ``Recording.datetime`` is stored UTC-aware.
+            tz_name = (
+                await db.execute(
+                    select(Dataset.datetime_timezone).where(Dataset.id == dataset_id)
+                )
+            ).scalar_one_or_none() or "UTC"
+            try:
+                local_tz = ZoneInfo(tz_name)
+            except ZoneInfoNotFoundError:
+                logger.warning(
+                    "Dataset %s has invalid timezone %r; falling back to UTC",
+                    dataset_id,
+                    tz_name,
+                )
+                local_tz = ZoneInfo("UTC")
+
             # --------------------------------------------------------------
             # 2. Fetch candidate recordings (dataset + date filter applied in SQL)
             # --------------------------------------------------------------
@@ -171,7 +191,9 @@ async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
                     rec_dt is not None
                     and tod_start is not None
                     and tod_end is not None
-                    and not _time_in_range(rec_dt.time(), tod_start, tod_end)
+                    and not _time_in_range(
+                        rec_dt.astimezone(local_tz).time(), tod_start, tod_end
+                    )
                 ):
                     continue
                 effective = float(duration) * float(time_expansion or 1.0)

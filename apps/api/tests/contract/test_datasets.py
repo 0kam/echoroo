@@ -619,6 +619,39 @@ class TestDatasetStatisticsEndpoints:
         assert "format_distribution" in data
         assert "recordings_by_date" in data
         assert "recordings_by_hour" in data
+        # Timezone field tells the frontend which tz the hour/date buckets use.
+        # Defaults to 'UTC' when the dataset has no datetime_timezone.
+        assert data["timezone"] == "UTC"
+
+    async def test_get_statistics_uses_dataset_timezone(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_site: Site,
+    ) -> None:
+        """Statistics response reports the dataset's local timezone for buckets."""
+        dataset_data = {
+            "site_id": str(test_site.id),
+            "name": "TZ Stats Dataset",
+            "audio_dir": "test/audio",
+            "datetime_timezone": "Asia/Tokyo",
+        }
+
+        create_response = await client.post(
+            f"/api/v1/projects/{test_project_id}/datasets",
+            headers=auth_headers,
+            json=dataset_data,
+        )
+        dataset_id = create_response.json()["id"]
+
+        response = await client.get(
+            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["timezone"] == "Asia/Tokyo"
 
     async def test_get_statistics_not_found(
         self,

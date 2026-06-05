@@ -620,6 +620,7 @@ async def get_dataset_statistics(
         format_distribution=stats["format_distribution"],
         recordings_by_date=stats["recordings_by_date"],
         recordings_by_hour=stats["recordings_by_hour"],
+        timezone=stats["timezone"],
     )
 
 
