@@ -14,13 +14,17 @@ This guide explains how to configure Echoroo for different deployment scenarios.
    # Required: Database password
    POSTGRES_PASSWORD=your_secure_password
 
+   # Required: Invitation token HMAC key
+   # Generate with: openssl rand -hex 32
+   INVITATION_TOKEN_HMAC_KEY=your_generated_hex_key
+
    # Required: Path to your audio files on the host
    ECHOROO_AUDIO_DIR=/path/to/your/audio/files
    ```
 
 3. **Start Echoroo:**
    ```bash
-   ./scripts/docker.sh dev
+   ./echoroo.sh start
    ```
 
 That's it! Access the application at http://localhost:5173.
@@ -32,6 +36,7 @@ That's it! Access the application at http://localhost:5173.
 | Variable | Description |
 |----------|-------------|
 | `POSTGRES_PASSWORD` | Database password (choose a secure password) |
+| `INVITATION_TOKEN_HMAC_KEY` | HMAC key for invitation tokens. Generate with `openssl rand -hex 32` |
 | `ECHOROO_AUDIO_DIR` | Path on HOST where audio files are stored |
 
 ### Database Configuration
@@ -53,7 +58,7 @@ That's it! Access the application at http://localhost:5173.
 
 ### Production Settings
 
-A production compose file is not currently present in this repository. `./scripts/docker.sh prod` expects `compose.prod.yaml` and will fail until a production stack is added.
+A production compose file is not currently present in this repository. `./echoroo.sh prod ...` exits with an unsupported-environment error until a production stack is added.
 
 ### Development Settings
 
@@ -88,13 +93,14 @@ Perfect for development on your laptop/desktop using Docker.
 ```bash
 # .env
 POSTGRES_PASSWORD=dev_password
+INVITATION_TOKEN_HMAC_KEY=replace_with_openssl_rand_hex_32_output
 ECHOROO_AUDIO_DIR=/home/user/audio
 ECHOROO_DOMAIN=localhost
 ECHOROO_DEV=true
 ```
 
 ```bash
-./scripts/docker.sh dev
+./echoroo.sh start
 ```
 
 **Access:**
@@ -202,7 +208,7 @@ Production deployment needs a new `compose.prod.yaml` or another deployment targ
 
 ## Architecture
 
-### Development Mode (`./scripts/docker.sh dev`)
+### Development Mode (`./echoroo.sh start`)
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -220,7 +226,7 @@ Production deployment needs a new `compose.prod.yaml` or another deployment targ
 
 ### Production Mode
 
-Not currently defined in this repository. Add `compose.prod.yaml` before documenting or using `./scripts/docker.sh prod`.
+Not currently defined in this repository. Add a production stack before documenting or using `./echoroo.sh prod ...`.
 
 ## Troubleshooting
 
@@ -242,17 +248,17 @@ Not currently defined in this repository. Add `compose.prod.yaml` before documen
 
 1. **Check PostgreSQL is running:**
    ```bash
-   ./scripts/docker.sh dev status
+   ./echoroo.sh status
    ```
 
 2. **Check database logs:**
    ```bash
-   ./scripts/docker.sh dev logs db
+   ./echoroo.sh logs db
    ```
 
 3. **Connect to database directly:**
    ```bash
-   ./scripts/docker.sh dev db
+   ./echoroo.sh db
    ```
 
 ### Audio files not accessible
@@ -275,18 +281,19 @@ Not currently defined in this repository. Add `compose.prod.yaml` before documen
 
 1. **Clean and rebuild:**
    ```bash
-   ./scripts/docker.sh dev build
+   ./echoroo.sh build --no-cache
    ```
 
 2. **Remove all containers and volumes (DATA LOSS!):**
    ```bash
-   ./scripts/docker.sh dev clean-all
+   ./echoroo.sh clean-all
    ```
 
 ## Summary
 
 **What you need to configure:**
 - `POSTGRES_PASSWORD` (database password)
+- `INVITATION_TOKEN_HMAC_KEY` (invitation token HMAC key)
 - `ECHOROO_AUDIO_DIR` (path to audio files)
 
 **What's automatically configured:**

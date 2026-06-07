@@ -27,7 +27,7 @@ AWS_KMS_CMK_INVITATION_HMAC_ALIAS=alias/echoroo-invitation-hmac-dev
 Start the dev stack:
 
 ```bash
-./scripts/docker.sh dev
+./echoroo.sh start
 ```
 
 Health checks:
@@ -44,7 +44,7 @@ Default ports are frontend `5173` and backend `8002`. The frontend port is drive
 The Docker entrypoint does not currently run migrations automatically. Apply them manually before creating users or seed data:
 
 ```bash
-docker exec echoroo-backend uv run alembic upgrade head
+./echoroo.sh migrate
 docker exec echoroo-backend uv run alembic current
 ```
 
@@ -67,7 +67,7 @@ docker exec echoroo-backend uv run python -m echoroo.scripts.initial_iucn_sync
 docker exec echoroo-backend uv run python -m echoroo.scripts.seed_moe_rdb <csv-path> --confirm
 ```
 
-Role-based test users plus a sample project and dataset come from the seeded-permission E2E fixture introduced on the `codex/e2e-permission-coverage` branch. Once that branch merges, run `python -m echoroo.scripts.seed_e2e_permissions` to bootstrap the same Viewer / Annotator / Manager users the trial scenarios reference. Until then, create trial accounts manually through registration plus invitation (section 6).
+Role-based test users plus a sample project and dataset come from the seeded-permission E2E fixture. Run `./echoroo.sh seed e2e` to bootstrap the same Viewer / Annotator / Manager users the trial scenarios reference. Its stdout JSON includes credentials and tokens; handle it as sensitive.
 
 ## 6. Invite Trial Users
 
