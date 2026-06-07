@@ -639,3 +639,43 @@ async def test_parse_inline_name_is_locale_aware() -> None:
 
     parsed_en = svc._parse_species_search_results(raw, locale="en")
     assert parsed_en[0]["vernacular_name"] == "English Name"
+
+
+def test_parse_excludes_empty_language_vernacular_entries() -> None:
+    """GBIF rows with an empty/None language (or name) are dropped at parse.
+
+    Regression: GBIF returns vernacular rows with null/empty ``language``; if
+    they survive into the from-GBIF payload they trip the ``min_length=1``
+    constraint on ``VernacularNameInput`` and 422 the whole add.
+    """
+    svc = GBIFService()
+    raw = [
+        {
+            "key": 7007,
+            "scientificName": "Empty langus",
+            "canonicalName": "Empty langus",
+            "rank": "SPECIES",
+            "datasetKey": gbif_module.GBIF_BACKBONE_DATASET_KEY,
+            "vernacularNames": [
+                {"vernacularName": "Good English", "language": "eng"},
+                {"vernacularName": "和名グッド", "language": "jpn"},
+                {"vernacularName": "No Language", "language": ""},
+                {"vernacularName": "Null Language"},  # missing language key
+                {"vernacularName": "", "language": "eng"},  # empty name
+            ],
+        }
+    ]
+
+    parsed = svc._parse_species_search_results(raw, locale="en")
+    vns = parsed[0]["vernacular_names"]
+
+    # Every surviving entry has a non-blank name AND a non-blank language.
+    assert all(vn["name"] and vn["language"] for vn in vns)
+    # The two valid entries are kept (eng normalised + jpn→ja).
+    assert {"name": "Good English", "language": "en"} in vns
+    assert {"name": "和名グッド", "language": "ja"} in vns
+    # The three junk entries are excluded.
+    names = {vn["name"] for vn in vns}
+    assert "No Language" not in names
+    assert "Null Language" not in names
+    assert "" not in names

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class VernacularNameResponse(BaseModel):
@@ -108,6 +109,39 @@ class TaxonFromGBIFRequest(BaseModel):
             "(e.g. a ja 和名 resolved during the live search)."
         ),
     )
+
+    @field_validator("vernacular_names", mode="before")
+    @classmethod
+    def _drop_blank_vernacular_entries(cls, value: Any) -> Any:
+        """Silently drop vernacular entries with a blank name or language.
+
+        GBIF/iNat search payloads occasionally include a vernacular row with a
+        null/empty ``language`` (or, rarely, ``name``). The frontend forwards
+        ``vernacular_names`` verbatim, so a single junk entry would otherwise
+        trip ``VernacularNameInput``'s ``min_length=1`` constraint and 422 the
+        whole add. Filter such entries out BEFORE per-item validation so the
+        good names (including the ja 和名) still persist. Real constraints on
+        the surviving entries are kept intact.
+        """
+        if not isinstance(value, list):
+            return value
+
+        def _is_valid(item: Any) -> bool:
+            if isinstance(item, VernacularNameInput):
+                return bool(item.name and item.name.strip()) and bool(
+                    item.language and item.language.strip()
+                )
+            if isinstance(item, dict):
+                name = item.get("name")
+                language = item.get("language")
+                name_ok = isinstance(name, str) and bool(name.strip())
+                language_ok = isinstance(language, str) and bool(language.strip())
+                return name_ok and language_ok
+            # Leave non-dict / non-model items untouched so per-item validation
+            # still surfaces a clear error for genuinely malformed shapes.
+            return True
+
+        return [item for item in value if _is_valid(item)]
 
 
 class GBIFVernacularName(BaseModel):
