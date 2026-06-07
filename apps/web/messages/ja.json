@@ -1570,6 +1570,8 @@
   "search_species_section_taxon_db": "種データベース",
   "search_species_section_gbif": "グローバル種データベース（GBIF）",
   "search_species_already_added": "追加済み",
+  "species_picker_add_aria": "{name}を追加",
+  "species_picker_remove_aria": "{name}を削除",
   "search_source_count": "{count}件の音源",
   "search_source_count_one": "1件の音源",
   "search_no_sources": "参照音源がありません。",

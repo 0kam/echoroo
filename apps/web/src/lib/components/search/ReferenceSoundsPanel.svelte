@@ -8,8 +8,10 @@
 
   import * as m from '$lib/paraglide/messages.js';
   import type { TargetSpecies } from '$lib/types/search';
+  import type { SpeciesPickerResult } from '$lib/types/species-picker';
   import { generateId } from '$lib/utils/id';
-  import SpeciesSelector from './SpeciesSelector.svelte';
+  import UnifiedSpeciesPicker from '$lib/components/shared/UnifiedSpeciesPicker.svelte';
+  import { norm } from '$lib/components/shared/unifiedSpeciesPicker';
   import SpeciesCard from './SpeciesCard.svelte';
 
   interface Props {
@@ -26,24 +28,26 @@
 
   let showSelector = $state(false);
 
-  // Set of tag_ids already added (for SpeciesSelector to gray them out)
+  // Set of tag_ids already added (the picker greys these out)
   let addedTagIds = $derived(
     new Set(species.map((sp) => sp.tag_id).filter((id): id is string => id !== null))
   );
 
-  function handleAddSpecies(entry: {
-    tag_id: string | null;
-    scientific_name: string;
-    common_name?: string;
-  }) {
-    // Prevent duplicate tag_ids
-    if (entry.tag_id && addedTagIds.has(entry.tag_id)) return;
+  // Authoritative grey-out: normalized scientific names already in the list.
+  // Catches taxon/GBIF/custom picks (which carry a null tag_id).
+  let addedKeys = $derived(new Set(species.map((sp) => norm(sp.scientific_name))));
+
+  function handleAddSpecies(result: SpeciesPickerResult) {
+    // Prevent duplicate tag_ids (only project-tag picks carry a tag_id).
+    if (result.tag_id && addedTagIds.has(result.tag_id)) return;
+    // Defense-in-depth: also skip when the species is already present by name.
+    if (addedKeys.has(norm(result.scientific_name))) return;
 
     const newSpecies: TargetSpecies = {
       id: generateId(),
-      tag_id: entry.tag_id,
-      scientific_name: entry.scientific_name,
-      common_name: entry.common_name,
+      tag_id: result.tag_id,
+      scientific_name: result.scientific_name,
+      common_name: result.common_name ?? undefined,
       sources: [],
     };
 
@@ -86,10 +90,15 @@
   <div class="space-y-3 p-4">
     <!-- Species Selector (inline, shown when Add Species clicked, hidden in readonly mode) -->
     {#if showSelector && !readonly}
-      <SpeciesSelector
+      <UnifiedSpeciesPicker
+        mode="add-to-list"
         {projectId}
-        addedSpeciesIds={addedTagIds}
-        onAdd={handleAddSpecies}
+        {addedTagIds}
+        {addedKeys}
+        showGBIF
+        allowCustom
+        autofocus
+        onPick={handleAddSpecies}
         onClose={() => (showSelector = false)}
       />
     {/if}

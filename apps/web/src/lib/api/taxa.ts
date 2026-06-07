@@ -5,6 +5,36 @@
 import { apiClient } from './client';
 import type { GBIFSpeciesResult, TaxonSearchResult } from '$lib/types/taxon';
 
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+/**
+ * Read the double-submit CSRF token from the cookie set by the BFF login flow.
+ * Mirrors the helper in `tags.ts`; mutating `/web-api/v1` routes require the
+ * `X-CSRF-Token` header to match this cookie.
+ */
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
+
 /**
  * Search taxa by name (scientific or vernacular) with optional locale preference.
  *
@@ -34,5 +64,38 @@ export async function searchGBIF(q: string, limit: number = 10): Promise<GBIFSpe
   if (limit !== 10) searchParams.set('limit', String(limit));
   return apiClient.get<GBIFSpeciesResult[]>(
     `/web-api/v1/taxa/gbif-search?${searchParams.toString()}`,
+  );
+}
+
+/**
+ * Materialise a live GBIF search pick into a local taxon (get-or-create).
+ *
+ * Used by the annotation-set palette: when a user picks a species straight
+ * from GBIF (no local taxon row exists yet) we POST it here to obtain a
+ * `taxon_id` that the palette can store. Idempotent — repeated calls for the
+ * same species return the same taxon.
+ *
+ * @param scientificName - Canonical scientific name of the GBIF pick
+ * @param gbifKey - GBIF backbone taxon key, when known
+ * @param commonName - Vernacular name to seed, when available
+ * @param locale - BCP 47 locale for the returned `common_name` resolution
+ */
+export async function createTaxonFromGbif(
+  scientificName: string,
+  gbifKey?: number | null,
+  commonName?: string | null,
+  locale?: string,
+): Promise<TaxonSearchResult> {
+  const searchParams = new URLSearchParams();
+  if (locale) searchParams.set('locale', locale);
+  const qs = searchParams.toString() ? `?${searchParams.toString()}` : '';
+  return apiClient.post<TaxonSearchResult>(
+    `/web-api/v1/taxa/from-gbif${qs}`,
+    {
+      scientific_name: scientificName,
+      gbif_taxon_key: gbifKey ?? null,
+      common_name: commonName ?? null,
+    },
+    { headers: csrfHeaders() },
   );
 }
