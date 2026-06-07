@@ -17,16 +17,23 @@ cd echoroo
 cp .env.example .env
 # Edit .env to set:
 #   - POSTGRES_PASSWORD (required)
+#   - INVITATION_TOKEN_HMAC_KEY (required)
 #   - ECHOROO_AUDIO_DIR (required - path to your audio files)
+# Generate a value for INVITATION_TOKEN_HMAC_KEY with:
+openssl rand -hex 32
 
-# Generate local Redis TLS certificates
-./scripts/gen-redis-dev-cert.sh
+# Prepare local dev prerequisites and validate configuration
+./echoroo.sh install
+./echoroo.sh checkenv
 
 # Start Echoroo (development mode)
-./scripts/docker.sh dev
+./echoroo.sh start
 ```
 
 Then open http://localhost:5173 in your browser.
+
+If `.env` is missing, `install` creates it from `.env.example` and exits
+non-zero so you can edit the required values before starting.
 
 See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
 
@@ -55,16 +62,22 @@ For detailed instructions, refer to the [Configuration Guide](CONFIGURATION.md).
 
 **Development:**
 ```bash
-./scripts/docker.sh dev              # Start
-./scripts/docker.sh dev logs         # View logs
-./scripts/docker.sh dev stop         # Stop
-./scripts/docker.sh dev db           # Connect to database
+./echoroo.sh start          # Start
+./echoroo.sh status         # Show containers and health
+./echoroo.sh logs           # View logs
+./echoroo.sh stop           # Stop containers, keep data
+./echoroo.sh db             # Connect to database
+./echoroo.sh migrate        # Run Alembic migrations
+./echoroo.sh update --ref main
+./echoroo.sh update --yes-migrate
+./echoroo.sh seed e2e [args...]  # Seed E2E data; stdout includes sensitive JSON
 ```
 
 **Rebuild images:**
 ```bash
-ECHOROO_BUILD=1 ./scripts/docker.sh dev
-./scripts/docker.sh dev build
+./echoroo.sh start --build
+./echoroo.sh build
+./echoroo.sh build --no-cache
 ```
 
 ### Documentation

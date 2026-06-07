@@ -2,9 +2,9 @@
 # PostgreSQL + Redis + FastAPI Backend + SvelteKit Frontend
 #
 # Usage:
-#   ./scripts/docker.sh dev        # Start development environment
-#   ./scripts/docker.sh dev logs   # View logs
-#   ./scripts/docker.sh dev stop   # Stop
+#   ./echoroo.sh start    # Start development environment
+#   ./echoroo.sh logs     # View logs
+#   ./echoroo.sh stop     # Stop
 
 services:
   # PostgreSQL Database with pgvector
