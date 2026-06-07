@@ -1570,6 +1570,8 @@
   "search_species_section_taxon_db": "Species database",
   "search_species_section_gbif": "Global species database (GBIF)",
   "search_species_already_added": "Already added",
+  "species_picker_add_aria": "Add {name}",
+  "species_picker_remove_aria": "Remove {name}",
   "search_source_count": "{count} sources",
   "search_source_count_one": "1 source",
   "search_no_sources": "No reference sounds yet.",

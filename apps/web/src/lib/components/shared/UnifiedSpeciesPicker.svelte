@@ -506,7 +506,9 @@
                   type="button"
                   class="ml-2 shrink-0 text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400"
                   onclick={() => pickTag(tag)}
-                  aria-label="Add {tag.scientific_name ?? tag.name}"
+                  aria-label={m.species_picker_add_aria({
+                    name: tag.scientific_name ?? tag.name,
+                  })}
                 >
                   <svg
                     class="h-4 w-4"
@@ -556,7 +558,9 @@
                   type="button"
                   class="ml-2 shrink-0 text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400"
                   onclick={() => pickTaxon(taxon)}
-                  aria-label="Add {taxon.scientific_name}"
+                  aria-label={m.species_picker_add_aria({
+                    name: taxon.scientific_name,
+                  })}
                 >
                   <svg
                     class="h-4 w-4"
@@ -606,7 +610,9 @@
                   type="button"
                   class="ml-2 shrink-0 text-primary-600 transition-colors hover:text-primary-700 dark:text-primary-400"
                   onclick={() => pickGbif(gbif)}
-                  aria-label="Add {gbif.canonical_name}"
+                  aria-label={m.species_picker_add_aria({
+                    name: gbif.canonical_name,
+                  })}
                 >
                   <svg
                     class="h-4 w-4"
@@ -744,7 +750,7 @@
               type="button"
               class="opacity-70 transition hover:opacity-100"
               onclick={() => onTagRemove?.(tag.id)}
-              aria-label="Remove {tag.name}"
+              aria-label={m.species_picker_remove_aria({ name: tag.name })}
             >
               &times;
             </button>
