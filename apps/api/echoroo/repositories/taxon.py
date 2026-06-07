@@ -14,6 +14,45 @@ from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.repositories.base import BaseRepository
 
+# GBIF/ISO 639-3 → ISO 639-1 normalization for incoming vernacular locales.
+# Mirrors the subset used by the materialize path; "jpn" → "ja" is the key one.
+_LOCALE_NORMALIZE: dict[str, str] = {
+    "jpn": "ja", "eng": "en", "deu": "de", "fra": "fr", "spa": "es",
+    "ita": "it", "por": "pt", "nld": "nl", "swe": "sv", "fin": "fi",
+    "dan": "da", "nor": "no", "pol": "pl", "rus": "ru", "zho": "zh",
+    "kor": "ko",
+}
+
+# Allowed provenance values for a persisted vernacular name. Any unknown/empty
+# value from a (client-supplied) payload is coerced to a safe default so an
+# arbitrary string can never reach the ``source`` column.
+_VERNACULAR_SOURCE_ALLOWED: frozenset[str] = frozenset(
+    {"gbif", "inaturalist", "birdnet", "user"}
+)
+_VERNACULAR_SOURCE_DEFAULT = "gbif"
+
+# Column length ceilings (mirror the model: name String(300), source String(20),
+# locale String(10)). Inputs are guarded against these to avoid DB errors.
+_VERNACULAR_NAME_MAX = 300
+_VERNACULAR_LOCALE_MAX = 10
+
+
+def normalize_locale(locale: str) -> str:
+    """Normalize a locale to a lowercase primary-subtag ISO code.
+
+    Two normalizations are applied so callers can pass any reasonable form:
+
+    1. Strip a BCP-47 region/script suffix and lowercase the primary subtag,
+       e.g. ``ja-JP`` / ``ja_JP`` / ``EN`` → ``ja`` / ``ja`` / ``en``.
+    2. Collapse a 3-letter ISO 639-3/GBIF code to its 2-letter equivalent,
+       e.g. ``jpn`` → ``ja``.
+
+    Unknown codes are returned as their lowercased primary subtag unchanged.
+    """
+    # Take the primary subtag (text before the first '-' or '_') and lowercase.
+    primary = locale.strip().split("-", 1)[0].split("_", 1)[0].lower()
+    return _LOCALE_NORMALIZE.get(primary, primary)
+
 
 class TaxonRepository(BaseRepository[Taxon]):
     """Repository for Taxon entity operations."""
@@ -270,3 +309,118 @@ class TaxonRepository(BaseRepository[Taxon]):
         self.db.add(vn)
         await self.db.flush()
         return vn
+
+    async def has_vernacular_in_locale(self, taxon_id: UUID, locale: str) -> bool:
+        """Return True when a taxon has a vernacular row in the EXACT locale.
+
+        Unlike ``resolve_vernacular_names`` this performs NO English fallback —
+        it answers "does a locale-specific row exist?" so the ja-backfill enqueue
+        can fire only when a ``ja`` name is genuinely absent. The ``locale`` is
+        normalized (``jpn``/``ja-JP`` → ``ja``) before the lookup.
+        """
+        normalized = normalize_locale(locale)
+        result = await self.db.execute(
+            select(TaxonVernacularName.id)
+            .where(TaxonVernacularName.taxon_id == taxon_id)
+            .where(TaxonVernacularName.locale == normalized)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def persist_vernacular_names(
+        self,
+        taxon_id: UUID,
+        entries: list[dict[str, str | None]],
+    ) -> int:
+        """Idempotently persist language-tagged vernacular names for a taxon.
+
+        Each entry is a dict with keys ``name``, ``language`` and optional
+        ``source``. ``is_primary`` is left False (the English seed from the
+        create path keeps its primary flag).
+
+        Input hardening (the payload is client-supplied):
+        * ``language`` is normalized to its primary lowercase subtag
+          (``jpn``/``ja-JP``/``JA`` → ``ja``) and capped to the column length.
+        * ``source`` is restricted to a known allow-set
+          (``gbif``/``inaturalist``/``birdnet``/``user``); any unknown/empty
+          value is coerced to the safe default ``gbif``.
+        * ``name`` is trimmed and truncated to the column length to avoid DB
+          errors on over-length input.
+
+        Idempotency / constraint handling:
+        * A row with the SAME ``(taxon_id, locale, name)`` is left untouched, so
+          repeated materialize calls never duplicate a name.
+        * The table has a UNIQUE ``(taxon_id, locale, source)`` constraint. When
+          a row already exists for that triple it is INSERT-only / fill-only: a
+          non-empty existing name is NEVER overwritten by the payload (prevents a
+          stale or malicious overwrite); an empty existing name is filled in.
+
+        Returns the number of rows newly inserted (fills/updates are not
+        counted).
+        """
+        if not entries:
+            return 0
+
+        # Load existing rows for this taxon once so per-entry checks are O(1).
+        existing_rows = (
+            await self.db.execute(
+                select(TaxonVernacularName).where(
+                    TaxonVernacularName.taxon_id == taxon_id
+                )
+            )
+        ).scalars().all()
+        by_name: set[tuple[str, str]] = {
+            (row.locale, row.name) for row in existing_rows
+        }
+        by_locale_source: dict[tuple[str, str], TaxonVernacularName] = {
+            (row.locale, row.source): row for row in existing_rows
+        }
+
+        inserted = 0
+        for entry in entries:
+            raw_name = entry.get("name")
+            raw_lang = entry.get("language")
+            if not raw_name or not raw_lang:
+                continue
+            name = str(raw_name).strip()[:_VERNACULAR_NAME_MAX]
+            locale = normalize_locale(str(raw_lang))[:_VERNACULAR_LOCALE_MAX]
+            if not name or not locale:
+                continue
+
+            # Restrict source to the known allow-set; unknown/empty → default.
+            raw_source = str(entry.get("source") or "").strip().lower()
+            source = (
+                raw_source
+                if raw_source in _VERNACULAR_SOURCE_ALLOWED
+                else _VERNACULAR_SOURCE_DEFAULT
+            )
+
+            if (locale, name) in by_name:
+                continue  # exact name already present — nothing to do
+            conflict = by_locale_source.get((locale, source))
+            if conflict is not None:
+                # A row already owns this (locale, source). Insert-only /
+                # fill-only: keep a non-empty existing name (no overwrite from
+                # the client payload); only fill an empty placeholder.
+                if not (conflict.name or "").strip():
+                    # Drop the stale (locale, "") key before re-keying by_name so
+                    # the dedup set never reports a name that no longer exists.
+                    by_name.discard((locale, conflict.name))
+                    conflict.name = name
+                    by_name.add((locale, name))
+                continue
+
+            row = TaxonVernacularName(
+                taxon_id=taxon_id,
+                locale=locale,
+                name=name,
+                source=source,
+                is_primary=False,
+            )
+            self.db.add(row)
+            by_name.add((locale, name))
+            by_locale_source[(locale, source)] = row
+            inserted += 1
+
+        await self.db.flush()
+        return inserted

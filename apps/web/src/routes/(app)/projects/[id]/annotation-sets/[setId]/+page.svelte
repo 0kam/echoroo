@@ -50,8 +50,10 @@
 
   const detailQuery = $derived(
     createQuery({
-      queryKey: ['annotation-set', setId],
-      queryFn: () => getAnnotationSet(projectId, setId),
+      // Include locale in the key so palette common_name resolution is cached
+      // per-locale (the backend resolves palette[].common_name for `locale`).
+      queryKey: ['annotation-set', setId, getLocale()],
+      queryFn: () => getAnnotationSet(projectId, setId, getLocale()),
       enabled: !!setId,
       refetchOnWindowFocus: false,
       // Poll while sampling; stop once ready/in_progress/completed.
@@ -112,7 +114,7 @@
   const renameMutationState = createMutation({
     mutationFn: (name: string) => updateAnnotationSet(projectId, setId, { name }),
     onSuccess: (updated) => {
-      queryClient.setQueryData(['annotation-set', setId], updated);
+      queryClient.setQueryData(['annotation-set', setId, getLocale()], updated);
       queryClient.invalidateQueries({ queryKey: ['annotation-sets', projectId] });
       isRenaming = false;
       toasts.success(m.annotation_sets_rename_success());
@@ -211,6 +213,7 @@
               result.gbif_key,
               result.common_name,
               getLocale(),
+              result.vernacular_names,
             );
             taxonId = taxon.id;
           }
@@ -221,6 +224,7 @@
           result.gbif_key,
           result.common_name,
           getLocale(),
+          result.vernacular_names,
         );
         taxonId = taxon.id;
       }

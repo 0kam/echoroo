@@ -31,21 +31,25 @@ export function norm(value: string): string {
 /**
  * Resolve the common name to display/emit for a GBIF result under `locale`.
  *
- * The backend's `gbif-search` does not locale-resolve: `vernacular_name` is its
- * best match (English-preferred), while `vernacular_names` carries every locale.
- * Fallback order: backend best match → requested locale → English → null.
+ * The backend's `gbif-search` `vernacular_name` is its best match but is
+ * English-biased, while `vernacular_names` carries every locale (and is
+ * live-enriched with the requested locale when it is non-`en`). To keep a
+ * locale name from being shadowed by an English best match, the precedence is:
+ *   1. `vernacular_names` entry whose `language === locale`
+ *   2. `vernacular_name` (backend best match)
+ *   3. `vernacular_names` English entry
+ *   4. null
  * Pure function so display, emitted `common_name`, and matching all agree.
  */
 export function resolveGbifCommonName(
   gbif: GBIFSpeciesResult,
   locale: string,
 ): string | null {
-  if (gbif.vernacular_name) return gbif.vernacular_name;
   const all = gbif.vernacular_names;
-  if (!all || all.length === 0) return null;
-  const byLocale = all.find((vn) => vn.language === locale);
+  const byLocale = all?.find((vn) => vn.language === locale);
   if (byLocale) return byLocale.name;
-  const en = all.find((vn) => vn.language === 'en');
+  if (gbif.vernacular_name) return gbif.vernacular_name;
+  const en = all?.find((vn) => vn.language === 'en');
   if (en) return en.name;
   return null;
 }
@@ -174,6 +178,9 @@ export function resultFromGbif(
     gbif_key: gbif.gbif_key,
     scientific_name: gbif.canonical_name,
     common_name: resolveGbifCommonName(gbif, locale),
+    // Carry the language-tagged names through so a later materialise call can
+    // persist the locale vernacular (e.g. 和名) under the right locale.
+    vernacular_names: gbif.vernacular_names,
   };
 }
 

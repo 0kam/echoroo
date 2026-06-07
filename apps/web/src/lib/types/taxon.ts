@@ -82,7 +82,7 @@ export interface GBIFSpeciesResult {
   /** Best matching vernacular name for the current locale; null if not available */
   vernacular_name: string | null;
   /** All vernacular names across locales; null if none available */
-  vernacular_names: Array<{ name: string; language: string }> | null;
+  vernacular_names: Array<{ name: string; language: string; source?: string }> | null;
   /** Kingdom classification; null if unknown */
   kingdom: string | null;
   /** Phylum classification; null if unknown */

@@ -337,6 +337,178 @@ async def test_from_gbif_locale_falls_back_to_en(
     assert response.json()["common_name"] == "Fallback Tit"
 
 
+async def _vernacular_rows(
+    db: AsyncSession, scientific_name: str, locale: str
+) -> list[TaxonVernacularName]:
+    result = await db.execute(
+        sa.select(TaxonVernacularName)
+        .join(Taxon, Taxon.id == TaxonVernacularName.taxon_id)
+        .where(Taxon.scientific_name == scientific_name)
+        .where(TaxonVernacularName.locale == locale)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_persists_ja_vernacular_names(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A from-GBIF payload carrying a ja vernacular persists a ja row.
+
+    The ``vernacular_names`` list lets the palette store a 和名 resolved during
+    the live search with its REAL locale (``jpn`` normalized to ``ja``). The
+    legacy/en ``common_name`` slot is seeded from the ``en`` entry of
+    ``vernacular_names`` — NOT from the client's locale-resolved display value
+    (which under a ``ja`` UI is the 和名).
+    """
+    user = await _create_user(db_session, email="wsa-from-gbif-vja@example.com")
+    headers = await _bff_session_headers(client, db_session, user)
+
+    sci = "Wsa Vernacularus testus"
+    response = await client.post(
+        "/web-api/v1/taxa/from-gbif?locale=ja",
+        headers=headers,
+        json={
+            "scientific_name": sci,
+            "gbif_taxon_key": 91000010,
+            # Client sends the locale-resolved display name (the 和名) under ja.
+            "common_name": "ボキャブガラ",
+            "vernacular_names": [
+                {"name": "ボキャブガラ", "language": "jpn", "source": "inaturalist"},
+                {"name": "Vernacular Tit", "language": "en", "source": "gbif"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    # Display resolves to the ja name for locale=ja.
+    assert response.json()["common_name"] == "ボキャブガラ"
+
+    ja_rows = await _vernacular_rows(db_session, sci, "ja")
+    assert len(ja_rows) == 1
+    assert ja_rows[0].name == "ボキャブガラ"
+    assert ja_rows[0].source == "inaturalist"
+    # The en row is the AUTHORITATIVE English name, NOT the locale-resolved 和名.
+    en_rows = await _vernacular_rows(db_session, sci, "en")
+    assert any(r.name == "Vernacular Tit" for r in en_rows)
+    assert all(r.name != "ボキャブガラ" for r in en_rows)
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_ja_locale_en_slot_uses_en_vernacular_not_display(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Regression: ja locale must not pollute the en slot with the 和名.
+
+    Reproduces the Gate-3 bug: the frontend sends ``common_name`` as the
+    locale-resolved display name (e.g. "スズメ" under a ``ja`` UI) plus a
+    language-tagged ``vernacular_names`` list. The persisted ``en`` row MUST be
+    the authoritative English name ("Eurasian Tree Sparrow"), never the 和名.
+    """
+    user = await _create_user(db_session, email="wsa-from-gbif-suzume@example.com")
+    headers = await _bff_session_headers(client, db_session, user)
+
+    sci = "Passer montanus"
+    response = await client.post(
+        "/web-api/v1/taxa/from-gbif?locale=ja",
+        headers=headers,
+        json={
+            "scientific_name": sci,
+            "gbif_taxon_key": 91000020,
+            # The locale-resolved display value the frontend currently sends.
+            "common_name": "スズメ",
+            "vernacular_names": [
+                {"name": "スズメ", "language": "ja", "source": "inaturalist"},
+                {"name": "Eurasian Tree Sparrow", "language": "en", "source": "gbif"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    # Display resolves to the ja name for locale=ja.
+    assert response.json()["common_name"] == "スズメ"
+
+    # The en row is the authoritative English name — NOT the 和名.
+    en_rows = await _vernacular_rows(db_session, sci, "en")
+    assert len(en_rows) == 1
+    assert en_rows[0].name == "Eurasian Tree Sparrow"
+    assert all(r.name != "スズメ" for r in en_rows)
+
+    # The ja row carries the 和名 under its correct locale.
+    ja_rows = await _vernacular_rows(db_session, sci, "ja")
+    assert len(ja_rows) == 1
+    assert ja_rows[0].name == "スズメ"
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_ja_locale_no_en_entry_creates_no_bogus_en_row(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """No ``en`` entry under a ja locale must NOT fabricate an en row.
+
+    When ``vernacular_names`` carries only a ja entry (no en), the legacy/en
+    slot must stay empty rather than seeding the ja display text as English.
+    """
+    user = await _create_user(db_session, email="wsa-from-gbif-noenrow@example.com")
+    headers = await _bff_session_headers(client, db_session, user)
+
+    sci = "Wsa Noenrow testus"
+    response = await client.post(
+        "/web-api/v1/taxa/from-gbif?locale=ja",
+        headers=headers,
+        json={
+            "scientific_name": sci,
+            "gbif_taxon_key": 91000021,
+            "common_name": "ノーエン",
+            "vernacular_names": [
+                {"name": "ノーエン", "language": "ja", "source": "inaturalist"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    # No en row was fabricated from the ja display text.
+    en_rows = await _vernacular_rows(db_session, sci, "en")
+    assert en_rows == []
+
+    # The ja row exists under its correct locale.
+    ja_rows = await _vernacular_rows(db_session, sci, "ja")
+    assert len(ja_rows) == 1
+    assert ja_rows[0].name == "ノーエン"
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_vernacular_persist_is_idempotent(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Re-posting the same ja vernacular does not create a duplicate row."""
+    user = await _create_user(db_session, email="wsa-from-gbif-videm@example.com")
+    headers = await _bff_session_headers(client, db_session, user)
+
+    sci = "Wsa Idemvernac testus"
+    payload = {
+        "scientific_name": sci,
+        "gbif_taxon_key": 91000011,
+        "vernacular_names": [
+            {"name": "イデムガラ", "language": "ja", "source": "gbif"},
+        ],
+    }
+    first = await client.post(
+        "/web-api/v1/taxa/from-gbif", headers=headers, json=payload
+    )
+    assert first.status_code == 200, first.text
+    second = await client.post(
+        "/web-api/v1/taxa/from-gbif", headers=headers, json=payload
+    )
+    assert second.status_code == 200, second.text
+
+    ja_rows = await _vernacular_rows(db_session, sci, "ja")
+    assert len(ja_rows) == 1
+    assert ja_rows[0].name == "イデムガラ"
+
+
 @pytest.mark.asyncio
 async def test_from_gbif_requires_authentication(
     client: AsyncClient,

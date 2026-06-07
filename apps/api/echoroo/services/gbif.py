@@ -20,11 +20,37 @@ GBIF_BASE_URL = "https://api.gbif.org/v1"
 INATURALIST_BASE_URL = "https://api.inaturalist.org/v1"
 GBIF_BACKBONE_DATASET_KEY = "d7dddbf4-2cf0-4f39-9b2a-bb099caae36c"
 
+# --- Search-time vernacular enrichment tuning (non-en locales only) ---------
+# Number of top search results whose vernacular name we live-enrich.
+_ENRICH_TOP_N = 8
+# Maximum concurrent external (iNat/GBIF) HTTP calls during enrichment.
+_ENRICH_CONCURRENCY = 4
+# Per-source HTTP timeout (seconds).
+_ENRICH_SOURCE_TIMEOUT = 0.7
+# Total enrichment budget (seconds). When exceeded, whatever resolved so far is
+# kept and the rest falls back to English/scientific name.
+_ENRICH_TOTAL_BUDGET = 1.5
+# Redis cache TTLs.
+_ENRICH_CACHE_TTL_HIT = 14 * 24 * 60 * 60  # 14 days for resolved names
+_ENRICH_CACHE_TTL_MISS = 24 * 60 * 60  # 1 day for explicit misses
+# Sentinel value stored in Redis to represent a cached "no name found" miss.
+_ENRICH_CACHE_MISS_SENTINEL = "\x00MISS"
+
 # Non-species labels from BirdNET that should not be resolved via GBIF
 NON_SPECIES_LABELS: frozenset[str] = frozenset({
     "Dog", "Engine", "Environmental", "Fireworks", "Gun",
     "Human non-vocal", "Human vocal", "Human whistle",
     "Noise", "Power tools", "Siren",
+})
+
+# Locales written in a non-latin script. For these a real vernacular name
+# contains non-ASCII characters, so a pure-ASCII iNaturalist candidate is
+# treated as an English/default fallback and rejected (see
+# ``GBIFService._inat_name_in_locale``). Latin-script and unknown locales are
+# left untouched by the ASCII guard.
+_NON_LATIN_SCRIPT_LOCALES: frozenset[str] = frozenset({
+    "ja", "zh", "ko", "ru", "uk", "ar", "th", "he", "el", "hi",
+    "bg", "sr", "mk", "be", "ka", "hy", "fa", "ur", "bn", "ta",
 })
 
 # ISO 639-1/3 to GBIF language code mapping
@@ -37,6 +63,19 @@ GBIF_LANG_CODE_MAP: dict[str, str] = {
     "tr": "tur", "th": "tha", "uk": "ukr", "ar": "ara",
     "af": "afr", "sl": "slv",
 }
+
+
+def _normalize_locale(locale: str) -> str:
+    """Reduce a locale to its lowercase primary subtag.
+
+    Strips a BCP-47 region/script suffix and lowercases the primary subtag so
+    inputs like ``ja-JP`` / ``en_US`` / ``EN`` normalize to ``ja`` / ``en`` /
+    ``en``. This is applied at the service boundary BEFORE the ``!= "en"``
+    enrichment gate (so ``en-US`` makes no extra calls and ``ja-JP`` enriches
+    like ``ja``) and consistently for cache keys, GBIF language lookup, and the
+    inline-name picker.
+    """
+    return locale.strip().split("-", 1)[0].split("_", 1)[0].lower()
 
 
 @dataclass
@@ -77,6 +116,7 @@ class GBIFService:
         self,
         query: str,
         limit: int = 10,
+        locale: str = "en",
     ) -> list[dict[str, Any]]:
         """Search GBIF species using the /v1/species/search endpoint.
 
@@ -88,13 +128,27 @@ class GBIFService:
         vernacular names like "ニホンジカ"), falls back to iNaturalist taxa
         search and resolves each result to a GBIF taxon key via /species/match.
 
+        Locale-aware enrichment: for any ``locale`` other than ``"en"``, the top
+        results' vernacular names are live-enriched for the requested locale
+        (iNaturalist → GBIF /vernacularNames → existing English → scientific).
+        For ``locale == "en"`` NO extra external calls are made — this keeps the
+        common English path on its existing single-request latency budget.
+
         Args:
             query: Search query string (scientific or vernacular name).
             limit: Maximum number of results to return.
+            locale: Display locale (e.g. ``"en"``, ``"ja"``). Non-en locales
+                trigger best-effort vernacular enrichment.
 
         Returns:
             List of parsed species result dicts with vernacular names.
         """
+        # Normalize the incoming locale to its primary subtag at the boundary so
+        # the gate, cache keys, GBIF lang lookup and persistence all agree
+        # (``ja-JP`` → ``ja``, ``EN`` → ``en``). This keeps ``en``/``en-US`` on
+        # the zero-extra-call path and lets ``ja-JP`` enrich like ``ja``.
+        locale = _normalize_locale(locale)
+
         await self._rate_limiter.acquire()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -115,15 +169,23 @@ class GBIFService:
 
         raw_results: list[dict[str, Any]] = data.get("results", [])
         if raw_results:
-            return self._parse_species_search_results(raw_results)
+            parsed = self._parse_species_search_results(raw_results, locale=locale)
+        else:
+            # Fallback: query iNaturalist for vernacular name search (e.g.
+            # Japanese names) then resolve each hit to a GBIF taxon key via
+            # /species/match. The iNat fallback already requests ja names.
+            logger.debug(
+                "GBIF backbone returned 0 results for query=%s, falling back to iNaturalist",
+                query,
+            )
+            parsed = await self._search_via_inaturalist(query, limit)
 
-        # Fallback: query iNaturalist for vernacular name search (e.g. Japanese names)
-        # then resolve each hit to a GBIF taxon key via /species/match.
-        logger.debug(
-            "GBIF backbone returned 0 results for query=%s, falling back to iNaturalist",
-            query,
-        )
-        return await self._search_via_inaturalist(query, limit)
+        # Live-enrich vernacular names ONLY for non-en locales. The English path
+        # is intentionally left untouched (zero extra external calls).
+        if locale != "en" and parsed:
+            await self._enrich_vernacular_locale(parsed, locale)
+
+        return parsed
 
     async def _search_via_inaturalist(
         self,
@@ -223,6 +285,7 @@ class GBIFService:
     def _parse_species_search_results(
         self,
         raw: list[dict[str, Any]],
+        locale: str = "en",
     ) -> list[dict[str, Any]]:
         """Parse and deduplicate GBIF species search results.
 
@@ -231,6 +294,10 @@ class GBIFService:
 
         Args:
             raw: Raw result items from GBIF /v1/species/search response.
+            locale: Preferred display locale for picking ``vernacular_name``
+                from the parsed inline names (requested locale → English →
+                first available). This only affects which already-parsed name
+                is surfaced; live enrichment is handled separately.
 
         Returns:
             Deduplicated list of parsed species dicts.
@@ -270,12 +337,20 @@ class GBIFService:
                     seen_vn.add(key_vn)
                     unique_vn.append(vn)
 
-            # Choose best vernacular name: prefer English, then first available
+            # Choose best vernacular name with a locale-aware preference chain:
+            # requested locale → English → first available. This avoids the old
+            # English-only bias so a ja UI surfaces a ja inline name when one is
+            # present among the parsed names.
             best_vernacular: str | None = None
             for vn in unique_vn:
-                if vn["language"] == "en":
+                if vn["language"] == locale:
                     best_vernacular = vn["name"]
                     break
+            if best_vernacular is None and locale != "en":
+                for vn in unique_vn:
+                    if vn["language"] == "en":
+                        best_vernacular = vn["name"]
+                        break
             if best_vernacular is None and unique_vn:
                 best_vernacular = unique_vn[0]["name"]
 
@@ -409,3 +484,294 @@ class GBIFService:
             results.append({"locale": locale, "name": name})
 
         return results
+
+    # ------------------------------------------------------------------
+    # Search-time vernacular enrichment (non-en locales only)
+    # ------------------------------------------------------------------
+
+    async def _enrich_vernacular_locale(
+        self,
+        results: list[dict[str, Any]],
+        locale: str,
+    ) -> None:
+        """Best-effort, in-place enrichment of vernacular names for ``locale``.
+
+        For the top ``_ENRICH_TOP_N`` results this resolves a locale-specific
+        vernacular name using the chain:
+
+            iNaturalist (exact scientific/canonical match) →
+            GBIF /species/{key}/vernacularNames →
+            existing English vernacular → scientific name.
+
+        When a name is resolved it is injected into the result's
+        ``vernacular_names`` list (``{name, language, source}``) and the
+        result's ``vernacular_name`` is OVERWRITTEN with the locale value so the
+        display is no longer English-biased.
+
+        Concurrency is capped at ``_ENRICH_CONCURRENCY`` and the whole pass is
+        bounded by ``_ENRICH_TOTAL_BUDGET``; on timeout whatever resolved so far
+        is kept and the rest is left as-is (English/scientific fallback). This
+        method NEVER raises — any failure degrades gracefully.
+        """
+        targets = results[:_ENRICH_TOP_N]
+        if not targets:
+            return
+
+        semaphore = asyncio.Semaphore(_ENRICH_CONCURRENCY)
+
+        async def enrich_one(entry: dict[str, Any]) -> None:
+            async with semaphore:
+                try:
+                    resolved = await self._resolve_locale_vernacular(entry, locale)
+                except Exception:  # noqa: BLE001 — enrichment must never raise
+                    logger.debug(
+                        "vernacular enrichment failed for entry=%s",
+                        entry.get("scientific_name"),
+                        exc_info=True,
+                    )
+                    return
+                if resolved is None:
+                    return
+                name, source = resolved
+                self._inject_vernacular(entry, name, locale, source)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*(enrich_one(e) for e in targets)),
+                timeout=_ENRICH_TOTAL_BUDGET,
+            )
+        except TimeoutError:
+            # Budget exceeded — keep whatever resolved so far and fall back to
+            # English/scientific for the remainder. Never propagate.
+            logger.debug(
+                "vernacular enrichment budget exceeded for locale=%s", locale
+            )
+        except Exception:  # noqa: BLE001 — defensive: never break search
+            logger.debug(
+                "vernacular enrichment pass failed for locale=%s",
+                locale,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _inject_vernacular(
+        entry: dict[str, Any],
+        name: str,
+        locale: str,
+        source: str,
+    ) -> None:
+        """Inject a resolved locale name into an entry (in place)."""
+        existing: list[dict[str, str]] = list(entry.get("vernacular_names") or [])
+        # Avoid duplicating a (locale, name) pair that is already present.
+        if not any(
+            vn.get("language") == locale and vn.get("name") == name
+            for vn in existing
+        ):
+            existing.append({"name": name, "language": locale, "source": source})
+        entry["vernacular_names"] = existing
+        entry["vernacular_name"] = name
+
+    async def _resolve_locale_vernacular(
+        self,
+        entry: dict[str, Any],
+        locale: str,
+    ) -> tuple[str, str] | None:
+        """Resolve a single entry's vernacular name for ``locale``.
+
+        Returns ``(name, source)`` or ``None`` when no locale-specific name is
+        found. Resolution order: iNaturalist (exact match) → GBIF vernacular
+        names. Each source is independently cached in Redis.
+        """
+        # If the entry already carries a name in the requested locale (e.g. from
+        # the iNat fallback path), keep it without any extra external calls.
+        for vn in entry.get("vernacular_names") or []:
+            if vn.get("language") == locale and vn.get("name"):
+                return str(vn["name"]), str(vn.get("source") or "gbif")
+
+        canonical = str(entry.get("canonical_name") or entry.get("scientific_name") or "")
+        gbif_key_raw = entry.get("gbif_key")
+        gbif_key = int(gbif_key_raw) if gbif_key_raw is not None else None
+
+        # 1) iNaturalist (exact scientific/canonical name match).
+        if canonical:
+            inat_name = await self._resolve_inat_vernacular(canonical, locale)
+            if inat_name:
+                return inat_name, "inaturalist"
+
+        # 2) GBIF /species/{key}/vernacularNames.
+        if gbif_key is not None:
+            gbif_name = await self._resolve_gbif_vernacular(gbif_key, locale)
+            if gbif_name:
+                return gbif_name, "gbif"
+
+        return None
+
+    async def _resolve_inat_vernacular(
+        self,
+        canonical_name: str,
+        locale: str,
+    ) -> str | None:
+        """Resolve a locale vernacular via iNaturalist with EXACT name match.
+
+        Uses ``/v1/taxa?q=<name>&locale=<locale>`` and accepts only a result
+        whose scientific name matches ``canonical_name`` exactly (genus +
+        species, case-insensitive). Fuzzy matches are rejected. Cached in Redis.
+
+        Locale verification (data integrity): iNaturalist populates
+        ``preferred_common_name`` with an ENGLISH/default fallback when no name
+        exists in the requested locale, which would otherwise inject an English
+        name persisted as ``language=<locale>``. The candidate is therefore
+        accepted only when it is genuinely in the requested locale:
+
+        * Reject when ``preferred_common_name`` equals the result's
+          ``english_common_name`` (case-insensitive) — that signals the English
+          fallback, so GBIF/English resolution should apply instead.
+        * For non-latin locales (e.g. ``ja``) additionally reject a pure-ASCII
+          candidate, since a real 和名 contains non-ASCII characters. Latin-script
+          locales are left untouched by this guard.
+        """
+        cache_key = f"vernacular:inat:{canonical_name.lower()}:{locale}"
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return None if cached == _ENRICH_CACHE_MISS_SENTINEL else cached
+
+        name: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=_ENRICH_SOURCE_TIMEOUT) as client:
+                resp = await client.get(
+                    f"{INATURALIST_BASE_URL}/taxa",
+                    params={"q": canonical_name, "locale": locale, "per_page": 10},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:
+            logger.debug(
+                "iNat vernacular lookup failed for name=%s", canonical_name,
+                exc_info=True,
+            )
+            return None  # transient error: do not cache
+
+        target = canonical_name.strip().lower()
+        for item in data.get("results", []):
+            sci = str(item.get("name") or "").strip().lower()
+            if sci != target:
+                continue  # exact match only; reject fuzzy hits
+            common = item.get("preferred_common_name")
+            if common and self._inat_name_in_locale(item, str(common), locale):
+                name = str(common)
+            break
+
+        await self._cache_set(cache_key, name)
+        return name
+
+    @staticmethod
+    def _inat_name_in_locale(
+        item: dict[str, Any],
+        candidate: str,
+        locale: str,
+    ) -> bool:
+        """Return True only when ``candidate`` is genuinely in ``locale``.
+
+        Detects iNaturalist's English/default fallback for
+        ``preferred_common_name`` (see :meth:`_resolve_inat_vernacular`). For a
+        non-English ``locale`` the candidate is rejected when it matches the
+        result's ``english_common_name`` (case-insensitive). For non-latin
+        locales a pure-ASCII candidate is also rejected.
+        """
+        if locale == "en":
+            return True
+
+        # English fallback: iNat returned its English/default name verbatim.
+        english = item.get("english_common_name")
+        if english and candidate.strip().lower() == str(english).strip().lower():
+            return False
+
+        # Non-latin locales (e.g. ja) must carry non-ASCII characters; a
+        # pure-ASCII candidate is an English/default fallback in disguise.
+        return not (locale in _NON_LATIN_SCRIPT_LOCALES and candidate.isascii())
+
+    async def _resolve_gbif_vernacular(
+        self,
+        gbif_key: int,
+        locale: str,
+    ) -> str | None:
+        """Resolve a locale vernacular via GBIF /vernacularNames. Cached."""
+        cache_key = f"vernacular:search:gbif:{gbif_key}:{locale}"
+        cached = await self._cache_get(cache_key)
+        if cached is not None:
+            return None if cached == _ENRICH_CACHE_MISS_SENTINEL else cached
+
+        # GBIF expects the 3-letter language code on the result rows; the
+        # existing get_vernacular_names already normalises jpn→ja internally and
+        # filters by the 2-letter ``locale``.
+        # Route through the shared GBIF rate limiter like every other GBIF call.
+        # If the limiter wait pushes past the per-source timeout/total budget the
+        # existing timeout/fallback handles it gracefully. The iNat host is on a
+        # separate origin and is intentionally NOT throttled here.
+        name: str | None = None
+        try:
+            await self._rate_limiter.acquire()
+            async with httpx.AsyncClient(timeout=_ENRICH_SOURCE_TIMEOUT) as client:
+                resp = await client.get(
+                    f"{GBIF_BASE_URL}/species/{gbif_key}/vernacularNames",
+                    params={"limit": 200},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception:
+            logger.debug(
+                "GBIF vernacular lookup failed for key=%s", gbif_key, exc_info=True
+            )
+            return None  # transient error: do not cache
+
+        iso3 = GBIF_LANG_CODE_MAP.get(locale, locale)
+        for item in data.get("results", []):
+            row_lang = str(item.get("language") or "").lower()
+            row_name = item.get("vernacularName")
+            if not row_name:
+                continue
+            if row_lang in (locale, iso3):
+                name = str(row_name)
+                break
+
+        await self._cache_set(cache_key, name)
+        return name
+
+    # ------------------------------------------------------------------
+    # Redis cache helpers (reuse the app's shared connection)
+    # ------------------------------------------------------------------
+
+    async def _cache_get(self, key: str) -> str | None:
+        """Return a cached value, or ``None`` on miss/redis error.
+
+        A returned ``_ENRICH_CACHE_MISS_SENTINEL`` represents a cached explicit
+        miss (no name found) and is distinguished from ``None`` (cache miss).
+        """
+        try:
+            from echoroo.core.redis import get_redis_connection  # noqa: PLC0415
+
+            client = await get_redis_connection()
+            value = await client.get(key)
+        except Exception:  # noqa: BLE001 — cache is best-effort
+            return None
+        if value is None:
+            return None
+        # ``decode_responses=True`` yields str; be defensive about bytes.
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return str(value)
+
+    async def _cache_set(self, key: str, name: str | None) -> None:
+        """Cache a hit (14d) or an explicit miss (1d). Best-effort."""
+        try:
+            from echoroo.core.redis import get_redis_connection  # noqa: PLC0415
+
+            client = await get_redis_connection()
+            if name is None:
+                await client.set(
+                    key, _ENRICH_CACHE_MISS_SENTINEL, ex=_ENRICH_CACHE_TTL_MISS
+                )
+            else:
+                await client.set(key, name, ex=_ENRICH_CACHE_TTL_HIT)
+        except Exception:  # noqa: BLE001 — cache write must never fail search
+            return

@@ -89,6 +89,7 @@
               result.gbif_key,
               result.common_name,
               getLocale(),
+              result.vernacular_names,
             );
             taxonId = taxon.id;
           }
@@ -99,6 +100,7 @@
           result.gbif_key,
           result.common_name,
           getLocale(),
+          result.vernacular_names,
         );
         taxonId = taxon.id;
       }

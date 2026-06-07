@@ -49,4 +49,10 @@ export interface SpeciesPickerResult {
   scientific_name: string;
   /** Locale-resolved common name, or null when none is available. */
   common_name: string | null;
+  /**
+   * Language-tagged vernacular names carried through from a GBIF pick, so a
+   * materialise call (`createTaxonFromGbif`) can persist them under the right
+   * locale (e.g. 和名). Only populated when `source === 'gbif'`; null otherwise.
+   */
+  vernacular_names?: Array<{ name: string; language: string; source?: string }> | null;
 }

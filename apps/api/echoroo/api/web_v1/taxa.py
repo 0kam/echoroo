@@ -74,11 +74,19 @@ async def gbif_search_taxa(
     current_user: CurrentUser,
     q: str,
     limit: int = 10,
+    locale: str = "en",
 ) -> list[GBIFSpeciesResult]:
-    """Search GBIF Backbone Taxonomy for species matching the query string."""
+    """Search GBIF Backbone Taxonomy for species matching the query string.
+
+    For non-en ``locale`` the top results' vernacular names are live-enriched
+    (iNaturalist/GBIF) so the picker can display the localized common name. The
+    ``en`` path makes no extra external calls.
+    """
     _require_authenticated(current_user)
     gbif_service = GBIFService()
-    raw_results = await gbif_service.search_species_full(query=q, limit=limit)
+    raw_results = await gbif_service.search_species_full(
+        query=q, limit=limit, locale=locale
+    )
     return [GBIFSpeciesResult.model_validate(r) for r in raw_results]
 
 
@@ -106,6 +114,11 @@ async def create_taxon_from_gbif(
         gbif_taxon_key=payload.gbif_taxon_key,
         common_name=payload.common_name,
         locale=locale or "en",
+        vernacular_names=(
+            [vn.model_dump() for vn in payload.vernacular_names]
+            if payload.vernacular_names
+            else None
+        ),
     )
 
 

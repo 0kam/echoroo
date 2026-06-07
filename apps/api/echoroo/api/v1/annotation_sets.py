@@ -114,8 +114,12 @@ async def get_annotation_set(
     set_id: UUID,
     current_user: CurrentUser,
     service: AnnotationSetServiceDep,
+    locale: str = Query(
+        default="en",
+        description="Display locale for palette common names (e.g. en, ja).",
+    ),
 ) -> AnnotationSetDetailResponse:
-    return await service.get_detail(set_id)
+    return await service.get_detail(set_id, locale=locale)
 
 
 @router.patch(

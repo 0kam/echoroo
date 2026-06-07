@@ -220,8 +220,10 @@
         ? Promise.resolve([])
         : searchTaxa(trimmed, locale, mode === 'add-to-list' ? 15 : 10);
 
+    // Pass locale so a non-`en` user gets live-enriched vernacular names
+    // (e.g. 和名) in each GBIF result rather than English-only matches.
     const gbifP: Promise<GBIFSpeciesResult[]> = wantGbif
-      ? searchGBIF(trimmed, 10)
+      ? searchGBIF(trimmed, 10, locale)
       : Promise.resolve([]);
 
     const [tagRes, taxonRes, gbifRes] = await Promise.allSettled([

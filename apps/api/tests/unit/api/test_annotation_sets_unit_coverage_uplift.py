@@ -76,10 +76,10 @@ async def test_get_annotation_set_delegates_to_service() -> None:
     user = MagicMock()
     set_id = uuid4()
     result = await mod.get_annotation_set(
-        set_id=set_id, current_user=user, service=service
+        set_id=set_id, current_user=user, service=service, locale="en"
     )
     assert result is sentinel
-    service.get_detail.assert_awaited_once_with(set_id)
+    service.get_detail.assert_awaited_once_with(set_id, locale="en")
 
 
 @pytest.mark.asyncio

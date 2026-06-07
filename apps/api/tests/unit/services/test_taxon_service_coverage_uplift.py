@@ -13,7 +13,18 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException, status
 
-from echoroo.services.taxon import TaxonService
+from echoroo.repositories.taxon import normalize_locale
+from echoroo.services.taxon import TaxonService, _en_common_name_for_seed
+
+
+def test_normalize_locale_primary_subtag_and_iso3() -> None:
+    """normalize_locale reduces to a lowercase primary 2-letter subtag (F3/F6)."""
+    assert normalize_locale("ja-JP") == "ja"
+    assert normalize_locale("ja_JP") == "ja"
+    assert normalize_locale("EN") == "en"
+    assert normalize_locale("en-US") == "en"
+    assert normalize_locale("jpn") == "ja"  # 3-letter ISO collapses too
+    assert normalize_locale(" Ja ") == "ja"
 
 
 def _make_taxon_repo() -> MagicMock:
@@ -22,8 +33,12 @@ def _make_taxon_repo() -> MagicMock:
     repo.get_by_id = AsyncMock()
     repo.search = AsyncMock()
     repo.get_or_create_by_scientific_name = AsyncMock()
+    repo.get_by_gbif_taxon_key = AsyncMock(return_value=None)
     repo.get_unresolved = AsyncMock()
     repo.update = AsyncMock()
+    repo.persist_vernacular_names = AsyncMock(return_value=0)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=False)
+    repo.db = MagicMock()
     return repo
 
 
@@ -162,6 +177,202 @@ async def test_get_or_create_returns_taxon_response() -> None:
         result = await service.get_or_create(scientific_name="Parus major")
 
     assert result is mock_resp
+
+
+def test_en_common_name_for_seed_prefers_en_vernacular_entry() -> None:
+    """The en slot is derived from the ``en`` entry, not the ja display name."""
+    result = _en_common_name_for_seed(
+        common_name="スズメ",
+        locale="ja",
+        vernacular_names=[
+            {"name": "スズメ", "language": "ja", "source": "inaturalist"},
+            {"name": "Eurasian Tree Sparrow", "language": "en", "source": "gbif"},
+        ],
+    )
+    assert result == "Eurasian Tree Sparrow"
+
+
+def test_en_common_name_for_seed_no_en_entry_returns_none_for_ja() -> None:
+    """A ja locale with no en entry must not fabricate an en row."""
+    result = _en_common_name_for_seed(
+        common_name="スズメ",
+        locale="ja",
+        vernacular_names=[
+            {"name": "スズメ", "language": "ja", "source": "inaturalist"},
+        ],
+    )
+    assert result is None
+
+
+def test_en_common_name_for_seed_en_locale_uses_client_common_name() -> None:
+    """Backward compat: an en locale keeps using the client common_name."""
+    assert (
+        _en_common_name_for_seed("Eurasian Tree Sparrow", "en", None)
+        == "Eurasian Tree Sparrow"
+    )
+    # No vernacular_names + en locale → pass through.
+    assert _en_common_name_for_seed("Great Tit", "EN", None) == "Great Tit"
+
+
+def test_en_common_name_for_seed_normalizes_en_language_tag() -> None:
+    """A normalized en entry (e.g. ``eng``/``en-US``) is recognized."""
+    assert (
+        _en_common_name_for_seed(
+            "和名",
+            "ja",
+            [{"name": "Eng Name", "language": "eng", "source": "gbif"}],
+        )
+        == "Eng Name"
+    )
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_seeds_en_slot_from_en_vernacular_entry() -> None:
+    """create_from_gbif passes the en entry (not the ja display) to the repo."""
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()
+    repo.get_or_create_by_scientific_name = AsyncMock(return_value=taxon)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=True)
+
+    service = TaxonService(taxon_repo=repo)
+
+    with patch(
+        "echoroo.services.taxon.resolve_vernacular_names",
+        new=AsyncMock(return_value={taxon.id: "スズメ"}),
+    ):
+        await service.create_from_gbif(
+            scientific_name="Passer montanus",
+            gbif_taxon_key=12345,
+            common_name="スズメ",
+            locale="ja",
+            vernacular_names=[
+                {"name": "スズメ", "language": "ja", "source": "inaturalist"},
+                {"name": "Eurasian Tree Sparrow", "language": "en", "source": "gbif"},
+            ],
+        )
+
+    # The legacy/en seed is the authoritative English name, NOT the 和名.
+    repo.get_or_create_by_scientific_name.assert_awaited_once_with(
+        scientific_name="Passer montanus",
+        common_name="Eurasian Tree Sparrow",
+    )
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_omits_en_seed_when_no_en_entry_for_ja() -> None:
+    """A ja locale with no en entry passes common_name=None to the repo."""
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()
+    repo.get_or_create_by_scientific_name = AsyncMock(return_value=taxon)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=True)
+
+    service = TaxonService(taxon_repo=repo)
+
+    with patch(
+        "echoroo.services.taxon.resolve_vernacular_names",
+        new=AsyncMock(return_value={taxon.id: "ノーエン"}),
+    ):
+        await service.create_from_gbif(
+            scientific_name="Wsa Noenrow testus",
+            gbif_taxon_key=12345,
+            common_name="ノーエン",
+            locale="ja",
+            vernacular_names=[
+                {"name": "ノーエン", "language": "ja", "source": "inaturalist"},
+            ],
+        )
+
+    repo.get_or_create_by_scientific_name.assert_awaited_once_with(
+        scientific_name="Wsa Noenrow testus",
+        common_name=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_enqueues_ja_fetch_when_no_ja_row() -> None:
+    """create_from_gbif enqueues the ja fetch only when no ja row exists (F4).
+
+    The taxon has a GBIF key and ja is requested; ``has_vernacular_in_locale``
+    reports no exact ja row, so the best-effort backfill fires regardless of the
+    en-fallback display name.
+    """
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()  # gbif_taxon_key is set on the mock
+    repo.get_or_create_by_scientific_name = AsyncMock(return_value=taxon)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=False)
+
+    service = TaxonService(taxon_repo=repo)
+
+    with (
+        patch(
+            "echoroo.services.taxon.resolve_vernacular_names",
+            # en-fallback resolves a name, but enqueue must still fire because
+            # the EXACT ja row is absent.
+            new=AsyncMock(return_value={taxon.id: "Great Tit"}),
+        ),
+        patch.object(TaxonService, "_maybe_enqueue_ja_fetch") as mock_enqueue,
+    ):
+        await service.create_from_gbif(
+            scientific_name="Parus major",
+            gbif_taxon_key=12345,
+            locale="ja",
+        )
+
+    repo.has_vernacular_in_locale.assert_awaited_once_with(taxon.id, "ja")
+    mock_enqueue.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_does_not_enqueue_when_ja_row_exists() -> None:
+    """No enqueue when an exact ja row already exists (F4)."""
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()
+    repo.get_or_create_by_scientific_name = AsyncMock(return_value=taxon)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=True)
+
+    service = TaxonService(taxon_repo=repo)
+
+    with (
+        patch(
+            "echoroo.services.taxon.resolve_vernacular_names",
+            new=AsyncMock(return_value={taxon.id: "シジュウカラ"}),
+        ),
+        patch.object(TaxonService, "_maybe_enqueue_ja_fetch") as mock_enqueue,
+    ):
+        await service.create_from_gbif(
+            scientific_name="Parus major",
+            gbif_taxon_key=12345,
+            locale="ja",
+        )
+
+    repo.has_vernacular_in_locale.assert_awaited_once_with(taxon.id, "ja")
+    mock_enqueue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_from_gbif_ja_jp_locale_normalized_for_enqueue() -> None:
+    """``ja-JP`` normalizes to ``ja`` and still gates the enqueue (F3 + F4)."""
+    repo = _make_taxon_repo()
+    taxon = _make_taxon()
+    repo.get_or_create_by_scientific_name = AsyncMock(return_value=taxon)
+    repo.has_vernacular_in_locale = AsyncMock(return_value=False)
+
+    service = TaxonService(taxon_repo=repo)
+
+    with (
+        patch(
+            "echoroo.services.taxon.resolve_vernacular_names",
+            new=AsyncMock(return_value={}),
+        ),
+        patch.object(TaxonService, "_maybe_enqueue_ja_fetch") as mock_enqueue,
+    ):
+        await service.create_from_gbif(
+            scientific_name="Parus major",
+            gbif_taxon_key=12345,
+            locale="ja-JP",
+        )
+
+    mock_enqueue.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -88,13 +88,20 @@ export async function listAnnotationSets(params: {
   );
 }
 
-/** Fetch a single annotation set with palette + progress. */
+/**
+ * Fetch a single annotation set with palette + progress.
+ *
+ * @param locale - BCP 47 locale code so the backend resolves each
+ *   `palette[].common_name` for that locale (e.g. 和名 on /ja).
+ */
 export async function getAnnotationSet(
   projectId: string,
   id: string,
+  locale?: string,
 ): Promise<AnnotationSetDetail> {
+  const qs = locale ? `?${new URLSearchParams({ locale }).toString()}` : '';
   return apiClient.get<AnnotationSetDetail>(
-    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${id}`,
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${id}${qs}`,
   );
 }
 
