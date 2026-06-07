@@ -7,7 +7,9 @@ from sqlalchemy.orm import selectinload
 
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
+from echoroo.models.clip_annotation import ClipAnnotation
 from echoroo.models.enums import AnnotationTaskStatus
+from echoroo.models.sound_event_annotation import SoundEventAnnotation
 from echoroo.repositories.base import BaseRepository
 
 
@@ -30,7 +32,20 @@ class AnnotationTaskRepository(BaseRepository[AnnotationTask]):
             .where(AnnotationTask.id == task_id)
             .options(
                 selectinload(AnnotationTask.clip),
-                selectinload(AnnotationTask.clip_annotation),
+                # Eager-load the nested clip_annotation relationships that
+                # ``_build_detail_response`` serializes (tags, sound_events +
+                # their tags, notes). Without these, Pydantic serialization
+                # triggers a lazy load inside the async context and raises
+                # MissingGreenlet once a task actually has a clip_annotation.
+                selectinload(AnnotationTask.clip_annotation).selectinload(
+                    ClipAnnotation.tags
+                ),
+                selectinload(AnnotationTask.clip_annotation)
+                .selectinload(ClipAnnotation.sound_events)
+                .selectinload(SoundEventAnnotation.tags),
+                selectinload(AnnotationTask.clip_annotation).selectinload(
+                    ClipAnnotation.notes
+                ),
                 selectinload(AnnotationTask.annotation_project).selectinload(AnnotationProject.tags),
             )
         )
@@ -134,7 +149,19 @@ class AnnotationTaskRepository(BaseRepository[AnnotationTask]):
             )
             .options(
                 selectinload(AnnotationTask.clip),
-                selectinload(AnnotationTask.clip_annotation),
+                # Mirror get_by_id: get_next results are serialized via
+                # ``_build_detail_response`` (TaskCompletionResponse.next_task /
+                # GET next-task), so the nested clip_annotation relationships
+                # must be eager-loaded to avoid MissingGreenlet.
+                selectinload(AnnotationTask.clip_annotation).selectinload(
+                    ClipAnnotation.tags
+                ),
+                selectinload(AnnotationTask.clip_annotation)
+                .selectinload(ClipAnnotation.sound_events)
+                .selectinload(SoundEventAnnotation.tags),
+                selectinload(AnnotationTask.clip_annotation).selectinload(
+                    ClipAnnotation.notes
+                ),
                 selectinload(AnnotationTask.annotation_project).selectinload(AnnotationProject.tags),
             )
             # Prefer tasks assigned to the user (assigned_to_id = user_id sorts before NULL)

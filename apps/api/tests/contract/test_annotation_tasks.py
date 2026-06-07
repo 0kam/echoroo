@@ -12,16 +12,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.models.annotation_project import AnnotationProject
 from echoroo.models.annotation_task import AnnotationTask
 from echoroo.models.clip import Clip
+from echoroo.models.clip_annotation import ClipAnnotation
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     AnnotationProjectVisibility,
+    AnnotationSource,
     AnnotationTaskStatus,
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
+    ReviewStatus,
+    TagCategory,
 )
+from echoroo.models.note import Note
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
+from echoroo.models.sound_event_annotation import SoundEventAnnotation
+from echoroo.models.tag import Tag
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project
@@ -272,6 +279,100 @@ class TestAnnotationTaskGetDetailEndpoint:
         )
 
         assert response.status_code == 401
+
+
+@pytest.fixture
+async def annotated_task(
+    db_session: AsyncSession,
+    test_project: "Project",
+    test_user: "User",
+    test_annotation_task: AnnotationTask,
+    test_clip: Clip,
+) -> AnnotationTask:
+    """Attach a fully-populated ClipAnnotation to ``test_annotation_task``.
+
+    The clip annotation carries at least one tag, a sound event annotation
+    (itself tagged), and a note. Serializing these nested relationships is
+    exactly what triggered the MissingGreenlet 500 before the repository
+    eager-loaded them.
+
+    Returns:
+        The same AnnotationTask, now linked to a clip_annotation.
+    """
+    tag = Tag(
+        project_id=test_project.id,
+        name="Regression Tag",
+        category=TagCategory.SPECIES,
+    )
+    db_session.add(tag)
+    await db_session.flush()
+
+    clip_annotation = ClipAnnotation(
+        task_id=test_annotation_task.id,
+        clip_id=test_clip.id,
+        created_by_id=test_user.id,
+        review_status=ReviewStatus.UNREVIEWED,
+    )
+    clip_annotation.tags.append(tag)
+    db_session.add(clip_annotation)
+    await db_session.flush()
+
+    sound_event = SoundEventAnnotation(
+        clip_annotation_id=clip_annotation.id,
+        created_by_id=test_user.id,
+        geometry={"type": "TimeInterval", "coordinates": [0.0, 1.0]},
+        source=AnnotationSource.HUMAN,
+    )
+    sound_event.tags.append(tag)
+    db_session.add(sound_event)
+
+    note = Note(
+        created_by_id=test_user.id,
+        clip_annotation_id=clip_annotation.id,
+        content="Regression note",
+    )
+    db_session.add(note)
+
+    await db_session.commit()
+    await db_session.refresh(test_annotation_task)
+    return test_annotation_task
+
+
+@pytest.mark.asyncio
+class TestAnnotationTaskDetailEagerLoad:
+    """Regression: detail GET must eager-load nested clip_annotation data.
+
+    A task with a clip_annotation whose tags / sound_events / notes are
+    accessed during serialization previously raised MissingGreenlet (500)
+    because those relationships were lazy-loaded inside the async request.
+    """
+
+    async def test_get_task_with_clip_annotation_serializes(
+        self,
+        client: AsyncClient,
+        auth_headers: dict[str, str],
+        test_project_id: str,
+        test_annotation_project: AnnotationProject,
+        annotated_task: AnnotationTask,
+    ) -> None:
+        """GET returns 200 and serializes the nested clip_annotation."""
+        response = await client.get(
+            f"/api/v1/projects/{test_project_id}/annotation-projects/{test_annotation_project.id}/tasks/{annotated_task.id}",
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        clip_annotation = data["clip_annotation"]
+        assert clip_annotation is not None
+        # Nested relationships that triggered MissingGreenlet must serialize.
+        assert len(clip_annotation["tags"]) == 1
+        assert clip_annotation["tags"][0]["name"] == "Regression Tag"
+        assert len(clip_annotation["sound_events"]) == 1
+        assert len(clip_annotation["sound_events"][0]["tags"]) == 1
+        assert len(clip_annotation["notes"]) == 1
+        assert clip_annotation["notes"][0]["content"] == "Regression note"
 
 
 @pytest.mark.asyncio

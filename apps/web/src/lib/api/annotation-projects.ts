@@ -12,6 +12,30 @@ import type {
 import { apiClient } from './client';
 
 const API_BASE = '/web-api/v1';
+const CSRF_COOKIE_NAME = 'echoroo_csrf';
+
+function getCsrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  const prefix = `${CSRF_COOKIE_NAME}=`;
+  const parts = document.cookie ? document.cookie.split('; ') : [];
+  for (const part of parts) {
+    if (part.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(part.slice(prefix.length));
+      } catch {
+        return part.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function csrfHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = getCsrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return headers;
+}
 
 /**
  * Fetch annotation projects for a project.
@@ -49,7 +73,8 @@ export async function createAnnotationProject(
 ): Promise<AnnotationProjectDetail> {
   return apiClient.post<AnnotationProjectDetail>(
     `${API_BASE}/projects/${projectId}/annotation-projects`,
-    data
+    data,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -61,7 +86,8 @@ export async function deleteAnnotationProject(
   annotationProjectId: string
 ): Promise<void> {
   return apiClient.delete<void>(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}`,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -73,6 +99,8 @@ export async function generateTasks(
   annotationProjectId: string
 ): Promise<TaskGenerationResponse> {
   return apiClient.post<TaskGenerationResponse>(
-    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/generate-tasks`
+    `${API_BASE}/projects/${projectId}/annotation-projects/${annotationProjectId}/generate-tasks`,
+    undefined,
+    { headers: csrfHeaders() }
   );
 }
