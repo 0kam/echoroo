@@ -322,7 +322,11 @@ class GBIFService:
             for vn in vernacular_names_raw:
                 raw_name: str = vn.get("vernacularName") or ""
                 raw_lang: str = (vn.get("language") or "").lower()
-                if not raw_name:
+                # GBIF returns some vernacular rows with a null/empty language
+                # (or, rarely, an empty name). Such entries would later fail the
+                # ``VernacularNameInput`` (min_length=1) constraint on the
+                # from-GBIF materialize, so drop them at the source.
+                if not raw_name or not raw_lang:
                     continue
                 # Normalise to ISO 639-1 where possible
                 lang = iso3_to_iso1.get(raw_lang, raw_lang)
@@ -562,6 +566,12 @@ class GBIFService:
     ) -> None:
         """Inject a resolved locale name into an entry (in place)."""
         existing: list[dict[str, str]] = list(entry.get("vernacular_names") or [])
+        # Never inject an entry with an empty name or locale: it would later be
+        # rejected by ``VernacularNameInput`` (min_length=1) on the from-GBIF
+        # materialize. Resolution normally yields a truthy name/locale, but guard
+        # defensively so a degenerate value cannot poison the payload.
+        if not name or not locale:
+            return
         # Avoid duplicating a (locale, name) pair that is already present.
         if not any(
             vn.get("language") == locale and vn.get("name") == name
