@@ -63,6 +63,23 @@ class TaxonSearchResult(BaseModel):
     common_name: str | None = Field(None, description="Best matching vernacular name")
 
 
+class VernacularNameInput(BaseModel):
+    """A language-tagged vernacular name carried by a from-GBIF materialize.
+
+    Lets the palette persist the locale-resolved name it already obtained from
+    the live search (e.g. a Japanese 和名) with the CORRECT ``locale`` instead
+    of defaulting everything to English.
+    """
+
+    name: str = Field(..., min_length=1, description="Vernacular name text")
+    language: str = Field(
+        ..., min_length=1, description="Locale code (e.g. en, ja). 'jpn' is normalized to 'ja'."
+    )
+    source: str | None = Field(
+        None, description="Origin of the name (e.g. inaturalist, gbif). Defaults to 'gbif'."
+    )
+
+
 class TaxonFromGBIFRequest(BaseModel):
     """Request body for materialising a GBIF search pick into a local taxon.
 
@@ -70,7 +87,9 @@ class TaxonFromGBIFRequest(BaseModel):
     live GBIF search (``GBIFSpeciesResult``) and add it to the project. This
     request carries the minimal fields needed to get-or-create the matching
     local ``taxa`` row: the canonical scientific name, the optional GBIF
-    backbone key, and an optional vernacular (common) name.
+    backbone key, an optional vernacular (common) name, and an optional list of
+    language-tagged vernacular names resolved at search time (so a non-English
+    name is persisted with its real locale rather than as English).
     """
 
     scientific_name: str = Field(
@@ -82,6 +101,28 @@ class TaxonFromGBIFRequest(BaseModel):
     common_name: str | None = Field(
         None, description="Vernacular name to seed when creating a new taxon"
     )
+    vernacular_names: list[VernacularNameInput] | None = Field(
+        None,
+        description=(
+            "Language-tagged vernacular names to persist with their real locale "
+            "(e.g. a ja 和名 resolved during the live search)."
+        ),
+    )
+
+
+class GBIFVernacularName(BaseModel):
+    """A single vernacular name attached to a GBIF search result.
+
+    ``source`` carries the origin of a live-enriched name (e.g.
+    ``inaturalist`` / ``gbif``). It is optional so inline GBIF-backbone names
+    (which have no enrichment source) serialize cleanly, but when an enriched
+    name is injected the source MUST survive serialization so the from-GBIF
+    materialize can persist it with the right provenance.
+    """
+
+    name: str
+    language: str
+    source: str | None = None
 
 
 class GBIFSpeciesResult(BaseModel):
@@ -94,9 +135,9 @@ class GBIFSpeciesResult(BaseModel):
     vernacular_name: str | None = Field(
         None, description="Best matching vernacular name from available vernacular names"
     )
-    vernacular_names: list[dict[str, str]] | None = Field(
+    vernacular_names: list[GBIFVernacularName] | None = Field(
         None,
-        description="All vernacular names as list of {name, language} dicts",
+        description="All vernacular names as {name, language, source} entries",
     )
     kingdom: str | None = None
     phylum: str | None = None

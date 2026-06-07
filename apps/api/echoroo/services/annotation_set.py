@@ -31,6 +31,7 @@ from echoroo.repositories.annotation_set import (
     AnnotationSegmentRepository,
     AnnotationSetRepository,
 )
+from echoroo.repositories.taxon import normalize_locale
 from echoroo.schemas.annotation_set import (
     AnnotationSegmentListResponse,
     AnnotationSegmentResponse,
@@ -44,6 +45,7 @@ from echoroo.schemas.annotation_set import (
     PaletteEntryResponse,
     PaletteItemCreate,
 )
+from echoroo.services.vernacular import resolve_vernacular_names
 
 logger = logging.getLogger(__name__)
 
@@ -111,23 +113,41 @@ class AnnotationSetService:
             empty=empty,
         )
 
-    async def _build_palette(self, set_id: UUID) -> list[PaletteEntryResponse]:
+    async def _build_palette(
+        self, set_id: UUID, locale: str = "en",
+    ) -> list[PaletteEntryResponse]:
+        """Build the palette, resolving each entry's display ``common_name``.
+
+        The name is resolved from the LOCAL database/cache via
+        ``resolve_vernacular_names`` (requested-locale → English fallback). No
+        live external lookups happen here — display is a read-only concern and
+        the scientific-name floor is applied by the frontend formatter when no
+        vernacular row exists.
+        """
         rows = await self.set_repo.list_palette_with_taxa(set_id)
+        # Normalize the requested locale to its primary subtag so ``ja-JP``/``JA``
+        # resolve like ``ja`` (``resolve_vernacular_names`` matches exactly).
+        normalized_locale = normalize_locale(locale)
+        common_names = await resolve_vernacular_names(
+            self._db,
+            [taxon.id for taxon, _ in rows],
+            normalized_locale,
+        )
         return [
             PaletteEntryResponse(
                 species_id=taxon.id,
                 scientific_name=taxon.scientific_name,
-                common_name=None,
+                common_name=common_names.get(taxon.id),
                 position=position,
             )
             for taxon, position in rows
         ]
 
     async def _to_detail(
-        self, anno_set: AnnotationSet,
+        self, anno_set: AnnotationSet, locale: str = "en",
     ) -> AnnotationSetDetailResponse:
         progress = await self._build_progress(anno_set.id)
-        palette = await self._build_palette(anno_set.id)
+        palette = await self._build_palette(anno_set.id, locale=locale)
         return AnnotationSetDetailResponse(
             id=anno_set.id,
             project_id=anno_set.project_id,
@@ -227,9 +247,11 @@ class AnnotationSetService:
             page_size=pagination.page_size,
         )
 
-    async def get_detail(self, set_id: UUID) -> AnnotationSetDetailResponse:
+    async def get_detail(
+        self, set_id: UUID, locale: str = "en",
+    ) -> AnnotationSetDetailResponse:
         anno_set = await self._require_set(set_id)
-        return await self._to_detail(anno_set)
+        return await self._to_detail(anno_set, locale=locale)
 
     async def update(
         self, set_id: UUID, request: AnnotationSetUpdate,

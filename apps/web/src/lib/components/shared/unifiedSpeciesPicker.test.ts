@@ -350,15 +350,30 @@ describe('norm', () => {
 });
 
 // ------------------------------------------------------------------
-// resolveGbifCommonName — ja → en → null fallback (fix D)
+// resolveGbifCommonName — locale entry → vernacular_name → en → null
 // ------------------------------------------------------------------
+// Precedence: a `vernacular_names` entry whose language === locale wins even
+// over an (English-biased) backend `vernacular_name`, so 和名 isn't shadowed.
 
 describe('resolveGbifCommonName', () => {
-  it('prefers vernacular_name (backend best match) when present', () => {
+  it('prefers the locale vernacular_names entry over an English vernacular_name', () => {
     const gbif = makeGbif({
       vernacular_name: 'Great Tit',
       vernacular_names: [{ name: 'シジュウカラ', language: 'ja' }],
     });
+    expect(resolveGbifCommonName(gbif, 'ja')).toBe('シジュウカラ');
+  });
+
+  it('falls back to vernacular_name when no locale entry exists', () => {
+    const gbif = makeGbif({
+      vernacular_name: 'Great Tit',
+      vernacular_names: [{ name: 'Kohlmeise', language: 'de' }],
+    });
+    expect(resolveGbifCommonName(gbif, 'ja')).toBe('Great Tit');
+  });
+
+  it('uses vernacular_name when vernacular_names is null', () => {
+    const gbif = makeGbif({ vernacular_name: 'Great Tit', vernacular_names: null });
     expect(resolveGbifCommonName(gbif, 'ja')).toBe('Great Tit');
   });
 
@@ -373,7 +388,7 @@ describe('resolveGbifCommonName', () => {
     expect(resolveGbifCommonName(gbif, 'ja')).toBe('シジュウカラ');
   });
 
-  it('falls back to English when the requested locale is missing', () => {
+  it('falls back to the English entry when locale + vernacular_name are absent', () => {
     const gbif = makeGbif({
       vernacular_name: null,
       vernacular_names: [{ name: 'Great Tit', language: 'en' }],

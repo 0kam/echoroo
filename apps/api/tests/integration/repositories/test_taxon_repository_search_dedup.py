@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.taxon import Taxon
@@ -202,7 +203,7 @@ async def test_get_or_create_race_loss_returns_existing_row(
     # Returned the existing (winning) row rather than raising IntegrityError.
     assert result.id == winner.id
     # The race-lost path must NOT have seeded a duplicate en vernacular.
-    from sqlalchemy import func, select
+    from sqlalchemy import func
 
     vn_count = await db_session.execute(
         select(func.count())
@@ -210,3 +211,137 @@ async def test_get_or_create_race_loss_returns_existing_row(
         .where(TaxonVernacularName.taxon_id == winner.id)
     )
     assert int(vn_count.scalar_one()) == 1
+
+
+async def _ja_rows(
+    db: AsyncSession, taxon_id: uuid.UUID, source: str
+) -> list[TaxonVernacularName]:
+    result = await db.execute(
+        select(TaxonVernacularName)
+        .where(TaxonVernacularName.taxon_id == taxon_id)
+        .where(TaxonVernacularName.locale == "ja")
+        .where(TaxonVernacularName.source == source)
+    )
+    return list(result.scalars().all())
+
+
+async def test_persist_does_not_overwrite_existing_name(
+    db_session: AsyncSession,
+) -> None:
+    """A second persist with a different name for the SAME (locale, source)
+    must NOT overwrite the original non-empty name (F6 no-overwrite)."""
+    suffix = uuid.uuid4().hex[:8]
+    taxon = Taxon(scientific_name=f"Persistus testus {suffix}")
+    db_session.add(taxon)
+    await db_session.flush()
+
+    repo = TaxonRepository(db_session)
+    inserted = await repo.persist_vernacular_names(
+        taxon.id, [{"name": "オリジナル名", "language": "ja", "source": "inaturalist"}]
+    )
+    assert inserted == 1
+
+    # Second materialize with a DIFFERENT name for the same (ja, inaturalist).
+    inserted2 = await repo.persist_vernacular_names(
+        taxon.id, [{"name": "上書き名", "language": "jpn", "source": "inaturalist"}]
+    )
+    assert inserted2 == 0  # not a new row
+
+    rows = await _ja_rows(db_session, taxon.id, "inaturalist")
+    assert len(rows) == 1
+    # Original preserved — payload did NOT overwrite it.
+    assert rows[0].name == "オリジナル名"
+
+
+async def test_persist_fills_empty_existing_name(
+    db_session: AsyncSession,
+) -> None:
+    """An empty placeholder name IS filled from the payload (F6 fill-only)."""
+    suffix = uuid.uuid4().hex[:8]
+    taxon = Taxon(scientific_name=f"Fillus testus {suffix}")
+    db_session.add(taxon)
+    await db_session.flush()
+    db_session.add(
+        TaxonVernacularName(
+            taxon_id=taxon.id, locale="ja", name="", source="gbif", is_primary=False
+        )
+    )
+    await db_session.flush()
+
+    repo = TaxonRepository(db_session)
+    await repo.persist_vernacular_names(
+        taxon.id, [{"name": "充填名", "language": "ja", "source": "gbif"}]
+    )
+
+    rows = await _ja_rows(db_session, taxon.id, "gbif")
+    assert len(rows) == 1
+    assert rows[0].name == "充填名"
+
+
+async def test_persist_unknown_source_coerced_to_default(
+    db_session: AsyncSession,
+) -> None:
+    """An unknown/empty source is coerced to the safe default (F6 allow-set)."""
+    suffix = uuid.uuid4().hex[:8]
+    taxon = Taxon(scientific_name=f"Sourceus testus {suffix}")
+    db_session.add(taxon)
+    await db_session.flush()
+
+    repo = TaxonRepository(db_session)
+    await repo.persist_vernacular_names(
+        taxon.id,
+        [{"name": "ソース名", "language": "ja", "source": "evil-injection"}],
+    )
+
+    rows = await db_session.execute(
+        select(TaxonVernacularName)
+        .where(TaxonVernacularName.taxon_id == taxon.id)
+        .where(TaxonVernacularName.locale == "ja")
+    )
+    persisted = list(rows.scalars().all())
+    assert len(persisted) == 1
+    assert persisted[0].source == "gbif"  # unknown → default
+
+
+async def test_persist_truncates_overlength_name(
+    db_session: AsyncSession,
+) -> None:
+    """An over-length name is truncated to the column ceiling (F6 lengths)."""
+    suffix = uuid.uuid4().hex[:8]
+    taxon = Taxon(scientific_name=f"Longus testus {suffix}")
+    db_session.add(taxon)
+    await db_session.flush()
+
+    long_name = "あ" * 500  # exceeds String(300)
+    repo = TaxonRepository(db_session)
+    inserted = await repo.persist_vernacular_names(
+        taxon.id, [{"name": long_name, "language": "ja", "source": "gbif"}]
+    )
+    assert inserted == 1
+
+    rows = await _ja_rows(db_session, taxon.id, "gbif")
+    assert len(rows) == 1
+    assert len(rows[0].name) == 300
+
+
+async def test_has_vernacular_in_locale_no_fallback(
+    db_session: AsyncSession,
+) -> None:
+    """has_vernacular_in_locale is exact (no en fallback) (F4 support)."""
+    suffix = uuid.uuid4().hex[:8]
+    taxon = Taxon(scientific_name=f"Exactus testus {suffix}")
+    db_session.add(taxon)
+    await db_session.flush()
+    db_session.add(
+        TaxonVernacularName(
+            taxon_id=taxon.id, locale="en", name="English Only", source="gbif"
+        )
+    )
+    await db_session.flush()
+
+    repo = TaxonRepository(db_session)
+    # An en row exists but NO ja row — exact check must report absence.
+    assert await repo.has_vernacular_in_locale(taxon.id, "ja") is False
+    assert await repo.has_vernacular_in_locale(taxon.id, "en") is True
+    # ja-JP normalizes to ja → still absent.
+    assert await repo.has_vernacular_in_locale(taxon.id, "ja-JP") is False

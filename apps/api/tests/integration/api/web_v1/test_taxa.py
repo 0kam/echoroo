@@ -186,7 +186,7 @@ async def test_taxa_gbif_search_bff_contract(
     assert response.status_code == 200, response.text
     assert response.json()[0]["scientific_name"] == "Parus major"
     assert response.json()[0]["gbif_key"] == 2492562
-    gbif_search.assert_awaited_once_with(query="great tit", limit=3)
+    gbif_search.assert_awaited_once_with(query="great tit", limit=3, locale="en")
     assert_rate_limit_bucket_web(response)
 
     await assert_api_key_cross_rejected(

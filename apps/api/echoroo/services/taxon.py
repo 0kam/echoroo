@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.pagination import paginate
 from echoroo.models.taxon import Taxon
-from echoroo.repositories.taxon import TaxonRepository
+from echoroo.repositories.taxon import TaxonRepository, normalize_locale
 from echoroo.schemas.taxon import (
     TaxonDetailResponse,
     TaxonListResponse,
@@ -28,6 +28,53 @@ from echoroo.services.vernacular import resolve_vernacular_names
 _GBIF_BATCH_CONCURRENCY = 8
 
 logger = logging.getLogger(__name__)
+
+
+def _en_common_name_for_seed(
+    common_name: str | None,
+    locale: str,
+    vernacular_names: list[dict[str, str | None]] | None,
+) -> str | None:
+    """Derive the value to seed into the legacy/en ``common_name`` slot.
+
+    The legacy ``common_name`` is persisted by
+    ``get_or_create_by_scientific_name`` as an English (``locale="en"``)
+    vernacular row. The client, however, sends ``common_name`` as the
+    locale-RESOLVED display name (e.g. a Japanese 和名 under a ``ja`` UI), so
+    passing it through verbatim would pollute the en slot with a non-English
+    string. This helper decouples the two:
+
+    * When language-tagged ``vernacular_names`` are provided, prefer their
+      ``en`` entry (language normalized) as the authoritative English name.
+    * When the requested ``locale`` is English (or no ``vernacular_names`` are
+      provided), keep the existing behaviour and use the client's
+      ``common_name`` directly (backward compatible).
+    * Otherwise (non-en locale, no ``en`` entry available) return ``None`` so
+      no en row is fabricated from a non-English display name. The scientific
+      name remains the floor and the correct locale rows are persisted by
+      ``persist_vernacular_names``.
+    """
+    # Prefer an explicit ``en`` entry from the language-tagged list, whatever
+    # the requested display locale. This is the authoritative English name.
+    if vernacular_names:
+        for entry in vernacular_names:
+            raw_name = entry.get("name")
+            raw_lang = entry.get("language")
+            if not raw_name or not raw_lang:
+                continue
+            if normalize_locale(str(raw_lang)) == "en":
+                name = str(raw_name).strip()
+                if name:
+                    return name
+
+    # English UI (or no language-tagged list): the client's locale-resolved
+    # name IS English, so it is safe to seed it directly (legacy behaviour).
+    if normalize_locale(locale or "en") == "en":
+        return common_name
+
+    # Non-en locale with no en entry: do not fabricate an en row from a
+    # non-English display name.
+    return None
 
 
 class TaxonService:
@@ -141,6 +188,7 @@ class TaxonService:
         gbif_taxon_key: int | None = None,
         common_name: str | None = None,
         locale: str = "en",
+        vernacular_names: list[dict[str, str | None]] | None = None,
     ) -> TaxonSearchResult:
         """Materialise a GBIF search pick into a local taxon (idempotent).
 
@@ -152,16 +200,38 @@ class TaxonService:
         key is already owned elsewhere it is silently left unset rather than
         raising; the row is still returned so the caller can use it.
 
+        Vernacular persistence: the legacy/en ``common_name`` slot is seeded
+        from the AUTHORITATIVE English name, never from a non-English display
+        value. The client sends ``common_name`` as the locale-RESOLVED display
+        name (e.g. a 和名 under a ``ja`` UI), so the en seed is derived via
+        :func:`_en_common_name_for_seed`: prefer the ``en`` entry of
+        ``vernacular_names``; fall back to the client ``common_name`` only when
+        the request locale is English; otherwise omit the en row entirely
+        (rather than polluting it with a non-English string). In addition, any
+        language-tagged ``vernacular_names`` are persisted with their REAL
+        locale (``jpn`` normalized to ``ja``) and source, idempotently. When a
+        non-English display locale is requested but no matching vernacular row
+        ends up present and the taxon has a GBIF key, the existing async
+        ja-fetch task is enqueued as a best-effort backfill (never blocking).
+
         The returned shape mirrors :meth:`search` (``TaxonSearchResult``) so
         the frontend can reuse the same type, including a locale-resolved
         ``common_name`` (requested locale → English fallback).
         """
+        # Decouple the legacy/en ``common_name`` seed from the client's
+        # locale-resolved display value so a non-English name (e.g. a ja 和名)
+        # never lands in the en vernacular row. The authoritative English name
+        # is taken from the ``en`` entry of ``vernacular_names`` when present.
+        en_common_name = _en_common_name_for_seed(
+            common_name, locale, vernacular_names
+        )
+
         # ``get_or_create_by_scientific_name`` has already ``add``+``flush``ed
         # the taxon (no commit) when it is newly created, so the SAVEPOINT
         # below scopes only the subsequent key assignment.
         taxon = await self.taxon_repo.get_or_create_by_scientific_name(
             scientific_name=scientific_name,
-            common_name=common_name,
+            common_name=en_common_name,
         )
 
         # Backfill the GBIF key only when the taxon lacks one. Guard the
@@ -193,12 +263,43 @@ class TaxonService:
                     # response is built below.
                     await self.taxon_repo.db.refresh(taxon)
 
-        display_locale = locale or "en"
+        # Persist any language-tagged vernacular names with their real locale
+        # (idempotent). This is how a non-English 和名 resolved during the live
+        # search gets stored as ``ja`` instead of being lost or mis-tagged.
+        if vernacular_names:
+            await self.taxon_repo.persist_vernacular_names(
+                taxon.id, vernacular_names
+            )
+
+        # Normalize the requested display locale to its primary subtag so
+        # ``ja-JP``/``JA`` resolve and gate like ``ja``.
+        display_locale = normalize_locale(locale or "en")
         common_names = await resolve_vernacular_names(
             self.taxon_repo.db,
             [taxon.id],
             display_locale,
         )
+
+        # Best-effort async backfill: when ja is requested and the taxon has a
+        # GBIF key but NO locale-specific ja row exists yet, enqueue the existing
+        # ja-fetch task rather than blocking the response. The previous condition
+        # relied on ``resolve_vernacular_names`` whose en-fallback made the
+        # "missing" check ~never true, so the task practically never fired; check
+        # the absence of an EXACT ja row (no fallback) instead. Only fire for ja
+        # (the task only fetches Japanese names). Failures to enqueue are
+        # swallowed — display already degrades to English/scientific.
+        if display_locale == "ja" and taxon.gbif_taxon_key is not None:
+            try:
+                has_ja = await self.taxon_repo.has_vernacular_in_locale(
+                    taxon.id, "ja"
+                )
+            except Exception:  # noqa: BLE001 — backfill probe is best-effort
+                logger.debug(
+                    "ja vernacular presence check failed", exc_info=True
+                )
+                has_ja = True  # fail closed: do not spam the queue on error
+            if not has_ja:
+                self._maybe_enqueue_ja_fetch()
 
         return TaxonSearchResult(
             id=taxon.id,
@@ -208,6 +309,24 @@ class TaxonService:
             is_non_biological=taxon.is_non_biological,
             common_name=common_names.get(taxon.id),
         )
+
+    @staticmethod
+    def _maybe_enqueue_ja_fetch() -> None:
+        """Enqueue the batch ja-vernacular fetch task, best-effort.
+
+        There is no single-taxon fetch variant; the existing batch task skips
+        taxa that already have a ja name, so enqueuing it backfills the newly
+        materialized taxon without redundant work. Any import/dispatch failure
+        is swallowed so the materialize response is never blocked.
+        """
+        try:
+            from echoroo.workers.taxon_tasks import (  # noqa: PLC0415
+                fetch_japanese_vernacular_names,
+            )
+
+            fetch_japanese_vernacular_names.delay()
+        except Exception:  # noqa: BLE001 — backfill is best-effort
+            logger.debug("Failed to enqueue ja vernacular fetch", exc_info=True)
 
     async def resolve_gbif_batch(self, limit: int = 100) -> int:
         """Resolve GBIF data for unresolved taxa. Returns count of resolved.

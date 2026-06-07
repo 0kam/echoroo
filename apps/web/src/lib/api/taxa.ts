@@ -56,12 +56,22 @@ export async function searchTaxa(
 /**
  * Search the GBIF backbone taxonomy in real-time for species not yet in the local database.
  *
+ * When a non-`en` `locale` is supplied the backend live-enriches each result:
+ * `vernacular_names` gains a locale-tagged entry (e.g. language `"ja"`) and
+ * `vernacular_name` is overwritten with the locale-resolved value.
+ *
  * @param q - Search query string (scientific name or vernacular name)
  * @param limit - Maximum number of results to return (default: 10)
+ * @param locale - BCP 47 locale code for vernacular name enrichment (e.g. "en", "ja")
  */
-export async function searchGBIF(q: string, limit: number = 10): Promise<GBIFSpeciesResult[]> {
+export async function searchGBIF(
+  q: string,
+  limit: number = 10,
+  locale?: string,
+): Promise<GBIFSpeciesResult[]> {
   const searchParams = new URLSearchParams({ q });
   if (limit !== 10) searchParams.set('limit', String(limit));
+  if (locale) searchParams.set('locale', locale);
   return apiClient.get<GBIFSpeciesResult[]>(
     `/web-api/v1/taxa/gbif-search?${searchParams.toString()}`,
   );
@@ -79,12 +89,16 @@ export async function searchGBIF(q: string, limit: number = 10): Promise<GBIFSpe
  * @param gbifKey - GBIF backbone taxon key, when known
  * @param commonName - Vernacular name to seed, when available
  * @param locale - BCP 47 locale for the returned `common_name` resolution
+ * @param vernacularNames - Language-tagged vernacular names from the GBIF pick;
+ *   persisted server-side so the materialized taxon keeps its locale names
+ *   (e.g. 和名). When omitted only `common_name` is seeded (backward compat).
  */
 export async function createTaxonFromGbif(
   scientificName: string,
   gbifKey?: number | null,
   commonName?: string | null,
   locale?: string,
+  vernacularNames?: Array<{ name: string; language: string; source?: string }> | null,
 ): Promise<TaxonSearchResult> {
   const searchParams = new URLSearchParams();
   if (locale) searchParams.set('locale', locale);
@@ -95,6 +109,7 @@ export async function createTaxonFromGbif(
       scientific_name: scientificName,
       gbif_taxon_key: gbifKey ?? null,
       common_name: commonName ?? null,
+      vernacular_names: vernacularNames ?? null,
     },
     { headers: csrfHeaders() },
   );

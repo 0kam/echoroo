@@ -225,6 +225,7 @@ async def get_annotation_set(
     current_user: CurrentUser,
     db: DbSession,
     service: legacy_annotation_sets.AnnotationSetServiceDep,
+    locale: str = "en",
 ) -> AnnotationSetDetailResponse:
     """Delegate annotation-set detail to the legacy handler."""
     await gate_action(
@@ -238,6 +239,7 @@ async def get_annotation_set(
         set_id=set_id,
         current_user=current_user,
         service=service,
+        locale=locale,
     )
 
 

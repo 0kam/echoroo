@@ -77,7 +77,7 @@ async def test_gbif_search_taxa_returns_validated_results() -> None:
             patch.object(mod.GBIFSpeciesResult, "model_validate", return_value=sentinel):
         result = await mod.gbif_search_taxa(current_user=user, q="oak", limit=5)
     assert result == [sentinel]
-    gbif.search_species_full.assert_awaited_once_with(query="oak", limit=5)
+    gbif.search_species_full.assert_awaited_once_with(query="oak", limit=5, locale="en")
 
 
 @pytest.mark.asyncio
@@ -117,6 +117,7 @@ async def test_create_taxon_from_gbif_delegates_to_service() -> None:
         gbif_taxon_key=12345,
         common_name="Northern red oak",
         locale="ja",
+        vernacular_names=None,
     )
 
 
@@ -137,4 +138,5 @@ async def test_create_taxon_from_gbif_defaults_locale_to_en() -> None:
         gbif_taxon_key=None,
         common_name=None,
         locale="en",
+        vernacular_names=None,
     )

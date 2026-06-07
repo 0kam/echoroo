@@ -56,8 +56,9 @@
 
   const setQuery = $derived(
     createQuery({
-      queryKey: ['annotation-set', setId],
-      queryFn: () => getAnnotationSet(projectId, setId),
+      // Include locale so palette[].common_name is resolved per-locale (和名 on /ja).
+      queryKey: ['annotation-set', setId, getLocale()],
+      queryFn: () => getAnnotationSet(projectId, setId, getLocale()),
       refetchOnWindowFocus: false,
     }),
   );
