@@ -11,14 +11,13 @@
    * existing `searchTaxa` / `searchGBIF` helpers, so the user can add any
    * species without leaving this page.
    */
-  import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import { fetchDataset } from '$lib/api/datasets';
-  import { searchTaxa } from '$lib/api/taxa';
+  import { searchTaxa, createTaxonFromGbif } from '$lib/api/taxa';
   import {
     getAnnotationSet,
     listSegments,
@@ -34,8 +33,10 @@
     AnnotationSegmentStatus,
     PaletteEntry,
   } from '$lib/types/annotation-set';
-  import type { TaxonSearchResult } from '$lib/types/taxon';
+  import type { SpeciesPickerResult } from '$lib/types/species-picker';
   import { formatSpeciesName } from '$lib/utils/speciesFormatters';
+  import UnifiedSpeciesPicker from '$lib/components/shared/UnifiedSpeciesPicker.svelte';
+  import { norm } from '$lib/components/shared/unifiedSpeciesPicker';
   import EvaluationRunDialog from '$lib/components/annotation-sets/EvaluationRunDialog.svelte';
   import EvaluationRunList from '$lib/components/annotation-sets/EvaluationRunList.svelte';
 
@@ -159,46 +160,86 @@
   // Palette management
   // ============================================================
 
-  let paletteQuery = $state('');
-  let paletteResults = $state<TaxonSearchResult[]>([]);
-  let paletteSearching = $state(false);
-  let paletteDebounce: ReturnType<typeof setTimeout> | null = null;
-
-  function onPaletteInput() {
-    if (paletteDebounce) clearTimeout(paletteDebounce);
-    const q = paletteQuery.trim();
-    if (q.length < 2) {
-      paletteResults = [];
-      paletteSearching = false;
-      return;
-    }
-    paletteSearching = true;
-    paletteDebounce = setTimeout(async () => {
-      try {
-        paletteResults = await searchTaxa(q, getLocale(), 10);
-      } catch {
-        paletteResults = [];
-      } finally {
-        paletteSearching = false;
-      }
-    }, 300);
-  }
-
-  onDestroy(() => {
-    if (paletteDebounce) clearTimeout(paletteDebounce);
-  });
-
   const addPaletteMutationState = createMutation({
     mutationFn: (speciesId: string) => addPalette(projectId, setId, { species_id: speciesId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
-      paletteQuery = '';
-      paletteResults = [];
     },
     onError: (err: Error) => {
       toasts.error(err.message || m.annotation_sets_palette_add_error());
     },
   });
+
+  /**
+   * Resolve a unified-picker pick to a `taxon_id` and add it to the palette.
+   *
+   * The palette only stores real taxa, so non-taxon picks are resolved first:
+   *   - taxon pick → use its id directly
+   *   - tag pick   → use the tag's taxon_id; legacy tags without a link fall
+   *     back to a single taxa search by scientific name
+   *   - gbif pick  → get-or-create a local taxon via `createTaxonFromGbif`
+   * (custom entry is disabled in palette-search, so it never reaches here.)
+   */
+  // Normalized scientific names with an in-flight resolve/add. Passed to the
+  // picker so the row stays disabled until the async add settles, preventing a
+  // double-POST before the palette query refetches with the new entry.
+  let pendingKeys = $state(new Set<string>());
+
+  async function handlePaletteAdd(result: SpeciesPickerResult) {
+    const key = norm(result.scientific_name);
+    // Defense-in-depth: a row already in the palette or mid-add is a no-op (no
+    // POST → no 409). The picker greys these out, but guard here regardless.
+    if (addedKeys.has(key) || pendingKeys.has(key)) return;
+
+    pendingKeys = new Set(pendingKeys).add(key);
+    try {
+      let taxonId: string | null = null;
+
+      if (result.source === 'taxon' && result.taxon_id) {
+        taxonId = result.taxon_id;
+      } else if (result.source === 'tag') {
+        if (result.taxon_id) {
+          taxonId = result.taxon_id;
+        } else {
+          // Legacy tag with no taxon link: resolve by scientific name, then
+          // materialise from GBIF so the pick never silently no-ops.
+          const matches = await searchTaxa(result.scientific_name, getLocale(), 1);
+          taxonId = matches[0]?.id ?? null;
+          if (!taxonId) {
+            const taxon = await createTaxonFromGbif(
+              result.scientific_name,
+              result.gbif_key,
+              result.common_name,
+              getLocale(),
+            );
+            taxonId = taxon.id;
+          }
+        }
+      } else if (result.source === 'gbif') {
+        const taxon = await createTaxonFromGbif(
+          result.scientific_name,
+          result.gbif_key,
+          result.common_name,
+          getLocale(),
+        );
+        taxonId = taxon.id;
+      }
+
+      if (taxonId) {
+        $addPaletteMutationState.mutate(taxonId);
+      } else {
+        toasts.error(m.annotation_sets_palette_add_error());
+      }
+    } catch (err) {
+      toasts.error(
+        err instanceof Error ? err.message : m.annotation_sets_palette_add_error(),
+      );
+    } finally {
+      const next = new Set(pendingKeys);
+      next.delete(key);
+      pendingKeys = next;
+    }
+  }
 
   const removePaletteMutationState = createMutation({
     mutationFn: (speciesId: string) => removePalette(projectId, setId, speciesId),
@@ -207,10 +248,6 @@
     },
     onError: () => toasts.error(m.annotation_sets_palette_remove_error()),
   });
-
-  function isInPalette(speciesId: string): boolean {
-    return detail?.palette?.some((p) => p.species_id === speciesId) ?? false;
-  }
 
   // ============================================================
   // Formatting helpers
@@ -289,12 +326,11 @@
 
   const paletteDisplay = $derived<PaletteEntry[]>(detail?.palette ?? []);
 
+  // Authoritative grey-out: normalized scientific names already in the palette.
+  const addedKeys = $derived(new Set(paletteDisplay.map((e) => norm(e.scientific_name))));
+
   function paletteDisplayName(entry: PaletteEntry): string {
     return formatSpeciesName(entry.common_name, entry.scientific_name);
-  }
-
-  function taxonDisplayName(t: TaxonSearchResult): string {
-    return formatSpeciesName(t.common_name, t.scientific_name);
   }
 </script>
 
@@ -530,49 +566,15 @@
           {/each}
         </div>
 
-        <div class="relative mt-4">
-          <input
-            type="search"
-            class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+        <div class="mt-4">
+          <UnifiedSpeciesPicker
+            mode="palette-search"
+            showGBIF
+            {addedKeys}
+            {pendingKeys}
             placeholder={m.annotation_sets_palette_add_placeholder()}
-            bind:value={paletteQuery}
-            oninput={onPaletteInput}
-            aria-label={m.annotation_sets_palette_add_placeholder()}
+            onPick={handlePaletteAdd}
           />
-          {#if paletteQuery.length >= 2}
-            <div class="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-lg border border-stone-200 bg-white shadow-lg dark:border-stone-700 dark:bg-stone-800">
-              {#if paletteSearching}
-                <div class="p-3 text-center text-sm text-stone-500">
-                  {m.annotation_sets_palette_searching()}
-                </div>
-              {:else if paletteResults.length === 0}
-                <div class="p-3 text-center text-sm text-stone-400">
-                  {m.annotation_sets_palette_no_matches()}
-                </div>
-              {:else}
-                <ul role="listbox" aria-label={m.annotation_sets_palette_title()}>
-                  {#each paletteResults as t (t.id)}
-                    {@const already = isInPalette(t.id)}
-                    <li>
-                      <button
-                        type="button"
-                        class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-stone-50 dark:hover:bg-stone-700/40 disabled:cursor-not-allowed disabled:opacity-50"
-                        onclick={() => $addPaletteMutationState.mutate(t.id)}
-                        disabled={already || $addPaletteMutationState.isPending}
-                      >
-                        <span class="min-w-0 truncate text-stone-900 dark:text-stone-100">
-                          {taxonDisplayName(t)}
-                        </span>
-                        {#if already}
-                          <span class="flex-shrink-0 text-xs text-primary-600 dark:text-primary-300">&#10003;</span>
-                        {/if}
-                      </button>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </div>
-          {/if}
         </div>
       </section>
 

@@ -22,10 +22,11 @@
     TagSummary,
     Tag,
   } from '$lib/types/annotation';
+  import type { SpeciesPickerResult } from '$lib/types/species-picker';
   import ClipSpectrogramPlayer from '$lib/components/audio/ClipSpectrogramPlayer.svelte';
   import AnnotationCanvas from '$lib/components/annotation/AnnotationCanvas.svelte';
   import AnnotationList from '$lib/components/annotation/AnnotationList.svelte';
-  import TagSelector from '$lib/components/annotation/TagSelector.svelte';
+  import UnifiedSpeciesPicker from '$lib/components/shared/UnifiedSpeciesPicker.svelte';
   import TaskNavigator from '$lib/components/annotation/TaskNavigator.svelte';
 
   // ============================================================
@@ -89,8 +90,8 @@
   $: instructions = task?.annotation_project?.instructions;
 
   /**
-   * Map TagSummary[] to Tag[] for TagSelector's availableTags prop.
-   * TagSelector requires the full Tag interface (project_id, created_at, updated_at).
+   * Map TagSummary[] to Tag[] for the species picker's availableTags prop.
+   * The picker requires the full Tag interface (project_id, created_at, updated_at).
    */
   function toTagArray(summaries: TagSummary[]): Tag[] {
     return summaries.map((s) => ({
@@ -220,6 +221,17 @@
     if (clipAnnotation) {
       $removeClipTagMutation.mutate({ clipAnnotationId: clipAnnotation.id, tagId });
     }
+  }
+
+  // UnifiedSpeciesPicker (mode `tag-select`) adapters. Only existing project
+  // tags are selectable here (GBIF is off for parity), so a pick always
+  // carries a `tag_id`; non-tag picks are ignored.
+  function handleSelectedTagPick(result: SpeciesPickerResult) {
+    if (result.tag_id) handleTagSelect(result.tag_id);
+  }
+
+  function handleClipTagPick(result: SpeciesPickerResult) {
+    if (result.tag_id) handleClipTagSelect(result.tag_id);
   }
 
   function handleComplete() {
@@ -412,24 +424,24 @@
           {#if selectedAnnotationId}
             {@const selectedAnnotation = soundEvents.find((a) => a.id === selectedAnnotationId)}
             {#if selectedAnnotation}
-              <TagSelector
-                {projectId}
-                selectedTagIds={selectedAnnotation.tags.map((t) => t.id)}
+              <UnifiedSpeciesPicker
+                mode="tag-select"
                 availableTags={availableTagsFull}
-                onTagSelect={handleTagSelect}
+                selectedTagIds={selectedAnnotation.tags.map((t) => t.id)}
                 onTagRemove={handleTagRemove}
+                onPick={handleSelectedTagPick}
               />
             {:else}
               <p class="sidebar-hint">{m.annotation_workspace_selection_not_found()}</p>
             {/if}
           {:else}
             <p class="sidebar-hint">{m.annotation_workspace_select_annotation_hint()}</p>
-            <TagSelector
-              {projectId}
-              selectedTagIds={clipTags.map((t) => t.id)}
+            <UnifiedSpeciesPicker
+              mode="tag-select"
               availableTags={availableTagsFull}
-              onTagSelect={handleClipTagSelect}
+              selectedTagIds={clipTags.map((t) => t.id)}
               onTagRemove={handleClipTagRemove}
+              onPick={handleClipTagPick}
             />
           {/if}
         </div>
