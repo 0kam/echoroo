@@ -17,6 +17,7 @@
   import { getLocale, localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import { fetchDataset } from '$lib/api/datasets';
+  import { projectsApi } from '$lib/api/projects';
   import { searchTaxa, createTaxonFromGbif } from '$lib/api/taxa';
   import {
     getAnnotationSet,
@@ -69,6 +70,24 @@
   );
 
   const detail = $derived<AnnotationSetDetail | null>($detailQuery.data ?? null);
+
+  // Load the project so we can resolve `current_user_role` — the canonical
+  // source for role gating across project pages (matches the sibling trusted /
+  // datasets pages). The ToriTore participation requirement (min_total_score)
+  // is owner/admin-only, so members see it read-only.
+  const projectQuery = $derived(
+    createQuery({
+      queryKey: ['project', projectId],
+      queryFn: () => projectsApi.get(projectId),
+      enabled: !!projectId,
+      refetchOnWindowFocus: false,
+    }),
+  );
+
+  const isAdmin = $derived(
+    $projectQuery.data?.current_user_role === 'owner' ||
+      $projectQuery.data?.current_user_role === 'admin',
+  );
 
   // Invalidate dependent queries when sampling completes.
   let previousStatus = $state<AnnotationSetStatus | null>(null);
@@ -685,37 +704,56 @@
         </h2>
         <p class="mt-1 text-sm text-stone-500">{m.annotation_sets_min_score_description()}</p>
 
-        <div class="mt-4 flex flex-wrap items-end gap-3">
-          <div>
-            <label
-              for="min-total-score-edit"
-              class="block text-sm font-medium text-stone-700 dark:text-stone-300"
-            >
-              {m.annotation_sets_create_min_total_score()}
-            </label>
-            <input
-              id="min-total-score-edit"
-              type="number"
-              min="0"
-              max="1"
-              step="0.01"
-              class="mt-1 w-40 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
-              bind:value={minTotalScoreDraft}
+        {#if isAdmin}
+          <div class="mt-4 flex flex-wrap items-end gap-3">
+            <div>
+              <label
+                for="min-total-score-edit"
+                class="block text-sm font-medium text-stone-700 dark:text-stone-300"
+              >
+                {m.annotation_sets_create_min_total_score()}
+              </label>
+              <input
+                id="min-total-score-edit"
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                class="mt-1 w-40 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+                bind:value={minTotalScoreDraft}
+                disabled={$minScoreMutationState.isPending}
+              />
+            </div>
+            <button
+              type="button"
+              class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:hover:bg-primary-400"
+              onclick={submitMinScore}
               disabled={$minScoreMutationState.isPending}
-            />
+            >
+              {$minScoreMutationState.isPending
+                ? m.annotation_sets_detail_rename_save()
+                : m.annotation_sets_min_score_save()}
+            </button>
           </div>
-          <button
-            type="button"
-            class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:hover:bg-primary-400"
-            onclick={submitMinScore}
-            disabled={$minScoreMutationState.isPending}
-          >
-            {$minScoreMutationState.isPending
-              ? m.annotation_sets_detail_rename_save()
-              : m.annotation_sets_min_score_save()}
-          </button>
-        </div>
-        <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_min_total_score_hint()}</p>
+          <p class="mt-1 text-xs text-stone-400">
+            {m.annotation_sets_create_min_total_score_hint()}
+          </p>
+        {:else}
+          <!-- Members can see the rule but cannot change it (owner/admin only). -->
+          <div class="mt-4">
+            {#if detail?.min_total_score != null}
+              <p class="text-sm text-stone-700 dark:text-stone-300">
+                {m.annotation_sets_min_score_current()}:
+                <span class="font-medium">{detail.min_total_score}</span>
+              </p>
+            {:else}
+              <p class="text-sm text-stone-500">{m.annotation_sets_min_score_none()}</p>
+            {/if}
+            <p class="mt-1 text-xs text-stone-400">
+              {m.annotation_sets_min_score_readonly_note()}
+            </p>
+          </div>
+        {/if}
       </section>
 
       <!-- Segments table -->

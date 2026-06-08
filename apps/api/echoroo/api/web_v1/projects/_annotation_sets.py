@@ -89,7 +89,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from echoroo.api.v1 import annotation_sets as legacy_annotation_sets
 from echoroo.api.v1 import evaluation as legacy_evaluation
@@ -215,6 +215,18 @@ async def create_annotation_set(
         request=http_request,
         db=db,
     )
+    # MEMBERs may create annotation sets, but the ToriTore participation
+    # requirement (``min_total_score``) is owner/admin-only. Rather than
+    # rejecting member set-creation outright (surprising — they CAN create
+    # sets), silently coerce the requirement to null when a non-owner/admin
+    # supplies one. The set is still created; only the gate threshold is
+    # dropped. Owners/admins keep full control.
+    if request.min_total_score is not None and not (
+        await is_project_owner_or_admin(
+            db, project_id=project_id, user_id=current_user.id,
+        )
+    ):
+        request = request.model_copy(update={"min_total_score": None})
     return await legacy_annotation_sets.create_annotation_set(
         request=request,
         current_user=current_user,
@@ -336,6 +348,26 @@ async def update_annotation_set(
         request=http_request,
         db=db,
     )
+    # ToriTore participation requirement (``min_total_score``) is an
+    # owner/admin-only knob: it defines who may annotate the set, so a plain
+    # MEMBER must not be able to set or clear it even via a direct API call.
+    # Members updating OTHER fields (no ``min_total_score`` in the payload)
+    # still pass through unchanged.
+    if "min_total_score" in request.model_fields_set and not (
+        await is_project_owner_or_admin(
+            db, project_id=project_id, user_id=current_user.id,
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "toritore_min_score_forbidden",
+                "message": (
+                    "Only project owners or admins can change the "
+                    "participation requirement."
+                ),
+            },
+        )
     return await legacy_annotation_sets.update_annotation_set(
         set_id=set_id,
         request=request,

@@ -396,6 +396,213 @@ async def test_update_annotation_set_bff_delegates_to_legacy(
     assert gate_captured["action"] is ANNOTATION_SET_UPDATE_ACTION
 
 
+def _make_owner_or_admin_check(*, allow: bool) -> Any:
+    """Stub ``is_project_owner_or_admin`` returning a fixed verdict.
+
+    The min_total_score gate on the update/create paths only depends on this
+    boolean, so each test fixes it to model a MEMBER (``allow=False``) or an
+    OWNER/ADMIN (``allow=True``) without needing real ``ProjectMember`` rows.
+    """
+
+    async def fake(*_args: object, **_kwargs: object) -> bool:
+        return allow
+
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_update_min_total_score_rejected_for_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A MEMBER setting ``min_total_score`` is rejected with a 403."""
+    project_id = uuid4()
+    set_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    gate_captured: dict[str, object] = {}
+    delegated = False
+
+    async def fake_update(**_kwargs: object) -> AnnotationSetDetailResponse:
+        nonlocal delegated
+        delegated = True
+        return _fake_set_detail(project_id=project_id, set_id=set_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_sets, "update_annotation_set", fake_update
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "gate_action",
+        _make_capturing_gate_action(gate_captured),
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "is_project_owner_or_admin",
+        _make_owner_or_admin_check(allow=False),
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.patch(
+            f"/web-api/v1/projects/{project_id}/annotation-sets/{set_id}",
+            json={"min_total_score": 0.5},
+        )
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "toritore_min_score_forbidden"
+    # The legacy update must not run when the gate rejects.
+    assert delegated is False
+
+
+@pytest.mark.asyncio
+async def test_update_min_total_score_allowed_for_owner_or_admin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OWNER/ADMIN setting ``min_total_score`` succeeds and delegates."""
+    project_id = uuid4()
+    set_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_update(**kwargs: object) -> AnnotationSetDetailResponse:
+        captured.update(kwargs)
+        return _fake_set_detail(project_id=project_id, set_id=set_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_sets, "update_annotation_set", fake_update
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "gate_action",
+        _make_capturing_gate_action(gate_captured),
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "is_project_owner_or_admin",
+        _make_owner_or_admin_check(allow=True),
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.patch(
+            f"/web-api/v1/projects/{project_id}/annotation-sets/{set_id}",
+            json={"min_total_score": 0.5},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = captured["request"]
+    assert payload.min_total_score == 0.5
+    assert "min_total_score" in payload.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_update_other_field_allowed_for_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A MEMBER updating a non-score field (no ``min_total_score``) succeeds.
+
+    The owner/admin gate only fires when ``min_total_score`` is in the
+    payload, so plain field edits stay open to members as before.
+    """
+    project_id = uuid4()
+    set_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_update(**kwargs: object) -> AnnotationSetDetailResponse:
+        captured.update(kwargs)
+        return _fake_set_detail(project_id=project_id, set_id=set_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_sets, "update_annotation_set", fake_update
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "gate_action",
+        _make_capturing_gate_action(gate_captured),
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "is_project_owner_or_admin",
+        _make_owner_or_admin_check(allow=False),
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.patch(
+            f"/web-api/v1/projects/{project_id}/annotation-sets/{set_id}",
+            json={"name": "renamed"},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = captured["request"]
+    assert payload.name == "renamed"
+    assert "min_total_score" not in payload.model_fields_set
+
+
+@pytest.mark.asyncio
+async def test_create_min_total_score_coerced_to_null_for_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A MEMBER creating a set still succeeds; the requirement is dropped."""
+    project_id = uuid4()
+    set_id = uuid4()
+    dataset_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_create(**kwargs: object) -> AnnotationSetDetailResponse:
+        captured.update(kwargs)
+        return _fake_set_detail(project_id=project_id, set_id=set_id)
+
+    monkeypatch.setattr(
+        legacy_annotation_sets, "create_annotation_set", fake_create
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "gate_action",
+        _make_capturing_gate_action(gate_captured),
+    )
+    monkeypatch.setattr(
+        bff_annotation_sets,
+        "is_project_owner_or_admin",
+        _make_owner_or_admin_check(allow=False),
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/annotation-sets",
+            json={
+                "project_id": str(project_id),
+                "dataset_id": str(dataset_id),
+                "name": "member-set",
+                "segment_length_sec": 30,
+                "num_segments": 5,
+                "min_total_score": 0.4,
+            },
+        )
+
+    assert response.status_code == 201, response.text
+    payload = captured["request"]
+    # Member set-creation still works, but the requirement is silently dropped.
+    assert payload.min_total_score is None
+
+
 @pytest.mark.asyncio
 async def test_delete_annotation_set_bff_delegates_to_legacy(
     monkeypatch: pytest.MonkeyPatch,
