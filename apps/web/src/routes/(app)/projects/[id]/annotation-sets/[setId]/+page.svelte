@@ -181,6 +181,42 @@
   }
 
   // ============================================================
+  // ToriTore participation gate threshold (min_total_score)
+  // ============================================================
+
+  // Local draft for the gate threshold editor. Empty string => no requirement
+  // (sent as `null`). Synced from the loaded detail whenever it changes.
+  let minTotalScoreDraft = $state<number | ''>('');
+  let lastSyncedSetId = $state<string | null>(null);
+
+  $effect(() => {
+    // Re-seed the draft when the set first loads or the route's set changes,
+    // so reopening the page reflects the persisted value (avoids clobbering an
+    // in-progress edit on unrelated query refetches).
+    if (detail && detail.id !== lastSyncedSetId) {
+      minTotalScoreDraft = detail.min_total_score ?? '';
+      lastSyncedSetId = detail.id;
+    }
+  });
+
+  const minScoreMutationState = createMutation({
+    mutationFn: (value: number | null) =>
+      updateAnnotationSet(projectId, setId, { min_total_score: value }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['annotation-set', setId, getLocale()], updated);
+      minTotalScoreDraft = updated.min_total_score ?? '';
+      toasts.success(m.annotation_sets_min_score_save_success());
+    },
+    onError: () => toasts.error(m.annotation_sets_min_score_save_error()),
+  });
+
+  function submitMinScore() {
+    const value = minTotalScoreDraft === '' ? null : minTotalScoreDraft;
+    if (value === (detail?.min_total_score ?? null)) return;
+    $minScoreMutationState.mutate(value);
+  }
+
+  // ============================================================
   // Delete
   // ============================================================
 
@@ -640,6 +676,46 @@
             onPick={handlePaletteAdd}
           />
         </div>
+      </section>
+
+      <!-- ToriTore participation gate (preview) -->
+      <section class="mt-6 rounded-xl border border-card bg-surface-card p-6 shadow-sm">
+        <h2 class="text-lg font-semibold text-stone-900 dark:text-stone-100">
+          {m.annotation_sets_min_score_title()}
+        </h2>
+        <p class="mt-1 text-sm text-stone-500">{m.annotation_sets_min_score_description()}</p>
+
+        <div class="mt-4 flex flex-wrap items-end gap-3">
+          <div>
+            <label
+              for="min-total-score-edit"
+              class="block text-sm font-medium text-stone-700 dark:text-stone-300"
+            >
+              {m.annotation_sets_create_min_total_score()}
+            </label>
+            <input
+              id="min-total-score-edit"
+              type="number"
+              min="0"
+              max="1"
+              step="0.01"
+              class="mt-1 w-40 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+              bind:value={minTotalScoreDraft}
+              disabled={$minScoreMutationState.isPending}
+            />
+          </div>
+          <button
+            type="button"
+            class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:hover:bg-primary-400"
+            onclick={submitMinScore}
+            disabled={$minScoreMutationState.isPending}
+          >
+            {$minScoreMutationState.isPending
+              ? m.annotation_sets_detail_rename_save()
+              : m.annotation_sets_min_score_save()}
+          </button>
+        </div>
+        <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_min_total_score_hint()}</p>
       </section>
 
       <!-- Segments table -->

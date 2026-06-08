@@ -86,9 +86,13 @@ async def create_annotation(
     request: TimeRangeAnnotationCreate,
     current_user: CurrentUser,
     service: SegmentServiceDep,
+    project_id: UUID | None = None,
 ) -> TimeRangeAnnotationResponse:
     return await service.create_annotation(
-        segment_id, user_id=current_user.id, request=request,
+        segment_id,
+        user_id=current_user.id,
+        request=request,
+        project_id=project_id,
     )
 
 

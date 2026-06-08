@@ -14,6 +14,7 @@ from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_mo
 from echoroo.api.web_v1 import detection_runs as detection_runs_module
 from echoroo.api.web_v1 import licenses as licenses_module
 from echoroo.api.web_v1 import me as me_module
+from echoroo.api.web_v1 import me_toritore as me_toritore_module
 from echoroo.api.web_v1 import taxa as taxa_module
 from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
@@ -60,6 +61,12 @@ web_v1_router.include_router(users_module.router)
 # carry no ``gate_action`` guard and are classified ``USER_SCOPED_ONLY``
 # in :mod:`echoroo.core.endpoint_allowlist`.
 web_v1_router.include_router(me_module.router)
+# ToriTore (とりトレ) integration (preview) — self-service proficiency
+# upload + summary under ``/web-api/v1/me/toritore-results``.
+# Authenticated-self only (resolved via ``CurrentUser``); no project
+# context, so the routes carry no ``gate_action`` guard and are classified
+# ``USER_SCOPED_ONLY`` in :mod:`echoroo.core.endpoint_allowlist`.
+web_v1_router.include_router(me_toritore_module.router)
 # Spec/009 PR 4 — first-party recorders catalog. Mounted at the top
 # level of ``/web-api/v1`` (not under ``/projects``) because the legacy
 # router is a tenant-wide catalog endpoint (no ``project_id`` in the

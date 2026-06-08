@@ -100,6 +100,15 @@ class AnnotationSetCreate(BaseModel):
             "full-length segment per recording)."
         ),
     )
+    min_total_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "ToriTore participation-gate threshold (preview): minimum latest "
+            "ToriTore total_score required to annotate. NULL = no requirement."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_segment_length(self) -> AnnotationSetCreate:
@@ -147,6 +156,16 @@ class AnnotationSetUpdate(BaseModel):
         ge=1,
         description="New target count (only accepted before sampling completes)",
     )
+    min_total_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "New ToriTore participation-gate threshold (preview). Supply "
+            "null to clear the requirement; omit the field to leave it "
+            "unchanged (presence is detected via the request's set fields)."
+        ),
+    )
 
 
 class AnnotationSetProgress(BaseModel):
@@ -174,6 +193,7 @@ class AnnotationSetResponse(BaseModel):
     num_segments: int
     status: Literal["sampling", "ready", "in_progress", "completed"]
     sampling_warning: str | None = None
+    min_total_score: float | None = None
     created_at: datetime
     updated_at: datetime
     # Additive, backward-compatible. The list endpoint populates real
@@ -362,6 +382,11 @@ class TimeRangeAnnotationResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     note_count: int = 0
+    # ToriTore snapshot (preview, Part B) — nullable when the annotator had
+    # no relevant ToriTore data at creation time.
+    annotator_species_score: float | None = None
+    annotator_total_score: float | None = None
+    annotator_test_reference: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

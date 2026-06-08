@@ -162,6 +162,7 @@ class AnnotationSetService:
             num_segments=anno_set.num_segments,
             status=anno_set.status.value,
             sampling_warning=anno_set.sampling_warning,
+            min_total_score=anno_set.min_total_score,
             created_at=anno_set.created_at,
             updated_at=anno_set.updated_at,
             progress=progress,
@@ -205,6 +206,7 @@ class AnnotationSetService:
                 if request.filter_time_of_day_range is not None
                 else None
             ),
+            min_total_score=request.min_total_score,
         )
 
         # Commit before enqueueing so the worker can fetch the row through a
@@ -366,6 +368,11 @@ class AnnotationSetService:
             anno_set.segment_length_sec = request.segment_length_sec
         if request.num_segments is not None:
             anno_set.num_segments = request.num_segments
+        # ToriTore threshold (preview): NULL is a meaningful value ("clear the
+        # requirement"), so distinguish "field supplied" from "omitted" via the
+        # request's explicitly-set fields rather than a None default.
+        if "min_total_score" in request.model_fields_set:
+            anno_set.min_total_score = request.min_total_score
 
         await self._db.flush()
         await self._db.refresh(anno_set)

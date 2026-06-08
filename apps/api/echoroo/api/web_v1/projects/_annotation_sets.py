@@ -118,6 +118,7 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.pagination import PaginationParams
 from echoroo.core.permissions import gate_action
+from echoroo.core.toritore_gate import is_project_owner_or_admin
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import AnnotationSegmentStatus, AnnotationSetStatus
 from echoroo.schemas.annotation_set import (
@@ -142,6 +143,8 @@ from echoroo.schemas.evaluation import (
     EvaluationRunResponse,
     EvaluationSummary,
 )
+from echoroo.schemas.toritore import AnnotationSetEligibility
+from echoroo.services import toritore as toritore_service
 
 router = APIRouter()
 
@@ -247,6 +250,66 @@ async def get_annotation_set(
         current_user=current_user,
         service=service,
         locale=locale,
+    )
+
+
+@router.get(
+    "/{project_id}/annotation-sets/{set_id}/eligibility",
+    response_model=AnnotationSetEligibility,
+    summary="ToriTore participation-gate eligibility for the current user (preview)",
+    description=(
+        "Returns whether the authenticated user may annotate this set under "
+        "the ToriTore participation gate. Owners/Admins are exempt; a set with "
+        "no min_total_score has no requirement."
+    ),
+)
+async def get_annotation_set_eligibility(
+    project_id: UUID,
+    set_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+    service: legacy_annotation_sets.AnnotationSetServiceDep,
+) -> AnnotationSetEligibility:
+    """Compute ToriTore eligibility for the set, reusing the set-read gate."""
+    # Reuse the SAME access check as the set GET endpoint.
+    await gate_action(
+        action=ANNOTATION_CLIP_GET_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    # Load the set (404 if absent) to read its threshold.
+    detail = await legacy_annotation_sets.get_annotation_set(
+        set_id=set_id,
+        current_user=current_user,
+        service=service,
+        locale="en",
+    )
+    anno_set = await service._require_set(set_id)
+    required = anno_set.min_total_score
+
+    is_exempt = await is_project_owner_or_admin(
+        db, project_id=project_id, user_id=current_user.id,
+    )
+    my_latest = await toritore_service.get_latest_total_score(
+        db, current_user.id,
+    )
+
+    eligible = (
+        is_exempt
+        or required is None
+        or (my_latest is not None and my_latest >= required)
+    )
+    # ``detail`` is intentionally not surfaced; the read-gate above already
+    # validated visibility and the set's existence.
+    del detail
+    return AnnotationSetEligibility(
+        required=required,
+        my_latest_total_score=my_latest,
+        eligible=eligible,
+        is_exempt=is_exempt,
     )
 
 
@@ -511,6 +574,7 @@ async def create_annotation(
         request=request,
         current_user=current_user,
         service=service,
+        project_id=project_id,
     )
 
 

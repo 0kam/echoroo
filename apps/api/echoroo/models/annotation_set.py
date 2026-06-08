@@ -244,6 +244,15 @@ class AnnotationSet(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc="Human-readable sampling warning (e.g. underfill notice)",
     )
+    min_total_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "ToriTore participation-gate threshold (preview): the minimum "
+            "latest ToriTore total_score required to annotate this set. "
+            "NULL = no requirement (gate skipped)."
+        ),
+    )
 
     # Relationships
     project: Mapped[Project] = relationship(
@@ -505,6 +514,32 @@ class TimeRangeAnnotation(UUIDMixin, TimestampMixin, Base):
         ForeignKey("users.id"),
         nullable=False,
         doc="Author user ID",
+    )
+    annotator_species_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "ToriTore snapshot (preview): the annotator's per-species correct "
+            "rate (AVG is_correct) for the annotated taxon's GBIF key at "
+            "creation time. NULL when the annotator had no ToriTore data for "
+            "that species."
+        ),
+    )
+    annotator_total_score: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+        doc=(
+            "ToriTore snapshot (preview): the annotator's latest ToriTore "
+            "total_score at creation time. NULL when no ToriTore upload exists."
+        ),
+    )
+    annotator_test_reference: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        doc=(
+            "ToriTore snapshot (preview): human-readable reference to the test "
+            'used for the snapshot, e.g. "test#1@20260604142325+9:00".'
+        ),
     )
 
     # Relationships

@@ -102,6 +102,12 @@ export interface AnnotationSet {
   segment_length_sec: number | null;
   num_segments: number;
   status: AnnotationSetStatus;
+  /**
+   * ToriTore participation gate threshold (preview feature). The minimum
+   * latest-test total score (0–1) a non-exempt annotator must reach to
+   * participate. `null` = no requirement.
+   */
+  min_total_score: number | null;
   /** Optional human-readable warning surfaced by the sampler. */
   sampling_warning: string | null;
   created_at: string;
@@ -135,11 +141,21 @@ export interface AnnotationSetCreate {
    * number of recordings to sample (one full-length segment each).
    */
   num_segments: number;
+  /**
+   * ToriTore participation gate threshold (preview). `null` = no requirement.
+   * Omitting the field lets the backend apply its own default.
+   */
+  min_total_score?: number | null;
 }
 
 /** Request body for `PATCH /annotation-sets/{id}`. */
 export interface AnnotationSetUpdate {
   name?: string;
+  /**
+   * ToriTore participation gate threshold (preview). `null` clears the
+   * requirement; omit to leave it unchanged.
+   */
+  min_total_score?: number | null;
 }
 
 /** Paginated list response wrapper. */

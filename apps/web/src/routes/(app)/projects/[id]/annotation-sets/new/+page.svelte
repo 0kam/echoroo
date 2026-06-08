@@ -48,6 +48,11 @@
   let segmentLengthSec = $state<number>(60);
   let numSegments = $state<number>(50);
 
+  // ToriTore participation gate (preview). Empty string => no requirement
+  // (sent as `null`). Prefilled to 0.2 per the locked default. The bound
+  // value can be a number or '' (cleared), so it is typed as `number | ''`.
+  let minTotalScore = $state<number | ''>(0.2);
+
   // Step 4
   let name = $state<string>('');
 
@@ -153,6 +158,8 @@
       name: name.trim(),
       segment_mode: segmentMode,
       num_segments: Math.floor(numSegments),
+      // Empty input clears the requirement (null); a number sets the threshold.
+      min_total_score: minTotalScore === '' ? null : minTotalScore,
     };
 
     // segment_length_sec is only sent in fixed mode; whole_recording leaves it
@@ -441,6 +448,23 @@
         </div>
       </div>
 
+      <!-- ToriTore participation gate (preview) -->
+      <div class="mt-4">
+        <label for="min-total-score" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+          {m.annotation_sets_create_min_total_score()}
+        </label>
+        <input
+          id="min-total-score"
+          type="number"
+          min="0"
+          max="1"
+          step="0.01"
+          class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+          bind:value={minTotalScore}
+        />
+        <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_min_total_score_hint()}</p>
+      </div>
+
     <!-- Step 4: Name + summary -->
     {:else if step === 4}
       <h2 class="text-lg font-semibold text-stone-900 dark:text-stone-100">
@@ -504,6 +528,13 @@
               : m.annotation_sets_create_summary_count()}:
           </dt>
           <dd class="text-stone-900 dark:text-stone-100">{numSegments}</dd>
+
+          <dt class="text-stone-500">{m.annotation_sets_create_summary_min_total_score()}:</dt>
+          <dd class="text-stone-900 dark:text-stone-100">
+            {minTotalScore === ''
+              ? m.annotation_sets_create_summary_min_total_score_none()
+              : minTotalScore}
+          </dd>
         </dl>
       </section>
     {/if}

@@ -23,7 +23,12 @@ from fastapi import status as http_status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.annotation_set import AnnotationSegment, TimeRangeAnnotation
+from echoroo.core.toritore_gate import enforce_participation_gate
+from echoroo.models.annotation_set import (
+    AnnotationSegment,
+    AnnotationSet,
+    TimeRangeAnnotation,
+)
 from echoroo.models.enums import AnnotationSegmentStatus
 from echoroo.models.note import Note
 from echoroo.models.taxon import Taxon
@@ -39,6 +44,7 @@ from echoroo.schemas.annotation_set import (
     TimeRangeAnnotationCreate,
     TimeRangeAnnotationResponse,
 )
+from echoroo.services import toritore as toritore_service
 from echoroo.services.annotation_set import AnnotationSetService
 
 logger = logging.getLogger(__name__)
@@ -120,6 +126,9 @@ class AnnotationSegmentService:
             created_at=row.created_at,
             updated_at=row.updated_at,
             note_count=note_count,
+            annotator_species_score=row.annotator_species_score,
+            annotator_total_score=row.annotator_total_score,
+            annotator_test_reference=row.annotator_test_reference,
         )
 
     # ------------------------------------------------------------------
@@ -258,6 +267,7 @@ class AnnotationSegmentService:
         *,
         user_id: UUID,
         request: TimeRangeAnnotationCreate,
+        project_id: UUID | None = None,
     ) -> TimeRangeAnnotationResponse:
         segment = await self._require_segment(segment_id)
 
@@ -272,7 +282,35 @@ class AnnotationSegmentService:
                 ),
             )
 
-        await self._require_taxon(request.species_id)
+        taxon = await self._require_taxon(request.species_id)
+
+        # ToriTore participation gate (preview): enforced UNCONDITIONALLY so
+        # the legacy path (no ``project_id`` argument) cannot bypass the score
+        # gate. When the caller does not supply a ``project_id`` (legacy path),
+        # resolve the owning project from the segment's AnnotationSet. The set's
+        # ``min_total_score`` NULL disables the gate; Owners/Admins are exempt.
+        min_total_score = await self._set_min_total_score(segment.annotation_set_id)
+        if project_id is None:
+            project_id = await self._resolve_project_id(segment.annotation_set_id)
+        await enforce_participation_gate(
+            self._db,
+            project_id=project_id,
+            user_id=user_id,
+            min_total_score=min_total_score,
+        )
+
+        # ToriTore per-species snapshot (preview, Part B).
+        annotator_species_score: float | None = None
+        if taxon.gbif_taxon_key is not None:
+            annotator_species_score = await toritore_service.get_species_rate(
+                self._db, user_id, taxon.gbif_taxon_key,
+            )
+        annotator_total_score = await toritore_service.get_latest_total_score(
+            self._db, user_id,
+        )
+        annotator_test_reference = (
+            await toritore_service.get_latest_test_reference(self._db, user_id)
+        )
 
         created = await self.annotation_repo.create(
             segment_id=segment_id,
@@ -282,6 +320,10 @@ class AnnotationSegmentService:
             created_by_id=user_id,
             confidence=request.confidence,
         )
+        created.annotator_species_score = annotator_species_score
+        created.annotator_total_score = annotator_total_score
+        created.annotator_test_reference = annotator_test_reference
+        await self._db.flush()
 
         # Invariant: creating an annotation flips is_empty to False.
         if segment.is_empty:
@@ -289,6 +331,31 @@ class AnnotationSegmentService:
             await self._db.flush()
 
         return await self._annotation_to_response(created)
+
+    async def _set_min_total_score(self, set_id: UUID) -> float | None:
+        """Return the owning set's ToriTore ``min_total_score`` threshold."""
+        result = await self._db.execute(
+            select(AnnotationSet.min_total_score).where(AnnotationSet.id == set_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def _resolve_project_id(self, set_id: UUID) -> UUID:
+        """Resolve the owning project for an AnnotationSet (one cheap query).
+
+        Used by the legacy create path which receives no ``project_id`` so the
+        ToriTore participation gate can still be enforced. Raises the existing
+        not-found error when the owning set cannot be located.
+        """
+        result = await self._db.execute(
+            select(AnnotationSet.project_id).where(AnnotationSet.id == set_id)
+        )
+        project_id = result.scalar_one_or_none()
+        if project_id is None:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="Annotation segment not found",
+            )
+        return project_id
 
     # ------------------------------------------------------------------
     # Note attachment

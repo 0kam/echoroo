@@ -375,6 +375,24 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # ToriTore (とりトレ) integration (preview) — self-service proficiency
+    # upload + summary. Both operate strictly on the authenticated session
+    # user (resolved via ``CurrentUser``); there is no project context and no
+    # cross-user side effect, so they carry NO ``gate_action`` guard. Same
+    # trust boundary as ``/web-api/v1/me/banners`` (USER_SCOPED_ONLY).
+    AllowlistEntry(
+        path_pattern="/web-api/v1/me/toritore-results",
+        methods=frozenset({"GET", "POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason=(
+            "ToriTore proficiency upload/summary operates strictly on the "
+            "authenticated session user (preview/toritore-integration)"
+        ),
+        owner=_DEFAULT_OWNER,
+        spec_ref="preview/toritore-integration#me-toritore",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     # ---- auth_callback: DSR account endpoints ----------------------------
     AllowlistEntry(
         path_pattern="/web-api/v1/account/dsr/export",

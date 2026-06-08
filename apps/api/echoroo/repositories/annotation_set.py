@@ -59,6 +59,7 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
         segment_length_sec: int | None = None,
         filter_date_range: dict[str, Any] | None = None,
         filter_time_of_day_range: dict[str, Any] | None = None,
+        min_total_score: float | None = None,
     ) -> AnnotationSet:
         """Create a new AnnotationSet with status ``sampling``.
 
@@ -74,6 +75,8 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
                 Required for ``fixed`` mode; ``None`` for ``whole_recording``.
             filter_date_range: Optional JSONB date filter payload.
             filter_time_of_day_range: Optional JSONB time-of-day filter payload.
+            min_total_score: Optional ToriTore participation-gate threshold
+                (preview); NULL = no requirement.
 
         Returns:
             The newly created ``AnnotationSet`` with ``status = sampling``.
@@ -88,6 +91,7 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
             num_segments=num_segments,
             filter_date_range=filter_date_range,
             filter_time_of_day_range=filter_time_of_day_range,
+            min_total_score=min_total_score,
             status=AnnotationSetStatus.SAMPLING,
         )
         self.db.add(set_)

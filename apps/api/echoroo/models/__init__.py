@@ -74,6 +74,7 @@ from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+from echoroo.models.toritore import ToriToreSpeciesScore, ToriToreTestResult
 from echoroo.models.trusted_device import TrustedDevice
 from echoroo.models.two_factor_reset_request import (
     TwoFactorConfirmationToken,
@@ -124,6 +125,9 @@ __all__ = [
     "Taxon",
     "TaxonSensitivity",
     "TaxonVernacularName",
+    # ToriTore proficiency (preview)
+    "ToriToreTestResult",
+    "ToriToreSpeciesScore",
     # Taxon-driven auto-obscure (Phase 11)
     "IucnSyncAttempt",
     # Detection review models (003-detection-review)
