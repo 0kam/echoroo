@@ -174,7 +174,9 @@ class AnnotationSetExportService:
         recording_id = recording.id if recording else None
 
         # Absolute event datetime = recording start + segment offset + annotation
-        # offset (start / end). Reuses the detection export formatter.
+        # offset (start / end). Reuses the shared detection-export helper, which
+        # now preserves sub-second (millisecond) precision so short /
+        # fractional-offset annotations keep their real boundaries.
         segment_offset = segment.start_time_sec if segment else 0.0
         event_start = _format_event_datetime(
             recording_datetime, segment_offset + ann.start_time_sec

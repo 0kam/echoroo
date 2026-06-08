@@ -131,17 +131,28 @@ def _format_event_datetime(
 ) -> str:
     """Format an absolute ISO 8601 datetime from recording start + offset.
 
+    Sub-second precision is preserved: the offset is added as a float (no int
+    truncation) and the output carries a millisecond fraction, uniformly — a
+    whole-second value renders as ``.000``. Audio detections / annotations often
+    have fractional-second boundaries (many are shorter than one second), so
+    truncating to whole seconds would drop their real duration. The trailing
+    ``Z`` (UTC) suffix style is preserved from the previous implementation.
+
     Args:
         recording_datetime: Base datetime of the recording (timezone-aware or naive).
-        offset_seconds: Offset in seconds from the recording start.
+        offset_seconds: Offset in seconds from the recording start (float;
+            fractional part preserved).
 
     Returns:
-        ISO 8601 string with Z suffix, or empty string if datetime is None.
+        ISO 8601 string with millisecond fraction and ``Z`` suffix
+        (e.g. ``2026-06-04T05:23:25.450Z``), or empty string if datetime is None.
     """
     if recording_datetime is None:
         return ""
-    result = recording_datetime + timedelta(seconds=offset_seconds)
-    return result.strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = recording_datetime + timedelta(seconds=float(offset_seconds))
+    # Emit millisecond (3 fractional-digit) precision while keeping the existing
+    # ``Z`` UTC suffix; recording datetimes are stored UTC.
+    return result.strftime("%Y-%m-%dT%H:%M:%S.") + f"{result.microsecond // 1000:03d}Z"
 
 
 class DetectionExportService:

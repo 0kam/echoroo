@@ -129,10 +129,11 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     body = await _collect(service, project_id=project_id, set_id=set_id)
 
     reader = csv.DictReader(io.StringIO(body))
+    assert reader.fieldnames is not None
     assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
     # Sanity: detection CamtrapDP cols precede the ToriTore cols.
-    assert reader.fieldnames[: len(_CAMTRAPDP_COLUMNS)] == _CAMTRAPDP_COLUMNS
-    assert reader.fieldnames[-len(_TORITORE_COLUMNS) :] == _TORITORE_COLUMNS
+    assert list(reader.fieldnames[: len(_CAMTRAPDP_COLUMNS)]) == _CAMTRAPDP_COLUMNS
+    assert list(reader.fieldnames[-len(_TORITORE_COLUMNS) :]) == _TORITORE_COLUMNS
 
     rows = list(reader)
     assert len(rows) == len(annotations)
@@ -149,14 +150,73 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert first["annotator_species_score"] == "0.8000"
     assert first["annotator_test_reference"] == "test#1@20260604142325+9:00"
     # Event datetime = recording start + segment offset (10s) + annotation
-    # offset (1s) = 00:00:11 on 2026-06-01.
-    assert first["eventStart"] == "2026-06-01T00:00:11Z"
+    # offset (1s) = 00:00:11 on 2026-06-01. Sub-second precision is preserved
+    # (millisecond fraction), so a whole-second offset renders ``.000``.
+    assert first["eventStart"] == "2026-06-01T00:00:11.000Z"
 
     second = rows[1]
     assert second["annotator_total_score"] == "0.4200"
     # Null ToriTore species/test reference render as blank.
     assert second["annotator_species_score"] == ""
     assert second["annotator_test_reference"] == ""
+
+
+@pytest.mark.asyncio
+async def test_export_event_times_preserve_subsecond_precision() -> None:
+    """eventStart/eventEnd keep the fractional offset (not whole-second rounded).
+
+    Many audio annotations are shorter than one second or begin/end at
+    fractional-second offsets. With segment.start_time_sec=10.0 and annotation
+    offsets start=2.45 / end=2.75, the absolute times are 00:00:12.450 and
+    00:00:12.750 on 2026-06-01 — the millisecond fraction must survive.
+    """
+    set_id = uuid4()
+    project_id = uuid4()
+
+    annotations = [
+        _make_annotation(
+            dataset_name="Forest A",
+            scientific_name="Turdus merula",
+            annotator_name="Alice",
+            total_score=0.91,
+            species_score=0.8,
+            test_reference=None,
+            start_offset=2.45,
+            end_offset=2.75,
+        ),
+    ]
+
+    anno_set = SimpleNamespace(id=set_id, project_id=project_id)
+    project = SimpleNamespace(license="CC-BY-4.0")
+
+    db = MagicMock()
+    set_result = MagicMock()
+    set_result.scalar_one_or_none.return_value = anno_set
+    ann_result = MagicMock()
+    ann_result.scalars.return_value.all.return_value = annotations
+    h3_result = MagicMock()
+    h3_result.all.return_value = []
+    db.execute = AsyncMock(side_effect=[set_result, ann_result, h3_result])
+
+    service = AnnotationSetExportService(db)
+    service._detection._load_project = AsyncMock(return_value=project)  # type: ignore[method-assign]
+
+    body = await _collect(service, project_id=project_id, set_id=set_id)
+
+    reader = csv.DictReader(io.StringIO(body))
+    # Header shape (incl. ToriTore cols) must remain intact.
+    assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
+    rows = list(reader)
+    assert len(rows) == 1
+
+    event_start = rows[0]["eventStart"]
+    event_end = rows[0]["eventEnd"]
+    # The sub-second fraction must be present (NOT truncated to whole seconds).
+    assert event_start == "2026-06-01T00:00:12.450Z"
+    assert event_end == "2026-06-01T00:00:12.750Z"
+    # Defensive: a whole-second-only renderer would have produced these.
+    assert event_start != "2026-06-01T00:00:12Z"
+    assert event_end != "2026-06-01T00:00:12Z"
 
 
 @pytest.mark.asyncio
