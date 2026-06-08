@@ -26,6 +26,7 @@
     addPalette,
     removePalette,
   } from '$lib/api/annotation-sets';
+  import { exportAnnotationSetCsv } from '$lib/api/annotation-set-export';
   import { toasts } from '$lib/stores/toast';
   import type {
     AnnotationSetDetail,
@@ -87,6 +88,25 @@
       refetchOnWindowFocus: false,
     }),
   );
+
+  // ============================================================
+  // CSV export (CamtrapDP + ToriTore). Visible to any viewer of the set —
+  // export is a read action, no special role required.
+  // ============================================================
+  let exporting = $state(false);
+
+  async function handleExportCsv(): Promise<void> {
+    if (exporting) return;
+    exporting = true;
+    try {
+      await exportAnnotationSetCsv(projectId, setId);
+    } catch (err) {
+      console.error('Annotation set CSV export failed', err);
+      toasts.error(m.annotation_sets_detail_export_csv_error());
+    } finally {
+      exporting = false;
+    }
+  }
 
   // Filter for segment list
   let segmentFilter = $state<AnnotationSegmentStatus | 'all'>('all');
@@ -465,6 +485,16 @@
         </div>
 
         <div class="flex flex-shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-stone-600 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
+            onclick={handleExportCsv}
+            disabled={exporting}
+          >
+            {exporting
+              ? m.annotation_sets_detail_export_csv_loading()
+              : m.annotation_sets_detail_export_csv()}
+          </button>
           <button
             type="button"
             class="rounded-lg border border-danger/40 bg-danger-light px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
