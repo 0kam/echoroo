@@ -14,7 +14,7 @@
   import { createTag } from '$lib/api/tags';
   import { createCustomModel, generateSeedSamples } from '$lib/api/custom-models';
   import type { SearchSession } from '$lib/types/search';
-  import type { TagCreate } from '$lib/types/annotation';
+  import type { TagCreate } from '$lib/types/tag';
   import { formatSpeciesName } from '$lib/utils/speciesFormatters';
 
   interface SpeciesConfig {

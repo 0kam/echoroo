@@ -37,10 +37,7 @@ from fastapi import APIRouter
 from echoroo.api.web_v1 import trusted as trusted_module
 
 from . import (
-    _annotation_projects,
     _annotation_sets,
-    _annotation_tasks,
-    _annotations,
     _clips,
     _core,
     _custom_models,
@@ -101,15 +98,6 @@ router.include_router(_detection_runs.router)
 
 # Detection reads used by the project detections page.
 router.include_router(_detections.router)
-
-# Annotation project/task reads and mutations needed by the PR D annotation
-# screen before export and batch-tag interactions can run.
-router.include_router(_annotation_projects.router)
-router.include_router(_annotation_tasks.router)
-
-# Annotation mutations (spec/009 PR D) — legacy behavior adapter for
-# ``/{project_id}/clip-annotations/batch-tag``.
-router.include_router(_annotations.router)
 
 # Site CRUD (spec/009 PR 3a) — ``/{project_id}/sites``.
 router.include_router(_sites.router)

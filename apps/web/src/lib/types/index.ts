@@ -4,7 +4,7 @@
  * This file serves as the canonical re-export hub.
  * Domain-specific types are defined in their own modules:
  *   - data.ts: Data management entities (sites, datasets, recordings, clips)
- *   - annotation.ts: Annotation feature entities (tags, annotations, tasks)
+ *   - tag.ts: Project tag management entities
  *
  * Administration and auth types are defined directly in this file
  * since they are foundational and used across the application.
@@ -14,14 +14,9 @@
 // Re-export domain types
 // ============================================
 
-// Re-export annotation types (canonical for Tag, TagCategory, AnnotationSource, Geometry, etc.)
+// Re-export project tag types.
 export type {
   TagCategory,
-  AnnotationProjectVisibility,
-  AnnotationTaskStatus,
-  ReviewStatus,
-  AnnotationSource,
-  GeometryType,
   Tag,
   TagDetail,
   TagCreate,
@@ -29,36 +24,8 @@ export type {
   TagListResponse,
   GBIFSuggestion,
   TagStatistic,
-  AnnotationProgress,
-  TagSummary,
-  AnnotationProject,
-  AnnotationProjectDetail,
-  AnnotationProjectCreate,
-  AnnotationProjectUpdate,
-  AnnotationProjectListResponse,
-  TaskGenerationResponse,
-  RecordingSummaryForTask,
-  ClipDetailForTask,
-  AnnotationProjectSummary,
-  AnnotationTask,
-  AnnotationTaskUpdate,
-  AnnotationTaskDetail,
-  AnnotationTaskListResponse,
-  TaskCompletionResponse,
-  Geometry,
-  SoundEventAnnotation,
-  SoundEventAnnotationCreate,
-  SoundEventAnnotationUpdate,
-  ClipAnnotationDetail,
-  Note,
-  NoteCreate,
-  ReviewRequest,
-  AddTagRequest,
-  AnnotationTaskListParams,
   TagListParams,
-  AnnotationProjectListParams,
-  ExportFormat,
-} from './annotation';
+} from './tag';
 
 // Re-export data management types
 export type {
@@ -1195,37 +1162,4 @@ export interface RecorderListResponse {
   total: number;
   page: number;
   limit: number;
-}
-
-// ============================================
-// Legacy Annotation Types (deprecated)
-// Use the canonical types from annotation.ts via the re-exports above
-// ============================================
-
-/**
- * @deprecated Use GeometryType from annotation.ts instead
- */
-export type AnnotationGeometryType = 'BoundingBox' | 'TimeInterval' | 'Point';
-
-/**
- * @deprecated Use Geometry from annotation.ts instead
- */
-export interface AnnotationGeometry {
-  type: AnnotationGeometryType;
-  coordinates: number[];
-}
-
-/**
- * @deprecated Use SoundEventAnnotation from annotation.ts instead.
- * This flat annotation type is kept for backwards compatibility only.
- */
-export interface Annotation {
-  id: string;
-  clip_id: string;
-  tag_id: string;
-  geometry: AnnotationGeometry;
-  confidence?: number;
-  source: 'human' | 'model';
-  created_by: string;
-  created_at: string;
 }

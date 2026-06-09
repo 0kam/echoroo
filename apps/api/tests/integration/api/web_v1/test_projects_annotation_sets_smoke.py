@@ -32,13 +32,24 @@ from echoroo.api.v1 import segments as legacy_segments
 from echoroo.api.v1 import time_range_annotations as legacy_time_range_annotations
 from echoroo.api.web_v1.projects import _annotation_sets as bff_annotation_sets
 from echoroo.core.actions import (
-    ANNOTATION_BATCH_TAG_ACTION,
-    ANNOTATION_CLIP_GET_ACTION,
-    ANNOTATION_NOTE_CREATE_ACTION,
+    ANNOTATION_SEGMENT_GET_ACTION,
+    ANNOTATION_SEGMENT_LIST_ACTION,
+    ANNOTATION_SEGMENT_NOTE_CREATE_ACTION,
+    ANNOTATION_SEGMENT_UPDATE_ACTION,
+    ANNOTATION_SET_CREATE_ACTION,
+    ANNOTATION_SET_DELETE_ACTION,
+    ANNOTATION_SET_GET_ACTION,
+    ANNOTATION_SET_LIST_ACTION,
+    ANNOTATION_SET_PALETTE_UPDATE_ACTION,
+    ANNOTATION_SET_UPDATE_ACTION,
     EVALUATION_CREATE_ACTION,
     EVALUATION_RUN_DELETE_ACTION,
     EVALUATION_RUN_GET_ACTION,
     EVALUATION_RUNS_BY_SET_ACTION,
+    TIME_RANGE_ANNOTATION_CREATE_ACTION,
+    TIME_RANGE_ANNOTATION_DELETE_ACTION,
+    TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION,
+    TIME_RANGE_ANNOTATION_UPDATE_ACTION,
 )
 from echoroo.core.database import get_db
 from echoroo.middleware.auth import get_current_user
@@ -58,7 +69,6 @@ from echoroo.schemas.evaluation import (
     EvaluationSummary,
 )
 from tests.integration.api.web_v1._helpers import assert_api_key_cross_rejected
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and fake response factories
@@ -261,7 +271,7 @@ async def test_list_annotation_sets_bff_delegates_to_legacy(
     pagination = captured["pagination"]
     assert pagination.page == 2
     assert pagination.page_size == 50
-    assert gate_captured["action"] is ANNOTATION_CLIP_GET_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_LIST_ACTION
 
 
 @pytest.mark.asyncio
@@ -308,7 +318,7 @@ async def test_create_annotation_set_bff_delegates_to_legacy(
     payload = captured["request"]
     assert payload.name == "fresh"
     assert payload.project_id == project_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_CREATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -343,7 +353,7 @@ async def test_get_annotation_set_bff_delegates_to_legacy(
 
     assert response.status_code == 200, response.text
     assert captured["set_id"] == set_id
-    assert gate_captured["action"] is ANNOTATION_CLIP_GET_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_GET_ACTION
 
 
 @pytest.mark.asyncio
@@ -383,7 +393,7 @@ async def test_update_annotation_set_bff_delegates_to_legacy(
     payload = captured["request"]
     assert payload.name == "renamed"
     assert captured["set_id"] == set_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_UPDATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -419,7 +429,7 @@ async def test_delete_annotation_set_bff_delegates_to_legacy(
 
     assert response.status_code == 204, response.text
     assert captured["set_id"] == set_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_DELETE_ACTION
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +478,7 @@ async def test_add_palette_bff_delegates_to_legacy(
 
     assert response.status_code == 201, response.text
     assert captured["set_id"] == set_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_PALETTE_UPDATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -507,7 +517,7 @@ async def test_remove_palette_bff_delegates_to_legacy(
     assert response.status_code == 204, response.text
     assert captured["set_id"] == set_id
     assert captured["species_id"] == species_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SET_PALETTE_UPDATE_ACTION
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +561,7 @@ async def test_list_set_segments_bff_delegates_to_legacy(
 
     assert response.status_code == 200, response.text
     assert captured["set_id"] == set_id
-    assert gate_captured["action"] is ANNOTATION_CLIP_GET_ACTION
+    assert gate_captured["action"] is ANNOTATION_SEGMENT_LIST_ACTION
 
 
 @pytest.mark.asyncio
@@ -587,7 +597,7 @@ async def test_get_segment_bff_delegates_to_legacy(
 
     assert response.status_code == 200, response.text
     assert captured["segment_id"] == segment_id
-    assert gate_captured["action"] is ANNOTATION_CLIP_GET_ACTION
+    assert gate_captured["action"] is ANNOTATION_SEGMENT_GET_ACTION
 
 
 @pytest.mark.asyncio
@@ -624,7 +634,7 @@ async def test_update_segment_bff_delegates_to_legacy(
 
     assert response.status_code == 200, response.text
     assert captured["segment_id"] == segment_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is ANNOTATION_SEGMENT_UPDATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -668,7 +678,7 @@ async def test_create_annotation_bff_delegates_to_legacy(
 
     assert response.status_code == 201, response.text
     assert captured["segment_id"] == segment_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is TIME_RANGE_ANNOTATION_CREATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -704,7 +714,7 @@ async def test_create_segment_note_bff_delegates_to_legacy(
 
     assert response.status_code == 201, response.text
     assert captured["segment_id"] == segment_id
-    assert gate_captured["action"] is ANNOTATION_NOTE_CREATE_ACTION
+    assert gate_captured["action"] is ANNOTATION_SEGMENT_NOTE_CREATE_ACTION
 
 
 # ---------------------------------------------------------------------------
@@ -747,7 +757,7 @@ async def test_update_annotation_bff_delegates_to_legacy(
 
     assert response.status_code == 200, response.text
     assert captured["annotation_id"] == annotation_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is TIME_RANGE_ANNOTATION_UPDATE_ACTION
 
 
 @pytest.mark.asyncio
@@ -783,7 +793,7 @@ async def test_delete_annotation_bff_delegates_to_legacy(
 
     assert response.status_code == 204, response.text
     assert captured["annotation_id"] == annotation_id
-    assert gate_captured["action"] is ANNOTATION_BATCH_TAG_ACTION
+    assert gate_captured["action"] is TIME_RANGE_ANNOTATION_DELETE_ACTION
 
 
 @pytest.mark.asyncio
@@ -821,7 +831,7 @@ async def test_create_annotation_note_bff_delegates_to_legacy(
 
     assert response.status_code == 201, response.text
     assert captured["annotation_id"] == annotation_id
-    assert gate_captured["action"] is ANNOTATION_NOTE_CREATE_ACTION
+    assert gate_captured["action"] is TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION
 
 
 # ---------------------------------------------------------------------------

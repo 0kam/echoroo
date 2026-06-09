@@ -6,7 +6,7 @@
  * these and only owns the reactive state, debouncing, and rendering.
  */
 
-import type { Tag } from '$lib/types/annotation';
+import type { Tag } from '$lib/types/tag';
 import type { GBIFSpeciesResult, TaxonSearchResult } from '$lib/types/taxon';
 import type { SpeciesPickerResult } from '$lib/types/species-picker';
 import { displayCommonName } from '$lib/utils/speciesFormatters';

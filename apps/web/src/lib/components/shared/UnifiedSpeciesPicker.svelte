@@ -25,7 +25,7 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { fetchTags } from '$lib/api/tags';
   import { searchGBIF, searchTaxa } from '$lib/api/taxa';
-  import type { Tag } from '$lib/types/annotation';
+  import type { Tag } from '$lib/types/tag';
   import type { GBIFSpeciesResult, TaxonSearchResult } from '$lib/types/taxon';
   import type {
     SpeciesPickerMode,

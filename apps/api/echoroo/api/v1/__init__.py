@@ -5,10 +5,7 @@ from fastapi import APIRouter
 from echoroo.api.v1 import (
     admin,
     annotation_comments,
-    annotation_projects,
-    annotation_tasks,
     annotation_votes,
-    annotations,
     auth,
     clips,
     confirmed_regions,
@@ -49,9 +46,6 @@ api_router.include_router(h3.router)
 api_router.include_router(tags.router)
 api_router.include_router(taxa.router)
 api_router.include_router(recorders.router)
-api_router.include_router(annotation_projects.router)
-api_router.include_router(annotation_tasks.router)
-api_router.include_router(annotations.router)
 api_router.include_router(admin.router)
 # spec/012 — public license list (FR-001/FR-002/FR-017). Bearer surface
 # mirroring ``echoroo.api.web_v1.licenses``. Any authenticated caller

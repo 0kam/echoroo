@@ -43,27 +43,6 @@
 
 
 apps/web/src/lib/components/annotation-sets/SegmentNavigator.svelte:Segment navigator:hardcoded-ui-string
-apps/web/src/lib/components/annotation/AnnotationCanvas.svelte:Annotation canvas:hardcoded-ui-string
-apps/web/src/lib/components/annotation/AnnotationCanvas.svelte:Annotation:hardcoded-ui-string
-apps/web/src/lib/components/annotation/AnnotationList.svelte:Sound event annotations:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add Note:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add a note... (Ctrl+Enter to submit):hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Add note:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Annotator:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Applied clip tags:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Clip notes:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:No notes yet.:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:No tags configured for this project.:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Note content:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Remove tag:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:Remove:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ClipAnnotationPanel.svelte:User ID::hardcoded-ui-string
-apps/web/src/lib/components/annotation/ReviewPanel.svelte:Review comment:hardcoded-ui-string
-apps/web/src/lib/components/annotation/ReviewPanel.svelte:Review status::hardcoded-ui-string
-apps/web/src/lib/components/annotation/ReviewPanel.svelte:Reviewer ID::hardcoded-ui-string
-apps/web/src/lib/components/annotation/TagSelector.svelte:Remove:hardcoded-ui-string
-apps/web/src/lib/components/annotation/TagSelector.svelte:Tag suggestions:hardcoded-ui-string
-apps/web/src/lib/components/annotation/TaskNavigator.svelte:Task navigation:hardcoded-ui-string
 apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Audio Filters:hardcoded-ui-string
 apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Filter order:hardcoded-ui-string
 apps/web/src/lib/components/audio/AudioFilterSettings.svelte:Frequency Range:hardcoded-ui-string
@@ -228,11 +207,6 @@ apps/web/src/routes/(app)/profile/+page.svelte:Trusted devices:hardcoded-ui-stri
 apps/web/src/routes/(app)/profile/api-tokens/+page.svelte:Close modal:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/+page.svelte:Close dialog:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/annotation-sets/new/+page.svelte:Wizard progress:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/+page.svelte:Batch actions:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/review/+page.svelte:Clip ID::hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/review/+page.svelte:Priority:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/tasks/[taskId]/+page.svelte:Annotation tools:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/annotations/[annotationProjectId]/tasks/[taskId]/+page.svelte:Drawing tools:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/collaborators/+page.svelte:Close dialog:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/data/+page.svelte:Tabs:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/datasets/+page.svelte:Close:hardcoded-ui-string

@@ -10,9 +10,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import Response, StreamingResponse
+from starlette.responses import StreamingResponse
 
-from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.web_v1.projects import _media
 from echoroo.core.database import get_db
@@ -42,79 +41,6 @@ def _build_app(user: object, audio_service: object) -> FastAPI:
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[legacy_datasets.get_audio_service] = lambda: audio_service
     return app
-
-
-@pytest.mark.asyncio
-async def test_annotation_project_export_bff_delegates_response_shape(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_id = uuid4()
-    annotation_project_id = uuid4()
-    captured: dict[str, object] = {}
-
-    async def fake_export_annotations(**kwargs: object) -> dict[str, object]:
-        captured.update(kwargs)
-        return {"format": kwargs["format"], "annotations": []}
-
-    monkeypatch.setattr(
-        legacy_annotation_projects,
-        "export_annotations",
-        fake_export_annotations,
-    )
-    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=_build_app(SimpleNamespace(id=uuid4()), object())),
-        base_url="http://testserver",
-    ) as client:
-        response = await client.get(
-            "/web-api/v1/projects/"
-            f"{project_id}/annotation-projects/{annotation_project_id}/export",
-            params={"format": "json"},
-        )
-
-    assert response.status_code == 200
-    assert response.json() == {"format": "json", "annotations": []}
-    assert captured["project_id"] == project_id
-    assert captured["annotation_project_id"] == annotation_project_id
-    assert captured["format"] == "json"
-
-
-@pytest.mark.asyncio
-async def test_annotation_project_export_bff_preserves_csv_response(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    project_id = uuid4()
-    annotation_project_id = uuid4()
-
-    async def fake_export_annotations(**kwargs: object) -> Response:
-        return Response(
-            "Selection,Begin Time (s)\n1,0.0\n",
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=annotations.csv"},
-        )
-
-    monkeypatch.setattr(
-        legacy_annotation_projects,
-        "export_annotations",
-        fake_export_annotations,
-    )
-    monkeypatch.setattr(_media, "gate_action", _noop_gate_action)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=_build_app(SimpleNamespace(id=uuid4()), object())),
-        base_url="http://testserver",
-    ) as client:
-        response = await client.get(
-            "/web-api/v1/projects/"
-            f"{project_id}/annotation-projects/{annotation_project_id}/export",
-            params={"format": "csv"},
-        )
-
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/csv")
-    assert "attachment" in response.headers["content-disposition"]
-    assert response.text.startswith("Selection,")
 
 
 @pytest.mark.asyncio
@@ -160,22 +86,13 @@ async def test_dataset_export_bff_delegates_streaming_zip_shape(
 
 def test_export_bff_paths_are_declared() -> None:
     paths = _build_app(SimpleNamespace(id=uuid4()), object()).openapi()["paths"]
-    assert (
-        "/web-api/v1/projects/{project_id}/annotation-projects/"
-        "{annotation_project_id}/export"
-        in paths
-    )
     assert "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export" in paths
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path",
-    [
-        "/web-api/v1/projects/{project_id}/annotation-projects/"
-        "{annotation_project_id}/export",
-        "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export",
-    ],
+    ["/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export"],
 )
 async def test_export_bff_rejects_api_key_bearer(
     client: AsyncClient,
@@ -186,7 +103,6 @@ async def test_export_bff_rejects_api_key_bearer(
         "GET",
         path.format(
             project_id=uuid4(),
-            annotation_project_id=uuid4(),
             dataset_id=uuid4(),
         ),
     )
@@ -195,11 +111,7 @@ async def test_export_bff_rejects_api_key_bearer(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path",
-    [
-        "/web-api/v1/projects/{project_id}/annotation-projects/"
-        "{annotation_project_id}/export",
-        "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export",
-    ],
+    ["/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export"],
 )
 async def test_export_restricted_non_member_returns_403_not_401(
     client: AsyncClient,
@@ -233,7 +145,6 @@ async def test_export_restricted_non_member_returns_403_not_401(
     response = await client.get(
         path.format(
             project_id=project.id,
-            annotation_project_id=uuid4(),
             dataset_id=uuid4(),
         ),
         headers={"Authorization": f"Bearer {refresh.json()['access_token']}"},

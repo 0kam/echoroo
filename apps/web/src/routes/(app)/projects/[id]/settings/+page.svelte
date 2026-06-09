@@ -463,6 +463,25 @@
       </div>
     {/if}
 
+    <section class="mb-6 rounded-lg border border-stone-200 bg-surface-card p-6 shadow">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-stone-900">
+            {m.project_settings_tag_management_heading()}
+          </h2>
+          <p class="mt-1 text-sm text-stone-600">
+            {m.project_settings_tag_management_description()}
+          </p>
+        </div>
+        <a
+          href={localizeHref(`/projects/${projectId}/settings/tags`)}
+          class="inline-flex items-center justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+        >
+          {m.project_settings_tag_management_link()}
+        </a>
+      </div>
+    </section>
+
     <!-- Settings Form -->
     <form onsubmit={handleSave} class="space-y-6">
       <div class="rounded-lg bg-surface-card shadow">

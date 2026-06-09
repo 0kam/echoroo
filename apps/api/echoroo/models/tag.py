@@ -13,7 +13,6 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import TagCategory
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation_project import AnnotationProject
     from echoroo.models.project import Project
     from echoroo.models.taxon import Taxon
 
@@ -97,12 +96,6 @@ class Tag(UUIDMixin, TimestampMixin, Base):
     children: Mapped[list[Tag]] = relationship(
         "Tag",
         back_populates="parent",
-        lazy="select",
-    )
-    annotation_projects: Mapped[list[AnnotationProject]] = relationship(
-        "AnnotationProject",
-        secondary="annotation_project_tags",
-        back_populates="tags",
         lazy="select",
     )
     taxon: Mapped[Taxon | None] = relationship(

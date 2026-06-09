@@ -303,7 +303,7 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
         # those endpoints on MANAGE_DATASET without granting it to member
         # would regress member access (P0). Resource-level dataset CRUD
         # (create/delete/edit dataset itself, import, datetime apply,
-        # annotation_project CRUD, etc.) remains admin/owner-only via the new
+        # removed legacy annotation workflow CRUD, etc.) remains admin/owner-only via the new
         # MANAGE_DATASET_ADMIN below.
         Permission.MANAGE_DATASET,
         Permission.MANAGE_SITE,  # TODO(spec/008-audit): SUPERUSER_ONLY category vs member-held — flagged for audit in Codex consultation 2026-05-12; out of scope for this hotfix.

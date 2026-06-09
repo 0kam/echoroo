@@ -15,40 +15,36 @@ BFF layer is a thin adapter that:
 Spec/003-annotation pre-dates the spec/006 Action registry, so the
 underlying handlers are still unguarded (entries 40-48, 138-141, 159-161
 of ``scripts/allowlists/permission_guard_allowlist.txt``). The BFF
-adapter mirrors that decision — no annotation-set-specific Actions
-exist today (``ANNOTATION_SET_*`` etc. are *not* registered), so the
-adapter wires the broad ``ANNOTATION_BATCH_TAG_ACTION`` for write
-mutations and ``ANNOTATION_CLIP_GET_ACTION`` for reads (both already in
-use for the spec/009 PR 2.5 annotation mutations); for evaluation we
-reuse the dedicated ``EVALUATION_*`` Actions; for note creation we
-reuse ``ANNOTATION_NOTE_CREATE_ACTION`` and for review we reuse
-``ANNOTATION_REVIEW_ACTION``. This keeps the BFF surface auditable and
-the permission decision lands in the canonical matrix.
+adapter fires annotation-set-specific, segment-specific, and
+time-range-annotation-specific Actions before delegating; for evaluation
+we reuse the dedicated ``EVALUATION_*`` Actions. This keeps the BFF
+surface auditable and the permission decision lands in the canonical
+matrix.
 
 Endpoints (18):
 
 AnnotationSet CRUD
-* GET    ``/{pid}/annotation-sets``                   → ``ANNOTATION_CLIP_GET_ACTION``
-* POST   ``/{pid}/annotation-sets``                   → ``ANNOTATION_BATCH_TAG_ACTION``
-* GET    ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_CLIP_GET_ACTION``
-* PATCH  ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_BATCH_TAG_ACTION``
-* DELETE ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_BATCH_TAG_ACTION``
+* GET    ``/{pid}/annotation-sets``                   → ``ANNOTATION_SET_LIST_ACTION``
+* POST   ``/{pid}/annotation-sets``                   → ``ANNOTATION_SET_CREATE_ACTION``
+* GET    ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_SET_GET_ACTION``
+* PATCH  ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_SET_UPDATE_ACTION``
+* DELETE ``/{pid}/annotation-sets/{set_id}``          → ``ANNOTATION_SET_DELETE_ACTION``
 
 Palette
-* POST   ``/{pid}/annotation-sets/{set_id}/palette``                  → ``ANNOTATION_BATCH_TAG_ACTION``
-* DELETE ``/{pid}/annotation-sets/{set_id}/palette/{species_id}``     → ``ANNOTATION_BATCH_TAG_ACTION``
+* POST   ``/{pid}/annotation-sets/{set_id}/palette``                  → ``ANNOTATION_SET_PALETTE_UPDATE_ACTION``
+* DELETE ``/{pid}/annotation-sets/{set_id}/palette/{species_id}``     → ``ANNOTATION_SET_PALETTE_UPDATE_ACTION``
 
 Segments
-* GET    ``/{pid}/annotation-sets/{set_id}/segments``                 → ``ANNOTATION_CLIP_GET_ACTION``
-* GET    ``/{pid}/segments/{segment_id}``                             → ``ANNOTATION_CLIP_GET_ACTION``
-* PATCH  ``/{pid}/segments/{segment_id}``                             → ``ANNOTATION_BATCH_TAG_ACTION``
-* POST   ``/{pid}/segments/{segment_id}/annotations``                 → ``ANNOTATION_BATCH_TAG_ACTION``
-* POST   ``/{pid}/segments/{segment_id}/notes``                       → ``ANNOTATION_NOTE_CREATE_ACTION``
+* GET    ``/{pid}/annotation-sets/{set_id}/segments``                 → ``ANNOTATION_SEGMENT_LIST_ACTION``
+* GET    ``/{pid}/segments/{segment_id}``                             → ``ANNOTATION_SEGMENT_GET_ACTION``
+* PATCH  ``/{pid}/segments/{segment_id}``                             → ``ANNOTATION_SEGMENT_UPDATE_ACTION``
+* POST   ``/{pid}/segments/{segment_id}/annotations``                 → ``TIME_RANGE_ANNOTATION_CREATE_ACTION``
+* POST   ``/{pid}/segments/{segment_id}/notes``                       → ``ANNOTATION_SEGMENT_NOTE_CREATE_ACTION``
 
 TimeRangeAnnotation
-* PATCH  ``/{pid}/annotations/{annotation_id}``                       → ``ANNOTATION_BATCH_TAG_ACTION``
-* DELETE ``/{pid}/annotations/{annotation_id}``                       → ``ANNOTATION_BATCH_TAG_ACTION``
-* POST   ``/{pid}/annotations/{annotation_id}/notes``                 → ``ANNOTATION_NOTE_CREATE_ACTION``
+* PATCH  ``/{pid}/annotations/{annotation_id}``                       → ``TIME_RANGE_ANNOTATION_UPDATE_ACTION``
+* DELETE ``/{pid}/annotations/{annotation_id}``                       → ``TIME_RANGE_ANNOTATION_DELETE_ACTION``
+* POST   ``/{pid}/annotations/{annotation_id}/notes``                 → ``TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION``
 
 Evaluation
 * POST   ``/{pid}/annotation-sets/{set_id}/evaluate``                 → ``EVALUATION_CREATE_ACTION``
@@ -100,13 +96,24 @@ from echoroo.api.v1 import evaluation as legacy_evaluation
 from echoroo.api.v1 import segments as legacy_segments
 from echoroo.api.v1 import time_range_annotations as legacy_time_range_annotations
 from echoroo.core.actions import (
-    ANNOTATION_BATCH_TAG_ACTION,
-    ANNOTATION_CLIP_GET_ACTION,
-    ANNOTATION_NOTE_CREATE_ACTION,
+    ANNOTATION_SEGMENT_GET_ACTION,
+    ANNOTATION_SEGMENT_LIST_ACTION,
+    ANNOTATION_SEGMENT_NOTE_CREATE_ACTION,
+    ANNOTATION_SEGMENT_UPDATE_ACTION,
+    ANNOTATION_SET_CREATE_ACTION,
+    ANNOTATION_SET_DELETE_ACTION,
+    ANNOTATION_SET_GET_ACTION,
+    ANNOTATION_SET_LIST_ACTION,
+    ANNOTATION_SET_PALETTE_UPDATE_ACTION,
+    ANNOTATION_SET_UPDATE_ACTION,
     EVALUATION_CREATE_ACTION,
     EVALUATION_RUN_DELETE_ACTION,
     EVALUATION_RUN_GET_ACTION,
     EVALUATION_RUNS_BY_SET_ACTION,
+    TIME_RANGE_ANNOTATION_CREATE_ACTION,
+    TIME_RANGE_ANNOTATION_DELETE_ACTION,
+    TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION,
+    TIME_RANGE_ANNOTATION_UPDATE_ACTION,
 )
 from echoroo.core.database import DbSession
 from echoroo.core.pagination import PaginationParams
@@ -165,7 +172,7 @@ async def list_annotation_sets(
 ) -> AnnotationSetListResponse:
     """Delegate annotation-set list to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SET_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -199,7 +206,7 @@ async def create_annotation_set(
 ) -> AnnotationSetDetailResponse:
     """Delegate annotation-set create to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SET_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -229,7 +236,7 @@ async def get_annotation_set(
 ) -> AnnotationSetDetailResponse:
     """Delegate annotation-set detail to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SET_GET_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -260,7 +267,7 @@ async def update_annotation_set(
 ) -> AnnotationSetDetailResponse:
     """Delegate annotation-set update to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SET_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -290,7 +297,7 @@ async def delete_annotation_set(
 ) -> None:
     """Delegate annotation-set delete to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SET_DELETE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -326,7 +333,7 @@ async def add_palette_species(
 ) -> PaletteEntryResponse:
     """Delegate add-palette to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SET_PALETTE_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -357,7 +364,7 @@ async def remove_palette_species(
 ) -> None:
     """Delegate remove-palette to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SET_PALETTE_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -398,7 +405,7 @@ async def list_set_segments(
 ) -> AnnotationSegmentListResponse:
     """Delegate set-segment list to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SEGMENT_LIST_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -431,7 +438,7 @@ async def get_segment(
 ) -> AnnotationSegmentDetailResponse:
     """Delegate segment detail to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SEGMENT_GET_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -461,7 +468,7 @@ async def update_segment(
 ) -> AnnotationSegmentDetailResponse:
     """Delegate segment update to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=ANNOTATION_SEGMENT_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -493,7 +500,7 @@ async def create_annotation(
 ) -> TimeRangeAnnotationResponse:
     """Delegate create-annotation to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=TIME_RANGE_ANNOTATION_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -525,7 +532,7 @@ async def create_segment_note(
 ) -> AnnotationNoteResponse:
     """Delegate segment note creation to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_NOTE_CREATE_ACTION,
+        action=ANNOTATION_SEGMENT_NOTE_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -561,7 +568,7 @@ async def update_annotation(
 ) -> TimeRangeAnnotationResponse:
     """Delegate annotation update to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=TIME_RANGE_ANNOTATION_UPDATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,
@@ -591,7 +598,7 @@ async def delete_annotation(
 ) -> None:
     """Delegate annotation delete to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_BATCH_TAG_ACTION,
+        action=TIME_RANGE_ANNOTATION_DELETE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -622,7 +629,7 @@ async def create_annotation_note(
 ) -> AnnotationNoteResponse:
     """Delegate annotation note creation to the legacy handler."""
     await gate_action(
-        action=ANNOTATION_NOTE_CREATE_ACTION,
+        action=TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=http_request,

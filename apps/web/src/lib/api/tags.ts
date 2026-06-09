@@ -15,7 +15,7 @@ import type {
   TagListResponse,
   TagStatistic,
   TagUpdate,
-} from '$lib/types/annotation';
+} from '$lib/types/tag';
 import { apiClient } from './client';
 
 const WEB_API_BASE = '/web-api/v1';

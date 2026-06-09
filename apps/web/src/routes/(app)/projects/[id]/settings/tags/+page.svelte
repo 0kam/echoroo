@@ -17,7 +17,7 @@
     TagUpdate,
     TagCategory,
     GBIFSuggestion,
-  } from '$lib/types/annotation';
+  } from '$lib/types/tag';
   import ConfirmDialog from '$lib/components/ui/ConfirmDialog.svelte';
 
   const queryClient = useQueryClient();
@@ -245,7 +245,7 @@
   <!-- Page header -->
   <header class="page-header">
     <div class="page-header__left">
-      <a href={localizeHref(`/projects/${projectId}/annotations`)} class="back-link">
+      <a href={localizeHref(`/projects/${projectId}/settings`)} class="back-link">
         &larr; {m.annotation_tag_back_link()}
       </a>
       <h1>{m.annotation_tag_heading()}</h1>

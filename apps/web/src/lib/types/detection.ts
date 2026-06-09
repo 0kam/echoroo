@@ -7,7 +7,7 @@
  */
 
 import type { Recording } from './data';
-import type { Tag } from './annotation';
+import type { Tag } from './tag';
 
 // ============================================
 // Detection Enums

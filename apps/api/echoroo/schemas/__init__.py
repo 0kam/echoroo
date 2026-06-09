@@ -1,39 +1,5 @@
 """Pydantic schemas for request/response validation."""
 
-from echoroo.schemas.annotation import (
-    AddTagRequest,
-    ClipAnnotationDetailResponse,
-    GeometrySchema,
-    ReviewRequest,
-    SoundEventAnnotationCreate,
-    SoundEventAnnotationResponse,
-    SoundEventAnnotationUpdate,
-)
-from echoroo.schemas.annotation import (
-    TagSummary as AnnotationTagSummary,
-)
-from echoroo.schemas.annotation_project import (
-    AnnotationProgress,
-    AnnotationProjectCreate,
-    AnnotationProjectDetailResponse,
-    AnnotationProjectListResponse,
-    AnnotationProjectResponse,
-    AnnotationProjectUpdate,
-    DatasetSummary,
-    TagSummary,
-    TaskGenerationResponse,
-)
-from echoroo.schemas.annotation_task import (
-    AnnotationProjectSummary,
-    AnnotationTaskDetailResponse,
-    AnnotationTaskListResponse,
-    AnnotationTaskResponse,
-    AnnotationTaskUpdate,
-    ClipDetailForTask,
-    ClipSummary,
-    RecordingSummaryForTask,
-    TaskCompletionResponse,
-)
 from echoroo.schemas.clip import (
     ClipCreate,
     ClipDetailResponse,
@@ -59,7 +25,6 @@ from echoroo.schemas.dataset import (
     SiteSummary,
     UserSummary,
 )
-from echoroo.schemas.note import NoteCreate, NoteResponse
 from echoroo.schemas.recording import (
     DatasetSummary as RecordingDatasetSummary,
 )
@@ -154,38 +119,6 @@ __all__ = [
     "TagResponse",
     "TagStatistic",
     "TagUpdate",
-    # Annotation project schemas
-    "AnnotationProgress",
-    "AnnotationProjectCreate",
-    "AnnotationProjectDetailResponse",
-    "AnnotationProjectListResponse",
-    "AnnotationProjectResponse",
-    "AnnotationProjectUpdate",
-    "DatasetSummary",
-    "TagSummary",
-    "TaskGenerationResponse",
-    # Annotation task schemas
-    "AnnotationProjectSummary",
-    "AnnotationTaskDetailResponse",
-    "AnnotationTaskListResponse",
-    "AnnotationTaskResponse",
-    "AnnotationTaskUpdate",
-    "ClipDetailForTask",
-    "ClipSummary",
-    "RecordingSummaryForTask",
-    "TaskCompletionResponse",
-    # Annotation schemas
-    "AddTagRequest",
-    "AnnotationTagSummary",
-    "ClipAnnotationDetailResponse",
-    "GeometrySchema",
-    "ReviewRequest",
-    "SoundEventAnnotationCreate",
-    "SoundEventAnnotationResponse",
-    "SoundEventAnnotationUpdate",
-    # Note schemas
-    "NoteCreate",
-    "NoteResponse",
     # Upload schemas
     "CompleteUploadRequest",
     "CompleteUploadResponse",
