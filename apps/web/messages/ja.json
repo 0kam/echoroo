@@ -2150,12 +2150,15 @@
   "annotation_editor_already_completed": "完了済み",
   "annotation_editor_status_label": "状態",
 
+  "annotation_editor_viewport_annotate": "アノテーションモード (A)",
+
   "annotation_editor_shortcuts_title": "キーボードショートカット",
   "annotation_editor_shortcuts_nav": "Alt+\u2190 / Alt+\u2192: 前/次のセグメント",
   "annotation_editor_shortcuts_palette": "1\u20139: パレットの種を適用",
   "annotation_editor_shortcuts_complete": "Ctrl+Enter: 完了して次へ",
   "annotation_editor_shortcuts_cancel": "Esc: ドラフトをキャンセル",
   "annotation_editor_shortcuts_delete": "Delete: 選択中のアノテーションを削除",
+  "annotation_editor_shortcuts_viewport": "A: アノテート · X: パン · Z: ズーム · B: 表示を戻す",
 
   "annotation_editor_spectrogram_title": "スペクトログラム",
   "annotation_editor_drag_hint": "スペクトログラム上でドラッグして時間範囲を選択し、種を選んでください。",

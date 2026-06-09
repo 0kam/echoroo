@@ -2150,12 +2150,15 @@
   "annotation_editor_already_completed": "Already completed",
   "annotation_editor_status_label": "Status",
 
+  "annotation_editor_viewport_annotate": "Annotate mode (A)",
+
   "annotation_editor_shortcuts_title": "Keyboard shortcuts",
   "annotation_editor_shortcuts_nav": "Alt+\u2190 / Alt+\u2192: Previous / next segment",
   "annotation_editor_shortcuts_palette": "1\u20139: Apply palette species",
   "annotation_editor_shortcuts_complete": "Ctrl+Enter: Complete & next",
   "annotation_editor_shortcuts_cancel": "Esc: Cancel draft selection",
   "annotation_editor_shortcuts_delete": "Delete: Remove selected annotation",
+  "annotation_editor_shortcuts_viewport": "A: Annotate · X: Pan · Z: Zoom · B: Back view",
 
   "annotation_editor_spectrogram_title": "Spectrogram",
   "annotation_editor_drag_hint": "Drag on the spectrogram to select a time range, then choose a species.",

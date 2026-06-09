@@ -27,7 +27,9 @@
   import AnnotationList from '$lib/components/annotation-sets/AnnotationList.svelte';
   import NotesPanel from '$lib/components/annotation-sets/NotesPanel.svelte';
   import { useAnnotationDraft } from '$lib/components/annotation-sets/useAnnotationDraft.svelte';
+  import { useAnnotationOverlay } from '$lib/components/annotation-sets/useAnnotationOverlay.svelte';
   import { useAnnotationMutations } from '$lib/components/annotation-sets/useAnnotationMutations.svelte';
+  import { timeToPixel } from '$lib/utils/viewport';
   import {
     getAnnotationSet,
     getSegment,
@@ -41,6 +43,8 @@
     TimeRangeAnnotation,
   } from '$lib/types/annotation-set';
   import type { RecordingDetail } from '$lib/types/data';
+  import type { SpectrogramWindow } from '$lib/types/audio';
+  import type { AnnotationInteractionMode } from '$lib/components/annotation-sets/types';
 
   interface Props {
     projectId: string;
@@ -138,6 +142,49 @@
   let overlayEl: HTMLDivElement | undefined = $state();
 
   /**
+   * Spectrogram canvas height in CSS px. Matches the overlay height and the
+   * SpectrogramViewer's fixed clip height (DEFAULT_HEIGHT). Kept as a constant
+   * because the clip player does not currently expose a resizable canvas.
+   */
+  const CANVAS_HEIGHT = 400;
+
+  /**
+   * Live spectrogram viewport / canvas width / clip bounds, mirrored OUTWARD
+   * from `ClipSpectrogramPlayer` via callbacks (never `bind:`, to avoid a
+   * reactive write-back loop — see ClipSpectrogramPlayer). The overlay reads
+   * these so its pixel↔time math shares the exact coordinate model the
+   * spectrogram renders with. Seeded with safe placeholders until the player
+   * reports its real values.
+   */
+  let viewportForOverlay = $state<SpectrogramWindow>({
+    time: { min: 0, max: 1 },
+    freq: { min: 0, max: 1 },
+  });
+  let canvasWidthForOverlay = $state(0);
+  let boundsForOverlay = $state<SpectrogramWindow>({
+    time: { min: 0, max: 1 },
+    freq: { min: 0, max: 1 },
+  });
+
+  /**
+   * Vertical offset (CSS px) of the spectrogram canvas from the top of the
+   * clip player, reported by the player. The viewport-controls toolbar sits
+   * above the spectrogram, so the overlay must be pushed down by this amount
+   * to stay aligned with the canvas.
+   */
+  let viewportControlsHeight = $state(0);
+
+  /**
+   * Component ref for the clip player. Inbound viewport changes (overlay
+   * pan/zoom) are pushed through `player.setViewport()` instead of `bind:`,
+   * so the player remains the single owner of viewport state.
+   */
+  let player = $state<ClipSpectrogramPlayer>();
+
+  /** Current overlay interaction mode (Annotate default / Pan / Zoom). */
+  let annotationMode = $state<AnnotationInteractionMode>('annotating');
+
+  /**
    * Requested playhead position (absolute recording seconds) for click-to-seek.
    * `seekNonce` is bumped on every click so that clicking the SAME spot twice
    * still re-triggers ClipSpectrogramPlayer's seek effect (a plain value prop
@@ -164,17 +211,42 @@
     overlayEl: () => overlayEl,
     clipStart: () => clipStart,
     clipDuration: () => clipDuration,
+    canvasWidth: () => canvasWidthForOverlay,
+    canvasHeight: () => CANVAS_HEIGHT,
+    viewport: () => viewportForOverlay,
     onSeek: seekTo,
   });
 
   /**
-   * Helper used to position existing annotation overlays. The draft hook
-   * does not expose this — it is trivial and is used only for the rendered
-   * annotation overlays on the spectrogram, not for drag math.
+   * Mode-aware pointer dispatch for the overlay. In `annotating` mode it
+   * forwards to the draft hook; in `panning`/`zooming` it drives the shared
+   * viewport via the player. The two hooks each own their own window
+   * listeners but never act on the same gesture (the overlay hook only acts
+   * when its mode is pan/zoom; the draft hook's listeners only act after its
+   * own mousedown fired).
    */
-  function timeToPercent(t: number): number {
-    if (clipDuration <= 0) return 0;
-    return ((t - clipStart) / clipDuration) * 100;
+  const overlay = useAnnotationOverlay({
+    overlayEl: () => overlayEl,
+    viewport: () => viewportForOverlay,
+    bounds: () => boundsForOverlay,
+    canvasWidth: () => canvasWidthForOverlay,
+    canvasHeight: () => CANVAS_HEIGHT,
+    mode: () => annotationMode,
+    onAnnotateMouseDown: (e) => draft.handlers.onMouseDown(e),
+    onViewportChange: (vp) => player?.setViewport(vp),
+    onViewportSave: () => player?.saveViewport(),
+    onModeChange: (mode) => (annotationMode = mode),
+  });
+
+  /**
+   * Position existing annotation overlays in CSS px using the live viewport
+   * transform (shared with the draft hook + zoom box). The same transform the
+   * spectrogram renders with keeps boxes aligned under any zoom/pan; the
+   * overlay container `overflow-hidden` clips boxes panned out of view.
+   */
+  function timeToPx(t: number): number {
+    if (canvasWidthForOverlay <= 0) return 0;
+    return timeToPixel(t, canvasWidthForOverlay, viewportForOverlay);
   }
 
   // When the segment changes, clear both draft and selection state. This
@@ -387,9 +459,34 @@
           draft.clear();
           selectedAnnotationId = null;
         }
-      } else if (e.key === 'Delete' && selectedAnnotationId) {
+        return;
+      }
+      if (e.key === 'Delete' && selectedAnnotationId) {
         e.preventDefault();
         onDeleteAnnotation(selectedAnnotationId);
+        return;
+      }
+      // Viewport/mode shortcuts (dataset-parity): A=annotate, X=pan, Z=zoom,
+      // B=back. Ignore when modifier keys are held so they never clash with
+      // browser/app chords.
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      switch (e.key.toLowerCase()) {
+        case 'a':
+          e.preventDefault();
+          annotationMode = 'annotating';
+          break;
+        case 'x':
+          e.preventDefault();
+          annotationMode = 'panning';
+          break;
+        case 'z':
+          e.preventDefault();
+          annotationMode = 'zooming';
+          break;
+        case 'b':
+          e.preventDefault();
+          player?.back();
+          break;
       }
     }
     window.addEventListener('keydown', handleKeyDown);
@@ -398,6 +495,7 @@
 
   onDestroy(() => {
     draft.dispose();
+    overlay.dispose();
     mutations.dispose();
   });
 
@@ -532,6 +630,7 @@
 
           <div class="relative">
             <ClipSpectrogramPlayer
+              bind:this={player}
               {projectId}
               recording={{
                 id: recording.id,
@@ -543,16 +642,26 @@
               clipEnd={clipEnd}
               seekTo={seekTime ?? undefined}
               {seekNonce}
+              showViewportControls
+              {annotationMode}
+              onAnnotationModeChange={(mode) => (annotationMode = mode)}
+              onViewportChange={(vp) => (viewportForOverlay = vp)}
+              onCanvasWidthChange={(w) => (canvasWidthForOverlay = w)}
+              onBoundsChange={(b) => (boundsForOverlay = b)}
+              onSpectrogramTopChange={(t) => (viewportControlsHeight = t)}
             />
 
             <!-- Drag-select + annotation overlay (absolute over the spectrogram area) -->
             <div
               bind:this={overlayEl}
-              class="pointer-events-auto absolute inset-x-0 top-0 cursor-crosshair select-none"
-              style:height="{recording ? '400px' : '0'}"
+              class="absolute inset-x-0 select-none overflow-hidden"
+              class:pointer-events-auto={recording}
+              style:top="{viewportControlsHeight}px"
+              style:height="{recording ? `${CANVAS_HEIGHT}px` : '0'}"
+              style:cursor={annotationMode === 'panning' ? 'grab' : 'crosshair'}
               style:z-index="3"
               role="presentation"
-              onmousedown={draft.handlers.onMouseDown}
+              onmousedown={overlay.handlers.onMouseDown}
             >
               <!-- Existing annotations -->
               {#each segment.annotations as a (a.id)}
@@ -560,15 +669,15 @@
                 {@const isSel = a.id === selectedAnnotationId}
                 {@const absStart = clipStart + a.start_time_sec}
                 {@const absEnd = clipStart + a.end_time_sec}
-                {@const left = timeToPercent(absStart)}
-                {@const width = timeToPercent(absEnd) - timeToPercent(absStart)}
+                {@const left = timeToPx(absStart)}
+                {@const width = Math.max(0, timeToPx(absEnd) - timeToPx(absStart))}
                 <button
                   type="button"
                   class="absolute top-0 bottom-0 overflow-hidden rounded-sm border transition-opacity"
                   class:opacity-90={isSel}
                   class:opacity-70={!isSel}
-                  style:left="{left}%"
-                  style:width="{width}%"
+                  style:left="{left}px"
+                  style:width="{width}px"
                   style:background-color={`${color}33`}
                   style:border-color={color}
                   style:border-width={isSel ? '2.5px' : '1.5px'}
@@ -592,24 +701,34 @@
 
               <!-- Draft range -->
               {#if draft.draftRange && !draft.isDragging}
-                {@const left = timeToPercent(draft.draftRange.start)}
-                {@const width = timeToPercent(draft.draftRange.end) - timeToPercent(draft.draftRange.start)}
+                {@const left = Math.max(0, timeToPx(draft.draftRange.start))}
+                {@const width = Math.max(0, timeToPx(draft.draftRange.end) - timeToPx(draft.draftRange.start))}
                 <div
                   class="pointer-events-none absolute top-0 bottom-0 border-2 border-dashed bg-primary-500/20"
-                  style:left="{left}%"
-                  style:width="{width}%"
+                  style:left="{left}px"
+                  style:width="{width}px"
                   style:border-color="rgb(var(--primary-500))"
                   aria-hidden="true"
                 ></div>
               {/if}
 
-              <!-- Drag preview -->
+              <!-- Drag preview (annotate mode) -->
               {#if draft.isDragging}
                 <div
                   class="pointer-events-none absolute top-0 bottom-0 border-2 border-dashed bg-primary-500/20"
-                  style:left="{draft.dragPreview.left}%"
-                  style:width="{draft.dragPreview.width}%"
+                  style:left="{draft.dragPreview.left}px"
+                  style:width="{draft.dragPreview.width}px"
                   style:border-color="rgb(var(--primary-500))"
+                  aria-hidden="true"
+                ></div>
+              {/if}
+
+              <!-- Zoom box (zoom mode) -->
+              {#if overlay.zoomBoxPx}
+                <div
+                  class="pointer-events-none absolute top-0 bottom-0 border-2 border-dashed border-info bg-info/20"
+                  style:left="{overlay.zoomBoxPx.left}px"
+                  style:width="{overlay.zoomBoxPx.width}px"
                   aria-hidden="true"
                 ></div>
               {/if}
@@ -690,6 +809,7 @@
               <li>{m.annotation_editor_shortcuts_complete()}</li>
               <li>{m.annotation_editor_shortcuts_cancel()}</li>
               <li>{m.annotation_editor_shortcuts_delete()}</li>
+              <li>{m.annotation_editor_shortcuts_viewport()}</li>
             </ul>
           </details>
         </section>

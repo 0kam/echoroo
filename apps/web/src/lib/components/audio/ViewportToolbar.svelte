@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { InteractionMode } from '$lib/types/audio';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     mode: InteractionMode;
@@ -7,9 +8,37 @@
     onBack?: () => void;
     onPan?: () => void;
     onZoom?: () => void;
+    /**
+     * Annotation-editor extension: show an "Annotate" mode button alongside
+     * Pan/Zoom. When `showAnnotate` is set, active highlighting is driven by
+     * the explicit `*Active` flags (the editor tracks its own mode union
+     * separate from the dataset `mode`), and `onAnnotate` switches back to
+     * annotate mode.
+     */
+    showAnnotate?: boolean;
+    annotateActive?: boolean;
+    panActive?: boolean;
+    zoomActive?: boolean;
+    onAnnotate?: () => void;
   }
 
-  let { mode, onReset, onBack, onPan, onZoom }: Props = $props();
+  let {
+    mode,
+    onReset,
+    onBack,
+    onPan,
+    onZoom,
+    showAnnotate = false,
+    annotateActive = false,
+    panActive = false,
+    zoomActive = false,
+    onAnnotate,
+  }: Props = $props();
+
+  // When the editor drives mode externally (`showAnnotate`), use the explicit
+  // active flags; otherwise fall back to the dataset `mode` prop.
+  const isPanActive = $derived(showAnnotate ? panActive : mode === 'panning');
+  const isZoomActive = $derived(showAnnotate ? zoomActive : mode === 'zooming');
 </script>
 
 <div class="flex items-center gap-1.5">
@@ -38,10 +67,26 @@
     </svg>
   </button>
 
+  {#if showAnnotate}
+    <!-- Annotate mode (annotation editor only) -->
+    <button
+      type="button"
+      class="toolbar-btn {annotateActive ? 'toolbar-btn-active' : ''}"
+      title={m.annotation_editor_viewport_annotate()}
+      onclick={onAnnotate}
+    >
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+      </svg>
+      <span class="text-xs ml-0.5">A</span>
+    </button>
+  {/if}
+
   <!-- Pan mode -->
   <button
     type="button"
-    class="toolbar-btn {mode === 'panning' ? 'toolbar-btn-active' : ''}"
+    class="toolbar-btn {isPanActive ? 'toolbar-btn-active' : ''}"
     title="Pan mode (X)"
     onclick={onPan}
   >
@@ -54,7 +99,7 @@
   <!-- Zoom mode -->
   <button
     type="button"
-    class="toolbar-btn {mode === 'zooming' ? 'toolbar-btn-active' : ''}"
+    class="toolbar-btn {isZoomActive ? 'toolbar-btn-active' : ''}"
     title="Zoom to selection (Z)"
     onclick={onZoom}
   >
