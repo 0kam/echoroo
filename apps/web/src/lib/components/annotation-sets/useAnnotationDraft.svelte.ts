@@ -19,6 +19,7 @@
  *     is the real guardrail (see plan.md §3.3, v3 decision in §0).
  */
 import { onDestroy } from 'svelte';
+import { pixelsToPosition, timeToPixel } from '$lib/utils/viewport';
 import type { DraftHookApi, DraftHookInput, DraftRange } from './types';
 
 /**
@@ -56,26 +57,42 @@ export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
 
   /**
    * Convert a client-x (CSS px) within the overlay to absolute recording
-   * seconds. Returns `clipStart` when the overlay is missing or has zero
-   * width so callers never produce NaN values.
+   * seconds, using the CURRENT viewport window rather than a fixed clip
+   * fraction. This is the single source of truth for click/drag → time math
+   * and is what makes seek + draft-range correct under any zoom/pan (the old
+   * implementation assumed the viewport always spanned the entire clip, which
+   * produced wrong times whenever the viewport was zoomed or panned).
+   *
+   * Returns `clipStart` when the overlay is missing or has zero width so
+   * callers never produce NaN values. The result is clamped to the clip
+   * bounds so a click on an out-of-clip pixel can never escape the segment.
    */
   function clientXToTime(clientX: number): number {
     const overlayEl = input.overlayEl();
     const clipStart = input.clipStart();
     const clipDuration = input.clipDuration();
-    if (!overlayEl) return clipStart;
+    const canvasWidth = input.canvasWidth();
+    const viewport = input.viewport();
+    if (!overlayEl || canvasWidth <= 0) return clipStart;
     const rect = overlayEl.getBoundingClientRect();
-    if (rect.width === 0) return clipStart;
-    const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return clipStart + fraction * clipDuration;
+    const offsetX = clientX - rect.left;
+    // The overlay (`inset-x-0`) shares the canvas's left edge and width, so
+    // offsetX maps directly onto the canvas pixel x used by the viewport math.
+    const { time } = pixelsToPosition(offsetX, 0, canvasWidth, 1, viewport);
+    const clipEnd = clipStart + clipDuration;
+    return Math.max(clipStart, Math.min(clipEnd, time));
   }
 
-  /** Convert an absolute recording-seconds time to a CSS percentage (0..100). */
-  function timeToPercent(t: number): number {
-    const clipStart = input.clipStart();
-    const clipDuration = input.clipDuration();
-    if (clipDuration <= 0) return 0;
-    return ((t - clipStart) / clipDuration) * 100;
+  /**
+   * Convert an absolute recording-seconds time to a CSS px x-coordinate within
+   * the overlay, using the live viewport transform. Shared with the parent's
+   * annotation-box geometry so the preview bar and committed boxes line up.
+   */
+  function timeToPx(t: number): number {
+    const canvasWidth = input.canvasWidth();
+    const viewport = input.viewport();
+    if (canvasWidth <= 0) return 0;
+    return timeToPixel(t, canvasWidth, viewport);
   }
 
   function onMouseDown(e: MouseEvent) {
@@ -131,18 +148,20 @@ export function useAnnotationDraft(input: DraftHookInput): DraftHookApi {
     };
   }
 
-  // Percentage geometry for the transient drag preview bar. Derived from
-  // `isDragging` + dragStartX + dragCurrentX + clipStart/clipDuration.
+  // Pixel geometry for the transient drag-preview bar, computed via the live
+  // viewport transform so the bar tracks zoom/pan. `left`/`width` are clamped
+  // to non-negative; the overlay container clips any overflow.
   const dragPreviewLeft = $derived(
     isDragging
-      ? timeToPercent(clientXToTime(Math.min(dragStartX, dragCurrentX)))
+      ? Math.max(0, timeToPx(clientXToTime(Math.min(dragStartX, dragCurrentX))))
       : 0,
   );
   const dragPreviewWidth = $derived(
     isDragging
-      ? Math.abs(
-          timeToPercent(clientXToTime(dragCurrentX)) -
-            timeToPercent(clientXToTime(dragStartX)),
+      ? Math.max(
+          0,
+          timeToPx(clientXToTime(Math.max(dragStartX, dragCurrentX))) -
+            timeToPx(clientXToTime(Math.min(dragStartX, dragCurrentX))),
         )
       : 0,
   );

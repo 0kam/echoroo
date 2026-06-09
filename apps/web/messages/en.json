@@ -2148,6 +2148,7 @@
   "annotation_editor_shortcuts_complete": "Ctrl+Enter: Complete & next",
   "annotation_editor_shortcuts_cancel": "Esc: Cancel draft selection",
   "annotation_editor_shortcuts_delete": "Delete: Remove selected annotation",
+  "annotation_editor_shortcuts_viewport": "A: Annotate · X: Pan · Z: Zoom · B: Back view",
 
   "annotation_editor_spectrogram_title": "Spectrogram",
   "annotation_editor_drag_hint": "Drag on the spectrogram to select a time range, then choose a species.",

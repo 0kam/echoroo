@@ -2148,6 +2148,7 @@
   "annotation_editor_shortcuts_complete": "Ctrl+Enter: 完了して次へ",
   "annotation_editor_shortcuts_cancel": "Esc: ドラフトをキャンセル",
   "annotation_editor_shortcuts_delete": "Delete: 選択中のアノテーションを削除",
+  "annotation_editor_shortcuts_viewport": "A: アノテート · X: パン · Z: ズーム · B: 表示を戻す",
 
   "annotation_editor_spectrogram_title": "スペクトログラム",
   "annotation_editor_drag_hint": "スペクトログラム上でドラッグして時間範囲を選択し、種を選んでください。",

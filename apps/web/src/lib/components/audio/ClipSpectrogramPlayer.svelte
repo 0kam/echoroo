@@ -5,18 +5,38 @@
    * the clip region is displayed rather than the full recording.
    *
    * Internally manages viewport and bounds state so callers only need to
-   * provide basic clip/recording metadata.
+   * provide basic clip/recording metadata. The annotation editor layers an
+   * interaction overlay on top of the spectrogram; to keep that overlay's
+   * coordinate model in sync, this component:
+   *   - owns `viewport` + `spectrogramSettings` as `$state`,
+   *   - exposes the live `viewport` and `canvasWidth` OUTWARD via callbacks
+   *     (`onViewportChange` / `onCanvasWidthChange`) — never `bind:`, to avoid
+   *     a reactive write-back loop, and
+   *   - accepts inbound viewport changes (overlay pan/zoom) via the exported
+   *     `setViewport()` method, which clamps to the clip bounds.
+   * Dataset-parity time/freq scale controls drive a relative viewport zoom.
    */
   import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
   import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
+  import ScaleControls from '$lib/components/audio/ScaleControls.svelte';
+  import ViewportToolbar from '$lib/components/audio/ViewportToolbar.svelte';
   import type { RecordingDetail } from '$lib/types/data';
-  import type { SpectrogramWindow, InteractionMode } from '$lib/types/audio';
+  import type {
+    SpectrogramWindow,
+    InteractionMode,
+    SpectrogramSettings,
+  } from '$lib/types/audio';
   import {
     DEFAULT_SPECTROGRAM_SETTINGS,
     DEFAULT_AUDIO_SETTINGS,
     getSpeedOptions,
   } from '$lib/types/audio';
-  import { getInitialViewingWindow, adjustWindowToBounds } from '$lib/utils/viewport';
+  import {
+    getInitialViewingWindow,
+    adjustWindowToBounds,
+    centerWindowOn,
+  } from '$lib/utils/viewport';
+  import { untrack } from 'svelte';
 
   /**
    * Minimum recording fields required by this component.
@@ -50,12 +70,49 @@
      * `seekTo` value and skip the effect.
      */
     seekNonce?: number;
+    /**
+     * Optional: when true, mount the dataset-parity viewport controls
+     * (time/freq scale sliders + Pan/Zoom/Annotate/Back/Reset toolbar) and
+     * surface the live viewport + canvas width to the caller. Off by default
+     * so existing call sites (recording-detail clip preview) are unchanged.
+     */
+    showViewportControls?: boolean;
+    /** Optional: current annotation interaction mode (drives the toolbar UI). */
+    annotationMode?: 'annotating' | 'panning' | 'zooming';
+    /** Optional: notified when the mode toolbar requests a mode change. */
+    onAnnotationModeChange?: (mode: 'annotating' | 'panning' | 'zooming') => void;
+    /** Optional: notified when the live viewport changes (pan/zoom/scale/seek). */
+    onViewportChange?: (viewport: SpectrogramWindow) => void;
+    /** Optional: notified when the spectrogram canvas width (CSS px) changes. */
+    onCanvasWidthChange?: (width: number) => void;
+    /** Optional: notified when the clip bounds change (segment switch). */
+    onBoundsChange?: (bounds: SpectrogramWindow) => void;
+    /**
+     * Optional: notified with the vertical offset (CSS px) of the spectrogram
+     * canvas from the top of the clip player. The annotation overlay uses this
+     * to align itself below the viewport-controls toolbar row.
+     */
+    onSpectrogramTopChange?: (top: number) => void;
     /** Optional: notified when playback time changes */
     onTimeUpdate?: (time: number) => void;
   }
 
-  let { projectId, recording, clipStart, clipEnd, seekTo, seekNonce, onTimeUpdate }: Props =
-    $props();
+  let {
+    projectId,
+    recording,
+    clipStart,
+    clipEnd,
+    seekTo,
+    seekNonce,
+    showViewportControls = false,
+    annotationMode = 'annotating',
+    onAnnotationModeChange,
+    onViewportChange,
+    onCanvasWidthChange,
+    onBoundsChange,
+    onSpectrogramTopChange,
+    onTimeUpdate,
+  }: Props = $props();
 
   // Cast to RecordingDetail for SpectrogramViewer (it only uses id, samplerate, duration)
   const recordingForViewer = $derived(recording as unknown as RecordingDetail);
@@ -68,6 +125,12 @@
     freq: { min: 0, max: recording.samplerate / 2 },
   });
 
+  // Surface bounds changes outward (clip/segment switch) so the overlay clamps
+  // pan/zoom against the right region.
+  $effect(() => {
+    onBoundsChange?.(bounds);
+  });
+
   // Initial viewport = the full clip (up to 20s).
   // We start with a placeholder and set the real value in an effect to avoid
   // capturing only the initial prop values in $state().
@@ -76,15 +139,29 @@
     freq: { min: 0, max: 1 },
   });
 
+  // Surface the live viewport outward via a callback (NOT `bind:`). The caller
+  // mirrors this into its overlay coordinate model; it must never write back
+  // to this `viewport` directly — inbound changes go through `setViewport()`.
+  $effect(() => {
+    onViewportChange?.(viewport);
+  });
+
+  // Track previous scale values so a slider change applies a RELATIVE zoom
+  // about the current viewport centre (mirrors the recording-detail page).
+  let prevTimeScale = $state(untrack(() => DEFAULT_SPECTROGRAM_SETTINGS.time_scale));
+  let prevFreqScale = $state(untrack(() => DEFAULT_SPECTROGRAM_SETTINGS.freq_scale));
+
   // Initialize viewport reactively so it always reflects the latest props.
-  // Also sync when clip range or recording samplerate changes.
+  // Also sync when clip range or recording samplerate changes. Resetting the
+  // scale baseline here keeps the slider-driven zoom consistent across
+  // segment switches.
   $effect(() => {
     const initial = getInitialViewingWindow({
       startTime: clipStart,
       endTime: clipEnd,
       samplerate: recording.samplerate,
     });
-    viewport = adjustWindowToBounds(initial, bounds);
+    viewport = adjustWindowToBounds(initial, untrack(() => bounds));
   });
 
   let currentTime = $state(0);
@@ -110,9 +187,33 @@
     if (target === undefined) return;
     handleSeek(target);
   });
-  let interactionMode = $state<InteractionMode>('idle');
 
-  const spectrogramSettings = DEFAULT_SPECTROGRAM_SETTINGS;
+  // The dataset viewer's own interaction never fires on the annotation page
+  // (the overlay sits above it), so we pin the viewer to a neutral mode. The
+  // real annotation mode lives in the parent via `annotationMode`.
+  let interactionMode = $state<InteractionMode>('panning');
+
+  // Spectrogram settings as $state so the time/freq scale sliders can drive a
+  // relative viewport zoom (mirrors the recording-detail page).
+  let spectrogramSettings = $state<SpectrogramSettings>({ ...DEFAULT_SPECTROGRAM_SETTINGS });
+
+  // Viewport history for the toolbar Back button.
+  let viewportHistory: SpectrogramWindow[] = [];
+
+  // Live spectrogram canvas width (CSS px). Bound from the outer wrapper which
+  // shares the 100%-width SpectrogramViewer container width.
+  let canvasWidth = $state(0);
+  $effect(() => {
+    onCanvasWidthChange?.(canvasWidth);
+  });
+
+  // Height (CSS px) of the viewport-controls toolbar row, when shown. The
+  // spectrogram canvas begins right below it, so the overlay must offset by
+  // this amount to stay aligned. Measured via `bind:clientHeight`.
+  let toolbarRowHeight = $state(0);
+  $effect(() => {
+    onSpectrogramTopChange?.(showViewportControls ? toolbarRowHeight : 0);
+  });
 
   const speedOptions = $derived(getSpeedOptions(recording.samplerate));
   // Local playback speed, seeded from defaults. Updated when the user picks a
@@ -127,6 +228,47 @@
     viewport = adjustWindowToBounds(newViewport, bounds);
   }
 
+  /**
+   * Inbound viewport setter for the annotation overlay (pan/zoom). Exported so
+   * the parent pushes changes here instead of `bind:`-ing the viewport, which
+   * would create a reactive write-back loop. Always clamped to the clip bounds.
+   */
+  export function setViewport(newViewport: SpectrogramWindow) {
+    viewport = adjustWindowToBounds(newViewport, bounds);
+  }
+
+  /** Save the current viewport onto the history stack (before pan/zoom). */
+  export function saveViewport() {
+    viewportHistory = [...viewportHistory, { ...viewport }];
+  }
+
+  function handleViewportBack() {
+    if (viewportHistory.length > 0) {
+      const prev = viewportHistory[viewportHistory.length - 1] as SpectrogramWindow;
+      viewportHistory = viewportHistory.slice(0, -1);
+      viewport = adjustWindowToBounds(prev, bounds);
+    }
+  }
+  /** Public alias so the parent can wire a keyboard `B` shortcut. */
+  export function back() {
+    handleViewportBack();
+  }
+
+  function handleViewportReset() {
+    viewportHistory = [];
+    spectrogramSettings = { ...spectrogramSettings, time_scale: 1.0, freq_scale: 1.0 };
+    prevTimeScale = 1.0;
+    prevFreqScale = 1.0;
+    viewport = adjustWindowToBounds(
+      getInitialViewingWindow({
+        startTime: clipStart,
+        endTime: clipEnd,
+        samplerate: recording.samplerate,
+      }),
+      bounds,
+    );
+  }
+
   function handleSeek(time: number) {
     currentTime = Math.max(clipStart, Math.min(clipEnd, time));
   }
@@ -135,9 +277,86 @@
     currentTime = time;
     onTimeUpdate?.(time);
   }
+
+  // When time_scale or freq_scale changes, zoom the viewport relative to its
+  // current size (not the full clip bounds). Mirrors the recording-detail page.
+  $effect(() => {
+    const timeScale = spectrogramSettings.time_scale;
+    const freqScale = spectrogramSettings.freq_scale;
+
+    const currentViewport = untrack(() => viewport);
+    const currentBounds = untrack(() => bounds);
+    const oldTimeScale = untrack(() => prevTimeScale);
+    const oldFreqScale = untrack(() => prevFreqScale);
+
+    if (timeScale === oldTimeScale && freqScale === oldFreqScale) return;
+
+    const currentDuration = currentViewport.time.max - currentViewport.time.min;
+    const currentBandwidth = currentViewport.freq.max - currentViewport.freq.min;
+
+    const newDuration = currentDuration * (oldTimeScale / timeScale);
+    const newBandwidth = currentBandwidth * (oldFreqScale / freqScale);
+
+    const timeCenter = (currentViewport.time.min + currentViewport.time.max) / 2;
+    const freqCenter = (currentViewport.freq.min + currentViewport.freq.max) / 2;
+
+    const proposed: SpectrogramWindow = {
+      time: { min: timeCenter - newDuration / 2, max: timeCenter + newDuration / 2 },
+      freq: { min: freqCenter - newBandwidth / 2, max: freqCenter + newBandwidth / 2 },
+    };
+
+    viewport = adjustWindowToBounds(proposed, currentBounds);
+
+    untrack(() => {
+      prevTimeScale = timeScale;
+      prevFreqScale = freqScale;
+    });
+  });
+
+  // Optional: when seeking outside the current viewport, recentre so the
+  // playhead stays visible. Only relevant when viewport controls are active.
+  // Depends ONLY on the seek inputs — viewport/bounds are read via untrack so
+  // the write-back to `viewport` never re-triggers this effect.
+  $effect(() => {
+    void seekNonce;
+    const target = seekTo;
+    if (target === undefined) return;
+    if (!showViewportControls) return;
+    const time = Math.max(clipStart, Math.min(clipEnd, target));
+    const currentViewport = untrack(() => viewport);
+    if (time < currentViewport.time.min || time > currentViewport.time.max) {
+      viewport = adjustWindowToBounds(
+        centerWindowOn(currentViewport, { time }),
+        untrack(() => bounds),
+      );
+    }
+  });
 </script>
 
-<div class="clip-player">
+<div class="clip-player" bind:clientWidth={canvasWidth}>
+  {#if showViewportControls}
+    <div class="viewport-toolbar-row" bind:clientHeight={toolbarRowHeight}>
+      <ViewportToolbar
+        mode={interactionMode}
+        showAnnotate
+        annotateActive={annotationMode === 'annotating'}
+        panActive={annotationMode === 'panning'}
+        zoomActive={annotationMode === 'zooming'}
+        onAnnotate={() => onAnnotationModeChange?.('annotating')}
+        onPan={() => onAnnotationModeChange?.('panning')}
+        onZoom={() => onAnnotationModeChange?.('zooming')}
+        onBack={handleViewportBack}
+        onReset={handleViewportReset}
+      />
+      <div class="scale-controls-wrapper">
+        <ScaleControls
+          settings={spectrogramSettings}
+          onChange={(s) => (spectrogramSettings = s)}
+        />
+      </div>
+    </div>
+  {/if}
+
   <SpectrogramViewer
     recording={recordingForViewer}
     {projectId}
@@ -177,6 +396,25 @@
     display: flex;
     flex-direction: column;
     gap: 0;
+  }
+
+  .viewport-toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    padding: 0.375rem 0.5rem;
+    background: #ffffff;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  :global(.dark) .viewport-toolbar-row {
+    background: #18181b;
+    border-bottom-color: #3f3f46;
+  }
+
+  .scale-controls-wrapper {
+    margin-left: auto;
   }
 
   .audio-player-wrapper {

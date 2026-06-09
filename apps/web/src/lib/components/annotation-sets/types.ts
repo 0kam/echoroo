@@ -13,7 +13,19 @@
  *     `onDestroy` to guarantee deterministic cleanup.
  */
 
+import type { SpectrogramWindow } from '$lib/types/audio';
+
 // --- Shared primitives ---------------------------------------------------
+
+/**
+ * Interaction mode for the annotation-editor overlay. Mirrors the
+ * dataset-viewer `InteractionMode` but adds an `annotating` mode (the
+ * default) where a left-drag draws a draft range / a click seeks.
+ *   - annotating: left-drag → draft range; click (<5px) → seek the playhead.
+ *   - panning:    left-drag → pan the shared viewport (shiftWindow).
+ *   - zooming:    left-drag → zoom box; on mouseup, zoom-to-box.
+ */
+export type AnnotationInteractionMode = 'annotating' | 'panning' | 'zooming';
 
 /**
  * A draft range expressed in ABSOLUTE recording seconds (not segment-relative).
@@ -39,6 +51,22 @@ export interface DraftHookInput {
   /** Duration in seconds of the clip (segment). */
   clipDuration: () => number;
   /**
+   * Live overlay/canvas width in CSS px. Required for viewport-aware
+   * coordinate math: pixel↔time conversion depends on the current viewport
+   * window, NOT on a fixed clip-duration fraction. The overlay is laid out
+   * `inset-x-0` so its width matches the spectrogram canvas width exactly.
+   */
+  canvasWidth: () => number;
+  /** Live canvas height in CSS px (used only for completeness in pixel↔pos math). */
+  canvasHeight: () => number;
+  /**
+   * Live spectrogram viewport (recording-absolute time + Hz). Drives the
+   * pixel↔time transform so click/drag math stays correct under any
+   * zoom/pan. The same transform positions the annotation boxes, so seek and
+   * box geometry share a single coordinate model.
+   */
+  viewport: () => SpectrogramWindow;
+  /**
    * Optional: invoked when a press-release on the overlay is a trivial CLICK
    * (movement below the drag threshold) rather than a drag. The argument is
    * the clicked position in ABSOLUTE recording seconds. The parent uses this
@@ -58,7 +86,11 @@ export interface DraftHookApi {
   readonly draftRange: DraftRange | null;
   /** True while the mouse is held down after a valid `onMouseDown`. */
   readonly isDragging: boolean;
-  /** CSS percentage geometry for the transient drag preview bar. */
+  /**
+   * Pixel geometry (CSS px) for the transient drag-preview bar, computed via
+   * the live viewport transform so the preview tracks zoom/pan. `left`/`width`
+   * are clamped to non-negative; the overlay container clips overflow.
+   */
   readonly dragPreview: { left: number; width: number };
   /** Event handlers the parent attaches to the overlay element. */
   readonly handlers: { onMouseDown: (e: MouseEvent) => void };
@@ -69,6 +101,64 @@ export interface DraftHookApi {
    * Must be called from the parent's `onDestroy`; window listeners are
    * detached by the hook's own `$effect` cleanup when the parent unmounts.
    */
+  dispose(): void;
+}
+
+// --- useAnnotationOverlay -----------------------------------------------
+
+/**
+ * A pending zoom-box selection on the annotation overlay. `start`/`end` are
+ * positions in spectrogram coordinates (recording-absolute seconds / Hz),
+ * matching the dataset-viewer {@link import('../audio/types').ZoomBox}.
+ */
+export interface AnnotationZoomBox {
+  start: { time: number; freq: number };
+  end: { time: number; freq: number };
+}
+
+/**
+ * Reactive inputs for the overlay-interaction hook. The hook is the SOLE
+ * interaction surface on the annotation page: the overlay sits above the
+ * spectrogram with `pointer-events-auto`, so the dataset viewer's own
+ * pan/zoom/seek never fire. The hook dispatches by mode:
+ *   - annotating → delegates mousedown to the draft hook (drag → range / click → seek).
+ *   - panning    → left-drag pans the shared viewport via `onViewportChange`.
+ *   - zooming    → left-drag draws a zoom box; mouseup zooms-to-box.
+ */
+export interface OverlayHookInput {
+  /** DOM ref for the overlay `<div>` (parent owns it via `bind:this`). */
+  overlayEl: () => HTMLDivElement | undefined;
+  /** Live spectrogram viewport (recording-absolute time + Hz). */
+  viewport: () => SpectrogramWindow;
+  /** Clip bounds — pan/zoom is clamped within these via `adjustWindowToBounds`. */
+  bounds: () => SpectrogramWindow;
+  /** Live overlay/canvas width in CSS px. */
+  canvasWidth: () => number;
+  /** Live overlay/canvas height in CSS px. */
+  canvasHeight: () => number;
+  /** Current interaction mode. */
+  mode: () => AnnotationInteractionMode;
+  /** Delegate for `annotating` mode — the draft hook's `onMouseDown`. */
+  onAnnotateMouseDown: (e: MouseEvent) => void;
+  /** Push a new viewport (pan/zoom result); parent clamps + commits. */
+  onViewportChange: (vp: SpectrogramWindow) => void;
+  /** Save the current viewport to history before a pan/zoom gesture begins. */
+  onViewportSave?: () => void;
+  /** Switch mode (e.g. back to `annotating` after a zoom completes). */
+  onModeChange?: (mode: AnnotationInteractionMode) => void;
+}
+
+/**
+ * Imperative API returned by {@link useAnnotationOverlay}. The parent wires
+ * `handlers.onMouseDown` onto the overlay element and renders `zoomBox`
+ * (pixel geometry) while a zoom drag is in progress.
+ */
+export interface OverlayHookApi {
+  /** Pixel geometry for the transient zoom-box rectangle, or null when idle. */
+  readonly zoomBoxPx: { left: number; width: number } | null;
+  /** Event handler the parent attaches to the overlay element. */
+  readonly handlers: { onMouseDown: (e: MouseEvent) => void };
+  /** Detach window listeners / short-circuit async continuations. */
   dispose(): void;
 }
 
