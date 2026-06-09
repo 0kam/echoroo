@@ -120,6 +120,16 @@ class AnnotationSetUpdate(BaseModel):
     )
 
 
+class AnnotationSetProgress(BaseModel):
+    """Per-status segment counts aggregated for an AnnotationSet."""
+
+    total: int
+    unannotated: int
+    annotated: int
+    skipped: int
+    empty: int
+
+
 class AnnotationSetResponse(BaseModel):
     """Response schema for an ``AnnotationSet`` row."""
 
@@ -136,18 +146,11 @@ class AnnotationSetResponse(BaseModel):
     sampling_warning: str | None = None
     created_at: datetime
     updated_at: datetime
+    # Additive, backward-compatible. The list endpoint populates real
+    # per-status segment counts; other producers may leave it ``None``.
+    progress: AnnotationSetProgress | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class AnnotationSetProgress(BaseModel):
-    """Per-status segment counts aggregated for an AnnotationSet."""
-
-    total: int
-    unannotated: int
-    annotated: int
-    skipped: int
-    empty: int
 
 
 class PaletteEntryResponse(BaseModel):

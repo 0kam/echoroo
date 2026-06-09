@@ -16,6 +16,7 @@ the service tier:
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -240,12 +241,84 @@ class AnnotationSetService:
             limit=pagination.page_size,
             offset=pagination.offset,
         )
+
+        progress_map = await self._build_progress_map([row.id for row in items])
+
         return AnnotationSetListResponse(
-            items=[AnnotationSetResponse.model_validate(row) for row in items],
+            items=[
+                AnnotationSetResponse.model_validate(row).model_copy(
+                    update={"progress": progress_map.get(row.id)},
+                )
+                for row in items
+            ],
             total=total,
             page=pagination.page,
             page_size=pagination.page_size,
         )
+
+    async def _build_progress_map(
+        self, set_ids: Sequence[UUID]
+    ) -> dict[UUID, AnnotationSetProgress]:
+        """Compute per-set :class:`AnnotationSetProgress` for the listed sets.
+
+        Uses TWO grouped queries over all ``set_ids`` (one for per-status
+        counts, one for ``is_empty`` counts) regardless of how many sets are
+        listed, so the list view avoids the N+1 of calling
+        :meth:`_build_progress` per row. Semantics match ``_build_progress``:
+        ``total = unannotated + annotated + skipped`` and ``empty`` counts
+        segments with ``is_empty=True``.
+        """
+        if not set_ids:
+            return {}
+
+        # Per-status counts: GROUP BY (annotation_set_id, status).
+        status_stmt = (
+            select(
+                AnnotationSegment.annotation_set_id,
+                AnnotationSegment.status,
+                func.count(),
+            )
+            .where(AnnotationSegment.annotation_set_id.in_(set_ids))
+            .group_by(
+                AnnotationSegment.annotation_set_id,
+                AnnotationSegment.status,
+            )
+        )
+        per_status: dict[UUID, dict[AnnotationSegmentStatus, int]] = {
+            sid: dict.fromkeys(AnnotationSegmentStatus, 0) for sid in set_ids
+        }
+        for set_id, seg_status, count in (
+            await self._db.execute(status_stmt)
+        ).all():
+            per_status[set_id][seg_status] = int(count)
+
+        # Empty counts (is_empty=True): GROUP BY annotation_set_id.
+        empty_stmt = (
+            select(AnnotationSegment.annotation_set_id, func.count())
+            .where(
+                AnnotationSegment.annotation_set_id.in_(set_ids),
+                AnnotationSegment.is_empty.is_(True),
+            )
+            .group_by(AnnotationSegment.annotation_set_id)
+        )
+        empty_map: dict[UUID, int] = {}
+        for set_id, count in (await self._db.execute(empty_stmt)).all():
+            empty_map[set_id] = int(count)
+
+        result: dict[UUID, AnnotationSetProgress] = {}
+        for set_id in set_ids:
+            counts = per_status[set_id]
+            unannotated = counts.get(AnnotationSegmentStatus.UNANNOTATED, 0)
+            annotated = counts.get(AnnotationSegmentStatus.ANNOTATED, 0)
+            skipped = counts.get(AnnotationSegmentStatus.SKIPPED, 0)
+            result[set_id] = AnnotationSetProgress(
+                total=unannotated + annotated + skipped,
+                unannotated=unannotated,
+                annotated=annotated,
+                skipped=skipped,
+                empty=empty_map.get(set_id, 0),
+            )
+        return result
 
     async def get_detail(
         self, set_id: UUID, locale: str = "en",

@@ -96,6 +96,11 @@ export interface AnnotationSet {
   sampling_warning: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Real per-status segment counts for the list view. The list endpoint
+   * always populates this; other producers may omit it (null).
+   */
+  progress: AnnotationSetProgress | null;
 }
 
 /** Full AnnotationSet including palette and per-status counts. */
