@@ -2142,6 +2142,8 @@
   "annotation_editor_already_completed": "Already completed",
   "annotation_editor_status_label": "Status",
 
+  "annotation_editor_viewport_annotate": "Annotate mode (A)",
+
   "annotation_editor_shortcuts_title": "Keyboard shortcuts",
   "annotation_editor_shortcuts_nav": "Alt+\u2190 / Alt+\u2192: Previous / next segment",
   "annotation_editor_shortcuts_palette": "1\u20139: Apply palette species",

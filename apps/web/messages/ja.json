@@ -2142,6 +2142,8 @@
   "annotation_editor_already_completed": "完了済み",
   "annotation_editor_status_label": "状態",
 
+  "annotation_editor_viewport_annotate": "アノテーションモード (A)",
+
   "annotation_editor_shortcuts_title": "キーボードショートカット",
   "annotation_editor_shortcuts_nav": "Alt+\u2190 / Alt+\u2192: 前/次のセグメント",
   "annotation_editor_shortcuts_palette": "1\u20139: パレットの種を適用",

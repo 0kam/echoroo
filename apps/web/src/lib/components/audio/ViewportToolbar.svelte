@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { InteractionMode } from '$lib/types/audio';
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     mode: InteractionMode;
@@ -71,7 +72,7 @@
     <button
       type="button"
       class="toolbar-btn {annotateActive ? 'toolbar-btn-active' : ''}"
-      title="Annotate mode (A)"
+      title={m.annotation_editor_viewport_annotate()}
       onclick={onAnnotate}
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
