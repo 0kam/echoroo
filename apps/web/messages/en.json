@@ -1961,10 +1961,18 @@
   "annotation_sets_create_filters_tod_hint": "Uses recorder-local HH:MM, wrap-around (e.g. 20:00-05:00) allowed.",
 
   "annotation_sets_create_geometry_description": "Configure how the sampler chops the source dataset into reviewable segments.",
+  "annotation_sets_create_geometry_mode": "Segment mode",
+  "annotation_sets_create_geometry_mode_fixed": "Fixed length",
+  "annotation_sets_create_geometry_mode_fixed_hint": "Chop recordings into fixed-length sliding-window segments.",
+  "annotation_sets_create_geometry_mode_whole": "Whole recording",
+  "annotation_sets_create_geometry_mode_whole_hint": "Each sampled recording becomes one segment spanning its full duration.",
   "annotation_sets_create_geometry_length": "Segment length (seconds)",
   "annotation_sets_create_geometry_length_hint": "Minimum 10 seconds.",
   "annotation_sets_create_geometry_count": "Number of segments",
   "annotation_sets_create_geometry_count_hint": "Budget for this set. The sampler may return fewer if the pool is small.",
+  "annotation_sets_create_geometry_count_whole": "Max recordings",
+  "annotation_sets_create_geometry_count_whole_hint": "Maximum number of recordings to sample (one full-length segment each).",
+  "annotation_sets_create_summary_mode": "Segment mode",
 
   "annotation_sets_create_name_label": "Annotation set name",
   "annotation_sets_create_name_hint": "Shown in lists and exports.",

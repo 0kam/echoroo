@@ -202,15 +202,31 @@ class AnnotationSet(UUIDMixin, TimestampMixin, Base):
         nullable=True,
         doc='Optional {"start": "HH:MM", "end": "HH:MM"} local time-of-day filter',
     )
-    segment_length_sec: Mapped[int] = mapped_column(
-        Integer,
+    segment_mode: Mapped[str] = mapped_column(
+        String(20),
         nullable=False,
-        doc="Length in seconds of every sampled segment (>= 10)",
+        default="fixed",
+        server_default="fixed",
+        doc=(
+            "Segmentation strategy: 'fixed' (fixed-length sliding window slots) "
+            "or 'whole_recording' (one full-length segment per recording)"
+        ),
+    )
+    segment_length_sec: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        doc=(
+            "Length in seconds of every sampled segment (>= 10). Required when "
+            "segment_mode = 'fixed'; ignored/NULL when 'whole_recording'"
+        ),
     )
     num_segments: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
-        doc="Target segment count (>= 1)",
+        doc=(
+            "Target segment count (>= 1). In 'whole_recording' mode this is the "
+            "maximum number of recordings to sample (1 segment each)"
+        ),
     )
     status: Mapped[AnnotationSetStatus] = mapped_column(
         Enum(
@@ -257,7 +273,13 @@ class AnnotationSet(UUIDMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("project_id", "name", name="uq_annotation_sets_project_name"),
         CheckConstraint(
-            "segment_length_sec >= 10",
+            "segment_mode IN ('fixed', 'whole_recording')",
+            name="ck_annotation_sets_segment_mode_valid",
+        ),
+        # Fixed-mode sets require a >= 10 s length; whole-recording sets may
+        # leave it NULL because each segment spans the full recording.
+        CheckConstraint(
+            "segment_mode = 'whole_recording' OR segment_length_sec >= 10",
             name="ck_annotation_sets_segment_length_min",
         ),
         CheckConstraint(

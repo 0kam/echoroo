@@ -1961,10 +1961,18 @@
   "annotation_sets_create_filters_tod_hint": "録音機ローカル時刻のHH:MM。20:00-05:00のような日跨ぎも可。",
 
   "annotation_sets_create_geometry_description": "どのようにデータセットをセグメントに分割するかを指定します。",
+  "annotation_sets_create_geometry_mode": "セグメントモード",
+  "annotation_sets_create_geometry_mode_fixed": "固定長",
+  "annotation_sets_create_geometry_mode_fixed_hint": "録音を固定長のスライディングウィンドウでセグメントに分割します。",
+  "annotation_sets_create_geometry_mode_whole": "録音全体",
+  "annotation_sets_create_geometry_mode_whole_hint": "サンプリングされた各録音が、その全長にわたる1つのセグメントになります。",
   "annotation_sets_create_geometry_length": "セグメント長（秒）",
   "annotation_sets_create_geometry_length_hint": "10秒以上。",
   "annotation_sets_create_geometry_count": "セグメント数",
   "annotation_sets_create_geometry_count_hint": "このセットの上限数。サンプリング対象が少ない場合は結果がこれより少なくなることがあります。",
+  "annotation_sets_create_geometry_count_whole": "最大録音数",
+  "annotation_sets_create_geometry_count_whole_hint": "サンプリングする録音の最大数（各録音につき全長セグメント1つ）。",
+  "annotation_sets_create_summary_mode": "セグメントモード",
 
   "annotation_sets_create_name_label": "セット名",
   "annotation_sets_create_name_hint": "一覧や書き出し時に表示されます。",

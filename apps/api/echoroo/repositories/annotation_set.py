@@ -54,8 +54,9 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
         dataset_id: UUID,
         created_by_id: UUID,
         name: str,
-        segment_length_sec: int,
         num_segments: int,
+        segment_mode: str = "fixed",
+        segment_length_sec: int | None = None,
         filter_date_range: dict[str, Any] | None = None,
         filter_time_of_day_range: dict[str, Any] | None = None,
     ) -> AnnotationSet:
@@ -66,8 +67,11 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
             dataset_id: Source dataset ID.
             created_by_id: Creator user ID.
             name: Display name (unique within project).
+            num_segments: Target segment count (>= 1). In ``whole_recording``
+                mode this is the maximum number of recordings to sample.
+            segment_mode: ``'fixed'`` (default) or ``'whole_recording'``.
             segment_length_sec: Length of each sampled segment (>= 10).
-            num_segments: Target segment count (>= 1).
+                Required for ``fixed`` mode; ``None`` for ``whole_recording``.
             filter_date_range: Optional JSONB date filter payload.
             filter_time_of_day_range: Optional JSONB time-of-day filter payload.
 
@@ -79,6 +83,7 @@ class AnnotationSetRepository(BaseRepository[AnnotationSet]):
             dataset_id=dataset_id,
             created_by_id=created_by_id,
             name=name,
+            segment_mode=segment_mode,
             segment_length_sec=segment_length_sec,
             num_segments=num_segments,
             filter_date_range=filter_date_range,

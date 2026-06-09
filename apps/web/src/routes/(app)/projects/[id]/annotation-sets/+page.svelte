@@ -63,15 +63,13 @@
   }
 
   /**
-   * Estimate progress for the list preview. Detail-level progress counts live
-   * on the detail response only, so we fall back to 0 for the list view.
+   * Real annotation progress as a percentage, matching the detail page's
+   * formula: `annotated / total * 100` (0 when there are no segments yet).
    */
-  function fakeProgress(set: AnnotationSet): number {
-    if (set.status === 'completed') return 100;
-    if (set.status === 'ready') return 0;
-    if (set.status === 'sampling') return 0;
-    // in_progress — no per-row counts without detail fetch; show indeterminate 50%
-    return 50;
+  function progressPercent(set: AnnotationSet): number {
+    const p = set.progress;
+    if (!p || p.total === 0) return 0;
+    return Math.round((p.annotated / p.total) * 100);
   }
 </script>
 
@@ -153,7 +151,7 @@
         </thead>
         <tbody class="divide-y divide-stone-200 dark:divide-stone-700">
           {#each $setsQuery.data.items as set (set.id)}
-            {@const progress = fakeProgress(set)}
+            {@const progress = progressPercent(set)}
             <tr class="group cursor-pointer transition-colors hover:bg-stone-50 dark:hover:bg-stone-800/40">
               <td class="px-4 py-3 align-top">
                 <a
@@ -188,6 +186,11 @@
                       style:width="{progress}%"
                     ></div>
                   </div>
+                  {#if set.progress}
+                    <div class="mt-1 text-xs text-stone-400">
+                      {set.progress.annotated}/{set.progress.total}
+                    </div>
+                  {/if}
                 </a>
               </td>
               <td class="px-4 py-3 align-top text-sm text-stone-500">

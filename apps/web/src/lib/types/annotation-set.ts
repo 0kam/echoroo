@@ -23,6 +23,15 @@ export type AnnotationSegmentStatus =
   | 'annotated'
   | 'skipped';
 
+/**
+ * Segmentation strategy for an AnnotationSet.
+ *
+ * - `fixed`: fixed-length sliding-window slots (requires `segment_length_sec`).
+ * - `whole_recording`: one full-length segment per recording; `num_segments`
+ *   then acts as the maximum number of recordings to sample.
+ */
+export type SegmentMode = 'fixed' | 'whole_recording';
+
 /** Model kind recognised by the cross-model evaluation runner. */
 export type EvaluationModelKind = 'birdnet' | 'perch' | 'custom';
 
@@ -89,13 +98,19 @@ export interface AnnotationSet {
   name: string;
   filter_date_range: DateRange | null;
   filter_time_of_day_range: TimeOfDayRange | null;
-  segment_length_sec: number;
+  segment_mode: SegmentMode;
+  segment_length_sec: number | null;
   num_segments: number;
   status: AnnotationSetStatus;
   /** Optional human-readable warning surfaced by the sampler. */
   sampling_warning: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Real per-status segment counts for the list view. The list endpoint
+   * always populates this; other producers may omit it (null).
+   */
+  progress: AnnotationSetProgress | null;
 }
 
 /** Full AnnotationSet including palette and per-status counts. */
@@ -111,7 +126,14 @@ export interface AnnotationSetCreate {
   name: string;
   filter_date_range?: DateRange | null;
   filter_time_of_day_range?: TimeOfDayRange | null;
-  segment_length_sec: number;
+  /** Segmentation strategy. Defaults to `fixed` on the backend if omitted. */
+  segment_mode?: SegmentMode;
+  /** Required when `segment_mode` is `fixed`; omit for `whole_recording`. */
+  segment_length_sec?: number | null;
+  /**
+   * Target segment count. In `whole_recording` mode this is the maximum
+   * number of recordings to sample (one full-length segment each).
+   */
   num_segments: number;
 }
 
