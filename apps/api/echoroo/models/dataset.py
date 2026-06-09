@@ -13,7 +13,6 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import DatasetStatus, DatasetVisibility
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation_project import AnnotationProject
     from echoroo.models.license import License
     from echoroo.models.project import Project
     from echoroo.models.recorder import Recorder
@@ -195,13 +194,6 @@ class Dataset(UUIDMixin, TimestampMixin, Base):
         back_populates="dataset",
         cascade="all, delete-orphan",
     )
-    annotation_projects: Mapped[list[AnnotationProject]] = relationship(
-        "AnnotationProject",
-        secondary="annotation_project_datasets",
-        back_populates="datasets",
-        lazy="select",
-    )
-
     __table_args__ = (
         UniqueConstraint("project_id", "name", name="uq_dataset_project_name"),
         Index("ix_datasets_project_id", "project_id"),

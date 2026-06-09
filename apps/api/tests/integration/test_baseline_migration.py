@@ -78,6 +78,29 @@ SUPPORTING_TABLES: tuple[str, ...] = (
     "tags",
 )
 
+LEGACY_ANNOTATION_WORKFLOW_TABLES: tuple[str, ...] = (
+    "annotation_projects",
+    "annotation_project_tags",
+    "annotation_project_datasets",
+    "annotation_tasks",
+    "clip_annotations",
+    "clip_annotation_tags",
+    "sound_event_annotations",
+    "sound_event_annotation_tags",
+)
+
+LEGACY_ANNOTATION_WORKFLOW_ENUMS: tuple[str, ...] = (
+    "annotationprojectvisibility",
+    "annotationtaskstatus",
+    "reviewstatus",
+    "geometrytype",
+)
+
+LEGACY_NOTE_PARENT_COLUMNS: tuple[str, ...] = (
+    "clip_annotation_id",
+    "sound_event_annotation_id",
+)
+
 
 @pytest.fixture(scope="module")
 def pg_container() -> Iterator[object]:
@@ -148,6 +171,46 @@ def _tables_in_db(url: str) -> set[str]:
         engine.dispose()
 
 
+def _enum_types_in_db(url: str) -> set[str]:
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    """
+                    SELECT t.typname
+                    FROM pg_type t
+                    JOIN pg_enum e ON e.enumtypid = t.oid
+                    JOIN pg_namespace n ON n.oid = t.typnamespace
+                    WHERE n.nspname = 'public'
+                    """
+                )
+            ).scalars()
+            return set(rows)
+    finally:
+        engine.dispose()
+
+
+def _columns_in_table(url: str, table_name: str) -> set[str]:
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                sa.text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                    AND table_name = :table_name
+                    """
+                ),
+                {"table_name": table_name},
+            ).scalars()
+            return set(rows)
+    finally:
+        engine.dispose()
+
+
 def test_all_22_primary_entities_created(upgraded_db: str) -> None:
     """FR-113: the single baseline migration creates all 22 authoritative tables."""
 
@@ -162,6 +225,30 @@ def test_supporting_tables_created(upgraded_db: str) -> None:
     tables = _tables_in_db(upgraded_db)
     missing = [t for t in SUPPORTING_TABLES if t not in tables]
     assert not missing, f"Missing supporting tables from baseline: {missing}"
+
+
+def test_legacy_annotation_project_tables_removed(upgraded_db: str) -> None:
+    """Revision 0025 removes the legacy AnnotationProject workflow tables."""
+
+    tables = _tables_in_db(upgraded_db)
+    present = [t for t in LEGACY_ANNOTATION_WORKFLOW_TABLES if t in tables]
+    assert not present, f"Legacy annotation workflow tables still present: {present}"
+
+
+def test_legacy_annotation_project_enums_removed(upgraded_db: str) -> None:
+    """Revision 0025 removes enum types used only by the legacy workflow."""
+
+    enum_types = _enum_types_in_db(upgraded_db)
+    present = [e for e in LEGACY_ANNOTATION_WORKFLOW_ENUMS if e in enum_types]
+    assert not present, f"Legacy annotation workflow enums still present: {present}"
+
+
+def test_legacy_note_parent_columns_removed(upgraded_db: str) -> None:
+    """Current notes no longer point directly at legacy clip/sound-event rows."""
+
+    columns = _columns_in_table(upgraded_db, "notes")
+    present = [c for c in LEGACY_NOTE_PARENT_COLUMNS if c in columns]
+    assert not present, f"Legacy note parent columns still present: {present}"
 
 
 def test_alembic_version_stamped(upgraded_db: str) -> None:

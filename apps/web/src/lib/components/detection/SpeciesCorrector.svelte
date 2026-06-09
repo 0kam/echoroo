@@ -8,7 +8,7 @@
 
   import { createQuery } from '@tanstack/svelte-query';
   import { fetchTags } from '$lib/api/tags';
-  import type { Tag } from '$lib/types/annotation';
+  import type { Tag } from '$lib/types/tag';
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { displaySpeciesName } from '$lib/utils/speciesFormatters';

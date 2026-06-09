@@ -8,19 +8,17 @@ first-party session surface.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from echoroo.api.v1 import annotation_projects as legacy_annotation_projects
 from echoroo.api.v1 import clips as legacy_clips
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
 from echoroo.core.actions import (
-    ANNOTATION_PROJECT_EXPORT_ACTION,
     CLIP_GET_ACTION,
     CLIP_LIST_ACTION,
     DATASET_EXPORT_ACTION,
@@ -333,37 +331,6 @@ async def get_spectrogram(
         channel=channel,
         width=width,
         height=height,
-    )
-
-
-@router.get(
-    "/{project_id}/annotation-projects/{annotation_project_id}/export",
-    summary="Export annotations",
-    description="BFF adapter for the legacy annotation project export endpoint.",
-)
-async def export_annotations(
-    project_id: UUID,
-    annotation_project_id: UUID,
-    request: Request,
-    current_user: CurrentUser,
-    db: DbSession,
-    format: str = Query("json", description="Export format: json, csv, or aoef"),
-) -> Any:
-    """Delegate annotation export to the legacy handler."""
-    await gate_action(
-        action=ANNOTATION_PROJECT_EXPORT_ACTION,
-        project_id=project_id,
-        current_user=current_user,
-        request=request,
-        db=db,
-    )
-    return await legacy_annotation_projects.export_annotations(
-        project_id=project_id,
-        annotation_project_id=annotation_project_id,
-        request=request,
-        current_user=current_user,
-        db=db,
-        format=format,
     )
 
 

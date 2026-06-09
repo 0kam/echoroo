@@ -109,42 +109,11 @@ class TagCategory(StrEnum):
     QUALITY = "quality"
 
 
-class AnnotationProjectVisibility(StrEnum):
-    """Annotation project visibility levels."""
-
-    PRIVATE = "private"
-    PUBLIC = "public"
-
-
-class AnnotationTaskStatus(StrEnum):
-    """Annotation task workflow status."""
-
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    REVIEW_PENDING = "review_pending"
-
-
-class ReviewStatus(StrEnum):
-    """Clip annotation review status."""
-
-    UNREVIEWED = "unreviewed"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-
-
 class AnnotationSource(StrEnum):
     """Source of annotation (human annotator or ML model)."""
 
     HUMAN = "human"
     MODEL = "model"
-
-
-class GeometryType(StrEnum):
-    """Sound event geometry types."""
-
-    BOUNDING_BOX = "BoundingBox"
-    TIME_INTERVAL = "TimeInterval"
 
 
 class DetectionSource(StrEnum):

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { Tag } from '$lib/types/annotation';
+import type { Tag } from '$lib/types/tag';
 import type { GBIFSpeciesResult, TaxonSearchResult } from '$lib/types/taxon';
 import {
   dedupTaxa,

@@ -13,7 +13,6 @@
 
 import type { DetectionStatus, ConsensusStatus } from '$lib/types/detection';
 import type { DatasetStatus } from '$lib/types/data';
-import type { AnnotationTaskStatus, ReviewStatus } from '$lib/types/annotation';
 import type { CustomModelStatus } from '$lib/types/custom-model';
 
 // ============================================
@@ -119,34 +118,6 @@ export function getConsensusStatusLabel(
       return t?.rejected() ?? 'Rejected';
     default:
       return t?.needs_votes() ?? 'Needs Votes';
-  }
-}
-
-// ============================================
-// Annotation clip review status
-// Covers: ReviewStatus ('unreviewed' | 'approved' | 'rejected') from annotation.ts
-// ============================================
-
-/**
- * Human-readable label for an annotation clip review status.
- *
- * Pass the paraglide message functions when calling from a Svelte component.
- */
-export function getAnnotationReviewStatusLabel(
-  status: ReviewStatus | string,
-  t?: {
-    approved: () => string;
-    rejected: () => string;
-    unreviewed: () => string;
-  },
-): string {
-  switch (status) {
-    case 'approved':
-      return t?.approved() ?? 'Approved';
-    case 'rejected':
-      return t?.rejected() ?? 'Rejected';
-    default:
-      return t?.unreviewed() ?? 'Unreviewed';
   }
 }
 
@@ -364,59 +335,6 @@ export function getCustomModelStatusLabel(
       return t?.deployed() ?? 'Deployed';
     case 'failed':
       return t?.failed() ?? 'Failed';
-    default:
-      return status;
-  }
-}
-
-// ============================================
-// Annotation task status
-// Covers: AnnotationTaskStatus ('pending' | 'in_progress' | 'completed' | 'review_pending')
-// ============================================
-
-/**
- * CSS class string for an annotation-task status badge.
- * Returns a BEM-style compound class (e.g. "badge badge-pending") that
- * maps to existing CSS in the annotation page stylesheet.
- */
-export function getAnnotationTaskStatusClass(status: AnnotationTaskStatus): string {
-  switch (status) {
-    case 'pending':
-      return 'badge badge-pending';
-    case 'in_progress':
-      return 'badge badge-in-progress';
-    case 'completed':
-      return 'badge badge-completed';
-    case 'review_pending':
-      return 'badge badge-review-pending';
-    default:
-      return 'badge';
-  }
-}
-
-/**
- * Human-readable label for an annotation task status.
- *
- * Pass the paraglide message functions when calling from a Svelte component.
- */
-export function getAnnotationTaskStatusLabel(
-  status: AnnotationTaskStatus,
-  t?: {
-    pending: () => string;
-    in_progress: () => string;
-    completed: () => string;
-    review_pending: () => string;
-  },
-): string {
-  switch (status) {
-    case 'pending':
-      return t?.pending() ?? 'Pending';
-    case 'in_progress':
-      return t?.in_progress() ?? 'In Progress';
-    case 'completed':
-      return t?.completed() ?? 'Completed';
-    case 'review_pending':
-      return t?.review_pending() ?? 'Review Pending';
     default:
       return status;
   }

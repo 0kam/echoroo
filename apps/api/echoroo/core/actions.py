@@ -798,203 +798,117 @@ CLIP_DOWNLOAD_ACTION: Action = register_action(
 
 
 # =============================================================================
-# Phase 2A.4 (spec 007) — annotation_project / annotation_task / annotation
+# Phase 2A.4 (spec 007) — annotation sets / segments / time-range annotations
 # =============================================================================
-#
-# annotation_project = dataset-scope resource lifecycle (admin-only today).
-# annotation_task complete/skip + annotation CRUD = member-allowed today
-# (ANNOTATE). Reads gate on VIEW_DETECTION.
 
-ANNOTATION_PROJECT_LIST_ACTION: Action = register_action(
+ANNOTATION_SET_LIST_ACTION: Action = register_action(
     Action(
-        name="annotation_project.list",
+        name="annotation_set.list",
         required_permission=Permission.VIEW_DETECTION,
         is_mutating=False,
     )
 )
 
-ANNOTATION_PROJECT_GET_ACTION: Action = register_action(
+ANNOTATION_SET_GET_ACTION: Action = register_action(
     Action(
-        name="annotation_project.get",
+        name="annotation_set.get",
         required_permission=Permission.VIEW_DETECTION,
         is_mutating=False,
     )
 )
 
-ANNOTATION_PROJECT_CREATE_ACTION: Action = register_action(
+ANNOTATION_SET_CREATE_ACTION: Action = register_action(
     Action(
-        name="annotation_project.create",
-        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        name="annotation_set.create",
+        required_permission=Permission.ANNOTATE,
         is_mutating=True,
     )
 )
 
-ANNOTATION_PROJECT_UPDATE_ACTION: Action = register_action(
+ANNOTATION_SET_UPDATE_ACTION: Action = register_action(
     Action(
-        name="annotation_project.update",
-        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        name="annotation_set.update",
+        required_permission=Permission.ANNOTATE,
         is_mutating=True,
     )
 )
 
-ANNOTATION_PROJECT_DELETE_ACTION: Action = register_action(
+ANNOTATION_SET_DELETE_ACTION: Action = register_action(
     Action(
-        name="annotation_project.delete",
-        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        name="annotation_set.delete",
+        required_permission=Permission.ANNOTATE,
         is_mutating=True,
     )
 )
 
-ANNOTATION_PROJECT_EXPORT_ACTION: Action = register_action(
+ANNOTATION_SET_PALETTE_UPDATE_ACTION: Action = register_action(
     Action(
-        name="annotation_project.export",
-        required_permission=Permission.EXPORT,
-        is_mutating=False,
-    )
-)
-
-ANNOTATION_PROJECT_GENERATE_TASKS_ACTION: Action = register_action(
-    Action(
-        name="annotation_project.generate_tasks",
-        required_permission=Permission.MANAGE_DATASET_ADMIN,
+        name="annotation_set.palette.update",
+        required_permission=Permission.ANNOTATE,
         is_mutating=True,
     )
 )
 
-ANNOTATION_TASK_LIST_ACTION: Action = register_action(
+ANNOTATION_SEGMENT_LIST_ACTION: Action = register_action(
     Action(
-        name="annotation_task.list",
+        name="annotation_segment.list",
         required_permission=Permission.VIEW_DETECTION,
         is_mutating=False,
     )
 )
 
-ANNOTATION_TASK_NEXT_ACTION: Action = register_action(
+ANNOTATION_SEGMENT_GET_ACTION: Action = register_action(
     Action(
-        name="annotation_task.next",
+        name="annotation_segment.get",
         required_permission=Permission.VIEW_DETECTION,
         is_mutating=False,
     )
 )
 
-ANNOTATION_TASK_GET_ACTION: Action = register_action(
+ANNOTATION_SEGMENT_UPDATE_ACTION: Action = register_action(
     Action(
-        name="annotation_task.get",
-        required_permission=Permission.VIEW_DETECTION,
-        is_mutating=False,
-    )
-)
-
-# task PATCH = assignee / status edits, modelled as ANNOTATE today.
-ANNOTATION_TASK_UPDATE_ACTION: Action = register_action(
-    Action(
-        name="annotation_task.update",
+        name="annotation_segment.update",
         required_permission=Permission.ANNOTATE,
         is_mutating=True,
     )
 )
 
-ANNOTATION_TASK_COMPLETE_ACTION: Action = register_action(
+ANNOTATION_SEGMENT_NOTE_CREATE_ACTION: Action = register_action(
     Action(
-        name="annotation_task.complete",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-# Clip-annotation level (annotations.py /clip-annotations/* endpoints).
-ANNOTATION_CLIP_GET_ACTION: Action = register_action(
-    Action(
-        name="annotation.clip.get",
-        required_permission=Permission.VIEW_DETECTION,
-        is_mutating=False,
-    )
-)
-
-ANNOTATION_CLIP_TAG_CREATE_ACTION: Action = register_action(
-    Action(
-        name="annotation.clip.tag.create",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_CLIP_TAG_DELETE_ACTION: Action = register_action(
-    Action(
-        name="annotation.clip.tag.delete",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_LIST_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.list",
-        required_permission=Permission.VIEW_DETECTION,
-        is_mutating=False,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_CREATE_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.create",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_UPDATE_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.update",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_DELETE_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.delete",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.tag.create",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION: Action = register_action(
-    Action(
-        name="annotation.sound_event.tag.delete",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_BATCH_TAG_ACTION: Action = register_action(
-    Action(
-        name="annotation.batch_tag",
-        required_permission=Permission.ANNOTATE,
-        is_mutating=True,
-    )
-)
-
-ANNOTATION_NOTE_CREATE_ACTION: Action = register_action(
-    Action(
-        name="annotation.note.create",
+        name="annotation_segment.note.create",
         required_permission=Permission.COMMENT,
         is_mutating=True,
     )
 )
 
-ANNOTATION_REVIEW_ACTION: Action = register_action(
+TIME_RANGE_ANNOTATION_CREATE_ACTION: Action = register_action(
     Action(
-        name="annotation.review",
+        name="time_range_annotation.create",
         required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+TIME_RANGE_ANNOTATION_UPDATE_ACTION: Action = register_action(
+    Action(
+        name="time_range_annotation.update",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+TIME_RANGE_ANNOTATION_DELETE_ACTION: Action = register_action(
+    Action(
+        name="time_range_annotation.delete",
+        required_permission=Permission.ANNOTATE,
+        is_mutating=True,
+    )
+)
+
+TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION: Action = register_action(
+    Action(
+        name="time_range_annotation.note.create",
+        required_permission=Permission.COMMENT,
         is_mutating=True,
     )
 )
@@ -1592,31 +1506,21 @@ __all__ = [
     "CLIP_LIST_ACTION",
     "CLIP_SPECTROGRAM_ACTION",
     "CLIP_UPDATE_ACTION",
-    # Phase 2A.4 (spec 007) — annotation_project / annotation_task / annotation
-    "ANNOTATION_BATCH_TAG_ACTION",
-    "ANNOTATION_CLIP_GET_ACTION",
-    "ANNOTATION_CLIP_TAG_CREATE_ACTION",
-    "ANNOTATION_CLIP_TAG_DELETE_ACTION",
-    "ANNOTATION_NOTE_CREATE_ACTION",
-    "ANNOTATION_PROJECT_CREATE_ACTION",
-    "ANNOTATION_PROJECT_DELETE_ACTION",
-    "ANNOTATION_PROJECT_EXPORT_ACTION",
-    "ANNOTATION_PROJECT_GENERATE_TASKS_ACTION",
-    "ANNOTATION_PROJECT_GET_ACTION",
-    "ANNOTATION_PROJECT_LIST_ACTION",
-    "ANNOTATION_PROJECT_UPDATE_ACTION",
-    "ANNOTATION_REVIEW_ACTION",
-    "ANNOTATION_SOUND_EVENT_CREATE_ACTION",
-    "ANNOTATION_SOUND_EVENT_DELETE_ACTION",
-    "ANNOTATION_SOUND_EVENT_LIST_ACTION",
-    "ANNOTATION_SOUND_EVENT_TAG_CREATE_ACTION",
-    "ANNOTATION_SOUND_EVENT_TAG_DELETE_ACTION",
-    "ANNOTATION_SOUND_EVENT_UPDATE_ACTION",
-    "ANNOTATION_TASK_COMPLETE_ACTION",
-    "ANNOTATION_TASK_GET_ACTION",
-    "ANNOTATION_TASK_LIST_ACTION",
-    "ANNOTATION_TASK_NEXT_ACTION",
-    "ANNOTATION_TASK_UPDATE_ACTION",
+    # Phase 2A.4 (spec 007) — annotation sets / segments / time-range annotations
+    "ANNOTATION_SEGMENT_GET_ACTION",
+    "ANNOTATION_SEGMENT_LIST_ACTION",
+    "ANNOTATION_SEGMENT_NOTE_CREATE_ACTION",
+    "ANNOTATION_SEGMENT_UPDATE_ACTION",
+    "ANNOTATION_SET_CREATE_ACTION",
+    "ANNOTATION_SET_DELETE_ACTION",
+    "ANNOTATION_SET_GET_ACTION",
+    "ANNOTATION_SET_LIST_ACTION",
+    "ANNOTATION_SET_PALETTE_UPDATE_ACTION",
+    "ANNOTATION_SET_UPDATE_ACTION",
+    "TIME_RANGE_ANNOTATION_CREATE_ACTION",
+    "TIME_RANGE_ANNOTATION_DELETE_ACTION",
+    "TIME_RANGE_ANNOTATION_NOTE_CREATE_ACTION",
+    "TIME_RANGE_ANNOTATION_UPDATE_ACTION",
     # Phase 2A.5 (spec 007) — confirmed_region / detection_run
     "CONFIRMED_REGION_CREATE_ACTION",
     "CONFIRMED_REGION_DELETE_ACTION",

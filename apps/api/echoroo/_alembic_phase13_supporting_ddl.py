@@ -1,4 +1,4 @@
-"""Phase 13 P1 (T803): shared DDL block for the 32 ORM-only supporting tables.
+"""Phase 13 P1 (T803): shared DDL block for ORM-only supporting tables.
 
 Both ``0001_baseline_permissions_redesign`` (fresh-DB upgrade path) and
 ``0006_schema_reconcile_static`` (existing-dev-DB delta path) emit the same
@@ -18,9 +18,9 @@ import sqlalchemy as sa
 
 from alembic import op
 
-# Total: 32 ORM-only tables + ``detections`` (DB-only adopted by ORM in
-# Phase 13). All statements are guarded with ``IF NOT EXISTS`` so the helper
-# is idempotent across replays.
+# All statements are guarded with ``IF NOT EXISTS`` so the helper is
+# idempotent across replays. Legacy AnnotationProject workflow tables are
+# intentionally excluded; revision 0025 removes them from existing databases.
 _DDL_STATEMENTS: tuple[str, ...] = (
     # --- licenses ---
     """
@@ -87,27 +87,6 @@ CREATE TABLE IF NOT EXISTS taxon_vernacular_names (
     """,
     "CREATE INDEX IF NOT EXISTS ix_taxon_vernacular_names_locale_taxon_id ON taxon_vernacular_names (locale, taxon_id)",
     "CREATE INDEX IF NOT EXISTS ix_taxon_vernacular_names_created_at ON taxon_vernacular_names (created_at)",
-    # --- annotation_projects ---
-    """
-CREATE TABLE IF NOT EXISTS annotation_projects (
-    project_id UUID NOT NULL,
-    created_by_id UUID NOT NULL,
-    name VARCHAR(200) NOT NULL,
-    description TEXT,
-    instructions TEXT,
-    visibility annotationprojectvisibility NOT NULL,
-    id UUID NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id),
-    CONSTRAINT uq_annotation_project_project_name UNIQUE (project_id, name),
-    FOREIGN KEY(project_id) REFERENCES projects (id) ON DELETE CASCADE,
-    FOREIGN KEY(created_by_id) REFERENCES users (id)
-)
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_annotation_projects_created_at ON annotation_projects (created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_annotation_projects_project_id ON annotation_projects (project_id)",
-    "CREATE INDEX IF NOT EXISTS ix_annotation_projects_created_by_id ON annotation_projects (created_by_id)",
     # --- search_sessions ---
     """
 CREATE TABLE IF NOT EXISTS search_sessions (
@@ -140,16 +119,6 @@ CREATE TABLE IF NOT EXISTS search_sessions (
     "CREATE UNIQUE INDEX IF NOT EXISTS ix_search_sessions_celery_job_id ON search_sessions (celery_job_id)",
     "CREATE INDEX IF NOT EXISTS ix_search_sessions_user_id ON search_sessions (user_id)",
     "CREATE INDEX IF NOT EXISTS ix_search_sessions_status ON search_sessions (status)",
-    # --- annotation_project_tags ---
-    """
-CREATE TABLE IF NOT EXISTS annotation_project_tags (
-    annotation_project_id UUID NOT NULL,
-    tag_id UUID NOT NULL,
-    PRIMARY KEY (annotation_project_id, tag_id),
-    FOREIGN KEY(annotation_project_id) REFERENCES annotation_projects (id) ON DELETE CASCADE,
-    FOREIGN KEY(tag_id) REFERENCES tags (id) ON DELETE CASCADE
-)
-    """,
     # --- search_query_embeddings ---
     """
 CREATE TABLE IF NOT EXISTS search_query_embeddings (
@@ -164,16 +133,6 @@ CREATE TABLE IF NOT EXISTS search_query_embeddings (
 )
     """,
     "CREATE INDEX IF NOT EXISTS ix_search_query_embeddings_search_session_id ON search_query_embeddings (search_session_id)",
-    # --- annotation_project_datasets ---
-    """
-CREATE TABLE IF NOT EXISTS annotation_project_datasets (
-    annotation_project_id UUID NOT NULL,
-    dataset_id UUID NOT NULL,
-    PRIMARY KEY (annotation_project_id, dataset_id),
-    FOREIGN KEY(annotation_project_id) REFERENCES annotation_projects (id) ON DELETE CASCADE,
-    FOREIGN KEY(dataset_id) REFERENCES datasets (id) ON DELETE CASCADE
-)
-    """,
     # --- annotation_sets ---
     """
 CREATE TABLE IF NOT EXISTS annotation_sets (
@@ -482,27 +441,6 @@ CREATE TABLE IF NOT EXISTS upload_files (
     "CREATE INDEX IF NOT EXISTS ix_upload_files_recording_id ON upload_files (recording_id)",
     "CREATE INDEX IF NOT EXISTS ix_upload_files_created_at ON upload_files (created_at)",
     "CREATE INDEX IF NOT EXISTS ix_upload_files_session_id ON upload_files (session_id)",
-    # --- annotation_tasks ---
-    """
-CREATE TABLE IF NOT EXISTS annotation_tasks (
-    annotation_project_id UUID NOT NULL,
-    clip_id UUID NOT NULL,
-    assigned_to_id UUID,
-    status annotationtaskstatus NOT NULL,
-    priority INTEGER NOT NULL,
-    id UUID NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id),
-    CONSTRAINT uq_annotation_task_project_clip UNIQUE (annotation_project_id, clip_id),
-    FOREIGN KEY(annotation_project_id) REFERENCES annotation_projects (id) ON DELETE CASCADE,
-    FOREIGN KEY(clip_id) REFERENCES clips (id) ON DELETE CASCADE,
-    FOREIGN KEY(assigned_to_id) REFERENCES users (id) ON DELETE SET NULL
-)
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_annotation_tasks_assigned_to_id ON annotation_tasks (assigned_to_id)",
-    "CREATE INDEX IF NOT EXISTS ix_annotation_tasks_created_at ON annotation_tasks (created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_annotation_tasks_project_status ON annotation_tasks (annotation_project_id, status)",
     # --- evaluation_results ---
     """
 CREATE TABLE IF NOT EXISTS evaluation_results (
@@ -574,64 +512,10 @@ CREATE TABLE IF NOT EXISTS time_range_annotations (
     "CREATE INDEX IF NOT EXISTS ix_time_range_annotations_created_at ON time_range_annotations (created_at)",
     "CREATE INDEX IF NOT EXISTS ix_time_range_annotations_segment_id ON time_range_annotations (segment_id)",
     "CREATE INDEX IF NOT EXISTS ix_time_range_annotations_taxon_id ON time_range_annotations (taxon_id)",
-    # --- clip_annotations ---
-    """
-CREATE TABLE IF NOT EXISTS clip_annotations (
-    task_id UUID NOT NULL,
-    clip_id UUID NOT NULL,
-    created_by_id UUID NOT NULL,
-    review_status reviewstatus NOT NULL,
-    reviewed_by_id UUID,
-    reviewed_at TIMESTAMP WITH TIME ZONE,
-    id UUID NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE (task_id),
-    FOREIGN KEY(task_id) REFERENCES annotation_tasks (id) ON DELETE CASCADE,
-    FOREIGN KEY(clip_id) REFERENCES clips (id) ON DELETE CASCADE,
-    FOREIGN KEY(created_by_id) REFERENCES users (id),
-    FOREIGN KEY(reviewed_by_id) REFERENCES users (id) ON DELETE SET NULL
-)
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_clip_annotations_created_at ON clip_annotations (created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_clip_annotations_review_status ON clip_annotations (review_status)",
-    "CREATE INDEX IF NOT EXISTS ix_clip_annotations_clip_id ON clip_annotations (clip_id)",
-    # --- clip_annotation_tags ---
-    """
-CREATE TABLE IF NOT EXISTS clip_annotation_tags (
-    clip_annotation_id UUID NOT NULL,
-    tag_id UUID NOT NULL,
-    PRIMARY KEY (clip_annotation_id, tag_id),
-    FOREIGN KEY(clip_annotation_id) REFERENCES clip_annotations (id) ON DELETE CASCADE,
-    FOREIGN KEY(tag_id) REFERENCES tags (id) ON DELETE CASCADE
-)
-    """,
-    # --- sound_event_annotations ---
-    """
-CREATE TABLE IF NOT EXISTS sound_event_annotations (
-    clip_annotation_id UUID NOT NULL,
-    created_by_id UUID NOT NULL,
-    geometry JSONB NOT NULL,
-    source annotationsource NOT NULL,
-    confidence FLOAT,
-    id UUID NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    PRIMARY KEY (id),
-    CONSTRAINT ck_sea_confidence_range CHECK (confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)),
-    FOREIGN KEY(clip_annotation_id) REFERENCES clip_annotations (id) ON DELETE CASCADE,
-    FOREIGN KEY(created_by_id) REFERENCES users (id)
-)
-    """,
-    "CREATE INDEX IF NOT EXISTS ix_sound_event_annotations_created_at ON sound_event_annotations (created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_sound_event_annotations_clip_annotation_id ON sound_event_annotations (clip_annotation_id)",
     # --- notes ---
     """
 CREATE TABLE IF NOT EXISTS notes (
     created_by_id UUID NOT NULL,
-    clip_annotation_id UUID,
-    sound_event_annotation_id UUID,
     content TEXT NOT NULL,
     is_review BOOLEAN NOT NULL,
     is_issue BOOLEAN DEFAULT 'false' NOT NULL,
@@ -639,25 +523,10 @@ CREATE TABLE IF NOT EXISTS notes (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
     PRIMARY KEY (id),
-    CONSTRAINT ck_note_not_both_parents CHECK (NOT (clip_annotation_id IS NOT NULL AND sound_event_annotation_id IS NOT NULL)),
-    FOREIGN KEY(created_by_id) REFERENCES users (id),
-    FOREIGN KEY(clip_annotation_id) REFERENCES clip_annotations (id) ON DELETE CASCADE,
-    FOREIGN KEY(sound_event_annotation_id) REFERENCES sound_event_annotations (id) ON DELETE CASCADE
+    FOREIGN KEY(created_by_id) REFERENCES users (id)
 )
     """,
-    "CREATE INDEX IF NOT EXISTS ix_notes_sound_event_annotation_id ON notes (sound_event_annotation_id)",
     "CREATE INDEX IF NOT EXISTS ix_notes_created_at ON notes (created_at)",
-    "CREATE INDEX IF NOT EXISTS ix_notes_clip_annotation_id ON notes (clip_annotation_id)",
-    # --- sound_event_annotation_tags ---
-    """
-CREATE TABLE IF NOT EXISTS sound_event_annotation_tags (
-    sound_event_annotation_id UUID NOT NULL,
-    tag_id UUID NOT NULL,
-    PRIMARY KEY (sound_event_annotation_id, tag_id),
-    FOREIGN KEY(sound_event_annotation_id) REFERENCES sound_event_annotations (id) ON DELETE CASCADE,
-    FOREIGN KEY(tag_id) REFERENCES tags (id) ON DELETE CASCADE
-)
-    """,
     # --- annotation_segment_notes ---
     """
 CREATE TABLE IF NOT EXISTS annotation_segment_notes (
@@ -686,7 +555,6 @@ CREATE TABLE IF NOT EXISTS time_range_annotation_notes (
 SUPPORTING_TABLES_REVERSE_DROP_ORDER: tuple[str, ...] = (
     "time_range_annotation_notes",
     "annotation_segment_notes",
-    "sound_event_annotation_tags",
     "notes",
     "evaluation_results",
     "evaluation_runs",
@@ -698,18 +566,11 @@ SUPPORTING_TABLES_REVERSE_DROP_ORDER: tuple[str, ...] = (
     "sampling_rounds",
     "detection_runs",
     "confirmed_regions",
-    "clip_annotation_tags",
-    "clip_annotations",
     "clips",
-    "sound_event_annotations",
     "time_range_annotations",
     "annotation_segments",
     "annotation_set_species_palette",
     "annotation_sets",
-    "annotation_tasks",
-    "annotation_project_tags",
-    "annotation_project_datasets",
-    "annotation_projects",
     "upload_files",
     "upload_sessions",
     "taxon_vernacular_names",

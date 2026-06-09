@@ -2,12 +2,10 @@
 
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.orm import selectinload
 
-from echoroo.models.clip_annotation import clip_annotation_tags
 from echoroo.models.enums import TagCategory
-from echoroo.models.sound_event_annotation import sound_event_annotation_tags
 from echoroo.models.tag import Tag
 from echoroo.repositories.base import BaseRepository
 
@@ -210,10 +208,11 @@ class TagRepository(BaseRepository[Tag]):
         return tag
 
     async def get_statistics(self, project_id: UUID) -> list[tuple[Tag, int]]:
-        """Get tags with their usage counts across clip and sound event annotations.
+        """Get tags with their current usage counts.
 
-        Counts usage from both clip_annotation_tags and sound_event_annotation_tags
-        association tables and returns the combined total per tag.
+        Legacy clip/sound-event annotation associations have been removed. Tags
+        do not currently have a direct current annotation relation, so every tag
+        is returned with a zero usage count.
 
         Args:
             project_id: Project's UUID
@@ -221,39 +220,13 @@ class TagRepository(BaseRepository[Tag]):
         Returns:
             List of (Tag, usage_count) tuples ordered by usage_count descending
         """
-        # Count from clip_annotation_tags
-        clip_tag_count_subq = (
-            select(
-                clip_annotation_tags.c.tag_id,
-                func.count().label("cnt"),
-            )
-            .group_by(clip_annotation_tags.c.tag_id)
-            .subquery("clip_tag_counts")
-        )
-
-        # Count from sound_event_annotation_tags
-        sea_tag_count_subq = (
-            select(
-                sound_event_annotation_tags.c.tag_id,
-                func.count().label("cnt"),
-            )
-            .group_by(sound_event_annotation_tags.c.tag_id)
-            .subquery("sea_tag_counts")
-        )
-
-        # Combine counts using COALESCE to handle tags with zero usage
-        combined_count = (
-            func.coalesce(clip_tag_count_subq.c.cnt, 0)
-            + func.coalesce(sea_tag_count_subq.c.cnt, 0)
-        ).label("usage_count")
+        usage_count = literal(0).label("usage_count")
 
         result = await self.db.execute(
-            select(Tag, combined_count)
-            .outerjoin(clip_tag_count_subq, clip_tag_count_subq.c.tag_id == Tag.id)
-            .outerjoin(sea_tag_count_subq, sea_tag_count_subq.c.tag_id == Tag.id)
+            select(Tag, usage_count)
             .where(Tag.project_id == project_id)
             .options(selectinload(Tag.project))
-            .order_by(combined_count.desc(), Tag.name.asc())
+            .order_by(Tag.name.asc())
         )
 
         return [(row.Tag, row.usage_count) for row in result.all()]

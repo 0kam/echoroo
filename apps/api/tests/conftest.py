@@ -18,10 +18,8 @@ from unittest.mock import patch
 # `uv run pytest` (e.g. dev shells without docker exec) so collection never
 # fails for a developer who forgot to source the env. Strength check is
 # prod/staging-only so these short fixtures are accepted.
-import os as _os
-
-_os.environ.setdefault("INVITATION_TOKEN_KID_NEW", "test-kid")
-_os.environ.setdefault(
+os.environ.setdefault("INVITATION_TOKEN_KID_NEW", "test-kid")
+os.environ.setdefault(
     "INVITATION_TOKEN_HMAC_KEY",
     "test-invitation-hmac-key-32-chars-min-padding-xxxxxxxx",
 )
@@ -803,11 +801,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("datasetstatus", ["pending", "scanning", "processing", "completed", "failed"]),
             ("datetimeparsestatus", ["pending", "success", "failed"]),
             ("tagcategory", ["species", "sound_type", "quality"]),
-            ("annotationprojectvisibility", ["private", "public"]),
-            ("annotationtaskstatus", ["pending", "in_progress", "review_pending", "completed"]),
-            ("reviewstatus", ["unreviewed", "approved", "rejected"]),
             ("annotationsource", ["human", "model"]),
-            ("geometrytype", ["BoundingBox", "TimeInterval"]),
             (
                 "detectionsource",
                 [
@@ -1232,15 +1226,7 @@ async def cleanup_test_data(session: AsyncSession) -> None:
 
     # Delete in correct order (foreign key dependencies)
     # Annotation-related tables must be cleaned before clips/recordings/datasets
-    await session.execute(sa.text(_safe_delete("sound_event_annotation_tags")))
-    await session.execute(sa.text(_safe_delete("clip_annotation_tags")))
-    await session.execute(sa.text(_safe_delete("annotation_project_tags")))
-    await session.execute(sa.text(_safe_delete("annotation_project_datasets")))
     await session.execute(sa.text(_safe_delete("notes")))
-    await session.execute(sa.text(_safe_delete("sound_event_annotations")))
-    await session.execute(sa.text(_safe_delete("clip_annotations")))
-    await session.execute(sa.text(_safe_delete("annotation_tasks")))
-    await session.execute(sa.text(_safe_delete("annotation_projects")))
     # Annotation voting and comments (006-permissions-redesign)
     await session.execute(sa.text(_safe_delete("annotation_votes")))
     await session.execute(sa.text(_safe_delete("annotation_comments")))
