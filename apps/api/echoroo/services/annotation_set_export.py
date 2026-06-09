@@ -15,19 +15,23 @@ appended **after** the detection export's FR-086 block:
 Six segment / recording offset columns are appended after the ToriTore block so
 a consumer can locate each annotation both inside its segment/clip and inside
 the source recording: ``segment_id``, ``recording_id``, ``segment_start_sec``,
-``segment_end_sec``, ``recording_start_sec``, ``recording_end_sec``. Note that
-``mediaID`` carries the SEGMENT id (the annotation set is segment-centric), so
-``recording_id`` preserves the source-recording reference.
+``segment_end_sec``, ``recording_start_sec``, ``recording_end_sec``. ``mediaID``
+carries the canonical source-recording UUID (approved 2026-06-09; sourced from
+:mod:`echoroo.services.camtrap` like every other export surface), so the
+segment linkage is preserved via the trailing ``segment_id`` / ``recording_id``
++ offset extension columns rather than folded into ``mediaID``.
 
 CamtrapDP-compliant readers ignore unknown trailing columns, so the extension
 is non-breaking. Raw lat / lng / GPS columns are intentionally absent (FR-028 /
 SC-016); the row's location precision is disclosed via the reused
 ``location_generalization`` / ``withheld_reason`` helpers.
 
-The export is **read-only** — no migration is introduced. All FR-086 license /
-H3-resolution / generalization logic is REUSED from
+The export is **read-only** — no migration is introduced. The shared CamtrapDP
+column list, event-datetime formatter, and identifier functions come from
+:mod:`echoroo.services.camtrap`; the FR-086 license / H3-resolution /
+generalization logic is REUSED from
 :class:`echoroo.services.detection_export.DetectionExportService` rather than
-duplicated, so the two exports stay consistent.
+duplicated, so the exports stay consistent.
 """
 
 from __future__ import annotations
@@ -48,11 +52,17 @@ from echoroo.models.annotation_set import (
     TimeRangeAnnotation,
 )
 from echoroo.models.enums import AnnotationSegmentStatus
+from echoroo.services.camtrap import (
+    CAMTRAPDP_OBSERVATION_COLUMNS,
+    deployment_id,
+    event_id,
+    format_event_datetime,
+    media_id,
+    observation_id,
+)
 from echoroo.services.detection_export import (
-    _CAMTRAPDP_COLUMNS,
     _DEFAULT_MEMBER_H3_RESOLUTION,
     DetectionExportService,
-    _format_event_datetime,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -69,9 +79,9 @@ _TORITORE_COLUMNS = [
 
 # Segment / recording offset columns appended AFTER the ToriTore block so a
 # consumer can locate the annotation both inside the segment/clip and inside
-# the source recording. ``mediaID`` now carries the segment id (the annotation
-# set is segment-centric), so ``recording_id`` here preserves the source
-# recording reference.
+# the source recording. ``mediaID`` carries the canonical recording UUID
+# (single source of truth), so the segment linkage is preserved here via
+# ``segment_id`` + ``recording_id`` + the segment/recording offset columns.
 _OFFSET_COLUMNS = [
     "segment_id",
     "recording_id",
@@ -81,11 +91,11 @@ _OFFSET_COLUMNS = [
     "recording_end_sec",
 ]
 
-# Full ordered column list = detection export's CamtrapDP/FR-086 columns, then
-# the three ToriTore trailing columns, then the six segment/recording offset
+# Full ordered column list = the shared CamtrapDP/FR-086 columns, then the
+# three ToriTore trailing columns, then the six segment/recording offset
 # columns.
 _ANNOTATION_SET_COLUMNS = [
-    *_CAMTRAPDP_COLUMNS,
+    *CAMTRAPDP_OBSERVATION_COLUMNS,
     *_TORITORE_COLUMNS,
     *_OFFSET_COLUMNS,
 ]
@@ -205,9 +215,14 @@ class AnnotationSetExportService:
         """Render one CamtrapDP + FR-086 + ToriTore row for ``ann``."""
         segment = ann.segment
         recording = segment.recording if segment else None
-        dataset_name = (
-            recording.dataset.name if recording and recording.dataset else ""
-        )
+        dataset = recording.dataset if recording and recording.dataset else None
+        # Canonical CamtrapDP join keys (approved 2026-06-09): deploymentID is
+        # the dataset UUID and mediaID is the recording UUID (NOT the segment
+        # id) — both sourced from echoroo.services.camtrap so this export emits
+        # the same keys as the detection / deployments / media exports. The
+        # segment linkage is preserved via the trailing extension columns.
+        deployment_value = deployment_id(dataset.id) if dataset else ""
+        media_value = media_id(recording.id) if recording else ""
         recording_uuid = str(recording.id) if recording else ""
         segment_uuid = str(segment.id) if segment else ""
         recording_datetime = recording.datetime if recording else None
@@ -221,14 +236,15 @@ class AnnotationSetExportService:
         recording_start_sec = segment_offset_base + ann.start_time_sec
         recording_end_sec = segment_offset_base + ann.end_time_sec
 
-        # Absolute event datetime = recording start + segment offset + annotation
-        # offset (start / end). Reuses the shared detection-export helper, which
-        # now preserves sub-second (millisecond) precision so short /
-        # fractional-offset annotations keep their real boundaries.
-        event_start = _format_event_datetime(
+        # eventStart/eventEnd are the ANNOTATION's recording-relative time
+        # (segment offset + annotation offset), NOT the segment window. Reuses
+        # the shared formatter, which preserves sub-second (millisecond)
+        # precision so short / fractional-offset annotations keep their real
+        # boundaries.
+        event_start = format_event_datetime(
             recording_datetime, recording_start_sec
         )
-        event_end = _format_event_datetime(
+        event_end = format_event_datetime(
             recording_datetime, recording_end_sec
         )
 
@@ -256,12 +272,13 @@ class AnnotationSetExportService:
         )
 
         return {
-            "observationID": str(ann.id),
-            "deploymentID": dataset_name,
-            # The annotation set is segment-centric: the segment is the media
-            # unit. The source recording stays available via ``recording_id``.
-            "mediaID": segment_uuid,
-            "eventID": str(ann.id),
+            "observationID": observation_id(ann.id),
+            "deploymentID": deployment_value,
+            # mediaID is the source recording UUID (single source of truth).
+            # The segment linkage is preserved in the trailing ``segment_id`` /
+            # ``recording_id`` + offset extension columns below.
+            "mediaID": media_value,
+            "eventID": event_id(),
             "eventStart": event_start,
             "eventEnd": event_end,
             "observationLevel": "event",

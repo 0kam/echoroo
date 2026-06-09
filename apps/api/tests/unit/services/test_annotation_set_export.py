@@ -29,7 +29,7 @@ from echoroo.services.annotation_set_export import (
     _TORITORE_COLUMNS,
     AnnotationSetExportService,
 )
-from echoroo.services.detection_export import _CAMTRAPDP_COLUMNS
+from echoroo.services.camtrap import CAMTRAPDP_OBSERVATION_COLUMNS
 
 
 def _make_annotation(
@@ -47,7 +47,7 @@ def _make_annotation(
     recording = SimpleNamespace(
         id=uuid4(),
         datetime=datetime(2026, 6, 1, 0, 0, 0, tzinfo=UTC),
-        dataset=SimpleNamespace(name=dataset_name),
+        dataset=SimpleNamespace(id=uuid4(), name=dataset_name),
     )
     segment = SimpleNamespace(
         id=uuid4(),
@@ -133,8 +133,11 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     reader = csv.DictReader(io.StringIO(body))
     assert reader.fieldnames is not None
     assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
-    # Sanity: detection CamtrapDP cols precede the ToriTore cols.
-    assert list(reader.fieldnames[: len(_CAMTRAPDP_COLUMNS)]) == _CAMTRAPDP_COLUMNS
+    # Sanity: the shared CamtrapDP cols precede the ToriTore cols.
+    assert (
+        list(reader.fieldnames[: len(CAMTRAPDP_OBSERVATION_COLUMNS)])
+        == CAMTRAPDP_OBSERVATION_COLUMNS
+    )
     # The six segment/recording offset columns are the trailing block, in order.
     assert list(reader.fieldnames[-len(_OFFSET_COLUMNS) :]) == _OFFSET_COLUMNS
     assert _OFFSET_COLUMNS == [
@@ -158,16 +161,20 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert first["scientificName"] == "Turdus merula"
     assert first["classifiedBy"] == "Alice"
     assert first["classificationMethod"] == "human"
-    assert first["deploymentID"] == "Forest A"
+    # deploymentID is the canonical dataset UUID (not the dataset name).
+    assert first["deploymentID"] == str(annotations[0].segment.recording.dataset.id)
     assert first["count"] == "1"
     assert first["license"] == "CC-BY-4.0"
+    # eventID is empty under the canonical scheme.
+    assert first["eventID"] == ""
     # ToriTore proficiency snapshot populated for the gated annotation.
     assert first["annotator_total_score"] == "0.9100"
     assert first["annotator_species_score"] == "0.8000"
     assert first["annotator_test_reference"] == "test#1@20260604142325+9:00"
-    # mediaID is now the SEGMENT id (segment-centric), not the recording id.
-    assert first["mediaID"] == str(annotations[0].segment.id)
-    assert first["mediaID"] != str(annotations[0].segment.recording.id)
+    # mediaID is the canonical RECORDING id (single source of truth), not the
+    # segment id. The segment linkage stays in the trailing extension columns.
+    assert first["mediaID"] == str(annotations[0].segment.recording.id)
+    assert first["mediaID"] != str(annotations[0].segment.id)
     assert first["segment_id"] == str(annotations[0].segment.id)
     assert first["recording_id"] == str(annotations[0].segment.recording.id)
     # Event datetime = recording start + segment offset (10s) + annotation
@@ -246,8 +253,10 @@ async def test_export_event_times_preserve_subsecond_precision() -> None:
     # recording_*_sec == segment.start_time_sec (10.0) + annotation offset.
     assert rows[0]["recording_start_sec"] == "12.4500"
     assert rows[0]["recording_end_sec"] == "12.7500"
-    # mediaID == segment id; recording stays available via recording_id.
-    assert rows[0]["mediaID"] == str(annotations[0].segment.id)
+    # mediaID == recording id (single source of truth); segment linkage stays
+    # in the trailing extension columns.
+    assert rows[0]["mediaID"] == str(annotations[0].segment.recording.id)
+    assert rows[0]["mediaID"] != str(annotations[0].segment.id)
     assert rows[0]["segment_id"] == str(annotations[0].segment.id)
     assert rows[0]["recording_id"] == str(annotations[0].segment.recording.id)
 

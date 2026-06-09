@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.services.audio import AudioService
+from echoroo.services.camtrap import deployment_id, media_id
 from echoroo.services.h3_utils import h3_to_center
 
 
@@ -101,7 +102,10 @@ class ExportService:
 
         writer.writerow(
             [
-                str(dataset.id),
+                # Canonical CamtrapDP join key (approved 2026-06-09):
+                # deploymentID == str(dataset.id), shared with every observation
+                # export so the deployments<->observations join is consistent.
+                deployment_id(dataset.id),
                 str(site.id) if site else "",
                 site.name if site else "",
                 lat if lat else "",
@@ -206,8 +210,11 @@ class ExportService:
 
                 writer.writerow(
                     [
-                        str(recording.id),
-                        str(dataset_id),
+                        # Canonical CamtrapDP join keys (approved 2026-06-09):
+                        # mediaID == str(recording.id) and deploymentID ==
+                        # str(dataset.id), shared with every observation export.
+                        media_id(recording.id),
+                        deployment_id(dataset_id),
                         (
                             "audiomoth"
                             if "audiomoth" in recording.filename.lower()
