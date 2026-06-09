@@ -20,6 +20,7 @@
   import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
   import ScaleControls from '$lib/components/audio/ScaleControls.svelte';
   import ViewportToolbar from '$lib/components/audio/ViewportToolbar.svelte';
+  import ViewportBar from '$lib/components/audio/ViewportBar.svelte';
   import type { RecordingDetail } from '$lib/types/data';
   import type {
     SpectrogramWindow,
@@ -389,6 +390,22 @@
       onSpeedChange={handleSpeedChange}
     />
   </div>
+
+  {#if showViewportControls}
+    <!--
+      Minimap/scrollbar (dataset parity). Rendered BELOW the audio player so it
+      sits outside the annotation overlay's covered area (the overlay only
+      covers the spectrogram height). Does NOT affect `onSpectrogramTopChange`.
+    -->
+    <div class="viewport-bar-row">
+      <ViewportBar
+        {viewport}
+        {bounds}
+        onViewportChange={handleViewportChange}
+        onViewportSave={saveViewport}
+      />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -398,32 +415,33 @@
     gap: 0;
   }
 
+  /*
+   * Chrome parity with the dataset spectrogram: the toolbar row is transparent
+   * and borderless (the enclosing section already supplies a border), matching
+   * the dataset's airy `.toolbar-row`.
+   */
   .viewport-toolbar-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     flex-wrap: wrap;
     padding: 0.375rem 0.5rem;
-    background: #ffffff;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  :global(.dark) .viewport-toolbar-row {
-    background: #18181b;
-    border-bottom-color: #3f3f46;
   }
 
   .scale-controls-wrapper {
     margin-left: auto;
   }
 
+  /* Airy player row (dataset parity): keep only the top divider. */
   .audio-player-wrapper {
     border-top: 1px solid #e5e7eb;
-    background: #ffffff;
   }
 
   :global(.dark) .audio-player-wrapper {
-    background: #18181b;
     border-top-color: #3f3f46;
+  }
+
+  .viewport-bar-row {
+    padding: 0.375rem 0.5rem 0.25rem;
   }
 </style>

@@ -87,7 +87,7 @@
   <button
     type="button"
     class="toolbar-btn {isPanActive ? 'toolbar-btn-active' : ''}"
-    title="Pan mode (X)"
+    title={m.viewport_toolbar_pan_title()}
     onclick={onPan}
   >
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -100,7 +100,7 @@
   <button
     type="button"
     class="toolbar-btn {isZoomActive ? 'toolbar-btn-active' : ''}"
-    title="Zoom to selection (Z)"
+    title={m.viewport_toolbar_zoom_title()}
     onclick={onZoom}
   >
     <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

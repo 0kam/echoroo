@@ -178,6 +178,68 @@ export function getViewportPosition({
   };
 }
 
+/**
+ * Apply a mouse-wheel gesture to a spectrogram viewport.
+ *
+ * Mirrors the dataset spectrogram navigation (no mode gate):
+ *   - plain scroll      → pan (shift time/freq)
+ *   - Ctrl + scroll     → expand/contract the window
+ *   - Alt + scroll      → zoom toward the cursor position
+ *
+ * Shift swaps the deltaX/deltaY axes so a horizontal trackpad gesture maps to
+ * the same action as a vertical wheel. The result is always clamped to the
+ * supplied `bounds`. Extracted from `useSpectrogramInteraction.handleWheel`
+ * so both the dataset viewer and the annotation overlay share one wheel model.
+ *
+ * @param e          Wheel deltas + modifier flags (a subset of `WheelEvent`).
+ * @param viewport   The current spectrogram window.
+ * @param bounds     The clip/recording bounds to clamp against.
+ * @param cursorPos  Cursor position in spectrogram coords (zoom anchor).
+ * @param canvasWidth Live canvas width in CSS px (drives the zoom factor scale).
+ */
+export function applyWheelToViewport(
+  e: { deltaX: number; deltaY: number; altKey: boolean; ctrlKey: boolean; shiftKey: boolean },
+  viewport: SpectrogramWindow,
+  bounds: SpectrogramWindow,
+  cursorPos: SpectrogramPosition,
+  canvasWidth: number
+): SpectrogramWindow {
+  const timeFrac = (viewport.time.max - viewport.time.min) * 0.05;
+  const freqFrac = (viewport.freq.max - viewport.freq.min) * 0.05;
+
+  const deltaX = e.deltaX;
+  const deltaY = e.deltaY;
+
+  if (e.altKey) {
+    // Zoom toward cursor position.
+    const factor = 1 + 4 * timeFrac * (e.shiftKey ? deltaX : deltaY) / (canvasWidth * timeFrac);
+    return adjustWindowToBounds(
+      zoomWindowToPosition(viewport, cursorPos, Math.max(0.1, factor)),
+      bounds
+    );
+  }
+
+  if (e.ctrlKey) {
+    // Expand/contract viewport.
+    return adjustWindowToBounds(
+      expandWindow(viewport, {
+        time: timeFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
+        freq: freqFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
+      }),
+      bounds
+    );
+  }
+
+  // Scroll time/frequency (pan).
+  return adjustWindowToBounds(
+    shiftWindow(viewport, {
+      time: timeFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
+      freq: -freqFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
+    }),
+    bounds
+  );
+}
+
 /** Convert canvas pixel coordinates to spectrogram time/freq position */
 export function pixelsToPosition(
   x: number,

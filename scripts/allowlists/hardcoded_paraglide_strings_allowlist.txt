@@ -77,10 +77,8 @@ apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Spectrogram Setting
 apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Window function:hardcoded-ui-string
 apps/web/src/lib/components/audio/SpectrogramSettings.svelte:Window size (s):hardcoded-ui-string
 apps/web/src/lib/components/audio/ViewportBar.svelte:Viewport position:hardcoded-ui-string
-apps/web/src/lib/components/audio/ViewportToolbar.svelte:Pan mode (X):hardcoded-ui-string
 apps/web/src/lib/components/audio/ViewportToolbar.svelte:Previous view (B):hardcoded-ui-string
 apps/web/src/lib/components/audio/ViewportToolbar.svelte:Reset to full view:hardcoded-ui-string
-apps/web/src/lib/components/audio/ViewportToolbar.svelte:Zoom to selection (Z):hardcoded-ui-string
 apps/web/src/lib/components/common/MiniSpectrogram.svelte:Spectrogram to:hardcoded-ui-string
 apps/web/src/lib/components/common/ReviewCard.svelte:Review card::hardcoded-ui-string
 apps/web/src/lib/components/data/AutoClipGenerator.svelte:Auto-Generate Clips:hardcoded-ui-string

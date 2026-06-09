@@ -29,7 +29,8 @@
   import { useAnnotationDraft } from '$lib/components/annotation-sets/useAnnotationDraft.svelte';
   import { useAnnotationOverlay } from '$lib/components/annotation-sets/useAnnotationOverlay.svelte';
   import { useAnnotationMutations } from '$lib/components/annotation-sets/useAnnotationMutations.svelte';
-  import { timeToPixel } from '$lib/utils/viewport';
+  import { nonPassiveWheel } from '$lib/actions/nonPassiveWheel';
+  import { timeToPixel, pixelsToPosition } from '$lib/utils/viewport';
   import {
     getAnnotationSet,
     getSegment,
@@ -43,7 +44,7 @@
     TimeRangeAnnotation,
   } from '$lib/types/annotation-set';
   import type { RecordingDetail } from '$lib/types/data';
-  import type { SpectrogramWindow } from '$lib/types/audio';
+  import type { SpectrogramWindow, SpectrogramPosition } from '$lib/types/audio';
   import type { AnnotationInteractionMode } from '$lib/components/annotation-sets/types';
 
   interface Props {
@@ -200,6 +201,13 @@
   }
 
   /**
+   * Live cursor position (spectrogram coords) over the overlay, mirrored from
+   * the overlay hook. Drives the time/kHz cursor readout that floats above the
+   * overlay (the overlay covers `SpectrogramViewer`'s own `.cursor-info`).
+   */
+  let cursorPos = $state<SpectrogramPosition | null>(null);
+
+  /**
    * Draft state machine + drag geometry. See
    * `./useAnnotationDraft.svelte.ts` for details; the hook owns window
    * mousemove / mouseup subscriptions and exposes the finalised draft range
@@ -236,7 +244,27 @@
     onViewportChange: (vp) => player?.setViewport(vp),
     onViewportSave: () => player?.saveViewport(),
     onModeChange: (mode) => (annotationMode = mode),
+    onMousePositionChange: (pos) => (cursorPos = pos),
   });
+
+  /**
+   * Double-click on the overlay seeks the playhead, mirroring the dataset
+   * viewer's `ondblclick`. The overlay swallows the canvas dblclick, so we
+   * recompute the clicked time via the same `pixelsToPosition` transform the
+   * draft hook uses and route it through the existing click-to-seek path.
+   */
+  function onOverlayDoubleClick(e: MouseEvent) {
+    if (!overlayEl || canvasWidthForOverlay <= 0) return;
+    const rect = overlayEl.getBoundingClientRect();
+    const pos = pixelsToPosition(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      canvasWidthForOverlay,
+      CANVAS_HEIGHT,
+      viewportForOverlay,
+    );
+    seekTo(pos.time);
+  }
 
   /**
    * Position existing annotation overlays in CSS px using the live viewport
@@ -662,6 +690,10 @@
               style:z-index="3"
               role="presentation"
               onmousedown={overlay.handlers.onMouseDown}
+              onmousemove={overlay.handlers.onMouseMove}
+              onmouseleave={overlay.handlers.onMouseLeave}
+              ondblclick={onOverlayDoubleClick}
+              use:nonPassiveWheel={overlay.handlers.onWheel}
             >
               <!-- Existing annotations -->
               {#each segment.annotations as a (a.id)}
@@ -733,6 +765,20 @@
                 ></div>
               {/if}
             </div>
+
+            <!-- Cursor readout (time / kHz). Sits ABOVE the overlay (z-index 4)
+                 since the overlay covers SpectrogramViewer's own .cursor-info. -->
+            {#if cursorPos}
+              <div
+                class="pointer-events-none absolute right-2 flex gap-2 rounded bg-black/60 px-2 py-1 font-mono text-xs text-white/90"
+                style:top="{viewportControlsHeight + CANVAS_HEIGHT - 32}px"
+                style:z-index="4"
+                aria-hidden="true"
+              >
+                <span>{cursorPos.time.toFixed(3)}s</span>
+                <span>{(cursorPos.freq / 1000).toFixed(1)} kHz</span>
+              </div>
+            {/if}
           </div>
         {/if}
       </section>
@@ -810,6 +856,8 @@
               <li>{m.annotation_editor_shortcuts_cancel()}</li>
               <li>{m.annotation_editor_shortcuts_delete()}</li>
               <li>{m.annotation_editor_shortcuts_viewport()}</li>
+              <li>{m.annotation_editor_shortcuts_scroll()}</li>
+              <li>{m.annotation_editor_shortcuts_dblclick()}</li>
             </ul>
           </details>
         </section>

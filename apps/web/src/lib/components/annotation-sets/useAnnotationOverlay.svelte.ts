@@ -30,6 +30,7 @@ import {
   timeToPixel,
   shiftWindow,
   adjustWindowToBounds,
+  applyWheelToViewport,
 } from '$lib/utils/viewport';
 import type { OverlayHookApi, OverlayHookInput, AnnotationZoomBox } from './types';
 
@@ -80,6 +81,53 @@ export function useAnnotationOverlay(input: OverlayHookInput): OverlayHookApi {
     } else if (mode === 'zooming') {
       zoomBox = { start: pos, end: pos };
     }
+  }
+
+  /**
+   * Scroll-wheel navigation through the overlay. The overlay sits above the
+   * spectrogram with `pointer-events-auto` and swallows wheel events, so this
+   * handler reproduces the dataset viewer's wheel model (pan / Ctrl-expand /
+   * Alt-zoom) in ALL modes. `preventDefault` suppresses page scroll — the
+   * parent must attach this NON-passively (a passive listener would ignore it).
+   */
+  function onOverlayWheel(e: WheelEvent) {
+    if (disposed) return;
+    e.preventDefault();
+    const viewport = input.viewport();
+    const bounds = input.bounds();
+    const canvasWidth = input.canvasWidth();
+    const canvasHeight = input.canvasHeight();
+    if (canvasWidth <= 0) return;
+
+    const { x, y } = getOverlayPos(e);
+    const cursorPos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
+    input.onViewportChange(applyWheelToViewport(e, viewport, bounds, cursorPos, canvasWidth));
+  }
+
+  /**
+   * Cursor-readout tracking on overlay mousemove. The overlay covers the
+   * viewer's own `.cursor-info`, so we emit the cursor position (spectrogram
+   * coords) outward and the parent renders the time/kHz readout above the
+   * overlay. This is independent of the pan/zoom drag state machine below.
+   */
+  function onOverlayMouseMove(e: MouseEvent) {
+    if (disposed) return;
+    if (!input.onMousePositionChange) return;
+    const viewport = input.viewport();
+    const canvasWidth = input.canvasWidth();
+    const canvasHeight = input.canvasHeight();
+    if (canvasWidth <= 0) {
+      input.onMousePositionChange(null);
+      return;
+    }
+    const { x, y } = getOverlayPos(e);
+    input.onMousePositionChange(pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport));
+  }
+
+  /** Clear the cursor readout when the pointer leaves the overlay. */
+  function onOverlayMouseLeave() {
+    if (disposed) return;
+    input.onMousePositionChange?.(null);
   }
 
   function onWindowMouseMove(e: MouseEvent) {
@@ -184,6 +232,9 @@ export function useAnnotationOverlay(input: OverlayHookInput): OverlayHookApi {
     },
     handlers: {
       onMouseDown,
+      onWheel: onOverlayWheel,
+      onMouseMove: onOverlayMouseMove,
+      onMouseLeave: onOverlayMouseLeave,
     },
     dispose,
   };

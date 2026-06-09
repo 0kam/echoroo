@@ -27,8 +27,7 @@ import {
   pixelsToPosition,
   adjustWindowToBounds,
   shiftWindow,
-  expandWindow,
-  zoomWindowToPosition,
+  applyWheelToViewport,
 } from '$lib/utils/viewport';
 import type {
   SpectrogramInteractionInput,
@@ -186,42 +185,9 @@ export function useSpectrogramInteraction(
     const { x, y } = getCanvasPos(e);
     const pos = pixelsToPosition(x, y, canvasWidth, canvasHeight, viewport);
 
-    const timeFrac = (viewport.time.max - viewport.time.min) * 0.05;
-    const freqFrac = (viewport.freq.max - viewport.freq.min) * 0.05;
-
-    const deltaX = e.deltaX;
-    const deltaY = e.deltaY;
-
-    let newViewport: SpectrogramWindow;
-
-    if (e.altKey) {
-      // Zoom toward cursor position
-      const factor = 1 + 4 * timeFrac * (e.shiftKey ? deltaX : deltaY) / (canvasWidth * timeFrac);
-      newViewport = adjustWindowToBounds(
-        zoomWindowToPosition(viewport, pos, Math.max(0.1, factor)),
-        bounds
-      );
-    } else if (e.ctrlKey) {
-      // Expand/contract viewport
-      newViewport = adjustWindowToBounds(
-        expandWindow(viewport, {
-          time: timeFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
-          freq: freqFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
-        }),
-        bounds
-      );
-    } else {
-      // Scroll time/frequency
-      newViewport = adjustWindowToBounds(
-        shiftWindow(viewport, {
-          time: timeFrac * (e.shiftKey ? deltaY : deltaX) * 0.1,
-          freq: -freqFrac * (e.shiftKey ? deltaX : deltaY) * 0.1,
-        }),
-        bounds
-      );
-    }
-
-    input.onViewportChange(newViewport);
+    // Shared wheel math (pan / Ctrl-expand / Alt-zoom) — also used by the
+    // annotation overlay so both surfaces navigate identically.
+    input.onViewportChange(applyWheelToViewport(e, viewport, bounds, pos, canvasWidth));
   }
 
   function handleKeyDown(e: KeyboardEvent) {
