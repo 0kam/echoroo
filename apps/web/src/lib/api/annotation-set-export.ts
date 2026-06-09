@@ -30,6 +30,25 @@ export async function exportAnnotationSetCsv(
 }
 
 /**
+ * Export an annotation set as a dataset ZIP (CSV labels + per-segment audio
+ * clips) and trigger a browser download. The ZIP contains ``annotations.csv``,
+ * ``segments.csv`` and one ``clips/<segment_id>.wav`` per finalized segment.
+ */
+export async function downloadAnnotationSetDataset(
+  projectId: string,
+  setId: string
+): Promise<void> {
+  const response = await apiClient.requestRaw(
+    `${WEB_API_BASE}/projects/${projectId}/annotation-sets/${setId}/export/dataset`
+  );
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.statusText}`);
+  }
+  const blob = await response.blob();
+  downloadBlob(blob, `${setId}_dataset.zip`);
+}
+
+/**
  * Trigger a browser file download from a Blob.
  */
 function downloadBlob(blob: Blob, filename: string): void {

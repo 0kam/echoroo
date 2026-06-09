@@ -12,6 +12,13 @@ appended **after** the detection export's FR-086 block:
 * ``annotator_test_reference`` — a human-readable reference to the ToriTore
   test that produced the snapshot.
 
+Six segment / recording offset columns are appended after the ToriTore block so
+a consumer can locate each annotation both inside its segment/clip and inside
+the source recording: ``segment_id``, ``recording_id``, ``segment_start_sec``,
+``segment_end_sec``, ``recording_start_sec``, ``recording_end_sec``. Note that
+``mediaID`` carries the SEGMENT id (the annotation set is segment-centric), so
+``recording_id`` preserves the source-recording reference.
+
 CamtrapDP-compliant readers ignore unknown trailing columns, so the extension
 is non-breaking. Raw lat / lng / GPS columns are intentionally absent (FR-028 /
 SC-016); the row's location precision is disclosed via the reused
@@ -40,6 +47,7 @@ from echoroo.models.annotation_set import (
     AnnotationSet,
     TimeRangeAnnotation,
 )
+from echoroo.models.enums import AnnotationSegmentStatus
 from echoroo.services.detection_export import (
     _CAMTRAPDP_COLUMNS,
     _DEFAULT_MEMBER_H3_RESOLUTION,
@@ -59,9 +67,28 @@ _TORITORE_COLUMNS = [
     "annotator_test_reference",
 ]
 
-# Full ordered column list = detection export's CamtrapDP/FR-086 columns plus
-# the three ToriTore trailing columns.
-_ANNOTATION_SET_COLUMNS = [*_CAMTRAPDP_COLUMNS, *_TORITORE_COLUMNS]
+# Segment / recording offset columns appended AFTER the ToriTore block so a
+# consumer can locate the annotation both inside the segment/clip and inside
+# the source recording. ``mediaID`` now carries the segment id (the annotation
+# set is segment-centric), so ``recording_id`` here preserves the source
+# recording reference.
+_OFFSET_COLUMNS = [
+    "segment_id",
+    "recording_id",
+    "segment_start_sec",
+    "segment_end_sec",
+    "recording_start_sec",
+    "recording_end_sec",
+]
+
+# Full ordered column list = detection export's CamtrapDP/FR-086 columns, then
+# the three ToriTore trailing columns, then the six segment/recording offset
+# columns.
+_ANNOTATION_SET_COLUMNS = [
+    *_CAMTRAPDP_COLUMNS,
+    *_TORITORE_COLUMNS,
+    *_OFFSET_COLUMNS,
+]
 
 
 def _format_float(value: float | None) -> str:
@@ -97,7 +124,7 @@ class AnnotationSetExportService:
         return anno_set
 
     async def _fetch_annotations(
-        self, set_id: UUID
+        self, set_id: UUID, *, finalized_only: bool = False
     ) -> list[TimeRangeAnnotation]:
         """Load all TimeRangeAnnotations in a set with relationships for export.
 
@@ -106,8 +133,15 @@ class AnnotationSetExportService:
         * ``segment.recording`` (+ ``recording.dataset`` for deploymentID),
         * ``taxon`` (for ``scientificName``),
         * ``created_by`` (for the annotator display name).
+
+        When ``finalized_only`` is True the rows are scoped to segments with
+        ``status == AnnotationSegmentStatus.ANNOTATED`` — the SAME finalized
+        universe the evaluation worker uses (see
+        :func:`echoroo.workers.evaluation_tasks._load_ground_truths`). The
+        dataset ZIP export uses this so every CSV row's segment has a clip in
+        the bundle.
         """
-        result = await self.db.execute(
+        query = (
             select(TimeRangeAnnotation)
             .join(
                 AnnotationSegment,
@@ -126,6 +160,11 @@ class AnnotationSetExportService:
                 TimeRangeAnnotation.start_time_sec,
             )
         )
+        if finalized_only:
+            query = query.where(
+                AnnotationSegment.status == AnnotationSegmentStatus.ANNOTATED
+            )
+        result = await self.db.execute(query)
         return list(result.scalars().all())
 
     async def _build_recording_h3_map(
@@ -170,19 +209,27 @@ class AnnotationSetExportService:
             recording.dataset.name if recording and recording.dataset else ""
         )
         recording_uuid = str(recording.id) if recording else ""
+        segment_uuid = str(segment.id) if segment else ""
         recording_datetime = recording.datetime if recording else None
         recording_id = recording.id if recording else None
+
+        # Offsets: inside the segment/clip (annotation-relative) and inside the
+        # recording (segment.start_time_sec + annotation offset).
+        segment_offset_base = segment.start_time_sec if segment else 0.0
+        segment_start_sec = ann.start_time_sec
+        segment_end_sec = ann.end_time_sec
+        recording_start_sec = segment_offset_base + ann.start_time_sec
+        recording_end_sec = segment_offset_base + ann.end_time_sec
 
         # Absolute event datetime = recording start + segment offset + annotation
         # offset (start / end). Reuses the shared detection-export helper, which
         # now preserves sub-second (millisecond) precision so short /
         # fractional-offset annotations keep their real boundaries.
-        segment_offset = segment.start_time_sec if segment else 0.0
         event_start = _format_event_datetime(
-            recording_datetime, segment_offset + ann.start_time_sec
+            recording_datetime, recording_start_sec
         )
         event_end = _format_event_datetime(
-            recording_datetime, segment_offset + ann.end_time_sec
+            recording_datetime, recording_end_sec
         )
 
         classification_timestamp = (
@@ -211,7 +258,9 @@ class AnnotationSetExportService:
         return {
             "observationID": str(ann.id),
             "deploymentID": dataset_name,
-            "mediaID": recording_uuid,
+            # The annotation set is segment-centric: the segment is the media
+            # unit. The source recording stays available via ``recording_id``.
+            "mediaID": segment_uuid,
             "eventID": str(ann.id),
             "eventStart": event_start,
             "eventEnd": event_end,
@@ -252,7 +301,73 @@ class AnnotationSetExportService:
             "annotator_species_score": _format_float(ann.annotator_species_score),
             "annotator_total_score": _format_float(ann.annotator_total_score),
             "annotator_test_reference": ann.annotator_test_reference or "",
+            # Segment / recording identity + offset columns. ``segment_start_sec``
+            # is the annotation offset INSIDE the segment/clip; ``recording_*``
+            # adds the segment's own offset to locate it inside the recording.
+            "segment_id": segment_uuid,
+            "recording_id": recording_uuid,
+            "segment_start_sec": _format_float(segment_start_sec),
+            "segment_end_sec": _format_float(segment_end_sec),
+            "recording_start_sec": _format_float(recording_start_sec),
+            "recording_end_sec": _format_float(recording_end_sec),
         }
+
+    async def build_csv_rows(
+        self,
+        *,
+        project_id: UUID,
+        set_id: UUID,
+        finalized_only: bool = False,
+    ) -> list[dict[str, str]]:
+        """Build every CamtrapDP + ToriTore row dict for a set (no header).
+
+        Shared by :meth:`export_csv_stream` (streaming CSV endpoint) and the
+        dataset ZIP export so the column logic is defined exactly once.
+
+        Raises :class:`ValueError` if the set does not exist (caller maps 404).
+        When ``finalized_only`` is True the rows are scoped to finalized
+        (``ANNOTATED``) segments only.
+        """
+        await self._require_set(set_id)
+
+        annotations = await self._fetch_annotations(
+            set_id, finalized_only=finalized_only
+        )
+        project = await self._detection._load_project(project_id)
+        license_value = (
+            project.license
+            if project is not None and project.license is not None
+            else ""
+        )
+        license_history_url = DetectionExportService._build_license_history_url(
+            project_id
+        )
+        recording_h3_map = await self._build_recording_h3_map(annotations)
+
+        return [
+            self._build_row(
+                ann,
+                project=project,
+                license_value=license_value,
+                license_history_url=license_history_url,
+                recording_h3_map=recording_h3_map,
+            )
+            for ann in annotations
+        ]
+
+    @staticmethod
+    def render_csv(rows: list[dict[str, str]]) -> str:
+        """Render header + rows to a CamtrapDP + ToriTore CSV string.
+
+        Used by the dataset ZIP export to embed ``annotations.csv``. The column
+        order matches the streaming endpoint's header exactly.
+        """
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=_ANNOTATION_SET_COLUMNS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+        return buf.getvalue()
 
     async def export_csv_stream(
         self,
@@ -266,21 +381,10 @@ class AnnotationSetExportService:
         row per ``TimeRangeAnnotation``. Raises :class:`ValueError` BEFORE the
         first yield if the set does not exist (the caller maps this to 404).
         """
-        # 404 mapping happens at the caller; raising before the first yield
-        # keeps the response status uncommitted.
-        await self._require_set(set_id)
-
-        annotations = await self._fetch_annotations(set_id)
-        project = await self._detection._load_project(project_id)
-        license_value = (
-            project.license
-            if project is not None and project.license is not None
-            else ""
-        )
-        license_history_url = DetectionExportService._build_license_history_url(
-            project_id
-        )
-        recording_h3_map = await self._build_recording_h3_map(annotations)
+        # build_csv_rows raises ValueError BEFORE the first yield if the set
+        # does not exist, keeping the response status uncommitted (404 mapping
+        # happens at the caller).
+        rows = await self.build_csv_rows(project_id=project_id, set_id=set_id)
 
         # ----- header row (commits the response) --------------------------
         header_buf = io.StringIO()
@@ -291,18 +395,10 @@ class AnnotationSetExportService:
         yield header_buf.getvalue().encode("utf-8")
 
         # ----- data rows --------------------------------------------------
-        for ann in annotations:
+        for row in rows:
             row_buf = io.StringIO()
             row_writer = csv.DictWriter(
                 row_buf, fieldnames=_ANNOTATION_SET_COLUMNS
             )
-            row_writer.writerow(
-                self._build_row(
-                    ann,
-                    project=project,
-                    license_value=license_value,
-                    license_history_url=license_history_url,
-                    recording_h3_map=recording_h3_map,
-                )
-            )
+            row_writer.writerow(row)
             yield row_buf.getvalue().encode("utf-8")

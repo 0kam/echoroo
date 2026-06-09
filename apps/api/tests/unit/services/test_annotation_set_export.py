@@ -25,6 +25,7 @@ import pytest
 
 from echoroo.services.annotation_set_export import (
     _ANNOTATION_SET_COLUMNS,
+    _OFFSET_COLUMNS,
     _TORITORE_COLUMNS,
     AnnotationSetExportService,
 )
@@ -49,6 +50,7 @@ def _make_annotation(
         dataset=SimpleNamespace(name=dataset_name),
     )
     segment = SimpleNamespace(
+        id=uuid4(),
         recording_id=recording.id,
         start_time_sec=10.0,
         recording=recording,
@@ -133,7 +135,21 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
     # Sanity: detection CamtrapDP cols precede the ToriTore cols.
     assert list(reader.fieldnames[: len(_CAMTRAPDP_COLUMNS)]) == _CAMTRAPDP_COLUMNS
-    assert list(reader.fieldnames[-len(_TORITORE_COLUMNS) :]) == _TORITORE_COLUMNS
+    # The six segment/recording offset columns are the trailing block, in order.
+    assert list(reader.fieldnames[-len(_OFFSET_COLUMNS) :]) == _OFFSET_COLUMNS
+    assert _OFFSET_COLUMNS == [
+        "segment_id",
+        "recording_id",
+        "segment_start_sec",
+        "segment_end_sec",
+        "recording_start_sec",
+        "recording_end_sec",
+    ]
+    # The ToriTore cols immediately precede the offset block.
+    toritore_slice = reader.fieldnames[
+        -(len(_OFFSET_COLUMNS) + len(_TORITORE_COLUMNS)) : -len(_OFFSET_COLUMNS)
+    ]
+    assert list(toritore_slice) == _TORITORE_COLUMNS
 
     rows = list(reader)
     assert len(rows) == len(annotations)
@@ -149,6 +165,11 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert first["annotator_total_score"] == "0.9100"
     assert first["annotator_species_score"] == "0.8000"
     assert first["annotator_test_reference"] == "test#1@20260604142325+9:00"
+    # mediaID is now the SEGMENT id (segment-centric), not the recording id.
+    assert first["mediaID"] == str(annotations[0].segment.id)
+    assert first["mediaID"] != str(annotations[0].segment.recording.id)
+    assert first["segment_id"] == str(annotations[0].segment.id)
+    assert first["recording_id"] == str(annotations[0].segment.recording.id)
     # Event datetime = recording start + segment offset (10s) + annotation
     # offset (1s) = 00:00:11 on 2026-06-01. Sub-second precision is preserved
     # (millisecond fraction), so a whole-second offset renders ``.000``.
@@ -217,6 +238,18 @@ async def test_export_event_times_preserve_subsecond_precision() -> None:
     # Defensive: a whole-second-only renderer would have produced these.
     assert event_start != "2026-06-01T00:00:12Z"
     assert event_end != "2026-06-01T00:00:12Z"
+
+    # Offset columns for a fractional-offset annotation.
+    # segment_*_sec == the annotation's own offset inside the segment/clip.
+    assert rows[0]["segment_start_sec"] == "2.4500"
+    assert rows[0]["segment_end_sec"] == "2.7500"
+    # recording_*_sec == segment.start_time_sec (10.0) + annotation offset.
+    assert rows[0]["recording_start_sec"] == "12.4500"
+    assert rows[0]["recording_end_sec"] == "12.7500"
+    # mediaID == segment id; recording stays available via recording_id.
+    assert rows[0]["mediaID"] == str(annotations[0].segment.id)
+    assert rows[0]["segment_id"] == str(annotations[0].segment.id)
+    assert rows[0]["recording_id"] == str(annotations[0].segment.recording.id)
 
 
 @pytest.mark.asyncio

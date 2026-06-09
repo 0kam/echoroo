@@ -2012,6 +2012,8 @@
   "annotation_sets_detail_export_csv": "Export CSV",
   "annotation_sets_detail_export_csv_loading": "Exporting...",
   "annotation_sets_detail_export_csv_error": "Failed to export CSV. Please try again.",
+  "annotation_sets_detail_export_dataset": "Export dataset (ZIP)",
+  "annotation_sets_detail_export_dataset_error": "Failed to export dataset. Please try again.",
   "annotation_sets_detail_rename": "Rename",
   "annotation_sets_detail_rename_save": "Save",
   "annotation_sets_detail_rename_cancel": "Cancel",
