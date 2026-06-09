@@ -6,9 +6,12 @@ time-of-day filters), this task:
 
 1. Fetches candidate recordings from the owning dataset, filtered by
    ``datetime`` (date filter) and local time-of-day (if present).
-2. Enumerates the set of contiguous, non-overlapping ``(recording_id,
-   start_time_sec)`` slots that can fit a ``segment_length_sec`` window.
-3. Uniformly samples ``num_segments`` slots without replacement.
+2. Enumerates candidate ``(recording_id, start, end)`` segments. In ``fixed``
+   mode these are contiguous, non-overlapping ``segment_length_sec`` slots; in
+   ``whole_recording`` mode each surviving recording yields exactly one segment
+   spanning its full (time-expanded) duration.
+3. Uniformly samples ``num_segments`` slots without replacement (in
+   ``whole_recording`` mode this caps the number of sampled recordings).
 4. Bulk-inserts the resulting segments and marks the set as ``ready``.
 
 Queue routing
@@ -29,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from datetime import time as dt_time
 from typing import Any
@@ -125,7 +129,14 @@ async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
                 )
 
             dataset_id = anno_set.dataset_id
-            segment_length = float(anno_set.segment_length_sec)
+            segment_mode = anno_set.segment_mode or "fixed"
+            # segment_length is only meaningful in fixed mode; whole_recording
+            # sets may persist NULL.
+            segment_length = (
+                float(anno_set.segment_length_sec)
+                if anno_set.segment_length_sec is not None
+                else None
+            )
             target_count = int(anno_set.num_segments)
             date_filter = anno_set.filter_date_range
             tod_filter = anno_set.filter_time_of_day_range
@@ -181,29 +192,16 @@ async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
                 tod_end = _parse_hhmm(tod_filter.get("end"))
 
             # --------------------------------------------------------------
-            # 3. Enumerate candidate (recording_id, slot_start) tuples
+            # 3. Enumerate candidate (recording_id, start, end) tuples
             # --------------------------------------------------------------
-            slots: list[tuple[UUID, float, float]] = []
-            for rec_id, duration, time_expansion, rec_dt in rec_rows:
-                if duration is None or duration <= 0:
-                    continue
-                if (
-                    rec_dt is not None
-                    and tod_start is not None
-                    and tod_end is not None
-                    and not _time_in_range(
-                        rec_dt.astimezone(local_tz).time(), tod_start, tod_end
-                    )
-                ):
-                    continue
-                effective = float(duration) * float(time_expansion or 1.0)
-                if effective < segment_length:
-                    continue
-                step = segment_length * _SLOT_STEP_MULTIPLIER
-                t = 0.0
-                while t + segment_length <= effective + 1e-6:
-                    slots.append((rec_id, t, t + segment_length))
-                    t += step
+            slots = _enumerate_segments(
+                rec_rows,
+                segment_mode=segment_mode,
+                segment_length=segment_length,
+                local_tz=local_tz,
+                tod_start=tod_start,
+                tod_end=tod_end,
+            )
 
             if not slots:
                 anno_set.status = AnnotationSetStatus.READY
@@ -299,6 +297,65 @@ async def _sample_annotation_segments(annotation_set_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _enumerate_segments(
+    rec_rows: Sequence[Any],
+    *,
+    segment_mode: str,
+    segment_length: float | None,
+    local_tz: ZoneInfo,
+    tod_start: dt_time | None,
+    tod_end: dt_time | None,
+) -> list[tuple[UUID, float, float]]:
+    """Enumerate candidate ``(recording_id, start_sec, end_sec)`` segments.
+
+    Pure function (no DB / no RNG) so it can be unit-tested in isolation.
+
+    Each row is ``(recording_id, duration, time_expansion, datetime)``.
+    Recordings with no/zero duration or that fall outside the optional
+    time-of-day window are skipped. ``effective`` duration applies the same
+    ``time_expansion`` factor in both modes.
+
+    Modes:
+        ``fixed``
+            Contiguous non-overlapping ``segment_length``-second slots starting
+            at ``t = 0`` while ``t + segment_length <= effective``. Requires a
+            ``segment_length``; recordings shorter than one slot are skipped.
+        ``whole_recording``
+            Exactly one segment ``(0, effective)`` per surviving recording.
+            ``segment_length`` is ignored. The caller then samples up to
+            ``num_segments`` of these (one per recording).
+    """
+    slots: list[tuple[UUID, float, float]] = []
+    for rec_id, duration, time_expansion, rec_dt in rec_rows:
+        if duration is None or duration <= 0:
+            continue
+        if (
+            rec_dt is not None
+            and tod_start is not None
+            and tod_end is not None
+            and not _time_in_range(
+                rec_dt.astimezone(local_tz).time(), tod_start, tod_end
+            )
+        ):
+            continue
+        effective = float(duration) * float(time_expansion or 1.0)
+
+        if segment_mode == "whole_recording":
+            # One full-length segment spanning the entire recording.
+            slots.append((rec_id, 0.0, effective))
+            continue
+
+        # Fixed-length sliding-window slots (default behaviour).
+        if segment_length is None or effective < segment_length:
+            continue
+        step = segment_length * _SLOT_STEP_MULTIPLIER
+        t = 0.0
+        while t + segment_length <= effective + 1e-6:
+            slots.append((rec_id, t, t + segment_length))
+            t += step
+    return slots
 
 
 def _parse_hhmm(value: str | None) -> dt_time | None:

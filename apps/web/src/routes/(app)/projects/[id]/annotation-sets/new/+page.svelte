@@ -20,7 +20,12 @@
   import { createAnnotationSet } from '$lib/api/annotation-sets';
   import { toasts } from '$lib/stores/toast';
   import type { Dataset } from '$lib/types/data';
-  import type { AnnotationSetCreate, DateRange, TimeOfDayRange } from '$lib/types/annotation-set';
+  import type {
+    AnnotationSetCreate,
+    DateRange,
+    SegmentMode,
+    TimeOfDayRange,
+  } from '$lib/types/annotation-set';
 
   const projectId = $derived($page.params.id as string);
 
@@ -39,6 +44,7 @@
   let todEnd = $state<string>('10:00');
 
   // Step 3
+  let segmentMode = $state<SegmentMode>('fixed');
   let segmentLengthSec = $state<number>(60);
   let numSegments = $state<number>(50);
 
@@ -86,7 +92,12 @@
   }
 
   function validateStep3(): string | null {
-    if (!Number.isFinite(segmentLengthSec) || segmentLengthSec < 10) {
+    // The segment length only matters in fixed mode; whole_recording uses the
+    // full duration and ignores it.
+    if (
+      segmentMode === 'fixed' &&
+      (!Number.isFinite(segmentLengthSec) || segmentLengthSec < 10)
+    ) {
       return m.annotation_sets_create_validation_length();
     }
     if (!Number.isFinite(numSegments) || numSegments < 1) {
@@ -140,9 +151,15 @@
       project_id: projectId,
       dataset_id: datasetId,
       name: name.trim(),
-      segment_length_sec: Math.floor(segmentLengthSec),
+      segment_mode: segmentMode,
       num_segments: Math.floor(numSegments),
     };
+
+    // segment_length_sec is only sent in fixed mode; whole_recording leaves it
+    // unset so the backend stores NULL.
+    if (segmentMode === 'fixed') {
+      body.segment_length_sec = Math.floor(segmentLengthSec);
+    }
 
     if (useDateRange && dateStart && dateEnd) {
       const range: DateRange = { start: dateStart, end: dateEnd };
@@ -334,24 +351,79 @@
         {m.annotation_sets_create_geometry_description()}
       </p>
 
-      <div class="mt-4 grid grid-cols-2 gap-4">
-        <div>
-          <label for="seg-length" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
-            {m.annotation_sets_create_geometry_length()}
+      <!-- Segment mode -->
+      <fieldset class="mt-4">
+        <legend class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+          {m.annotation_sets_create_geometry_mode()}
+        </legend>
+        <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label
+            class="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm {segmentMode === 'fixed'
+              ? 'border-primary-400 bg-primary-50 dark:border-primary-500 dark:bg-primary-900/30'
+              : 'border-stone-200 dark:border-stone-700'}"
+          >
+            <input
+              type="radio"
+              name="segment-mode"
+              value="fixed"
+              class="mt-0.5"
+              bind:group={segmentMode}
+            />
+            <span>
+              <span class="block font-medium text-stone-900 dark:text-stone-100">
+                {m.annotation_sets_create_geometry_mode_fixed()}
+              </span>
+              <span class="mt-0.5 block text-xs text-stone-400">
+                {m.annotation_sets_create_geometry_mode_fixed_hint()}
+              </span>
+            </span>
           </label>
-          <input
-            id="seg-length"
-            type="number"
-            min="10"
-            step="1"
-            class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
-            bind:value={segmentLengthSec}
-          />
-          <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_geometry_length_hint()}</p>
+          <label
+            class="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm {segmentMode === 'whole_recording'
+              ? 'border-primary-400 bg-primary-50 dark:border-primary-500 dark:bg-primary-900/30'
+              : 'border-stone-200 dark:border-stone-700'}"
+          >
+            <input
+              type="radio"
+              name="segment-mode"
+              value="whole_recording"
+              class="mt-0.5"
+              bind:group={segmentMode}
+            />
+            <span>
+              <span class="block font-medium text-stone-900 dark:text-stone-100">
+                {m.annotation_sets_create_geometry_mode_whole()}
+              </span>
+              <span class="mt-0.5 block text-xs text-stone-400">
+                {m.annotation_sets_create_geometry_mode_whole_hint()}
+              </span>
+            </span>
+          </label>
         </div>
+      </fieldset>
+
+      <div class="mt-4 grid grid-cols-2 gap-4">
+        {#if segmentMode === 'fixed'}
+          <div>
+            <label for="seg-length" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
+              {m.annotation_sets_create_geometry_length()}
+            </label>
+            <input
+              id="seg-length"
+              type="number"
+              min="10"
+              step="1"
+              class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
+              bind:value={segmentLengthSec}
+            />
+            <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_geometry_length_hint()}</p>
+          </div>
+        {/if}
         <div>
           <label for="seg-count" class="block text-sm font-medium text-stone-700 dark:text-stone-300">
-            {m.annotation_sets_create_geometry_count()}
+            {segmentMode === 'whole_recording'
+              ? m.annotation_sets_create_geometry_count_whole()
+              : m.annotation_sets_create_geometry_count()}
           </label>
           <input
             id="seg-count"
@@ -361,7 +433,11 @@
             class="mt-1 w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm dark:border-stone-600 dark:bg-stone-800 dark:text-stone-100"
             bind:value={numSegments}
           />
-          <p class="mt-1 text-xs text-stone-400">{m.annotation_sets_create_geometry_count_hint()}</p>
+          <p class="mt-1 text-xs text-stone-400">
+            {segmentMode === 'whole_recording'
+              ? m.annotation_sets_create_geometry_count_whole_hint()
+              : m.annotation_sets_create_geometry_count_hint()}
+          </p>
         </div>
       </div>
 
@@ -410,10 +486,23 @@
             {/if}
           </dd>
 
-          <dt class="text-stone-500">{m.annotation_sets_create_summary_length()}:</dt>
-          <dd class="text-stone-900 dark:text-stone-100">{segmentLengthSec}s</dd>
+          <dt class="text-stone-500">{m.annotation_sets_create_summary_mode()}:</dt>
+          <dd class="text-stone-900 dark:text-stone-100">
+            {segmentMode === 'whole_recording'
+              ? m.annotation_sets_create_geometry_mode_whole()
+              : m.annotation_sets_create_geometry_mode_fixed()}
+          </dd>
 
-          <dt class="text-stone-500">{m.annotation_sets_create_summary_count()}:</dt>
+          {#if segmentMode === 'fixed'}
+            <dt class="text-stone-500">{m.annotation_sets_create_summary_length()}:</dt>
+            <dd class="text-stone-900 dark:text-stone-100">{segmentLengthSec}s</dd>
+          {/if}
+
+          <dt class="text-stone-500">
+            {segmentMode === 'whole_recording'
+              ? m.annotation_sets_create_geometry_count_whole()
+              : m.annotation_sets_create_summary_count()}:
+          </dt>
           <dd class="text-stone-900 dark:text-stone-100">{numSegments}</dd>
         </dl>
       </section>

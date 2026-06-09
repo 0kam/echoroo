@@ -157,6 +157,7 @@ class AnnotationSetService:
             name=anno_set.name,
             filter_date_range=anno_set.filter_date_range,
             filter_time_of_day_range=anno_set.filter_time_of_day_range,
+            segment_mode=anno_set.segment_mode,
             segment_length_sec=anno_set.segment_length_sec,
             num_segments=anno_set.num_segments,
             status=anno_set.status.value,
@@ -191,6 +192,7 @@ class AnnotationSetService:
             dataset_id=request.dataset_id,
             created_by_id=user_id,
             name=request.name,
+            segment_mode=request.segment_mode,
             segment_length_sec=request.segment_length_sec,
             num_segments=request.num_segments,
             filter_date_range=(
@@ -337,6 +339,7 @@ class AnnotationSetService:
             for v in (
                 request.filter_date_range,
                 request.filter_time_of_day_range,
+                request.segment_mode,
                 request.segment_length_sec,
                 request.num_segments,
             )
@@ -357,6 +360,8 @@ class AnnotationSetService:
             anno_set.filter_time_of_day_range = (
                 request.filter_time_of_day_range.model_dump()
             )
+        if request.segment_mode is not None:
+            anno_set.segment_mode = request.segment_mode
         if request.segment_length_sec is not None:
             anno_set.segment_length_sec = request.segment_length_sec
         if request.num_segments is not None:

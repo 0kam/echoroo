@@ -75,16 +75,41 @@ class AnnotationSetCreate(BaseModel):
         default=None,
         description="Optional local time-of-day filter (may wrap midnight)",
     )
-    segment_length_sec: int = Field(
-        ...,
+    segment_mode: Literal["fixed", "whole_recording"] = Field(
+        default="fixed",
+        description=(
+            "Segmentation strategy. 'fixed': fixed-length sliding-window slots "
+            "(requires segment_length_sec >= 10). 'whole_recording': one "
+            "full-length segment per recording (segment_length_sec ignored)."
+        ),
+    )
+    segment_length_sec: int | None = Field(
+        default=None,
         ge=10,
-        description="Length of every sampled segment in seconds (minimum 10)",
+        description=(
+            "Length of every sampled segment in seconds (minimum 10). Required "
+            "when segment_mode = 'fixed'; ignored when 'whole_recording'."
+        ),
     )
     num_segments: int = Field(
         ...,
         ge=1,
-        description="Target number of segments to materialize",
+        description=(
+            "Target number of segments to materialize. In 'whole_recording' "
+            "mode this is the MAXIMUM number of recordings to sample (one "
+            "full-length segment per recording)."
+        ),
     )
+
+    @model_validator(mode="after")
+    def _check_segment_length(self) -> AnnotationSetCreate:
+        # A fixed-length set is meaningless without a length; whole-recording
+        # sets ignore it entirely so NULL is allowed there.
+        if self.segment_mode == "fixed" and self.segment_length_sec is None:
+            raise ValueError(
+                "segment_length_sec is required when segment_mode is 'fixed'"
+            )
+        return self
 
 
 class AnnotationSetUpdate(BaseModel):
@@ -107,6 +132,10 @@ class AnnotationSetUpdate(BaseModel):
     filter_time_of_day_range: TimeOfDayRangeFilter | None = Field(
         default=None,
         description="New time-of-day filter (only accepted before sampling completes)",
+    )
+    segment_mode: Literal["fixed", "whole_recording"] | None = Field(
+        default=None,
+        description="New segmentation mode (only accepted before sampling completes)",
     )
     segment_length_sec: int | None = Field(
         default=None,
@@ -140,7 +169,8 @@ class AnnotationSetResponse(BaseModel):
     name: str
     filter_date_range: DateRangeFilter | None = None
     filter_time_of_day_range: TimeOfDayRangeFilter | None = None
-    segment_length_sec: int
+    segment_mode: Literal["fixed", "whole_recording"] = "fixed"
+    segment_length_sec: int | None = None
     num_segments: int
     status: Literal["sampling", "ready", "in_progress", "completed"]
     sampling_warning: str | None = None
