@@ -19,6 +19,7 @@
   import type { PaletteEntry } from '$lib/types/annotation-set';
   import type { SpeciesPickerResult } from '$lib/types/species-picker';
   import { formatSpeciesName } from '$lib/utils/speciesFormatters';
+  import { isTextEntryTarget } from '$lib/utils/keyboardGuards';
   import UnifiedSpeciesPicker from '$lib/components/shared/UnifiedSpeciesPicker.svelte';
   import { norm } from '$lib/components/shared/unifiedSpeciesPicker';
 
@@ -128,11 +129,11 @@
   // ============================================================
 
   function handleKeyDown(e: KeyboardEvent) {
-    const target = e.target as HTMLElement | null;
-    if (target) {
-      const tag = target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
-    }
+    // Suppress the shortcut only when a genuine text-entry surface holds focus
+    // (species search box, note textarea, …). A focused zoom/scale/seek slider
+    // (<input type="range">) must NOT swallow the shortcut — otherwise the
+    // first species key after a zoom is lost while the slider keeps focus.
+    if (isTextEntryTarget(e.target)) return;
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const code = e.key;
     if (code >= '1' && code <= '9') {

@@ -30,6 +30,7 @@
   import { useAnnotationOverlay } from '$lib/components/annotation-sets/useAnnotationOverlay.svelte';
   import { useAnnotationMutations } from '$lib/components/annotation-sets/useAnnotationMutations.svelte';
   import { nonPassiveWheel } from '$lib/actions/nonPassiveWheel';
+  import { isTextEntryTarget } from '$lib/utils/keyboardGuards';
   import { timeToPixel, pixelsToPosition } from '$lib/utils/viewport';
   import {
     getAnnotationSet,
@@ -474,13 +475,11 @@
   // confirm() + mutate + selection-reset chain.
   $effect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // IME / text-entry guard — ignore keystrokes targeting inputs so that
-      // typing a species name or a note never triggers editor shortcuts.
-      const target = e.target as HTMLElement | null;
-      if (target) {
-        const tag = target.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
-      }
+      // IME / text-entry guard — ignore keystrokes targeting genuine text-entry
+      // surfaces so that typing a species name or a note never triggers editor
+      // shortcuts. Range sliders (e.g. the time-scale zoom) are NOT text entry,
+      // so the first shortcut after dragging one is no longer swallowed.
+      if (isTextEntryTarget(e.target)) return;
       if (e.key === 'Escape') {
         if (draft.draftRange || selectedAnnotationId) {
           e.preventDefault();
