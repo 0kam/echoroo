@@ -250,7 +250,7 @@ def _mask_species_summary_item_names(
     role: str = getattr(request.state, "normalized_role", "Guest")
     if not _should_mask_species(project, role):
         return
-    for field in ("tag_name", "scientific_name", "common_name"):
+    for field in ("tag_name", "scientific_name", "common_name", "vernacular_name"):
         if hasattr(item, field):
             setattr(item, field, MASKED_SPECIES_LABEL)
 

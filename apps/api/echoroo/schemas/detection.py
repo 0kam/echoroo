@@ -82,12 +82,23 @@ class DetectionListResponse(BaseModel):
 
 
 class SpeciesSummaryItem(BaseModel):
-    """Summary statistics for a single species tag or detection run."""
+    """Summary statistics for a single species tag or detection run.
+
+    ``common_name`` is the English common name stored directly on the tag
+    record. ``vernacular_name`` is resolved from ``taxon_vernacular_names`` for
+    the requested locale (mirrors :class:`~echoroo.schemas.tag.TagResponse`);
+    it is ``None`` when no entry exists, in which case clients should fall back
+    to ``common_name``.
+    """
 
     tag_id: UUID | None = Field(None, description="Species tag ID (None for tag-less sources like custom_svm)")
     tag_name: str = Field(..., description="Species tag name or model name for tag-less sources")
     scientific_name: str | None = Field(None, description="Scientific name")
-    common_name: str | None = Field(None, description="Common name")
+    common_name: str | None = Field(None, description="Common name (English legacy)")
+    vernacular_name: str | None = Field(
+        default=None,
+        description="Locale-resolved vernacular name; null if not available",
+    )
     taxon_id: UUID | None = Field(None, description="Global taxon ID")
     total_count: int = Field(..., description="Total number of detections")
     unreviewed_count: int = Field(..., description="Number of unreviewed detections")

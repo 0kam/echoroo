@@ -223,10 +223,15 @@ class DetectionService:
                 tag_id=row["tag_id"],
                 tag_name=row["tag_name"],
                 scientific_name=row["scientific_name"],
-                common_name=(
-                    vernacular_map.get(row["taxon_id"], row["common_name"])
+                # Keep ``common_name`` as the English legacy value and expose
+                # the locale-resolved name in ``vernacular_name`` (mirrors
+                # TagResponse) so clients can prefer the vernacular and fall
+                # back to common_name when no entry exists for the locale.
+                common_name=row["common_name"],
+                vernacular_name=(
+                    vernacular_map.get(row["taxon_id"])
                     if row["taxon_id"] is not None
-                    else row["common_name"]
+                    else None
                 ),
                 taxon_id=row["taxon_id"],
                 total_count=row["total_count"],
