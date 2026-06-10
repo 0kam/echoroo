@@ -126,9 +126,9 @@ The `worker` service reserves one NVIDIA GPU by default. If you do not have an N
 
 ML models are cached in the `echoroo-dev-ml-models` Docker volume.
 
-### Unsupported or absent GPU (e.g. Blackwell / sm_120)
+### GPU present but unusable by TensorFlow (e.g. Blackwell / sm_120)
 
-Some GPUs (notably NVIDIA Blackwell / RTX 50-series / sm_120) are enumerated by TensorFlow but cannot actually run its kernels — TF lists the device and then crashes at kernel launch, which can take the host down. On such a box, force CPU inference instead of relying on auto-detection:
+Some GPUs (notably NVIDIA Blackwell / RTX 50-series / sm_120) are enumerated by TensorFlow but cannot actually run its kernels — TF lists the device and then crashes at kernel launch, which can take the host down. On such a box (the GPU is **present** but unusable), force CPU inference instead of relying on auto-detection:
 
 ```bash
 # .env
@@ -137,6 +137,8 @@ ECHOROO_WORKER_MEM_LIMIT=24g    # bound worker RAM (~40% of host RAM) so CPU inf
 ```
 
 CPU mode is slower but stable. It also auto-caps inference threads (`ECHOROO_ML_CPU_NUM_THREADS`) and shrinks the Perch warmup (`ECHOROO_ML_CPU_WARMUP_BATCHES`). See [Configuration Guide](CONFIGURATION.md#machine-learning-settings) for the full ML env-var list.
+
+> **No NVIDIA GPU at all?** `ECHOROO_ML_USE_GPU=false` is necessary but **not sufficient**. The `worker` service still reserves an NVIDIA device via `deploy.resources.reservations.devices`, so the container fails to start on a host with no NVIDIA GPU. You must **also** remove or comment out that block in `compose.dev.yaml` (see [GPU Support](#gpu-support) above) in addition to setting `ECHOROO_ML_USE_GPU=false`.
 
 ## Common Tasks
 

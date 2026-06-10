@@ -220,7 +220,10 @@ services:
       - ECHOROO_ML_FEEDERS=${ECHOROO_ML_FEEDERS:-1}
       - ECHOROO_ML_WORKERS=${ECHOROO_ML_WORKERS:-1}
       - ECHOROO_ML_CPU_NUM_THREADS=${ECHOROO_ML_CPU_NUM_THREADS:-8}
-      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES:-1}
+      # Single-dash default (`-` not `:-`): an explicitly-empty value in .env
+      # passes through as empty -> "skip warmup" (the documented semantics);
+      # `:-` would wrongly force it back to 1.
+      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES-1}
       - ECHOROO_ML_GPU_ALLOW_GROWTH=${ECHOROO_ML_GPU_ALLOW_GROWTH:-true}
     volumes:
       - ./apps/api:/app
@@ -279,7 +282,10 @@ services:
       - ECHOROO_ML_FEEDERS=${ECHOROO_ML_FEEDERS:-1}
       - ECHOROO_ML_WORKERS=${ECHOROO_ML_WORKERS:-1}
       - ECHOROO_ML_CPU_NUM_THREADS=${ECHOROO_ML_CPU_NUM_THREADS:-8}
-      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES:-1}
+      # Single-dash default (`-` not `:-`): an explicitly-empty value in .env
+      # passes through as empty -> "skip warmup" (the documented semantics);
+      # `:-` would wrongly force it back to 1.
+      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES-1}
       - ECHOROO_ML_GPU_ALLOW_GROWTH=${ECHOROO_ML_GPU_ALLOW_GROWTH:-true}
     volumes:
       - ./apps/api:/app

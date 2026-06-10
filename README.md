@@ -109,9 +109,11 @@ If you encounter GPU memory errors during ML inference:
 2. **Reduce feeders:** Lower `ECHOROO_ML_FEEDERS`
 3. **Use CPU:** Set `ECHOROO_ML_USE_GPU=false` (slower but avoids GPU memory issues; also bound RAM with `ECHOROO_WORKER_MEM_LIMIT`)
 
-### Unsupported or absent GPU (e.g. Blackwell / sm_120)
+### GPU present but unusable by TensorFlow (e.g. Blackwell / sm_120)
 
-On a host whose GPU is enumerated by TensorFlow but unusable (e.g. NVIDIA Blackwell / RTX 50-series / sm_120), TF lists the device then crashes at kernel launch, so auto-detection alone is not enough. Set `ECHOROO_ML_USE_GPU=false` to force CPU inference for both BirdNET and Perch, and set `ECHOROO_WORKER_MEM_LIMIT` (e.g. `24g`, ~40% of host RAM) to keep CPU inference from exhausting RAM and rebooting the host. CPU mode is slower but stable.
+On a host whose GPU is **present** but enumerated-yet-unusable by TensorFlow (e.g. NVIDIA Blackwell / RTX 50-series / sm_120), TF lists the device then crashes at kernel launch, so auto-detection alone is not enough. Set `ECHOROO_ML_USE_GPU=false` to force CPU inference for both BirdNET and Perch, and set `ECHOROO_WORKER_MEM_LIMIT` (e.g. `24g`, ~40% of host RAM) to keep CPU inference from exhausting RAM and rebooting the host. CPU mode is slower but stable.
+
+On a host with **no NVIDIA GPU at all**, `ECHOROO_ML_USE_GPU=false` is necessary but not sufficient: the `worker` service still reserves an NVIDIA device, so you must also remove or comment out the `worker.deploy.resources.reservations.devices` block in `compose.dev.yaml`, otherwise the worker container will not start. See [DOCKER.md](DOCKER.md#gpu-support).
 
 ## Acknowledgements
 

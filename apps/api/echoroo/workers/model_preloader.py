@@ -133,17 +133,37 @@ def get_model(model_name: str) -> tuple[Any, Any]:
     if model_name in _gpu_model_store:
         return _gpu_model_store[model_name]
 
-    # Fallback: load on demand (for non-GPU workers or first call before preload)
+    # Fallback: load on demand (for non-GPU workers or first call before preload).
+    # This MUST resolve device + batch/feeders/workers from Settings exactly as
+    # ``preload_models()`` does. Otherwise the loader defaults to GPU, and
+    # BirdNET's ``_configure_device`` DELETES ``CUDA_VISIBLE_DEVICES=-1`` set by
+    # ``apply_ml_device_env`` — re-enabling the (unusable on Blackwell/sm_120)
+    # GPU and defeating ``ECHOROO_ML_USE_GPU=false``.
     logger.warning("Model %s not pre-loaded, loading on demand", model_name)
     import echoroo.ml.birdnet  # noqa: F401
     import echoroo.ml.perch  # noqa: F401
+    from echoroo.core.settings import get_settings
     from echoroo.ml.registry import ModelRegistry
+
+    settings = get_settings()
+    device = "GPU" if settings.ML_USE_GPU else "CPU"
 
     loader_cls = ModelRegistry.get_loader_class(model_name)
     engine_cls = ModelRegistry.get_engine_class(model_name)
-    loader = loader_cls()
+    # The registry erases concrete types to the ModelLoader / InferenceEngine
+    # base classes, whose __init__ does not declare these kwargs. Every
+    # *registered* model (BirdNETLoader/Inference, PerchLoader/Inference)
+    # accepts device + batch/feeders/workers, so the call is safe at runtime —
+    # hence the targeted call-arg ignores.
+    loader = loader_cls(device=device)  # type: ignore[call-arg]
     loader.load()
-    engine = engine_cls(loader)
+    engine = engine_cls(
+        loader,
+        batch_size=settings.ML_GPU_BATCH_SIZE,
+        feeders=settings.ML_FEEDERS,
+        workers=settings.ML_WORKERS,
+        device=device,
+    )  # type: ignore[call-arg]
     _gpu_model_store[model_name] = (loader, engine)
     return _gpu_model_store[model_name]
 

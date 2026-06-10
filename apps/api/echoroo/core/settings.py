@@ -250,8 +250,8 @@ class Settings(BaseSettings):
     # sm_120): TF lists the device then crashes at kernel launch, so plain
     # auto-detection is NOT enough. Setting ``ECHOROO_ML_USE_GPU=false``
     # forces ``CUDA_VISIBLE_DEVICES=-1`` in the worker process BEFORE
-    # TensorFlow is imported (see :mod:`echoroo.ml.device_env`), pinning
-    # both models to CPU. CPU mode additionally caps inference threads
+    # TensorFlow is imported (see :mod:`echoroo.workers.ml_device_env`),
+    # pinning both models to CPU. CPU mode additionally caps inference threads
     # (``ML_CPU_NUM_THREADS``) and shrinks the Perch warmup batch list
     # (``ML_CPU_WARMUP_BATCHES``) so it does not exhaust host RAM.
     ML_USE_GPU: bool = Field(
@@ -266,6 +266,7 @@ class Settings(BaseSettings):
     )
     ML_GPU_BATCH_SIZE: int = Field(
         default=16,
+        ge=1,
         validation_alias="ECHOROO_ML_GPU_BATCH_SIZE",
         description=(
             "Segments processed in parallel per inference batch. Lower this "
@@ -274,16 +275,19 @@ class Settings(BaseSettings):
     )
     ML_FEEDERS: int = Field(
         default=1,
+        ge=1,
         validation_alias="ECHOROO_ML_FEEDERS",
         description="Number of file-feeder processes for parallel audio loading.",
     )
     ML_WORKERS: int = Field(
         default=1,
+        ge=1,
         validation_alias="ECHOROO_ML_WORKERS",
         description="Number of inference worker processes (usually 1).",
     )
     ML_CPU_NUM_THREADS: int = Field(
         default=8,
+        ge=1,
         validation_alias="ECHOROO_ML_CPU_NUM_THREADS",
         description=(
             "Thread cap applied ONLY in CPU mode (ML_USE_GPU=false). Bounds "

@@ -9,7 +9,14 @@ very top of the Celery worker entrypoint, BEFORE anything imports TensorFlow,
 to pin the process to CPU (and cap its thread pools) when ``ML_USE_GPU`` is
 false.
 
-The function is intentionally import-light (no TensorFlow import) and
+This module lives in :mod:`echoroo.workers` (whose ``__init__`` is empty) and
+NOT in :mod:`echoroo.ml` on purpose: importing it must not trigger
+``echoroo/ml/__init__.py`` (which imports BirdNET/Perch and therefore numpy +
+TensorFlow). If numpy/BLAS initialise before the thread caps are set the caps
+are silently ignored — which is the core OOM safety. The module imports only
+the standard library plus the (numpy/TF-free) pydantic ``Settings``.
+
+The function is intentionally import-light (no TensorFlow / numpy import) and
 idempotent: it only ever *adds* environment variables, and uses
 ``os.environ.setdefault`` for the thread caps so an operator who exports an
 explicit value still wins.
