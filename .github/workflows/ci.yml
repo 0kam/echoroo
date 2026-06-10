@@ -796,6 +796,35 @@ jobs:
         working-directory: apps/api
         run: uv run python scripts/run_mutmut.py run
 
+      # W0 mutation-harness fix — fail-fast baseline guard.
+      #
+      # Root cause of the long-standing 0.0% / 0-mutants-checked gate failures:
+      # mutmut copies pyproject.toml into mutants/ but not README.md, so the
+      # stats subprocess (cwd=mutants/) made uv/hatchling re-resolve project
+      # metadata and raise `OSError: Readme file does not exist: README.md`,
+      # collapsing stats collection to 0 mutants checked. The fix adds
+      # README.md to [tool.mutmut] also_copy. This step asserts that copy
+      # actually landed — if it did not, the rest of the job (0/0 score table)
+      # is meaningless, so fail immediately with a clear, actionable error.
+      # `if: always()` so it surfaces the root cause even when `Run mutmut`
+      # itself already errored out on the metadata OSError.
+      - name: Assert mutants/ baseline is intact (README copied, stats present)
+        if: always()
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          if [ ! -d mutants ]; then
+            echo "::error::mutmut produced no mutants/ directory — generation failed before stats."
+            exit 1
+          fi
+          if [ ! -f mutants/README.md ]; then
+            echo "::error::mutants/README.md missing — [tool.mutmut] also_copy did not copy README.md."
+            echo "::error::hatchling will raise 'Readme file does not exist: README.md' from cwd=mutants/,"
+            echo "::error::collapsing the mutmut stats baseline to 0 mutants checked (the 0.0% / 0/0 failure)."
+            exit 1
+          fi
+          echo "mutants/README.md present — hatchling metadata resolution from cwd=mutants/ will succeed."
+
       # Collect results for CI artifact upload.  ``--all`` includes killed
       # mutants (the default ``mutmut results`` omits them), which makes the
       # artifact the authoritative per-mutant log and matches what

@@ -58,8 +58,13 @@ dev = [
     "types-passlib>=1.7.7",
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
-    # 006 permissions redesign: mutation testing + integration test containers
-    "mutmut>=3.2,<4.0",
+    # 006 permissions redesign: mutation testing + integration test containers.
+    # W0 mutation-harness fix: PINNED to ==3.5.0 (the version uv.lock currently
+    # resolves) so the mutation harness cannot silently drift to a new mutmut
+    # release that changes the run_stats / mutant-generation behaviour the
+    # scripts/run_mutmut.py monkey-patches against. Bump deliberately + re-run
+    # the gate (run-mutation-testing label / workflow_dispatch) when upgrading.
+    "mutmut==3.5.0",
     "testcontainers[postgres,redis]>=4.9,<5.0",
 ]
 
@@ -251,6 +256,21 @@ paths_to_mutate = [
     "echoroo/workers/dormancy_check.py",
 ]
 tests_dir = ["tests/unit/", "tests/security/"]
+# W0 mutation-harness fix (root cause of the 0.0% / 0-mutants-checked gate
+# failures since ~2026-05-09): mutmut copies ``pyproject.toml`` into the
+# generated ``mutants/`` directory (see ``copy_also_copy_files`` in
+# ``mutmut.__main__``) but NOT ``README.md``. When the stats subprocess runs
+# pytest with cwd=``mutants/``, uv / hatchling re-resolves the project's
+# packaging metadata from that cwd; the ``readme = "README.md"`` declaration in
+# ``[project]`` is resolved relative to ``mutants/`` and, because the file is
+# absent there, hatchling raises ``OSError: Readme file does not exist:
+# README.md`` (hatchling/metadata/core.py:531). That OSError surfaces as a
+# pytest collection error, so 0 mutant→test stats are collected and every
+# module reports ``0.0% (0/0, not checked=N)``. Copying ``README.md`` into
+# ``mutants/`` makes the metadata resolution succeed. ``also_copy`` entries are
+# prepended to mutmut's built-in copy list (tests/, pyproject.toml, …), so this
+# is purely additive.
+also_copy = ["README.md"]
 # Runner: use python -m pytest for portability across uv and CI venvs.
 # --no-cov avoids coverage overhead per mutant.
 # --override-ini=addopts= clears project-level addopts.

@@ -192,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if args.warn_only else 1
 
     failures: list[tuple[str, float, int, int]] = []
+    scored_totals: list[int] = []
 
     print(
         f"\n{'Module':<55} {'Score':>7}  {'Killed':>7} / {'Scorable':<8}  "
@@ -202,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
     for module in sorted(counts_by_module):
         module_counts = counts_by_module[module]
         score, killed, total = _compute_score(module_counts)
+        scored_totals.append(total)
         excluded = _format_excluded(module_counts)
         status_str = (
             "PASS" if score >= threshold else ("WARN" if args.warn_only else "FAIL")
@@ -214,6 +216,35 @@ def main(argv: list[str] | None = None) -> int:
             failures.append((module, score, killed, total))
 
     print()
+
+    # W0 mutation-harness fix — baseline-collapse guard.
+    #
+    # If EVERY parsed module reports 0 mutants in the kill-rate denominator
+    # (killed + survived + suspicious == 0), the mutants were generated but
+    # never executed against the suite — i.e. mutmut's baseline / stats phase
+    # collapsed (every mutant ends up "not checked"). The classic trigger was
+    # the hatchling ``OSError: Readme file does not exist: README.md`` raised
+    # from the stats subprocess (cwd=mutants/), which produced a meaningless
+    # ``0.0% (0/0, not checked=N)`` table for all 10 modules.
+    #
+    # This is an INFRASTRUCTURE failure, not a coverage shortfall, so it must
+    # hard-fail with a distinct, actionable message even under ``--warn-only``
+    # (the warn-ratchet was only ever intended to tolerate genuine low scores
+    # during the §D-1 ramp, never a totally empty baseline).
+    if scored_totals and not any(scored_totals):
+        print(
+            "[check_mutation_score] BASELINE FAILED — every module reports 0 "
+            "scorable mutants (0/0).\n"
+            "  Mutants were generated but never executed: the mutmut stats / "
+            "baseline subprocess collapsed (all mutants 'not checked').\n"
+            "  See the 'Run mutmut' step output and the mutmut-pytest-preflight "
+            "artifact for the underlying stats subprocess error\n"
+            "  (historically: hatchling 'Readme file does not exist: README.md' "
+            "resolved from cwd=mutants/ — ensure README.md is in [tool.mutmut]\n"
+            "  also_copy). This is a harness failure, NOT a low mutation score.",
+            file=sys.stderr,
+        )
+        return 1
 
     if failures:
         print(
