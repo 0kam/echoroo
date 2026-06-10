@@ -74,7 +74,12 @@ services:
     environment:
       - SERVICES=s3,kms
       - PERSISTENCE=1
-      - EXTRA_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
+      # Dual-origin: always keep the localhost variants (SSH port-forward
+      # users still arrive as localhost) AND append the public-host variants
+      # derived from ECHOROO_PUBLIC_HOST. When PUBLIC_HOST defaults to
+      # localhost the public entries collapse onto the localhost ones, so
+      # the effective allowlist is unchanged for the default deployment.
+      - EXTRA_CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173},http://${ECHOROO_PUBLIC_HOST:-localhost}:3000
       - EXTRA_CORS_ALLOWED_HEADERS=content-type,x-amz-content-sha256,x-amz-date,authorization,x-amz-security-token,x-amz-checksum-sha256
     ports:
       - "4566:4566"
@@ -123,11 +128,19 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
-      - APP_URL=http://localhost:${ECHOROO_FRONTEND_PORT:-5173}
+      # Browser-facing host derives from ECHOROO_PUBLIC_HOST (bare
+      # hostname/IP, no scheme/port; default localhost). Scheme stays http
+      # in dev — production terminates TLS at a reverse proxy. Ports keep
+      # using the existing ECHOROO_FRONTEND_PORT / ECHOROO_API_PORT knobs.
+      - APP_URL=http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173}
       - DEBUG=true
       - ENVIRONMENT=development
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-change-in-production}
-      - ALLOWED_ORIGINS=["http://localhost:${ECHOROO_FRONTEND_PORT:-5173}","http://localhost:3000","http://frontend:5173"]
+      # Dual-origin CORS: keep the localhost origins (SSH port-forward users
+      # still arrive as localhost) AND append the public-host origin. The
+      # container-internal http://frontend:5173 entry stays. When PUBLIC_HOST
+      # is localhost the public entry duplicates the first one — harmless.
+      - ALLOWED_ORIGINS=["http://localhost:${ECHOROO_FRONTEND_PORT:-5173}","http://localhost:3000","http://frontend:5173","http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173}"]
       - AUDIO_ROOT=/data/audio
       - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}
       - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
@@ -140,7 +153,9 @@ services:
       - TEST_MODE=${TEST_MODE:-false}
       - TEST_TOTP_SECRET_BASE32=${TEST_TOTP_SECRET_BASE32:-}
       - S3_ENDPOINT_URL=http://localstack:4566
-      - S3_PUBLIC_ENDPOINT_URL=http://localhost:${ECHOROO_FRONTEND_PORT:-5173}/s3-proxy
+      # Presigned URLs are handed to the browser, so they must use the
+      # public host (routed through the Vite /s3-proxy to avoid CORS).
+      - S3_PUBLIC_ENDPOINT_URL=http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173}/s3-proxy
       - S3_ACCESS_KEY=echoroo
       - S3_SECRET_KEY=echoroo-dev
       - S3_BUCKET=echoroo
@@ -366,8 +381,14 @@ services:
       - ./apps/web/messages:/app/messages:ro
     environment:
       - ECHOROO_API_URL=http://backend:8000
-      - PUBLIC_API_URL=http://localhost:${ECHOROO_API_PORT:-8002}
+      # Browser-facing API base derives from ECHOROO_PUBLIC_HOST (default
+      # localhost) + the existing ECHOROO_API_PORT knob.
+      - PUBLIC_API_URL=http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_API_PORT:-8002}
       - PUBLIC_TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
+      # Passed through so vite.config.ts can add the public host to
+      # server.allowedHosts (Vite rejects non-localhost Host headers by
+      # default). Empty/unset is fine — the config only appends when set.
+      - ECHOROO_PUBLIC_HOST=${ECHOROO_PUBLIC_HOST:-localhost}
     networks:
       - echoroo-net
 

@@ -52,6 +52,31 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 14
 
+    # Single browser-facing host knob (LAN-IP / remote-host deployments).
+    #
+    # ``ECHOROO_PUBLIC_HOST`` is a BARE hostname or IP only — no scheme, no
+    # port (e.g. ``localhost``, ``192.168.1.100``, ``echoroo.example.org``).
+    # The scheme stays ``http`` in dev (production terminates TLS at a
+    # reverse proxy) and ports keep their own knobs. When this is left at
+    # the ``localhost`` default the derived values below are byte-for-byte
+    # identical to the historical hard-coded defaults, so existing
+    # deployments are unaffected.
+    #
+    # NOTE: the dev ``compose.dev.yaml`` already passes explicit
+    # ``ALLOWED_ORIGINS`` / ``APP_URL`` env values, so for the Docker dev
+    # stack these derivations are the *fallback* path — they only fire for
+    # non-compose runs (bare ``uvicorn``, tests) that set only
+    # ``ECHOROO_PUBLIC_HOST``. Both paths are kept dual-origin / consistent.
+    echoroo_public_host: str = Field(
+        default="localhost",
+        validation_alias="ECHOROO_PUBLIC_HOST",
+        description=(
+            "Bare browser-facing hostname or IP (no scheme/port). Drives the "
+            "default WebAuthn RP ID + origins and CORS origins when those are "
+            "not explicitly overridden. Default 'localhost'."
+        ),
+    )
+
     # Security
     ALLOWED_ORIGINS: list[str] = Field(
         default=["http://localhost:5173", "http://localhost:3000"],
@@ -595,6 +620,28 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
 
+    @field_validator("ALLOWED_ORIGINS", mode="after")
+    @classmethod
+    def _dedupe_allowed_origins(cls, value: list[str]) -> list[str]:
+        """Order-preserving de-duplication of CORS origins.
+
+        ``compose.dev.yaml`` appends a public-host origin derived from
+        ``ECHOROO_PUBLIC_HOST`` to the explicit ``ALLOWED_ORIGINS`` list.
+        When the host is the default ``localhost`` that appended entry
+        duplicates an existing localhost origin (compose interpolation
+        cannot conditionally omit it). De-duping here keeps the effective
+        allowlist byte-identical to the pre-change default while preserving
+        first-seen order. Duplicates are otherwise harmless for CORS
+        membership checks; this is purely cosmetic hygiene.
+        """
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for origin in value:
+            if origin not in seen:
+                seen.add(origin)
+                deduped.append(origin)
+        return deduped
+
     # spec/011 NFR-011-010 — invitation token kid format guard.
     #
     # The wire envelope is the 4-part ``{token}.{exp}.{kid}.{mac}`` string;
@@ -686,6 +733,51 @@ class Settings(BaseSettings):
         """
         if self.web_csrf_ttl_seconds <= 0:
             self.web_csrf_ttl_seconds = self.web_refresh_token_ttl_seconds
+        return self
+
+    @model_validator(mode="after")
+    def _derive_public_host_defaults(self) -> "Settings":
+        """Fill browser-facing defaults from ``echoroo_public_host``.
+
+        Derivation runs ONLY for fields the caller did NOT explicitly set
+        (tracked via ``model_fields_set``) — an explicit env value or
+        constructor argument always wins. This keeps the single
+        ``ECHOROO_PUBLIC_HOST`` knob useful for non-compose runs (bare
+        ``uvicorn`` / tests) while never clobbering the explicit
+        ``ALLOWED_ORIGINS`` / WebAuthn env values the Docker dev stack
+        already passes.
+
+        Dual-origin rule (CRITICAL): the CORS + WebAuthn origin lists always
+        keep the ``localhost`` variants (SSH port-forward users still arrive
+        as localhost) AND append the public-host variants. When the public
+        host is ``localhost`` the appended entries collapse onto the existing
+        ones, so the default deployment's lists are byte-identical to the
+        historical hard-coded defaults.
+        """
+        host = (self.echoroo_public_host or "localhost").strip() or "localhost"
+
+        # WebAuthn RP ID is a bare host (no scheme/port). Default only.
+        if "webauthn_rp_id" not in self.model_fields_set:
+            self.webauthn_rp_id = host
+
+        # WebAuthn origins: dual on the frontend origin port (3000, matching
+        # the historical default origin). Preserve localhost; append public.
+        if "webauthn_origins" not in self.model_fields_set:
+            origins = ["http://localhost:3000"]
+            if host != "localhost":
+                origins.append(f"http://{host}:3000")
+            self.webauthn_origins = origins
+
+        # CORS origins: dual on both the 5173 (Vite) and 3000 ports, mirroring
+        # the historical localhost default list. Preserve localhost; append
+        # the public-host variants.
+        if "ALLOWED_ORIGINS" not in self.model_fields_set:
+            cors = ["http://localhost:5173", "http://localhost:3000"]
+            if host != "localhost":
+                cors.append(f"http://{host}:5173")
+                cors.append(f"http://{host}:3000")
+            self.ALLOWED_ORIGINS = cors
+
         return self
 
     @model_validator(mode="after")
