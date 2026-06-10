@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -22,10 +21,6 @@ from echoroo.schemas.taxon import (
 )
 from echoroo.services.gbif import GBIFService
 from echoroo.services.vernacular import resolve_vernacular_names
-
-# Maximum number of concurrent GBIF HTTP calls during batch resolution.
-# GBIF rate limit is 10 req/s; keeping concurrency below that avoids 429s.
-_GBIF_BATCH_CONCURRENCY = 8
 
 logger = logging.getLogger(__name__)
 
@@ -331,31 +326,47 @@ class TaxonService:
     async def resolve_gbif_batch(self, limit: int = 100) -> int:
         """Resolve GBIF data for unresolved taxa. Returns count of resolved.
 
-        Fetches GBIF data for all unresolved taxa concurrently (up to
-        _GBIF_BATCH_CONCURRENCY parallel requests) instead of sequentially,
-        which eliminates the N+1 HTTP call pattern.
+        Taxa are processed SEQUENTIALLY. ``resolve_one`` ends with a
+        ``self.db.flush()`` (via ``taxon_repo.update``); running these
+        concurrently on the single shared ``AsyncSession`` triggers
+        ``InvalidRequestError: Session is already flushing`` because an
+        ``AsyncSession`` is not safe for concurrent use. Concurrency also bought
+        nothing here: the GBIF HTTP client is rate-limited per request, so the
+        calls serialize regardless.
+
+        Each taxon is resolved inside its own try/except so a single failing
+        taxon (network/GBIF error, or a flush error from one row) does not abort
+        the whole batch. A failed taxon is left unresolved and retried on the
+        next batch run.
         """
         unresolved = await self.taxon_repo.get_unresolved(limit=limit)
         if not unresolved:
             return 0
 
-        semaphore = asyncio.Semaphore(_GBIF_BATCH_CONCURRENCY)
-
         async def resolve_one(taxon: Taxon) -> bool:
             """Resolve a single taxon; return True if GBIF data was found."""
-            async with semaphore:
-                result = await self.gbif_service.resolve_taxon(taxon.scientific_name)
-                if result is None:
-                    taxon.gbif_resolved_at = datetime.now(UTC)
-                    await self.taxon_repo.update(taxon)
-                    return False
-
-                taxon.gbif_taxon_key = result.taxon_key
-                taxon.rank = result.rank
-                taxon.gbif_metadata = result.metadata
+            result = await self.gbif_service.resolve_taxon(taxon.scientific_name)
+            if result is None:
                 taxon.gbif_resolved_at = datetime.now(UTC)
                 await self.taxon_repo.update(taxon)
-                return True
+                return False
 
-        results = await asyncio.gather(*[resolve_one(t) for t in unresolved])
-        return sum(1 for r in results if r)
+            taxon.gbif_taxon_key = result.taxon_key
+            taxon.rank = result.rank
+            taxon.gbif_metadata = result.metadata
+            taxon.gbif_resolved_at = datetime.now(UTC)
+            await self.taxon_repo.update(taxon)
+            return True
+
+        resolved_count = 0
+        for taxon in unresolved:
+            try:
+                if await resolve_one(taxon):
+                    resolved_count += 1
+            except Exception:  # noqa: BLE001 — isolate one bad taxon from the batch
+                logger.exception(
+                    "Failed to resolve GBIF data for taxon %s (id=%s)",
+                    taxon.scientific_name,
+                    taxon.id,
+                )
+        return resolved_count

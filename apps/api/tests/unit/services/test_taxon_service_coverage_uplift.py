@@ -12,8 +12,11 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.repositories.taxon import normalize_locale
+from echoroo.models.taxon import Taxon
+from echoroo.repositories.taxon import TaxonRepository, normalize_locale
+from echoroo.services.gbif import GBIFResolveResult
 from echoroo.services.taxon import TaxonService, _en_common_name_for_seed
 
 
@@ -427,3 +430,85 @@ async def test_resolve_gbif_batch_handles_no_gbif_match() -> None:
     # None result means gbif data not found — not counted as resolved
     assert count == 0
     repo.update.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_resolve_gbif_batch_continues_after_one_taxon_error() -> None:
+    """A failing taxon is isolated; the rest of the batch still resolves.
+
+    The per-item ``try/except`` must keep the batch alive when one taxon's
+    GBIF call (or its flush) raises, leaving that taxon unresolved without
+    aborting the others or losing the return count.
+    """
+    repo = _make_taxon_repo()
+    good = _make_taxon("Parus major")
+    bad = _make_taxon("Boom errorus")
+    good2 = _make_taxon("Turdus merula")
+    repo.get_unresolved = AsyncMock(return_value=[good, bad, good2])
+    repo.update = AsyncMock()
+
+    gbif_result = MagicMock()
+    gbif_result.taxon_key = 11111
+    gbif_result.rank = "SPECIES"
+    gbif_result.metadata = {}
+
+    async def resolve(scientific_name: str) -> object:
+        if scientific_name == "Boom errorus":
+            raise RuntimeError("GBIF blew up")
+        return gbif_result
+
+    gbif_service = _make_gbif_service()
+    gbif_service.resolve_taxon = AsyncMock(side_effect=resolve)
+
+    service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
+    count = await service.resolve_gbif_batch(limit=10)
+
+    # The two healthy taxa are resolved; the failing one is skipped, not fatal.
+    assert count == 2
+    assert repo.update.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_gbif_batch_no_session_error_on_real_session(
+    db_session: AsyncSession,
+) -> None:
+    """Regression: a multi-taxon batch flushes on the SAME real ``AsyncSession``
+    without ``InvalidRequestError: Session is already flushing``.
+
+    This uses the real :class:`TaxonRepository` (whose ``update`` calls
+    ``db.flush()``) against a real session — the exact setup the worker uses.
+    The previous concurrent ``asyncio.gather`` implementation overlapped flushes
+    on this single session and raised; the sequential loop must complete and
+    update *every* taxon.
+    """
+    repo = TaxonRepository(db_session)
+
+    sci_names = [f"Regression batchus {i}" for i in range(5)]
+    taxa = [Taxon(scientific_name=name, is_non_biological=False) for name in sci_names]
+    db_session.add_all(taxa)
+    await db_session.flush()
+
+    # Sanity: all start unresolved.
+    assert all(t.gbif_resolved_at is None for t in taxa)
+
+    def _gbif_result(name: str) -> GBIFResolveResult:
+        return GBIFResolveResult(
+            taxon_key=900000 + sci_names.index(name),
+            scientific_name=name,
+            rank="SPECIES",
+            metadata={"family": "Testidae"},
+        )
+
+    gbif_service = _make_gbif_service()
+    gbif_service.resolve_taxon = AsyncMock(side_effect=_gbif_result)
+
+    service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
+    count = await service.resolve_gbif_batch(limit=100)
+
+    # No session error raised, and every taxon was resolved + flushed.
+    assert count == len(taxa)
+    for taxon in taxa:
+        await db_session.refresh(taxon)
+        assert taxon.gbif_resolved_at is not None
+        assert taxon.gbif_taxon_key is not None
+        assert taxon.rank == "SPECIES"

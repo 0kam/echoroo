@@ -9,7 +9,6 @@ All queries are scoped to a project_id to enforce data isolation.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import tempfile
 import time
@@ -1068,33 +1067,37 @@ class SimilaritySearchService:
                 )
                 continue
 
-            # Search using all query vectors concurrently and aggregate by max similarity.
-            # asyncio.gather() parallelises the pgvector queries instead of
-            # issuing them sequentially (N+1 fix).
+            # Search using all query vectors and aggregate by max similarity.
+            # The per-vector pgvector queries MUST run SEQUENTIALLY: they all
+            # issue ``await self.db.execute(...)`` on the single shared
+            # ``AsyncSession``, which is not safe for concurrent use. Running
+            # them under ``asyncio.gather`` overlaps operations on one session
+            # and raises ``InvalidRequestError`` ("Session is already
+            # flushing" / illegal concurrent state change). The DB round-trips
+            # serialize on the single connection regardless, so concurrency
+            # bought nothing here.
             best_by_candidate: dict[str, SimilarityResult] = {}
 
-            per_vector_results: list[list[SimilarityResult]] = await asyncio.gather(
-                *[
-                    self.search_by_vector(
-                        project_id=project_id,
-                        query_vector=qv,
-                        model_name=request.model_name,
-                        # Fetch more candidates than needed to ensure coverage
-                        # after deduplication
-                        limit=request.limit_per_species * 3,
-                        min_similarity=request.min_similarity,
-                        dataset_id=dataset_id,
-                        # Phase 9 polish round 2 Major 1: batch search is
-                        # an in-project member route — opt out of the
-                        # Restricted-toggle SQL gate so members keep
-                        # seeing detections regardless of the non-member
-                        # ``allow_detection_view`` toggle (FR-019 /
-                        # FR-020).
-                        respect_restricted_toggle=False,
-                    )
-                    for qv in query_vectors
-                ]
-            )
+            per_vector_results: list[list[SimilarityResult]] = [
+                await self.search_by_vector(
+                    project_id=project_id,
+                    query_vector=qv,
+                    model_name=request.model_name,
+                    # Fetch more candidates than needed to ensure coverage
+                    # after deduplication
+                    limit=request.limit_per_species * 3,
+                    min_similarity=request.min_similarity,
+                    dataset_id=dataset_id,
+                    # Phase 9 polish round 2 Major 1: batch search is
+                    # an in-project member route — opt out of the
+                    # Restricted-toggle SQL gate so members keep
+                    # seeing detections regardless of the non-member
+                    # ``allow_detection_view`` toggle (FR-019 /
+                    # FR-020).
+                    respect_restricted_toggle=False,
+                )
+                for qv in query_vectors
+            ]
             for vec_results in per_vector_results:
                 for sim_result in vec_results:
                     candidate_key = _candidate_key(sim_result)
