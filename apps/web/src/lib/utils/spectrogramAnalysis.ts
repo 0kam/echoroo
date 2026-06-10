@@ -1,13 +1,15 @@
 /**
- * Shared spectrogram computation utilities.
+ * Shared spectrogram DSP utilities.
  *
- * These functions are used by both SpectrogramClipEditor and SpectrogramViewer
- * to compute and render STFT-based spectrograms from raw PCM audio data.
+ * Pure, framework-agnostic functions used by SpectrogramClipEditor and
+ * SpectrogramViewer to compute and render STFT-based spectrograms from raw
+ * PCM audio data. Extracted verbatim from the components so both share a
+ * single, behavior-preserving implementation.
  */
 
 /**
  * In-place radix-2 Cooley-Tukey FFT.
- * real and imag must have length that is a power of two.
+ * `real` and `imag` must have the same length, which must be a power of two.
  */
 export function fft(real: Float32Array, imag: Float32Array): void {
   const n = real.length;
@@ -113,7 +115,8 @@ export function computeSpectrogram(
 
 /**
  * Map a normalized intensity value (0–1) to a warm colormap RGB triple.
- * Color ramp: dark brown → deep orange → bright orange → yellow → white
+ * Color ramp: dark brown → deep orange → bright orange → yellow → white.
+ * Inputs outside [0, 1] are clamped.
  */
 export function warmColormap(t: number): [number, number, number] {
   // Clamp to [0, 1]

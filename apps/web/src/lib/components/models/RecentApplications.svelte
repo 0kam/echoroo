@@ -24,6 +24,10 @@
     CustomModelDetectionRun,
     DetectionRunStatus,
   } from '$lib/types/custom-model';
+  import {
+    getDetectionRunStatusLabel,
+    getDetectionRunStatusClass,
+  } from '$lib/utils/statusFormatters';
 
   interface Props {
     projectId: string;
@@ -128,29 +132,16 @@
   }
 
   function statusLabel(status: DetectionRunStatus): string {
-    switch (status) {
-      case 'pending':
-        return m.models_apply_pending();
-      case 'running':
-        return m.models_apply_running();
-      case 'completed':
-        return m.models_apply_completed();
-      case 'failed':
-        return m.models_apply_failed();
-    }
+    return getDetectionRunStatusLabel(status, {
+      pending: m.models_apply_pending,
+      running: m.models_apply_running,
+      completed: m.models_apply_completed,
+      failed: m.models_apply_failed,
+    });
   }
 
   function statusClasses(status: DetectionRunStatus): string {
-    switch (status) {
-      case 'pending':
-        return 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300';
-      case 'running':
-        return 'bg-info/10 text-info';
-      case 'completed':
-        return 'bg-success-light text-success';
-      case 'failed':
-        return 'bg-danger-light text-danger';
-    }
+    return getDetectionRunStatusClass(status);
   }
 </script>
 

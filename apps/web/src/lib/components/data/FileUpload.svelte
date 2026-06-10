@@ -25,6 +25,10 @@
     UploadFilePresignedResponse,
     CreateUploadSessionResponse,
   } from '$lib/types/data';
+  import {
+    getUploadSessionStatusLabel,
+    getUploadSessionStatusClass,
+  } from '$lib/utils/statusFormatters';
   import FileDropZone from './FileDropZone.svelte';
   import SelectedFileList from './SelectedFileList.svelte';
   import UploadProgressPanel from './UploadProgressPanel.svelte';
@@ -261,34 +265,19 @@
   }
 
   function getSessionStatusLabel(status: UploadSessionStatus): string {
-    switch (status) {
-      case 'issued':     return m.upload_status_issued();
-      case 'uploaded':   return m.upload_status_uploaded();
-      case 'validating': return m.upload_status_validating();
-      case 'validated':  return m.upload_status_validated();
-      case 'importing':  return m.upload_status_importing();
-      case 'imported':   return m.upload_status_imported();
-      case 'failed':     return m.upload_status_failed();
-      default:           return status;
-    }
+    return getUploadSessionStatusLabel(status, {
+      issued: m.upload_status_issued,
+      uploaded: m.upload_status_uploaded,
+      validating: m.upload_status_validating,
+      validated: m.upload_status_validated,
+      importing: m.upload_status_importing,
+      imported: m.upload_status_imported,
+      failed: m.upload_status_failed,
+    });
   }
 
   function getSessionStatusClasses(status: UploadSessionStatus): string {
-    switch (status) {
-      case 'issued':
-      case 'uploaded':
-        return 'bg-warning-light text-warning';
-      case 'validating':
-      case 'importing':
-        return 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-400';
-      case 'validated':
-      case 'imported':
-        return 'bg-success-light text-success';
-      case 'failed':
-        return 'bg-danger-light text-danger';
-      default:
-        return 'bg-stone-100 text-stone-800 dark:bg-stone-700 dark:text-stone-300';
-    }
+    return getUploadSessionStatusClass(status);
   }
 
   function resetToSelect() {

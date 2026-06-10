@@ -54,6 +54,8 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.actions import (
     ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+    PLATFORM_TAXON_SEED_BIRDNET_ACTION,
+    PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
     PROJECT_ARCHIVE_ACTION,
     PROJECT_RESTORE_ACTION,
     PROJECT_TAXON_OVERRIDE_APPROVE_ACTION,
@@ -97,8 +99,10 @@ from echoroo.schemas.admin import (
     SuperuserListResponse,
     SuperuserRejectRequest,
     SuperuserSummary,
+    TaskDispatchResponse,
     TaxonOverrideRejectRequest,
     TaxonOverrideResponse,
+    TaxonSyncVernacularRequest,
 )
 from echoroo.services import admin_password_reset, superuser_service
 from echoroo.services.audit_service import AuditLogService
@@ -617,6 +621,202 @@ async def force_iucn_resync(
         )
 
     return IucnForceResyncResponse(
+        task_id=async_result.id,
+        enqueued_at=enqueued_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/taxon/seed-birdnet
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/taxon/seed-birdnet",
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Seed BirdNET taxa (Superuser)",
+    description=(
+        "Fire-and-forget Celery dispatch of the idempotent "
+        "``seed_birdnet_taxa`` task. The task inserts any BirdNET species "
+        "rows missing from the ``taxa`` table; the endpoint only surfaces "
+        "the queued task id. The action is platform-scope (no project_id) "
+        "and writes a ``platform_audit_log`` entry."
+    ),
+)
+async def seed_birdnet_taxa(
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> TaskDispatchResponse:
+    """Enqueue the BirdNET taxa seeding task and return the Celery task id."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row.
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_SEED_BIRDNET_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="BirdNET taxa seeding is restricted to superusers",
+        )
+
+    # Lazy import: see the rationale in :func:`force_iucn_resync` — pulling in
+    # the worker module at import time would force the slim API image to load
+    # the audio + ML worker dependency tree.
+    from echoroo.workers.taxon_tasks import seed_birdnet_taxa as seed_task
+
+    async_result = seed_task.delay()
+    enqueued_at = datetime.now(UTC)
+
+    # The request-scoped ``db`` session already issued the superuser probe, so
+    # reuse the IUCN endpoint's fresh-session audit pattern (see its note).
+    await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.taxon.seed_birdnet",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "task_id": async_result.id,
+                        "enqueued_at": enqueued_at.isoformat(),
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
+        logger.warning(
+            "platform.taxon.seed_birdnet audit write failed (FR-089 soft alert): "
+            "actor=%s task_id=%s error=%r",
+            current_user.id,
+            async_result.id,
+            exc,
+        )
+
+    return TaskDispatchResponse(
+        task_id=async_result.id,
+        enqueued_at=enqueued_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/taxon/sync-vernacular
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/taxon/sync-vernacular",
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Sync taxon vernacular names from GBIF (Superuser)",
+    description=(
+        "Fire-and-forget Celery dispatch of the two-stage GBIF maintenance "
+        "chain: ``resolve_gbif_batch`` (fill GBIF classification metadata) "
+        "followed by ``fetch_vernacular_names_batch`` (persist locale-specific "
+        "vernacular names). The stages run sequentially via a Celery ``chain`` "
+        "of immutable signatures so the second stage only runs after the first "
+        "completes. The endpoint surfaces the chain's task id. The action is "
+        "platform-scope (no project_id) and writes a ``platform_audit_log`` "
+        "entry."
+    ),
+)
+async def sync_taxon_vernacular(
+    request: Request,
+    payload: TaxonSyncVernacularRequest,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> TaskDispatchResponse:
+    """Enqueue the GBIF resolve→vernacular chain and return its task id."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    # Platform-scope gate (Step 0a in :func:`is_allowed`).
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vernacular-name sync is restricted to superusers",
+        )
+
+    # Lazy import: keep the worker dependency tree out of the slim API image.
+    from celery import chain
+
+    from echoroo.workers.taxon_tasks import (
+        fetch_vernacular_names_batch,
+        resolve_gbif_batch,
+    )
+
+    # Sequence the two stages with a Celery ``chain`` of *immutable*
+    # signatures (``.si``): ``fetch_vernacular_names_batch`` takes its own
+    # kwargs and must NOT receive ``resolve_gbif_batch``'s return dict as a
+    # positional argument, so each link declares its arguments explicitly.
+    workflow = chain(
+        resolve_gbif_batch.si(batch_size=payload.batch_size),
+        fetch_vernacular_names_batch.si(
+            batch_size=payload.batch_size,
+            locales=payload.locales,
+            skip_existing=payload.skip_existing,
+        ),
+    )
+    async_result = workflow.apply_async()
+    enqueued_at = datetime.now(UTC)
+
+    # Reuse the IUCN endpoint's fresh-session audit pattern (see its note).
+    await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.taxon.sync_vernacular",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "task_id": async_result.id,
+                        "enqueued_at": enqueued_at.isoformat(),
+                        "batch_size": payload.batch_size,
+                        "locales": payload.locales,
+                        "skip_existing": payload.skip_existing,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
+        logger.warning(
+            "platform.taxon.sync_vernacular audit write failed (FR-089 soft "
+            "alert): actor=%s task_id=%s error=%r",
+            current_user.id,
+            async_result.id,
+            exc,
+        )
+
+    return TaskDispatchResponse(
         task_id=async_result.id,
         enqueued_at=enqueued_at,
     )

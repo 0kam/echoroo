@@ -31,6 +31,7 @@
   import { ApiError, apiClient } from '$lib/api/client';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import { getProjectStatusLabel } from '$lib/utils/statusFormatters';
 
   // -------------------------------------------------------------------------
   // Local types — mirror the Phase 5 backend `ProjectResponse` shape
@@ -230,9 +231,11 @@
   }
 
   function statusLabel(s: ProjectStatus): string {
-    if (s === 'active') return m.public_project_detail_status_active();
-    if (s === 'dormant') return m.public_project_detail_status_dormant();
-    return m.public_project_detail_status_archived();
+    return getProjectStatusLabel(s, {
+      active: m.public_project_detail_status_active,
+      dormant: m.public_project_detail_status_dormant,
+      archived: m.public_project_detail_status_archived,
+    });
   }
 </script>
 

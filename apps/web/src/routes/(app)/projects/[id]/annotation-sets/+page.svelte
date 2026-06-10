@@ -12,6 +12,10 @@
   import * as m from '$lib/paraglide/messages';
   import { listAnnotationSets } from '$lib/api/annotation-sets';
   import type { AnnotationSet, AnnotationSetStatus } from '$lib/types/annotation-set';
+  import {
+    getAnnotationSetStatusLabel,
+    getAnnotationSetStatusClass,
+  } from '$lib/utils/statusFormatters';
 
   const projectId = $derived($page.params.id as string);
 
@@ -25,29 +29,16 @@
   );
 
   function statusLabel(status: AnnotationSetStatus): string {
-    switch (status) {
-      case 'sampling':
-        return m.annotation_sets_status_sampling();
-      case 'ready':
-        return m.annotation_sets_status_ready();
-      case 'in_progress':
-        return m.annotation_sets_status_in_progress();
-      case 'completed':
-        return m.annotation_sets_status_completed();
-    }
+    return getAnnotationSetStatusLabel(status, {
+      sampling: m.annotation_sets_status_sampling,
+      ready: m.annotation_sets_status_ready,
+      in_progress: m.annotation_sets_status_in_progress,
+      completed: m.annotation_sets_status_completed,
+    });
   }
 
   function statusClass(status: AnnotationSetStatus): string {
-    switch (status) {
-      case 'sampling':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-      case 'ready':
-        return 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-300';
-      case 'in_progress':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-    }
+    return getAnnotationSetStatusClass(status);
   }
 
   function formatDate(iso: string): string {

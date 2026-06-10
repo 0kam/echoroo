@@ -24,6 +24,10 @@
   } from '$lib/types/annotation-set';
   import EvaluationResultDashboard from './EvaluationResultDashboard.svelte';
   import { toasts } from '$lib/stores/toast';
+  import {
+    getEvaluationRunStatusLabel,
+    getEvaluationRunStatusClass,
+  } from '$lib/utils/statusFormatters';
 
   interface Props {
     setId: string;
@@ -101,29 +105,16 @@
   // ------------------------------------------------------------
 
   function statusLabel(s: EvaluationRunStatus): string {
-    switch (s) {
-      case 'pending':
-        return m.evaluation_run_status_pending();
-      case 'running':
-        return m.evaluation_run_status_running();
-      case 'completed':
-        return m.evaluation_run_status_completed();
-      case 'failed':
-        return m.evaluation_run_status_failed();
-    }
+    return getEvaluationRunStatusLabel(s, {
+      pending: m.evaluation_run_status_pending,
+      running: m.evaluation_run_status_running,
+      completed: m.evaluation_run_status_completed,
+      failed: m.evaluation_run_status_failed,
+    });
   }
 
   function statusClass(s: EvaluationRunStatus): string {
-    switch (s) {
-      case 'pending':
-        return 'bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-300';
-      case 'running':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-      case 'failed':
-        return 'bg-danger-light text-danger';
-    }
+    return getEvaluationRunStatusClass(s);
   }
 
   function formatDate(iso: string | null): string {

@@ -9,6 +9,10 @@
   import { onMount, onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import type { AnnotationSegmentStatus } from '$lib/types/annotation-set';
+  import {
+    getAnnotationSegmentStatusLabel,
+    getAnnotationSegmentStatusClass,
+  } from '$lib/utils/statusFormatters';
 
   interface Props {
     setName: string;
@@ -96,25 +100,15 @@
   onDestroy(() => window.removeEventListener('keydown', handleKeyDown));
 
   function statusLabel(s: AnnotationSegmentStatus): string {
-    switch (s) {
-      case 'unannotated':
-        return m.annotation_sets_segment_status_unannotated();
-      case 'annotated':
-        return m.annotation_sets_segment_status_annotated();
-      case 'skipped':
-        return m.annotation_sets_segment_status_skipped();
-    }
+    return getAnnotationSegmentStatusLabel(s, {
+      unannotated: m.annotation_sets_segment_status_unannotated,
+      annotated: m.annotation_sets_segment_status_annotated,
+      skipped: m.annotation_sets_segment_status_skipped,
+    });
   }
 
   function statusClass(s: AnnotationSegmentStatus): string {
-    switch (s) {
-      case 'annotated':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-      case 'skipped':
-        return 'bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300';
-      default:
-        return 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400';
-    }
+    return getAnnotationSegmentStatusClass(s);
   }
 </script>
 

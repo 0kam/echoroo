@@ -2,6 +2,18 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vitest/config';
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
 
+// LAN / remote-host deployments: Vite's dev server rejects requests whose
+// Host header is not localhost unless the host is in `server.allowedHosts`.
+// We append the bare hostname/IP from ECHOROO_PUBLIC_HOST (the single
+// browser-facing host knob) to the defaults instead of replacing them, so
+// localhost (incl. SSH port-forward users) keeps working. Unset / 'localhost'
+// adds nothing new.
+const publicHost = process.env.ECHOROO_PUBLIC_HOST?.trim();
+const allowedHosts = ['localhost', '127.0.0.1'];
+if (publicHost && !allowedHosts.includes(publicHost)) {
+  allowedHosts.push(publicHost);
+}
+
 export default defineConfig({
   plugins: [
     paraglideVitePlugin({
@@ -40,6 +52,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: '0.0.0.0',
+    allowedHosts,
     proxy: {
       '/api': {
         target: process.env.ECHOROO_API_URL || 'http://localhost:8002',

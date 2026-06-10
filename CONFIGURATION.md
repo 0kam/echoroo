@@ -52,9 +52,41 @@ That's it! Access the application at http://localhost:5173.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ECHOROO_DOMAIN` | Domain or IP for accessing Echoroo | `localhost` |
+| `ECHOROO_PUBLIC_HOST` | Bare browser-facing hostname or IP (no scheme/port). The single knob from which all browser-facing URLs, CORS origins and WebAuthn config derive. See [LAN / remote-host deployment](#lan--remote-host-deployment). | `localhost` |
 | `ECHOROO_API_PORT` | Backend API port | `8002` |
 | `ECHOROO_FRONTEND_PORT` | Frontend port (dev only) | `5173` |
+
+#### LAN / remote-host deployment
+
+To serve Echoroo over a LAN IP, a GPU server, or a domain name, set **one
+variable** and restart — no tracked file needs editing:
+
+```bash
+# .env
+ECHOROO_PUBLIC_HOST=192.168.1.100   # your server's IP or FQDN
+```
+
+```bash
+./echoroo.sh dev restart
+```
+
+`ECHOROO_PUBLIC_HOST` is a **bare hostname or IP** — no `http://`, no port.
+Everything browser-facing derives from it: the frontend `APP_URL`, the
+`PUBLIC_API_URL`, the S3 presigned-URL proxy base, the CORS allowlist, the
+Vite `allowedHosts`, and the WebAuthn relying-party ID + origins. Ports keep
+their own knobs (`ECHOROO_FRONTEND_PORT` / `ECHOROO_API_PORT`); the scheme
+stays `http` in the dev stack (front it with a reverse proxy for TLS in
+production).
+
+**Dual-origin (important):** setting a non-localhost host does **not** drop
+`localhost` from the CORS / WebAuthn allowlists. Both the public-host origin
+**and** the localhost origin stay enabled at the same time, so users who
+reach the app over an SSH port-forward (arriving as `localhost`) keep working
+alongside LAN clients. Leaving `ECHOROO_PUBLIC_HOST=localhost` is
+byte-identical to the previous setup.
+
+Make sure the host firewall allows the frontend + API ports (e.g. `sudo ufw
+allow 5173` and `sudo ufw allow 8002`).
 
 ### Production Settings
 
@@ -99,8 +131,7 @@ Perfect for development on your laptop/desktop using Docker.
 POSTGRES_PASSWORD=dev_password
 INVITATION_TOKEN_HMAC_KEY=replace_with_openssl_rand_hex_32_output
 ECHOROO_AUDIO_DIR=/home/user/audio
-ECHOROO_DOMAIN=localhost
-ECHOROO_DEV=true
+ECHOROO_PUBLIC_HOST=localhost
 ```
 
 ```bash
@@ -197,14 +228,16 @@ For deployment on a remote server accessed by IP address.
 # .env
 POSTGRES_PASSWORD=secure_password
 ECHOROO_AUDIO_DIR=/data/audio
-ECHOROO_DOMAIN=192.168.1.100
+ECHOROO_PUBLIC_HOST=192.168.1.100
 ```
 
 **Access:**
 - Frontend: http://192.168.1.100:5173
 - Backend: http://192.168.1.100:8002
 
-**Important:** Make sure firewall allows ports 5173 and 8002.
+**Important:** Make sure firewall allows ports 5173 and 8002. See
+[LAN / remote-host deployment](#lan--remote-host-deployment) for the
+dual-origin behaviour (localhost stays enabled alongside the IP).
 
 ### 4. Production with Domain
 
@@ -236,11 +269,14 @@ Not currently defined in this repository. Add a production stack before document
 
 ### Cannot access from remote machine
 
-1. **Check `ECHOROO_DOMAIN`:**
+1. **Check `ECHOROO_PUBLIC_HOST`:**
    ```bash
    # Should be your server's IP or domain, not localhost
-   ECHOROO_DOMAIN=192.168.1.100
+   ECHOROO_PUBLIC_HOST=192.168.1.100
    ```
+   Then restart (`./echoroo.sh dev restart`). localhost stays enabled too,
+   so SSH port-forward access keeps working — see
+   [LAN / remote-host deployment](#lan--remote-host-deployment).
 
 2. **Check firewall:**
    ```bash

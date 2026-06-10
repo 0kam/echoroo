@@ -42,8 +42,11 @@ import {
 // Configuration
 // ---------------------------------------------------------------------------
 
-const BASE_URL = 'http://localhost:3000';
-const API_BASE = 'http://localhost:8002';
+// Defaults unchanged; LAN/remote runs may override via env without editing
+// this file (e.g. PLAYWRIGHT_BASE_URL / ECHOROO_API_URL pointing at an IP).
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000';
+const API_BASE =
+  process.env.ECHOROO_API_URL || process.env.PUBLIC_API_URL || 'http://localhost:8002';
 const TEST_PROJECT_ID = '6ed4e592-87ca-4fa7-a384-c64ca6bfeec5';
 const TEST_EMAIL = 'test@echoroo.app';
 const TEST_PASSWORD = 'N6Wz0IJXsQc4';
