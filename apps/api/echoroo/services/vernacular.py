@@ -9,6 +9,7 @@ trips to the database.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -16,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
+
+logger = logging.getLogger(__name__)
 
 
 async def resolve_vernacular_names(
@@ -89,5 +92,18 @@ async def resolve_vernacular_names(
         current = best.get(vn.taxon_id)
         if current is None or tier < current[0]:
             best[vn.taxon_id] = (tier, vn.name)
+
+    # Surface where the requested locale had no row and we silently fell back
+    # to the English candidate (tier >= 2). No behaviour change — this is a
+    # diagnostic so operators can spot locales (e.g. ``ja``) with poor coverage.
+    if locale != "en" and logger.isEnabledFor(logging.DEBUG):
+        for taxon_id, (tier, _name) in best.items():
+            if tier >= 2:
+                logger.debug(
+                    "vernacular name for taxon %s fell back to English: "
+                    "no %r row found",
+                    taxon_id,
+                    locale,
+                )
 
     return {taxon_id: name for taxon_id, (_, name) in best.items()}

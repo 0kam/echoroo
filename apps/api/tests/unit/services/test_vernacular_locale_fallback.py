@@ -14,6 +14,7 @@ coverage here).
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 import pytest
@@ -123,3 +124,53 @@ async def test_en_request_returns_en_only(db_session: AsyncSession) -> None:
 
     mapping = await resolve_vernacular_names(db_session, [taxon.id], "en")
     assert mapping[taxon.id] == "English Name"
+
+
+@pytest.mark.asyncio
+async def test_en_fallback_emits_debug_log(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Falling back to English for a non-en locale emits a DEBUG diagnostic.
+
+    No behaviour change — the mapping is still the English name; this only
+    asserts the new ``logger.debug`` so operators can spot poor ja coverage.
+    """
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Fallback log {suffix}",
+        [("en", "English Name", True)],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="echoroo.services.vernacular"):
+        mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+
+    assert mapping[taxon.id] == "English Name"
+    assert any(
+        "fell back to English" in record.getMessage()
+        and str(taxon.id) in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_fallback_log_when_locale_present(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When the requested locale is present, no fallback log is emitted."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"No fallback log {suffix}",
+        [("en", "English Name", True), ("ja", "ニホンゴ", True)],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="echoroo.services.vernacular"):
+        mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+
+    assert mapping[taxon.id] == "ニホンゴ"
+    assert not any(
+        "fell back to English" in record.getMessage()
+        and str(taxon.id) in record.getMessage()
+        for record in caplog.records
+    )

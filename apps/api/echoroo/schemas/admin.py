@@ -811,3 +811,61 @@ class IucnForceResyncResponse(BaseModel):
         ...,
         description="UTC timestamp at which the admin endpoint dispatched the task",
     )
+
+
+class TaskDispatchResponse(BaseModel):
+    """Generic fire-and-forget Celery dispatch acknowledgement.
+
+    Shared by the taxon-catalog maintenance triggers
+    (``POST /admin/taxon/seed-birdnet`` and ``POST /admin/taxon/sync-vernacular``).
+    Mirrors :class:`IucnForceResyncResponse`: the endpoint only surfaces the
+    queued Celery task id (and the dispatch instant) so the operator can
+    correlate the request with the worker's own progress logs / result rows.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    task_id: str = Field(
+        ..., description="Celery task id of the queued maintenance job"
+    )
+    enqueued_at: datetime = Field(
+        ...,
+        description="UTC timestamp at which the admin endpoint dispatched the task",
+    )
+
+
+class TaxonSyncVernacularRequest(BaseModel):
+    """Body for ``POST /admin/taxon/sync-vernacular``.
+
+    Drives the two-stage GBIF maintenance chain: ``resolve_gbif_batch`` (to
+    fill GBIF classification metadata for unresolved taxa) followed by
+    ``fetch_vernacular_names_batch`` (to persist locale-specific vernacular
+    names). ``batch_size`` is bounded so a single dispatch cannot starve the
+    worker pool or overwhelm the GBIF rate limit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_size: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description=(
+            "Maximum number of taxa each stage processes in this invocation "
+            "(1-500)."
+        ),
+    )
+    locales: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional ISO 639-1 locale codes to fetch (e.g. ``[\"en\", "
+            "\"ja\"]``). When omitted, all available locales are fetched."
+        ),
+    )
+    skip_existing: bool = Field(
+        default=True,
+        description=(
+            "When True, skip taxa that already have vernacular names for all "
+            "requested locales."
+        ),
+    )

@@ -496,6 +496,32 @@ PLATFORM_IUCN_FORCE_RESYNC_ACTION: Action = register_action(
 )
 
 
+# Taxon-catalog maintenance triggers are platform-scope (no project_id) and
+# rewrite global taxonomy tables (``taxa`` / ``taxon_vernacular_names``). They
+# mirror the IUCN force-resync action above: ``is_platform_scope=True`` routes
+# them through the Step-0a superuser-only branch in :func:`is_allowed`, and the
+# universal Step -1 api_key veto denies any API-key principal.
+PLATFORM_TAXON_SEED_BIRDNET_ACTION: Action = register_action(
+    Action(
+        name="platform.taxon.seed_birdnet",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+PLATFORM_TAXON_SYNC_VERNACULAR_ACTION: Action = register_action(
+    Action(
+        name="platform.taxon.sync_vernacular",
+        required_permission=None,
+        is_mutating=True,
+        is_superuser_only=True,
+        is_platform_scope=True,
+    )
+)
+
+
 # =============================================================================
 # Phase 15 Batch 5a — Superuser CRUD admin endpoints (FR-111 / FR-072 / FR-084)
 # =============================================================================
@@ -1467,6 +1493,9 @@ __all__ = [
     "UPLOAD_CREATE_ACTION",
     # Superuser admin (Phase 11 / T630)
     "PLATFORM_IUCN_FORCE_RESYNC_ACTION",
+    # Taxon-catalog maintenance triggers (admin maintenance surface)
+    "PLATFORM_TAXON_SEED_BIRDNET_ACTION",
+    "PLATFORM_TAXON_SYNC_VERNACULAR_ACTION",
     "PROJECT_TAXON_OVERRIDE_APPROVE_ACTION",
     "PROJECT_TAXON_OVERRIDE_REJECT_ACTION",
     # Project lifecycle (Phase 12 / T702)
