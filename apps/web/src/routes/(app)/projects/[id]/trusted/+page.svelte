@@ -45,6 +45,10 @@
   import { projectsApi } from '$lib/api/projects';
   import * as m from '$lib/paraglide/messages';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
+  import {
+    getProjectTrustedStatusLabel,
+    getProjectTrustedStatusClass,
+  } from '$lib/utils/statusFormatters';
   import type {
     Project,
     ProjectTrustedStatus,
@@ -449,25 +453,15 @@
   }
 
   function statusLabel(s: ProjectTrustedStatus): string {
-    switch (s) {
-      case 'active':
-        return m.trusted_users_list_status_active();
-      case 'expired':
-        return m.trusted_users_list_status_expired();
-      case 'revoked':
-        return m.trusted_users_list_status_revoked();
-    }
+    return getProjectTrustedStatusLabel(s, {
+      active: m.trusted_users_list_status_active,
+      expired: m.trusted_users_list_status_expired,
+      revoked: m.trusted_users_list_status_revoked,
+    });
   }
 
   function statusBadgeClass(s: ProjectTrustedStatus): string {
-    switch (s) {
-      case 'active':
-        return 'bg-success-light text-success';
-      case 'expired':
-        return 'bg-warning-light text-warning';
-      case 'revoked':
-        return 'bg-stone-100 text-stone-700';
-    }
+    return getProjectTrustedStatusClass(s);
   }
 </script>
 

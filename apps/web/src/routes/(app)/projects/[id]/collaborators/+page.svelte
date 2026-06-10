@@ -29,6 +29,12 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { buildProjectContext, can } from '$lib/utils/permissions';
   import InvitationUrlDialog from '$lib/components/InvitationUrlDialog.svelte';
+  import {
+    getInvitationStatusLabel,
+    getInvitationStatusBadgeClass,
+    getBulkInvitationStatusLabel,
+    getBulkInvitationStatusBadgeClass,
+  } from '$lib/utils/statusFormatters';
   import * as m from '$lib/paraglide/messages';
 
   // Get project ID from URL
@@ -405,38 +411,20 @@
    * Localized label for an invitation lifecycle status.
    */
   function statusLabel(status: string): string {
-    switch (status) {
-      case 'pending':
-        return m.collaborators_status_pending();
-      case 'accepted':
-        return m.collaborators_status_accepted();
-      case 'declined':
-        return m.collaborators_status_declined();
-      case 'revoked':
-        return m.collaborators_status_revoked();
-      case 'expired':
-        return m.collaborators_status_expired();
-      default:
-        return status;
-    }
+    return getInvitationStatusLabel(status, {
+      pending: m.collaborators_status_pending,
+      accepted: m.collaborators_status_accepted,
+      declined: m.collaborators_status_declined,
+      revoked: m.collaborators_status_revoked,
+      expired: m.collaborators_status_expired,
+    });
   }
 
   /**
    * Badge classes for an invitation lifecycle status.
    */
   function statusBadgeClass(status: string): string {
-    switch (status) {
-      case 'pending':
-        return 'bg-info-light text-info';
-      case 'accepted':
-        return 'bg-success-light text-success';
-      case 'expired':
-        return 'bg-warning-light text-warning';
-      case 'revoked':
-      case 'declined':
-      default:
-        return 'bg-danger-light text-danger';
-    }
+    return getInvitationStatusBadgeClass(status);
   }
 
   /**
@@ -459,36 +447,20 @@
    * Localized label for a bulk result status.
    */
   function bulkStatusLabel(status: BulkInvitationResultItem['status']): string {
-    switch (status) {
-      case 'issued':
-        return m.collaborators_bulk_status_issued();
-      case 'duplicate_pending':
-        return m.collaborators_bulk_status_duplicate_pending();
-      case 'already_member':
-        return m.collaborators_bulk_status_already_member();
-      case 'rate_limited':
-        return m.collaborators_bulk_status_rate_limited();
-      case 'internal_error':
-      default:
-        return m.collaborators_bulk_status_internal_error();
-    }
+    return getBulkInvitationStatusLabel(status, {
+      issued: m.collaborators_bulk_status_issued,
+      duplicate_pending: m.collaborators_bulk_status_duplicate_pending,
+      already_member: m.collaborators_bulk_status_already_member,
+      rate_limited: m.collaborators_bulk_status_rate_limited,
+      internal_error: m.collaborators_bulk_status_internal_error,
+    });
   }
 
   /**
    * Badge classes for a bulk result status.
    */
   function bulkStatusBadgeClass(status: BulkInvitationResultItem['status']): string {
-    switch (status) {
-      case 'issued':
-        return 'bg-success-light text-success';
-      case 'duplicate_pending':
-      case 'already_member':
-        return 'bg-warning-light text-warning';
-      case 'rate_limited':
-      case 'internal_error':
-      default:
-        return 'bg-danger-light text-danger';
-    }
+    return getBulkInvitationStatusBadgeClass(status);
   }
 </script>
 

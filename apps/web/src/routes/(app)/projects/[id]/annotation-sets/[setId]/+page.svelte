@@ -39,6 +39,12 @@
   } from '$lib/types/annotation-set';
   import type { SpeciesPickerResult } from '$lib/types/species-picker';
   import { formatSpeciesName } from '$lib/utils/speciesFormatters';
+  import {
+    getAnnotationSetStatusLabel,
+    getAnnotationSetStatusClass,
+    getAnnotationSegmentStatusLabel,
+    getAnnotationSegmentStatusClass,
+  } from '$lib/utils/statusFormatters';
   import UnifiedSpeciesPicker from '$lib/components/shared/UnifiedSpeciesPicker.svelte';
   import { norm } from '$lib/components/shared/unifiedSpeciesPicker';
   import EvaluationRunDialog from '$lib/components/annotation-sets/EvaluationRunDialog.svelte';
@@ -298,51 +304,28 @@
   // ============================================================
 
   function statusLabel(status: AnnotationSetStatus): string {
-    switch (status) {
-      case 'sampling':
-        return m.annotation_sets_status_sampling();
-      case 'ready':
-        return m.annotation_sets_status_ready();
-      case 'in_progress':
-        return m.annotation_sets_status_in_progress();
-      case 'completed':
-        return m.annotation_sets_status_completed();
-    }
+    return getAnnotationSetStatusLabel(status, {
+      sampling: m.annotation_sets_status_sampling,
+      ready: m.annotation_sets_status_ready,
+      in_progress: m.annotation_sets_status_in_progress,
+      completed: m.annotation_sets_status_completed,
+    });
   }
 
   function statusClass(status: AnnotationSetStatus): string {
-    switch (status) {
-      case 'sampling':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-      case 'ready':
-        return 'bg-primary-100 text-primary-800 dark:bg-primary-900/30 dark:text-primary-300';
-      case 'in_progress':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
-      case 'completed':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-    }
+    return getAnnotationSetStatusClass(status);
   }
 
   function segmentStatusLabel(status: AnnotationSegmentStatus): string {
-    switch (status) {
-      case 'unannotated':
-        return m.annotation_sets_segment_status_unannotated();
-      case 'annotated':
-        return m.annotation_sets_segment_status_annotated();
-      case 'skipped':
-        return m.annotation_sets_segment_status_skipped();
-    }
+    return getAnnotationSegmentStatusLabel(status, {
+      unannotated: m.annotation_sets_segment_status_unannotated,
+      annotated: m.annotation_sets_segment_status_annotated,
+      skipped: m.annotation_sets_segment_status_skipped,
+    });
   }
 
   function segmentStatusClass(status: AnnotationSegmentStatus): string {
-    switch (status) {
-      case 'annotated':
-        return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
-      case 'skipped':
-        return 'bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-300';
-      default:
-        return 'bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400';
-    }
+    return getAnnotationSegmentStatusClass(status);
   }
 
   function formatDate(iso: string): string {
