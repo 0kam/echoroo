@@ -185,6 +185,44 @@ class DetectionExportService:
         return site_resolution, None
 
     @staticmethod
+    def compute_export_location_cell(
+        *,
+        project: Project | None,
+        site_h3_index: str | None,
+        site_resolution: int,
+    ) -> tuple[str | None, int, str | None]:
+        """Resolve the EFFECTIVE export H3 cell for one site/deployment.
+
+        Single source of truth for "where on the map does the export reveal
+        this location". It composes the two existing primitives so that the
+        deployment export honours generalization byte-identically to the
+        observation export:
+
+        * :meth:`_compute_export_location_generalization` decides the effective
+          H3 resolution + ``withheld_reason`` from project visibility and the
+          Restricted ``public_location_precision_h3_res`` toggle.
+        * :func:`echoroo.core.response_filter._h3_to_parent` coarsens the
+          precise member cell up to that effective resolution.
+
+        Returns ``(effective_cell_id, effective_resolution, withheld_reason)``.
+        ``effective_cell_id`` is ``None`` when no H3 index is supplied; callers
+        that need a center coordinate derive it from this returned cell so the
+        emitted latitude/longitude never disagrees with the emitted cell id.
+        """
+        # Lazy import keeps this module import-light and avoids a hard
+        # dependency cycle with the permission engine in test contexts.
+        from echoroo.core.response_filter import _h3_to_parent
+
+        effective_resolution, withheld_reason = (
+            DetectionExportService._compute_export_location_generalization(
+                project=project,
+                site_resolution=site_resolution,
+            )
+        )
+        effective_cell = _h3_to_parent(site_h3_index, effective_resolution)
+        return effective_cell, effective_resolution, withheld_reason
+
+    @staticmethod
     def _build_license_history_url(project_id: UUID) -> str:
         """Build the FR-087 ``license_history`` reference URL for the export."""
         return f"/api/v1/projects/{project_id}/license-history"
