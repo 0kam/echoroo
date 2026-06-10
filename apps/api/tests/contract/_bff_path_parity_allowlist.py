@@ -65,4 +65,7 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/taxa/from-gbif POST",
     # PR D — detection model discovery used by dataset export/status pages
     "/web-api/v1/detection-runs/available-models GET",
+    # Admin maintenance surface — Celery task triggers (replaces shell access)
+    "/web-api/v1/admin/taxon/seed-birdnet POST",
+    "/web-api/v1/admin/taxon/sync-vernacular POST",
 ]
