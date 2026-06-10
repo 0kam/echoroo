@@ -1,18 +1,6 @@
-# IF GIT SHOWED THAT THIS FILE CHANGED
-#
-# 1. RUN THE FOLLOWING COMMAND
-#
-# ---
-# git rm --cached '**/*.inlang/.gitignore'
-# ---
-#
-# 2. COMMIT THE CHANGE
-#
-# ---
-# git commit -m "fix: remove tracked .gitignore from inlang project"
-# ---
-#
-# Inlang handles the gitignore itself starting with version ^2.5.
+# NOTE: this .gitignore is INTENTIONALLY tracked (do not `git rm --cached` it,
+# despite what inlang ^2.5 auto-generates as a header — if inlang ever
+# regenerates this file, restore these rules).
 #
 # Everything is ignored except settings.json, this .gitignore, and
 # cache/plugins/.gitkeep. The .gitkeep keeps the plugin-cache directory
