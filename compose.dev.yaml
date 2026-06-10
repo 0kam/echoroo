@@ -65,7 +65,11 @@ services:
 
   # LocalStack (S3-compatible object storage for development)
   localstack:
-    image: localstack/localstack:latest
+    # LocalStack >= 2026.03.0 requires an auth token (container exits with
+    # code 55 "License activation failed"). `community-archive` (2026-03-18)
+    # is the final token-free community build (4.14.x line); S3 + KMS work
+    # token-free in it.
+    image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
     container_name: echoroo-localstack
     environment:
       - SERVICES=s3,kms
@@ -318,8 +322,10 @@ services:
       - ./apps/web/tailwind.config.js:/app/tailwind.config.js:ro
       - ./apps/web/postcss.config.js:/app/postcss.config.js:ro
       - ./apps/web/tsconfig.json:/app/tsconfig.json:ro
-      # Mount inlang project and message files for Paraglide compilation
-      - ./apps/web/project.inlang:/app/project.inlang:ro
+      # Mount inlang project and message files for Paraglide compilation.
+      # Must be :rw — paraglide/inlang writes its plugin cache into
+      # project.inlang/cache; :ro causes EROFS on fresh installs.
+      - ./apps/web/project.inlang:/app/project.inlang:rw
       - ./apps/web/messages:/app/messages:ro
     environment:
       - ECHOROO_API_URL=http://backend:8000

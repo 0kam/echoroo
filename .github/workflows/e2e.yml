@@ -139,7 +139,8 @@ jobs:
         ports:
           - 6379:6379
       localstack:
-        image: localstack/localstack:3
+        # Pinned: LocalStack >= 2026.03.0 needs an auth token (exit 55); community-archive is the last token-free build (matches compose.dev.yaml).
+        image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
         env:
           SERVICES: s3,kms
           DEFAULT_REGION: us-east-1
