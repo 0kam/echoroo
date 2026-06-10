@@ -38,6 +38,33 @@ export interface AdminResetPasswordResponse {
   expires_at: string;
 }
 
+/**
+ * Common response for the superuser taxon maintenance dispatch endpoints
+ * (`seed-birdnet` / `sync-vernacular`).
+ *
+ * Both endpoints enqueue a Celery task and return immediately (no body work
+ * done inline), mirroring the IUCN force-resync dispatch contract:
+ * `task_id` is the Celery task id and `enqueued_at` is the ISO-8601 UTC
+ * timestamp the task was queued.
+ */
+export interface TaxonMaintenanceDispatchResponse {
+  task_id: string;
+  enqueued_at: string;
+}
+
+/**
+ * Request body for the vernacular-name sync dispatch.
+ *
+ * All fields are optional; omitting them lets the backend apply its
+ * defaults (`batch_size=100`, `locales=null` → all configured locales,
+ * `skip_existing=true`).
+ */
+export interface SyncVernacularRequest {
+  batch_size?: number;
+  locales?: string[] | null;
+  skip_existing?: boolean;
+}
+
 function getCsrfToken(): string | null {
   if (typeof document === 'undefined') return null;
   const prefix = `${CSRF_COOKIE_NAME}=`;
@@ -146,6 +173,39 @@ export const adminApi = {
           [STEP_UP_HEADER_NAME]: stepUpToken,
         },
       }
+    );
+  },
+
+  /**
+   * Dispatch the BirdNET taxon seed task (superuser only).
+   *
+   * Enqueues a Celery task that materialises the ~1000 BirdNET species into
+   * the local taxonomy. Idempotent — re-running skips taxa that already
+   * exist. The request body is intentionally empty; mirrors the IUCN
+   * force-resync dispatch shape.
+   */
+  seedBirdnetTaxa: async (): Promise<TaxonMaintenanceDispatchResponse> => {
+    return apiClient.post<TaxonMaintenanceDispatchResponse>(
+      `${WEB_API_BASE}/admin/taxon/seed-birdnet`,
+      {},
+      { headers: csrfHeaders() }
+    );
+  },
+
+  /**
+   * Dispatch the vernacular-name sync task (superuser only).
+   *
+   * Enqueues a Celery task that fetches/refreshes locale-specific vernacular
+   * names (e.g. 和名) for existing taxa. All body fields are optional and
+   * fall back to backend defaults when omitted.
+   */
+  syncVernacularNames: async (
+    data?: SyncVernacularRequest
+  ): Promise<TaxonMaintenanceDispatchResponse> => {
+    return apiClient.post<TaxonMaintenanceDispatchResponse>(
+      `${WEB_API_BASE}/admin/taxon/sync-vernacular`,
+      data ?? {},
+      { headers: csrfHeaders() }
     );
   },
 };
