@@ -849,6 +849,7 @@
   "recording_detail_shortcut_play_pause": "Play/Pause",
   "recording_detail_shortcut_navigate": "Navigate",
   "recording_detail_shortcut_expand": "Expand",
+  "recording_detail_shortcut_seek": "Seek",
   "recording_detail_notes_title": "Notes",
   "recording_detail_edit_modal_title": "Edit Recording",
   "recording_detail_time_expansion_label": "Time Expansion",
@@ -2159,6 +2160,10 @@
   "annotation_editor_shortcuts_cancel": "Esc: Cancel draft selection",
   "annotation_editor_shortcuts_delete": "Delete: Remove selected annotation",
   "annotation_editor_shortcuts_viewport": "A: Annotate · X: Pan · Z: Zoom · B: Back view",
+  "annotation_editor_shortcuts_scroll": "Scroll: Pan · Ctrl+Scroll: Expand · Alt+Scroll: Zoom",
+  "annotation_editor_shortcuts_dblclick": "DblClick: Seek playhead",
+  "viewport_toolbar_pan_title": "Drag to pan (X)",
+  "viewport_toolbar_zoom_title": "Drag to zoom-box (Z)",
 
   "annotation_editor_spectrogram_title": "Spectrogram",
   "annotation_editor_drag_hint": "Drag on the spectrogram to select a time range, then choose a species.",

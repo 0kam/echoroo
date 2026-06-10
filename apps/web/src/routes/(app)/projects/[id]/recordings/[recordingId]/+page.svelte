@@ -9,7 +9,6 @@
   import SpectrogramViewer from '$lib/components/audio/SpectrogramViewer.svelte';
   import SpectrogramSettings from '$lib/components/audio/SpectrogramSettings.svelte';
   import AudioFilterSettings from '$lib/components/audio/AudioFilterSettings.svelte';
-  import PlaybackSpeedControl from '$lib/components/audio/PlaybackSpeedControl.svelte';
   import ViewportBar from '$lib/components/audio/ViewportBar.svelte';
   import ViewportToolbar from '$lib/components/audio/ViewportToolbar.svelte';
   import ScaleControls from '$lib/components/audio/ScaleControls.svelte';
@@ -432,12 +431,6 @@
           onSeek={handleSeek}
           onSpeedChange={(s) => (audioSettings = { ...audioSettings, speed: s })}
         />
-
-        <PlaybackSpeedControl
-          speed={audioSettings.speed}
-          samplerate={recording.samplerate}
-          onChange={(s) => (audioSettings = { ...audioSettings, speed: s })}
-        />
       </div>
 
       <!-- Settings panels (collapsible) -->
@@ -492,7 +485,7 @@
         <span><kbd>Scroll</kbd> {m.recording_detail_shortcut_navigate()}</span>
         <span><kbd>Ctrl+Scroll</kbd> {m.recording_detail_shortcut_expand()}</span>
         <span><kbd>Alt+Scroll</kbd> {m.recording_detail_shortcut_zoom()}</span>
-        <span><kbd>DblClick</kbd> Seek</span>
+        <span><kbd>DblClick</kbd> {m.recording_detail_shortcut_seek()}</span>
       </div>
     </div>
 

@@ -849,6 +849,7 @@
   "recording_detail_shortcut_play_pause": "再生/一時停止",
   "recording_detail_shortcut_navigate": "ナビゲート",
   "recording_detail_shortcut_expand": "拡張",
+  "recording_detail_shortcut_seek": "シーク",
   "recording_detail_notes_title": "メモ",
   "recording_detail_edit_modal_title": "録音を編集",
   "recording_detail_time_expansion_label": "タイム拡張",
@@ -2159,6 +2160,10 @@
   "annotation_editor_shortcuts_cancel": "Esc: ドラフトをキャンセル",
   "annotation_editor_shortcuts_delete": "Delete: 選択中のアノテーションを削除",
   "annotation_editor_shortcuts_viewport": "A: アノテート · X: パン · Z: ズーム · B: 表示を戻す",
+  "annotation_editor_shortcuts_scroll": "スクロール: パン · Ctrl+スクロール: 拡張 · Alt+スクロール: ズーム",
+  "annotation_editor_shortcuts_dblclick": "ダブルクリック: 再生位置へシーク",
+  "viewport_toolbar_pan_title": "ドラッグでパン (X)",
+  "viewport_toolbar_zoom_title": "ドラッグでズームボックス (Z)",
 
   "annotation_editor_spectrogram_title": "スペクトログラム",
   "annotation_editor_drag_hint": "スペクトログラム上でドラッグして時間範囲を選択し、種を選んでください。",

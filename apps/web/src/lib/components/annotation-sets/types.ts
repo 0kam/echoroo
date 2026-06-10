@@ -13,7 +13,7 @@
  *     `onDestroy` to guarantee deterministic cleanup.
  */
 
-import type { SpectrogramWindow } from '$lib/types/audio';
+import type { SpectrogramWindow, SpectrogramPosition } from '$lib/types/audio';
 
 // --- Shared primitives ---------------------------------------------------
 
@@ -146,6 +146,13 @@ export interface OverlayHookInput {
   onViewportSave?: () => void;
   /** Switch mode (e.g. back to `annotating` after a zoom completes). */
   onModeChange?: (mode: AnnotationInteractionMode) => void;
+  /**
+   * Optional: emitted on every overlay mousemove with the cursor position in
+   * spectrogram coords (recording-absolute seconds / Hz), or `null` when the
+   * pointer leaves the overlay. The parent renders a time/kHz cursor readout
+   * (the overlay covers `SpectrogramViewer`'s own `.cursor-info`).
+   */
+  onMousePositionChange?: (pos: SpectrogramPosition | null) => void;
 }
 
 /**
@@ -156,8 +163,22 @@ export interface OverlayHookInput {
 export interface OverlayHookApi {
   /** Pixel geometry for the transient zoom-box rectangle, or null when idle. */
   readonly zoomBoxPx: { left: number; width: number } | null;
-  /** Event handler the parent attaches to the overlay element. */
-  readonly handlers: { onMouseDown: (e: MouseEvent) => void };
+  /**
+   * Event handlers the parent attaches to the overlay element:
+   *   - `onMouseDown`: mode dispatch (annotate / pan / zoom).
+   *   - `onWheel`:     scroll-wheel navigation (pan / Ctrl-expand / Alt-zoom),
+   *     active in ALL modes so the annotation spectrogram navigates exactly
+   *     like the dataset spectrogram. Wired non-passively so `preventDefault`
+   *     suppresses page scroll.
+   *   - `onMouseMove`: cursor-readout position tracking.
+   *   - `onMouseLeave`: clears the cursor readout.
+   */
+  readonly handlers: {
+    onMouseDown: (e: MouseEvent) => void;
+    onWheel: (e: WheelEvent) => void;
+    onMouseMove: (e: MouseEvent) => void;
+    onMouseLeave: () => void;
+  };
   /** Detach window listeners / short-circuit async continuations. */
   dispose(): void;
 }
