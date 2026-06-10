@@ -6,8 +6,12 @@ node_modules
 build
 dist
 
-# Paraglide-JS generated code (auto-generated, do not commit)
-src/lib/paraglide/
+# Paraglide-JS generated code (auto-generated, do not commit).
+# Ignore contents but keep the directory tracked via .gitkeep: a named
+# volume mounts at /app/src/lib/paraglide under the :ro src bind mount,
+# so the host dir must exist on a fresh clone for docker to mount it.
+src/lib/paraglide/*
+!src/lib/paraglide/.gitkeep
 src/paraglide/
 
 # Environment variables

@@ -79,6 +79,11 @@ openssl x509 -req \
   -extfile "${CERT_DIR}/redis.ext" >/dev/null 2>&1
 
 rm -f "${CERT_DIR}/redis.csr" "${CERT_DIR}/redis.ext" "${CERT_DIR}/ca.srl"
-chmod 600 "${CERT_DIR}"/*.key
+# These are dev-only self-signed keys/certs. The redis container runs as a
+# non-root user and reads redis.key/redis.crt through a :ro bind mount, so
+# they must be world-readable (600 + host-uid ownership breaks redis startup
+# on a fresh install).
+chmod 644 "${CERT_DIR}"/*.key
+chmod 644 "${CERT_DIR}"/*.crt
 
 echo "Dev Redis certificate generated successfully"
