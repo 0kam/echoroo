@@ -49,6 +49,40 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None
     monkeypatch.setattr(boot_checks, "get_settings", lambda: settings)
 
 
+# Strong dummy secrets (>= 32 chars, none matching a weak default) so that
+# constructing a ``Settings`` with ENVIRONMENT="production"/"staging" satisfies
+# ``Settings.validate_production_secrets`` (see ``core/settings.py``). The
+# invitation-token kid + HMAC key are supplied via env in ``tests/conftest.py``
+# and already clear the prod/staging 32-char strength bar, so they are not
+# repeated here.
+#
+# ``two_factor_reset_confirmation_hmac_key`` declares a ``validation_alias``
+# (``TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY``) and the model does NOT enable
+# ``populate_by_name``, so it must be passed under its alias — the snake_case
+# field name is ignored on init. The other three fields have no alias and are
+# accepted under their declared names.
+_STRONG_PROD_SECRETS: dict[str, str] = {
+    "JWT_SECRET_KEY": "prod-jwt-secret-key-strong-enough-32chars-padding",
+    "web_session_secret": "prod-web-session-secret-strong-enough-32chars-pad",
+    "S3_SECRET_KEY": "prod-s3-secret-key-strong-enough-32chars-padding",
+    "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY": (
+        "prod-2fa-reset-confirmation-hmac-strong-32chars-pad"
+    ),
+}
+
+
+def _prod_settings(environment: str, **overrides: object) -> Settings:
+    """Build a Settings instance that passes the prod/staging secret guards.
+
+    The boot-check probe policy is env-conditional (S3 failures are fatal only
+    in staging / production), so these tests must construct ``Settings`` with
+    ENVIRONMENT="production"/"staging". That trips
+    ``validate_production_secrets``, which requires strong values for every
+    prod-enforced secret, so we inject ``_STRONG_PROD_SECRETS`` here.
+    """
+    return Settings(ENVIRONMENT=environment, **_STRONG_PROD_SECRETS, **overrides)
+
+
 @pytest.mark.asyncio
 async def test_run_boot_checks_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both probes succeeding completes without raising."""
@@ -104,7 +138,7 @@ async def test_redis_connection_error_raises_boot_check_error(
 @pytest.mark.asyncio
 async def test_skip_flag_skips_all_probes(monkeypatch: pytest.MonkeyPatch) -> None:
     """ECHOROO_SKIP_BOOT_CHECKS short-circuits before any probe runs."""
-    settings = Settings(ENVIRONMENT="production", ECHOROO_SKIP_BOOT_CHECKS=True)
+    settings = _prod_settings("production", ECHOROO_SKIP_BOOT_CHECKS=True)
     _patch_settings(monkeypatch, settings)
 
     redis_called = False
@@ -125,7 +159,7 @@ async def test_s3_failure_fatal_in_production(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """S3 head_bucket failure is fatal in production."""
-    settings = Settings(ENVIRONMENT="production", ECHOROO_SKIP_BOOT_CHECKS=False)
+    settings = _prod_settings("production", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
 
     def _broken_head_bucket() -> None:
@@ -159,7 +193,7 @@ async def test_s3_failure_fatal_in_staging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """S3 head_bucket failure is fatal in staging too."""
-    settings = Settings(ENVIRONMENT="staging", ECHOROO_SKIP_BOOT_CHECKS=False)
+    settings = _prod_settings("staging", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
 
     def _broken_head_bucket() -> None:
