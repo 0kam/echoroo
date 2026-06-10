@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -66,18 +67,24 @@ def apply_ml_device_env() -> None:
         thread_cap = str(settings.ML_CPU_NUM_THREADS)
         for var in _CPU_THREAD_ENV_VARS:
             os.environ.setdefault(var, thread_cap)
-        logger.info(
+        cpu_msg = (
             "ML device env: CPU mode (CUDA_VISIBLE_DEVICES=-1, "
-            "thread cap=%s)",
-            thread_cap,
+            f"thread cap={thread_cap})"
         )
+        # This runs at the very top of the Celery worker entrypoint, BEFORE
+        # Celery configures logging, so logger.info() output is dropped. Write
+        # the device-selection line to stderr directly so it is always visible
+        # in container logs; keep the logger.info() for post-setup consumers.
+        print(cpu_msg, file=sys.stderr)
+        logger.info(cpu_msg)
         return
 
     # GPU mode: leave CUDA_VISIBLE_DEVICES untouched (the default GPU
     # behaviour) but optionally enable on-demand memory growth.
     if settings.ML_GPU_ALLOW_GROWTH:
         os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
-    logger.info(
-        "ML device env: GPU mode (allow_growth=%s)",
-        settings.ML_GPU_ALLOW_GROWTH,
-    )
+    gpu_msg = f"ML device env: GPU mode (allow_growth={settings.ML_GPU_ALLOW_GROWTH})"
+    # Same as the CPU branch: this runs pre-logging-setup, so the logger.info()
+    # is dropped. Mirror the message to stderr so it always lands in the logs.
+    print(gpu_msg, file=sys.stderr)
+    logger.info(gpu_msg)

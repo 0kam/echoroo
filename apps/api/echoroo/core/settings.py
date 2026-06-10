@@ -275,12 +275,18 @@ class Settings(BaseSettings):
     )
     ML_FEEDERS: int = Field(
         default=1,
+        # Minimum is 1: setting ECHOROO_ML_FEEDERS=0 fails at startup with an
+        # opaque pydantic validation error. To effectively disable ML work,
+        # scale the worker container to 0 replicas instead of zeroing this.
         ge=1,
         validation_alias="ECHOROO_ML_FEEDERS",
         description="Number of file-feeder processes for parallel audio loading.",
     )
     ML_WORKERS: int = Field(
         default=1,
+        # Minimum is 1: setting ECHOROO_ML_WORKERS=0 fails at startup with an
+        # opaque pydantic validation error. To effectively disable ML work,
+        # scale the worker container to 0 replicas instead of zeroing this.
         ge=1,
         validation_alias="ECHOROO_ML_WORKERS",
         description="Number of inference worker processes (usually 1).",

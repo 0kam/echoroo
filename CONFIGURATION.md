@@ -74,8 +74,8 @@ Echoroo uses machine learning models (BirdNET, Perch — both on TensorFlow) for
 |----------|-------------|---------|
 | `ECHOROO_ML_USE_GPU` | Use the GPU for inference. `false` forces CPU (`CUDA_VISIBLE_DEVICES=-1`) for both BirdNET and Perch. | `true` |
 | `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per inference batch | `16` |
-| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `1` |
-| `ECHOROO_ML_WORKERS` | Number of inference workers | `1` |
+| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading (minimum `1`) | `1` |
+| `ECHOROO_ML_WORKERS` | Number of inference workers (minimum `1`) | `1` |
 | `ECHOROO_ML_CPU_NUM_THREADS` | Thread cap applied **only** in CPU mode (bounds TF / OpenMP / BLAS pools so CPU inference does not exhaust RAM) | `8` |
 | `ECHOROO_ML_CPU_WARMUP_BATCHES` | Comma-separated Perch warmup batch sizes used **only** in CPU mode (empty = skip warmup). GPU mode always warms up `1,6,10,16`. | `1` |
 | `ECHOROO_ML_GPU_ALLOW_GROWTH` | In GPU mode, set `TF_FORCE_GPU_ALLOW_GROWTH=true` so TF grows GPU memory on demand | `true` |
@@ -84,8 +84,8 @@ Echoroo uses machine learning models (BirdNET, Perch — both on TensorFlow) for
 **Performance Tuning:**
 
 - **GPU_BATCH_SIZE:** Higher values improve throughput but require more GPU memory. Reduce if you get `CUDA_ERROR_OUT_OF_MEMORY`.
-- **FEEDERS:** More feeders speed up file I/O but use more CPU.
-- **WORKERS:** Usually 1 is optimal unless you have multiple GPUs.
+- **FEEDERS:** More feeders speed up file I/O but use more CPU. Must be `>= 1`; setting `0` fails at startup with an opaque pydantic validation error. To effectively disable ML work, scale the worker container down (e.g. `replicas: 0`) instead of zeroing this.
+- **WORKERS:** Usually 1 is optimal unless you have multiple GPUs. Must be `>= 1`; setting `0` fails at startup with an opaque pydantic validation error. To effectively disable ML work, scale the worker container down (e.g. `replicas: 0`) instead of zeroing this.
 - **CPU mode:** When `ECHOROO_ML_USE_GPU=false`, inference threads are capped to `ECHOROO_ML_CPU_NUM_THREADS` and the Perch warmup shrinks to `ECHOROO_ML_CPU_WARMUP_BATCHES`; pair with `ECHOROO_WORKER_MEM_LIMIT` to bound RAM.
 
 ## Deployment Scenarios
