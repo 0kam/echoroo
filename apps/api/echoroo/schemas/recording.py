@@ -5,10 +5,9 @@ from __future__ import annotations
 from datetime import datetime as DatetimeType
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from echoroo.models.enums import DatetimeParseStatus
-from echoroo.schemas.dataset import _validate_iana_timezone
 
 
 class DatasetSummary(BaseModel):
@@ -210,45 +209,3 @@ class PlaybackParams(BaseModel):
     speed: float = Field(default=1.0, ge=0.1, le=3.0, description="Playback speed multiplier")
     start: float | None = Field(None, ge=0, description="Start time in seconds")
     end: float | None = Field(None, description="End time in seconds")
-
-
-class RecordingReparseDatetimesRequest(BaseModel):
-    """Body for ``POST /projects/{project_id}/recordings/reparse-datetimes``.
-
-    Triggers a re-parse of recording datetimes for an entire dataset using a
-    new filename pattern. Mirrors the dataset-level
-    :class:`~echoroo.schemas.dataset.DatetimeApplyRequest` but carries the
-    target ``dataset_id`` in the body (the route is recording-scoped) so the
-    handler can validate that the dataset belongs to the path project before
-    dispatching the ``reparse_recording_datetimes`` Celery task.
-    """
-
-    model_config = {"extra": "forbid"}
-
-    dataset_id: UUID = Field(
-        ..., description="Dataset whose recordings should be re-parsed."
-    )
-    pattern: str = Field(
-        ..., max_length=200, description="Regex pattern for datetime extraction."
-    )
-    format: str = Field(  # noqa: A003 — matches the documented request contract
-        ..., description="strptime format string applied to the captured group."
-    )
-    timezone: str | None = Field(
-        None,
-        max_length=50,
-        description="IANA timezone for interpreting filenames (e.g., 'Asia/Tokyo').",
-    )
-
-    @field_validator("timezone")
-    @classmethod
-    def validate_timezone(cls, v: str | None) -> str | None:
-        """Validate IANA timezone string."""
-        return _validate_iana_timezone(v)
-
-
-class RecordingReparseDatetimesResponse(BaseModel):
-    """Response after dispatching a dataset datetime re-parse task."""
-
-    task_id: str
-    total_recordings: int
