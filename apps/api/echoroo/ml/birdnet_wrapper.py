@@ -19,6 +19,25 @@ SAMPLE_RATE = 48000
 SEGMENT_DURATION = 3.0
 
 
+def _resolve_default_device() -> str:
+    """Resolve the default BirdNET device from Settings, then auto-detect.
+
+    ``ECHOROO_ML_USE_GPU=false`` is authoritative: a host whose GPU is
+    enumerated but unusable by TensorFlow (e.g. Blackwell / sm_120) MUST be
+    pinned to CPU (TFLite "tf" backend) regardless of what
+    ``list_physical_devices`` reports. When ``ML_USE_GPU`` is true we fall
+    back to TF device enumeration so a GPU-less host still degrades to CPU.
+    """
+    try:
+        from echoroo.core.settings import get_settings
+
+        if not get_settings().ML_USE_GPU:
+            return "CPU"
+    except Exception as exc:  # settings unavailable — fall back to detection
+        logger.debug("ML_USE_GPU lookup failed, auto-detecting device: %s", exc)
+    return _detect_device()
+
+
 def _detect_device() -> str:
     """Detect whether a TensorFlow-accessible GPU is available.
 
@@ -85,7 +104,7 @@ class BirdNETWrapper:
             Shared BirdNETWrapper instance with model loaded.
         """
         if cls._instance is None:
-            resolved = device if device is not None else _detect_device()
+            resolved = device if device is not None else _resolve_default_device()
             cls._instance = cls(device=resolved)
         return cls._instance
 
@@ -96,7 +115,7 @@ class BirdNETWrapper:
             device: Device to use for inference ("GPU", "CPU", or "GPU:N").
                     Defaults to auto-detection via CUDA availability check.
         """
-        self._device = device if device is not None else _detect_device()
+        self._device = device if device is not None else _resolve_default_device()
         self._species_list: list[str] | None = None
 
     def _configure_device(self) -> None:

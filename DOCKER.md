@@ -126,6 +126,18 @@ The `worker` service reserves one NVIDIA GPU by default. If you do not have an N
 
 ML models are cached in the `echoroo-dev-ml-models` Docker volume.
 
+### Unsupported or absent GPU (e.g. Blackwell / sm_120)
+
+Some GPUs (notably NVIDIA Blackwell / RTX 50-series / sm_120) are enumerated by TensorFlow but cannot actually run its kernels — TF lists the device and then crashes at kernel launch, which can take the host down. On such a box, force CPU inference instead of relying on auto-detection:
+
+```bash
+# .env
+ECHOROO_ML_USE_GPU=false        # forces CPU (CUDA_VISIBLE_DEVICES=-1) for BirdNET + Perch
+ECHOROO_WORKER_MEM_LIMIT=24g    # bound worker RAM (~40% of host RAM) so CPU inference can't OOM-reboot the host
+```
+
+CPU mode is slower but stable. It also auto-caps inference threads (`ECHOROO_ML_CPU_NUM_THREADS`) and shrinks the Perch warmup (`ECHOROO_ML_CPU_WARMUP_BATCHES`). See [Configuration Guide](CONFIGURATION.md#machine-learning-settings) for the full ML env-var list.
+
 ## Common Tasks
 
 ```bash

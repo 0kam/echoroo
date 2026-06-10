@@ -7,7 +7,6 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-
 # spec/011 NFR-011-010 — invitation token kid character class. The wire
 # envelope ``{token}.{exp}.{kid}.{mac}`` is decoded via ``rsplit('.', 3)``
 # so kids MUST NOT contain ``.``; we additionally restrict to URL-safe
@@ -238,6 +237,99 @@ class Settings(BaseSettings):
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+
+    # ML / inference (Celery worker).
+    #
+    # Both BirdNET (via the ``birdnet`` package) and Perch run on
+    # TensorFlow. The defaults preserve the historical GPU behaviour
+    # (``ML_USE_GPU=True`` + batch 16) so a dev host with a working GPU is
+    # unaffected unless these env vars are explicitly set.
+    #
+    # The important operational case is a GPU that TensorFlow enumerates
+    # but cannot actually use (e.g. NVIDIA Blackwell / RTX 50-series /
+    # sm_120): TF lists the device then crashes at kernel launch, so plain
+    # auto-detection is NOT enough. Setting ``ECHOROO_ML_USE_GPU=false``
+    # forces ``CUDA_VISIBLE_DEVICES=-1`` in the worker process BEFORE
+    # TensorFlow is imported (see :mod:`echoroo.ml.device_env`), pinning
+    # both models to CPU. CPU mode additionally caps inference threads
+    # (``ML_CPU_NUM_THREADS``) and shrinks the Perch warmup batch list
+    # (``ML_CPU_WARMUP_BATCHES``) so it does not exhaust host RAM.
+    ML_USE_GPU: bool = Field(
+        default=True,
+        validation_alias="ECHOROO_ML_USE_GPU",
+        description=(
+            "Use the GPU for BirdNET + Perch inference (default). Set false "
+            "to force CPU inference (CUDA_VISIBLE_DEVICES=-1) on hosts whose "
+            "GPU is unusable by TensorFlow (e.g. Blackwell / sm_120) or with "
+            "no GPU at all."
+        ),
+    )
+    ML_GPU_BATCH_SIZE: int = Field(
+        default=16,
+        validation_alias="ECHOROO_ML_GPU_BATCH_SIZE",
+        description=(
+            "Segments processed in parallel per inference batch. Lower this "
+            "if you hit CUDA_ERROR_OUT_OF_MEMORY."
+        ),
+    )
+    ML_FEEDERS: int = Field(
+        default=1,
+        validation_alias="ECHOROO_ML_FEEDERS",
+        description="Number of file-feeder processes for parallel audio loading.",
+    )
+    ML_WORKERS: int = Field(
+        default=1,
+        validation_alias="ECHOROO_ML_WORKERS",
+        description="Number of inference worker processes (usually 1).",
+    )
+    ML_CPU_NUM_THREADS: int = Field(
+        default=8,
+        validation_alias="ECHOROO_ML_CPU_NUM_THREADS",
+        description=(
+            "Thread cap applied ONLY in CPU mode (ML_USE_GPU=false). Bounds "
+            "TF / OpenMP / BLAS thread pools so CPU inference does not "
+            "exhaust host RAM. Ignored in GPU mode."
+        ),
+    )
+    ML_CPU_WARMUP_BATCHES: str = Field(
+        default="1",
+        validation_alias="ECHOROO_ML_CPU_WARMUP_BATCHES",
+        description=(
+            "Comma-separated Perch warmup batch sizes used ONLY in CPU mode. "
+            "Empty value skips warmup entirely. GPU mode always warms up "
+            "[1, 6, 10, 16]."
+        ),
+    )
+    ML_GPU_ALLOW_GROWTH: bool = Field(
+        default=True,
+        validation_alias="ECHOROO_ML_GPU_ALLOW_GROWTH",
+        description=(
+            "In GPU mode, set TF_FORCE_GPU_ALLOW_GROWTH=true so TensorFlow "
+            "grows GPU memory on demand instead of pre-allocating the whole "
+            "device. No effect in CPU mode."
+        ),
+    )
+
+    def ml_cpu_warmup_batch_sizes(self) -> list[int]:
+        """Parse ``ML_CPU_WARMUP_BATCHES`` into a list of positive ints.
+
+        Tolerates surrounding / inter-item whitespace and an empty value
+        (which yields ``[]`` = skip warmup). Non-positive or non-integer
+        tokens are ignored so a malformed env value degrades to "skip"
+        rather than crashing worker startup.
+        """
+        sizes: list[int] = []
+        for token in self.ML_CPU_WARMUP_BATCHES.split(","):
+            stripped = token.strip()
+            if not stripped:
+                continue
+            try:
+                value = int(stripped)
+            except ValueError:
+                continue
+            if value > 0:
+                sizes.append(value)
+        return sizes
 
     # Phase 17 backlog A-2 — PII hash CMK rotation (FR-091b dual-write).
     #

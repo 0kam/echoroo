@@ -91,18 +91,30 @@ class BirdNETInference(InferenceEngine):
         loader: BirdNETLoader,
         confidence_threshold: float = 0.1,
         top_k: int = 10,
-        device: str = "GPU",
-        batch_size: int = DEFAULT_BATCH_SIZE,
-        feeders: int = DEFAULT_FEEDERS,
-        workers: int = DEFAULT_WORKERS,
+        device: str | None = None,
+        batch_size: int | None = None,
+        feeders: int | None = None,
+        workers: int | None = None,
     ) -> None:
         super().__init__(loader)
+        # ``None`` defaults resolve from Settings so the worker honours
+        # ECHOROO_ML_* env vars (device / batch / feeders / workers) while
+        # explicit call-site overrides keep working. Defaults preserve the
+        # historical GPU + batch-16 behaviour.
+        from echoroo.core.settings import get_settings
+
+        settings = get_settings()
         self._confidence_threshold = confidence_threshold
         self._top_k = top_k
-        self._device = device
-        self._batch_size = batch_size
-        self._feeders = feeders
-        self._workers = workers
+        if device is not None:
+            self._device = device
+        else:
+            self._device = "GPU" if settings.ML_USE_GPU else "CPU"
+        self._batch_size = (
+            batch_size if batch_size is not None else settings.ML_GPU_BATCH_SIZE
+        )
+        self._feeders = feeders if feeders is not None else settings.ML_FEEDERS
+        self._workers = workers if workers is not None else settings.ML_WORKERS
 
     @property
     def confidence_threshold(self) -> float:

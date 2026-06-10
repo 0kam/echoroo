@@ -12,6 +12,15 @@ import multiprocessing
 # cleanly. force=True allows calling this even if already set elsewhere.
 multiprocessing.set_start_method("spawn", force=True)
 
+# Configure the ML device / thread environment BEFORE anything can import
+# TensorFlow. On a host whose GPU is unusable by TF (e.g. Blackwell /
+# sm_120) ``ECHOROO_ML_USE_GPU=false`` forces CUDA_VISIBLE_DEVICES=-1 here so
+# the model preloader (worker_ready signal) and every inference task run on
+# CPU without exhausting RAM. Defaults preserve the GPU behaviour.
+from echoroo.ml.device_env import apply_ml_device_env  # noqa: E402
+
+apply_ml_device_env()
+
 from celery import Celery  # noqa: E402
 from celery.schedules import crontab  # noqa: E402
 
