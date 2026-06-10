@@ -11,7 +11,9 @@ const config: PlaywrightTestConfig = {
     reuseExistingServer: !process.env.CI,
   },
   use: {
-    baseURL: 'http://localhost:5173',
+    // Default unchanged; allow LAN/remote runs to override without editing
+    // this file (e.g. PLAYWRIGHT_BASE_URL=http://192.168.1.100:5173).
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:5173',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     trace: 'retain-on-failure',
