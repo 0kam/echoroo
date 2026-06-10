@@ -110,6 +110,11 @@ services:
       - ./apps/api/echoroo:/app/echoroo:ro
       - ./apps/api/alembic:/app/alembic:ro
       - ./apps/api/alembic.ini:/app/alembic.ini:ro
+      # Mount tests so test edits land in the container without `docker cp`
+      # (pytest runs here via `docker exec echoroo-backend`). Read-only is safe:
+      # CPython silently skips bytecode writes on read-only dirs, and the pytest
+      # cache lives under /app (writable), not /app/tests.
+      - ./apps/api/tests:/app/tests:ro
       # Audio files directory (read-only)
       - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       # Persistent data
