@@ -673,6 +673,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # W0 mutation-harness fix #2 — free disk before the run.
+      #
+      # The mutmut harness is disk-bound: mutmut's own `run_stats` full-suite
+      # run accumulates tmp artifacts (pytest-of-*, the
+      # echoroo-test-s3-audio-cache, coverage files), and mutmut additionally
+      # copies tests/ into mutants/. On GitHub ubuntu-24.04 runners (~14GB
+      # free by default) this collapsed the stats phase with `No space left on
+      # device (os error 28)`, turning every mutant into "not checked" and
+      # tripping the BASELINE FAILED guard (workflow_dispatch run
+      # 27289284047). Removing the preinstalled SDK hogs we never use (dotnet,
+      # Android, GHC/ghcup, CodeQL toolcache) typically frees 15-25GB and is
+      # scoped to this job only. `|| true` so a layout change on the runner
+      # image can never fail the job here.
+      - name: Free disk space (mutation job is disk-bound)
+        run: |
+          echo "=== before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          echo "=== after cleanup ==="
+          df -h /
+
       - name: Install uv + Python 3.11
         uses: astral-sh/setup-uv@v5
         with:
@@ -713,19 +738,30 @@ jobs:
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
           "
 
-      # Phase 17 §C-D diagnostic preflight: run the exact pytest command
-      # that mutmut uses for `run_stats`. First with --collect-only to
-      # confirm collection, then a real (no-collect-only) run with the
-      # security/unit suites to see if some baseline test fails or the
-      # in-process pytest crashes. `|| true` everywhere; the artifact is
+      # Phase 17 §C-D diagnostic preflight: confirm that the exact suite
+      # mutmut uses for `run_stats` (tests/unit/ + tests/security/) collects
+      # cleanly from the same cwd / args. `--collect-only` so it is cheap and
+      # writes ~no tmp artifacts.
+      #
+      # W0 mutation-harness fix #2 (this PR): the former "preflight 2" — a
+      # full, no-collect-only run of the same suite — was DROPPED. It existed
+      # only to surface baseline test failures early, but it (a) duplicated
+      # ~10 min of runtime and (b) wrote a full set of tmp artifacts
+      # (pytest-of-*, the echoroo-test-s3-audio-cache, coverage files) that
+      # then competed for the same ~14GB of runner disk as mutmut's own
+      # `run_stats` full-suite run — a direct contributor to the
+      # `No space left on device` stats collapse. The "Assert mutants/
+      # baseline is intact" guard added downstream in this branch now catches
+      # a collapsed/zero-mutant baseline with a clear, actionable error, so the
+      # expensive early-warning run is redundant. `|| true`; the artifact is
       # the interesting datum.
-      - name: Diagnostic - run mutmut baseline pytest manually
+      - name: Diagnostic - mutmut baseline pytest collection
         if: always()
         working-directory: apps/api
         run: |
           set +e
           {
-            echo "=== preflight 1: --collect-only ==="
+            echo "=== preflight: --collect-only ==="
             uv run python -m pytest \
               --rootdir=. --tb=native -x -q --no-cov \
               --override-ini=addopts= \
@@ -733,16 +769,6 @@ jobs:
               --collect-only
             collect_rc=$?
             echo "collect-only exit: $collect_rc"
-
-            echo ""
-            echo "=== preflight 2: actual mutmut baseline (first 5 failures) ==="
-            uv run python -m pytest \
-              --rootdir=. --tb=native -q --no-cov \
-              --override-ini=addopts= \
-              tests/unit/ tests/security/ \
-              --maxfail=5 -rA
-            run_rc=$?
-            echo "actual-run exit: $run_rc"
           } > /tmp/mutmut_pytest_preflight.log 2>&1
           tail -250 /tmp/mutmut_pytest_preflight.log
           # Always exit 0; mutmut itself is the authoritative gate.
@@ -779,6 +805,27 @@ jobs:
           " 2>&1 | tail -50
           exit 0
 
+      # W0 mutation-harness fix #2 — reclaim disk before mutmut's own
+      # full-suite `run_stats`. The preflight/diagnostic steps above run the
+      # unit+security suites and leave behind pytest tmp dirs, the
+      # echoroo-test-s3-audio-cache (Path(gettempdir())/"echoroo-test-s3-audio-cache",
+      # see tests/conftest.py), and coverage files. Clearing them here keeps
+      # those artifacts from stacking on top of the artifacts mutmut writes
+      # during its stats run (which was the `No space left on device` trigger).
+      # `.mutmut-cache` is intentionally NOT touched — it is mutmut's own
+      # working state, created by the next step. All globs are tolerant of
+      # absence (`|| true`).
+      - name: Clean test temp artifacts before mutmut
+        if: always()
+        working-directory: apps/api
+        run: |
+          rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
+          rm -rf /tmp/echoroo-test-s3-audio-cache 2>/dev/null || true
+          rm -rf .pytest_cache 2>/dev/null || true
+          rm -f .coverage .coverage.* coverage.xml 2>/dev/null || true
+          echo "=== disk before mutmut run ==="
+          df -h /
+
       # Phase 17 §D-0 Option B: run mutmut via the subprocess-stats wrapper.
       # scripts/run_mutmut.py monkey-patches PytestRunner.run_stats to spawn
       # pytest in a subprocess instead of calling pytest.main() in-process,
@@ -795,6 +842,14 @@ jobs:
       - name: Run mutmut (10 scorable modules, hard gate)
         working-directory: apps/api
         run: uv run python scripts/run_mutmut.py run
+
+      # W0 mutation-harness fix #2 — disk observability after the run.
+      # If a future suite/cache change re-pressures disk, this snapshot (paired
+      # with the pre-run df above) makes the drift obvious in the job log.
+      # `if: always()` so it is captured even when the mutmut run fails.
+      - name: Disk usage after mutmut run
+        if: always()
+        run: df -h /
 
       # W0 mutation-harness fix — fail-fast baseline guard.
       #
