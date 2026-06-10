@@ -88,24 +88,32 @@ For detailed information about using Echoroo, refer to:
 
 ## ML Configuration
 
-Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch) for species detection. Configure these settings in your `.env` file:
+Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch — both on TensorFlow) for species detection. The defaults below preserve GPU behaviour, so a host with a working GPU needs none of these set. Configure them in your `.env` file:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ECHOROO_ML_USE_GPU` | Enable GPU acceleration | `true` |
-| `ECHOROO_ML_GPU_DEVICE` | Device specification (`GPU`, `CPU`, `GPU:0`, `GPU:1`) | `GPU` |
-| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per GPU inference | `16` |
-| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `8` |
-| `ECHOROO_ML_WORKERS` | Number of GPU inference workers | `1` |
+| `ECHOROO_ML_USE_GPU` | Use the GPU for inference. `false` forces CPU (`CUDA_VISIBLE_DEVICES=-1`) for both BirdNET and Perch. | `true` |
+| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per inference batch | `16` |
+| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `1` |
+| `ECHOROO_ML_WORKERS` | Number of inference workers | `1` |
+| `ECHOROO_ML_CPU_NUM_THREADS` | Thread cap applied **only** in CPU mode (bounds TF / OpenMP / BLAS pools so CPU inference does not exhaust RAM) | `8` |
+| `ECHOROO_ML_CPU_WARMUP_BATCHES` | Comma-separated Perch warmup batch sizes used **only** in CPU mode (empty = skip warmup). GPU mode always warms up `1,6,10,16`. | `1` |
+| `ECHOROO_ML_GPU_ALLOW_GROWTH` | In GPU mode, set `TF_FORCE_GPU_ALLOW_GROWTH=true` so TF grows GPU memory on demand | `true` |
+| `ECHOROO_WORKER_MEM_LIMIT` | Compose-level RAM cap for the worker container (`0` = unlimited). Set e.g. `24g` on a CPU/Blackwell box to keep the host alive. | `0` |
 
 ### Troubleshooting: CUDA_ERROR_OUT_OF_MEMORY
 
 If you encounter GPU memory errors during ML inference:
 
 1. **Reduce batch size:** Lower `ECHOROO_ML_GPU_BATCH_SIZE` (try 8 or 4)
-2. **Reduce feeders:** Lower `ECHOROO_ML_FEEDERS` (try 4)
-3. **Use CPU:** Set `ECHOROO_ML_USE_GPU=false` (slower but avoids GPU memory issues)
-4. **Select specific GPU:** Set `ECHOROO_ML_GPU_DEVICE=GPU:0` or `GPU:1` if you have multiple GPUs
+2. **Reduce feeders:** Lower `ECHOROO_ML_FEEDERS`
+3. **Use CPU:** Set `ECHOROO_ML_USE_GPU=false` (slower but avoids GPU memory issues; also bound RAM with `ECHOROO_WORKER_MEM_LIMIT`)
+
+### GPU present but unusable by TensorFlow (e.g. Blackwell / sm_120)
+
+On a host whose GPU is **present** but enumerated-yet-unusable by TensorFlow (e.g. NVIDIA Blackwell / RTX 50-series / sm_120), TF lists the device then crashes at kernel launch, so auto-detection alone is not enough. Set `ECHOROO_ML_USE_GPU=false` to force CPU inference for both BirdNET and Perch, and set `ECHOROO_WORKER_MEM_LIMIT` (e.g. `24g`, ~40% of host RAM) to keep CPU inference from exhausting RAM and rebooting the host. CPU mode is slower but stable.
+
+On a host with **no NVIDIA GPU at all**, `ECHOROO_ML_USE_GPU=false` is necessary but not sufficient: the `worker` service still reserves an NVIDIA device, so you must also remove or comment out the `worker.deploy.resources.reservations.devices` block in `compose.dev.yaml`, otherwise the worker container will not start. See [DOCKER.md](DOCKER.md#gpu-support).
 
 ## Acknowledgements
 

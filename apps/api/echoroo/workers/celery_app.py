@@ -12,6 +12,21 @@ import multiprocessing
 # cleanly. force=True allows calling this even if already set elsewhere.
 multiprocessing.set_start_method("spawn", force=True)
 
+# Configure the ML device / thread environment BEFORE anything can import
+# TensorFlow OR numpy. On a host whose GPU is unusable by TF (e.g. Blackwell /
+# sm_120) ``ECHOROO_ML_USE_GPU=false`` forces CUDA_VISIBLE_DEVICES=-1 here so
+# the model preloader (worker_ready signal) and every inference task run on
+# CPU without exhausting RAM. Defaults preserve the GPU behaviour.
+#
+# This deliberately imports from ``echoroo.workers`` (empty ``__init__``) and
+# NOT ``echoroo.ml`` — the latter's ``__init__`` pulls BirdNET/Perch → numpy,
+# which would initialise BLAS before the OMP/OPENBLAS/MKL thread caps are
+# applied and silently defeat the OOM safety. Keep this import as early as
+# possible and before any import that pulls numpy or tensorflow.
+from echoroo.workers.ml_device_env import apply_ml_device_env  # noqa: E402
+
+apply_ml_device_env()
+
 from celery import Celery  # noqa: E402
 from celery.schedules import crontab  # noqa: E402
 

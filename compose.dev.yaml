@@ -180,6 +180,14 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    # CPU / Blackwell rationale: hosts whose GPU is unusable by TensorFlow
+    # (e.g. NVIDIA Blackwell / RTX 50-series / sm_120) set
+    # ECHOROO_ML_USE_GPU=false to force CPU inference. CPU inference can
+    # grow unbounded and reboot the host, so ECHOROO_WORKER_MEM_LIMIT caps
+    # this container's RAM (0 = unlimited = current GPU behaviour; set e.g.
+    # 24g — ~40% of host RAM — on a CPU box). mem_limit coexists with the
+    # GPU device reservation above (compose v2).
+    mem_limit: ${ECHOROO_WORKER_MEM_LIMIT:-0}
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
@@ -204,6 +212,19 @@ services:
       # the invitation kid envelope at every boot.
       - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
       - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
+      # ML / inference. Defaults preserve the historical GPU behaviour.
+      # Set ECHOROO_ML_USE_GPU=false (+ ECHOROO_WORKER_MEM_LIMIT) on a host
+      # whose GPU is unusable by TensorFlow (Blackwell / sm_120) or absent.
+      - ECHOROO_ML_USE_GPU=${ECHOROO_ML_USE_GPU:-true}
+      - ECHOROO_ML_GPU_BATCH_SIZE=${ECHOROO_ML_GPU_BATCH_SIZE:-16}
+      - ECHOROO_ML_FEEDERS=${ECHOROO_ML_FEEDERS:-1}
+      - ECHOROO_ML_WORKERS=${ECHOROO_ML_WORKERS:-1}
+      - ECHOROO_ML_CPU_NUM_THREADS=${ECHOROO_ML_CPU_NUM_THREADS:-8}
+      # Single-dash default (`-` not `:-`): an explicitly-empty value in .env
+      # passes through as empty -> "skip warmup" (the documented semantics);
+      # `:-` would wrongly force it back to 1.
+      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES-1}
+      - ECHOROO_ML_GPU_ALLOW_GROWTH=${ECHOROO_ML_GPU_ALLOW_GROWTH:-true}
     volumes:
       - ./apps/api:/app
       - backend-data:/data
@@ -228,6 +249,10 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo -Q default -n worker-cpu@%h
+    # CPU / Blackwell rationale (parity with the GPU worker above): this
+    # worker is CPU-only by design, so ECHOROO_WORKER_MEM_LIMIT bounds its
+    # RAM too (0 = unlimited = current behaviour).
+    mem_limit: ${ECHOROO_WORKER_MEM_LIMIT:-0}
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
@@ -250,6 +275,18 @@ services:
       # the invitation kid envelope at every boot.
       - INVITATION_TOKEN_KID_NEW=${INVITATION_TOKEN_KID_NEW:-dev-kid-001}
       - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
+      # ML / inference (parity with GPU worker). Defaults preserve current
+      # behaviour; consumed only if ML tasks ever route here.
+      - ECHOROO_ML_USE_GPU=${ECHOROO_ML_USE_GPU:-true}
+      - ECHOROO_ML_GPU_BATCH_SIZE=${ECHOROO_ML_GPU_BATCH_SIZE:-16}
+      - ECHOROO_ML_FEEDERS=${ECHOROO_ML_FEEDERS:-1}
+      - ECHOROO_ML_WORKERS=${ECHOROO_ML_WORKERS:-1}
+      - ECHOROO_ML_CPU_NUM_THREADS=${ECHOROO_ML_CPU_NUM_THREADS:-8}
+      # Single-dash default (`-` not `:-`): an explicitly-empty value in .env
+      # passes through as empty -> "skip warmup" (the documented semantics);
+      # `:-` would wrongly force it back to 1.
+      - ECHOROO_ML_CPU_WARMUP_BATCHES=${ECHOROO_ML_CPU_WARMUP_BATCHES-1}
+      - ECHOROO_ML_GPU_ALLOW_GROWTH=${ECHOROO_ML_GPU_ALLOW_GROWTH:-true}
     volumes:
       - ./apps/api:/app
       - backend-data:/data

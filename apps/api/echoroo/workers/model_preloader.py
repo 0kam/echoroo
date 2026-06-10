@@ -23,18 +23,39 @@ _direct_perch: Any | None = None
 
 
 def preload_models() -> None:
-    """Load all GPU models and warm them up."""
+    """Load all inference models and warm them up.
+
+    Device + batch/feeders/workers are driven by Settings
+    (``ML_USE_GPU`` / ``ML_GPU_BATCH_SIZE`` / ``ML_FEEDERS`` / ``ML_WORKERS``)
+    so a host whose GPU is unusable by TensorFlow can run CPU inference by
+    setting ``ECHOROO_ML_USE_GPU=false``. Defaults preserve GPU behaviour.
+    """
     import echoroo.ml.birdnet  # noqa: F401
     import echoroo.ml.perch  # noqa: F401
+    from echoroo.core.settings import get_settings
     from echoroo.ml.registry import ModelRegistry
 
+    settings = get_settings()
+    device = "GPU" if settings.ML_USE_GPU else "CPU"
+
     for model_name in ["perch", "birdnet"]:
-        logger.info("Pre-loading model: %s", model_name)
+        logger.info("Pre-loading model: %s (device=%s)", model_name, device)
         loader_cls = ModelRegistry.get_loader_class(model_name)
         engine_cls = ModelRegistry.get_engine_class(model_name)
-        loader = loader_cls()
+        # The registry erases concrete types to the ModelLoader /
+        # InferenceEngine base classes, whose __init__ does not declare these
+        # kwargs. Every *registered* model (BirdNETLoader/Inference,
+        # PerchLoader/Inference) accepts device + batch/feeders/workers, so the
+        # call is safe at runtime — hence the targeted call-arg ignores.
+        loader = loader_cls(device=device)  # type: ignore[call-arg]
         loader.load()
-        engine = engine_cls(loader)
+        engine = engine_cls(
+            loader,
+            batch_size=settings.ML_GPU_BATCH_SIZE,
+            feeders=settings.ML_FEEDERS,
+            workers=settings.ML_WORKERS,
+            device=device,
+        )  # type: ignore[call-arg]
         _gpu_model_store[model_name] = (loader, engine)
         logger.info("Model %s pre-loaded and ready", model_name)
 
@@ -53,12 +74,30 @@ def _preload_direct_perch() -> None:
     global _direct_perch
 
     try:
+        from echoroo.core.settings import get_settings
         from echoroo.ml.perch.direct_inference import PerchDirectInference
 
-        logger.info("Pre-loading Perch direct TF inference engine")
-        direct = PerchDirectInference(device="GPU")
+        settings = get_settings()
+        device = "GPU" if settings.ML_USE_GPU else "CPU"
+
+        # GPU mode keeps the historical multi-size warmup. CPU mode uses the
+        # configured (smaller) list to avoid OOM; an empty list skips warmup.
+        if settings.ML_USE_GPU:
+            warmup_batches = [1, 6, 10, 16]
+        else:
+            warmup_batches = settings.ml_cpu_warmup_batch_sizes()
+
+        logger.info(
+            "Pre-loading Perch direct TF inference engine (device=%s)", device
+        )
+        direct = PerchDirectInference(device=device)
         direct.load()
-        direct.warmup([1, 6, 10, 16])
+        if warmup_batches:
+            direct.warmup(warmup_batches)
+        else:
+            logger.info(
+                "Perch direct TF warmup skipped (empty warmup batch list)"
+            )
         _direct_perch = direct
         logger.info("Perch direct TF inference pre-loaded and warmed up")
     except Exception:
@@ -94,17 +133,37 @@ def get_model(model_name: str) -> tuple[Any, Any]:
     if model_name in _gpu_model_store:
         return _gpu_model_store[model_name]
 
-    # Fallback: load on demand (for non-GPU workers or first call before preload)
+    # Fallback: load on demand (for non-GPU workers or first call before preload).
+    # This MUST resolve device + batch/feeders/workers from Settings exactly as
+    # ``preload_models()`` does. Otherwise the loader defaults to GPU, and
+    # BirdNET's ``_configure_device`` DELETES ``CUDA_VISIBLE_DEVICES=-1`` set by
+    # ``apply_ml_device_env`` — re-enabling the (unusable on Blackwell/sm_120)
+    # GPU and defeating ``ECHOROO_ML_USE_GPU=false``.
     logger.warning("Model %s not pre-loaded, loading on demand", model_name)
     import echoroo.ml.birdnet  # noqa: F401
     import echoroo.ml.perch  # noqa: F401
+    from echoroo.core.settings import get_settings
     from echoroo.ml.registry import ModelRegistry
+
+    settings = get_settings()
+    device = "GPU" if settings.ML_USE_GPU else "CPU"
 
     loader_cls = ModelRegistry.get_loader_class(model_name)
     engine_cls = ModelRegistry.get_engine_class(model_name)
-    loader = loader_cls()
+    # The registry erases concrete types to the ModelLoader / InferenceEngine
+    # base classes, whose __init__ does not declare these kwargs. Every
+    # *registered* model (BirdNETLoader/Inference, PerchLoader/Inference)
+    # accepts device + batch/feeders/workers, so the call is safe at runtime —
+    # hence the targeted call-arg ignores.
+    loader = loader_cls(device=device)  # type: ignore[call-arg]
     loader.load()
-    engine = engine_cls(loader)
+    engine = engine_cls(
+        loader,
+        batch_size=settings.ML_GPU_BATCH_SIZE,
+        feeders=settings.ML_FEEDERS,
+        workers=settings.ML_WORKERS,
+        device=device,
+    )  # type: ignore[call-arg]
     _gpu_model_store[model_name] = (loader, engine)
     return _gpu_model_store[model_name]
 
