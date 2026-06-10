@@ -133,6 +133,12 @@ def test_celery_app_module_reload_with_rediss_settings_exercises_ssl_block(
         CELERY_BROKER_URL = "rediss://broker:6379/0"
         CELERY_RESULT_BACKEND = "rediss://backend:6379/0"
         REDIS_TLS_INSECURE = True
+        # ML device-env knobs read by ``apply_ml_device_env`` at the top of
+        # ``celery_app`` import. Mirror the production Settings defaults so the
+        # GPU code path is a no-op for this unrelated SSL-branch test.
+        ML_USE_GPU = True
+        ML_CPU_NUM_THREADS = 8
+        ML_GPU_ALLOW_GROWTH = True
 
     def fake_get_settings() -> _StubSettings:
         return _StubSettings()
