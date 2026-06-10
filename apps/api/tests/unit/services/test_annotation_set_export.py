@@ -1,15 +1,15 @@
 """Unit tests for ``echoroo.services.annotation_set_export``.
 
-Verifies the CamtrapDP + FR-086 + offset CSV export shape without requiring a
-live database: the export service's SQL is stubbed to return in-memory model
+Verifies the CamtrapDP + ToriTore CSV export shape without requiring a live
+database: the export service's SQL is stubbed to return in-memory model
 instances with relationships pre-wired, and the streamed bytes are decoded and
 parsed back through :mod:`csv` to assert:
 
 * the header row equals the detection export's CamtrapDP/FR-086 columns plus
-  the six trailing segment/recording offset columns, in order (and contains
-  none of the unmerged per-annotator snapshot columns); and
-* there is exactly one data row per ``TimeRangeAnnotation`` with a resolved
-  ``scientificName`` and ``classifiedBy``.
+  the three trailing ToriTore proficiency columns, in order; and
+* there is exactly one data row per ``TimeRangeAnnotation`` with the
+  ToriTore ``annotator_total_score`` populated for a gated annotation, plus a
+  resolved ``scientificName`` and ``classifiedBy``.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import pytest
 from echoroo.services.annotation_set_export import (
     _ANNOTATION_SET_COLUMNS,
     _OFFSET_COLUMNS,
+    _TORITORE_COLUMNS,
     AnnotationSetExportService,
 )
 from echoroo.services.camtrap import CAMTRAPDP_OBSERVATION_COLUMNS
@@ -36,15 +37,13 @@ def _make_annotation(
     dataset_name: str,
     scientific_name: str,
     annotator_name: str,
+    total_score: float | None,
+    species_score: float | None,
+    test_reference: str | None,
     start_offset: float,
     end_offset: float,
 ) -> SimpleNamespace:
-    """Build an in-memory TimeRangeAnnotation-like object with relationships.
-
-    Intentionally built WITHOUT the unmerged per-annotator snapshot fields:
-    on ``main`` the :class:`TimeRangeAnnotation` model has no such columns, and
-    the export must not read them.
-    """
+    """Build an in-memory TimeRangeAnnotation-like object with relationships."""
     recording = SimpleNamespace(
         id=uuid4(),
         datetime=datetime(2026, 6, 1, 0, 0, 0, tzinfo=UTC),
@@ -65,6 +64,9 @@ def _make_annotation(
         created_at=datetime(2026, 6, 2, 12, 0, 0, tzinfo=UTC),
         taxon=SimpleNamespace(scientific_name=scientific_name),
         created_by=SimpleNamespace(display_name=annotator_name, email="x@y.z"),
+        annotator_species_score=species_score,
+        annotator_total_score=total_score,
+        annotator_test_reference=test_reference,
     )
 
 
@@ -77,7 +79,7 @@ async def _collect(service: AnnotationSetExportService, **kwargs: object) -> str
 
 @pytest.mark.asyncio
 async def test_export_columns_and_one_row_per_annotation() -> None:
-    """Header = CamtrapDP + offset cols; one row per annotation."""
+    """Header = CamtrapDP + ToriTore cols; one row per annotation; score set."""
     set_id = uuid4()
     project_id = uuid4()
 
@@ -86,6 +88,9 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
             dataset_name="Forest A",
             scientific_name="Turdus merula",
             annotator_name="Alice",
+            total_score=0.91,
+            species_score=0.8,
+            test_reference="test#1@20260604142325+9:00",
             start_offset=1.0,
             end_offset=3.5,
         ),
@@ -93,6 +98,9 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
             dataset_name="Forest A",
             scientific_name="Parus major",
             annotator_name="Bob",
+            total_score=0.42,
+            species_score=None,
+            test_reference=None,
             start_offset=4.0,
             end_offset=6.0,
         ),
@@ -125,7 +133,7 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     reader = csv.DictReader(io.StringIO(body))
     assert reader.fieldnames is not None
     assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
-    # Sanity: the shared CamtrapDP cols are the leading block, in order.
+    # Sanity: the shared CamtrapDP cols precede the ToriTore cols.
     assert (
         list(reader.fieldnames[: len(CAMTRAPDP_OBSERVATION_COLUMNS)])
         == CAMTRAPDP_OBSERVATION_COLUMNS
@@ -140,23 +148,11 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
         "recording_start_sec",
         "recording_end_sec",
     ]
-    # The header must contain NONE of the unmerged per-annotator snapshot
-    # columns: those proficiency fields exist only on the unmerged branch's
-    # TimeRangeAnnotation model, never on main, so the main-safe export must not
-    # emit them. (Column names are assembled from parts so this main-safe source
-    # file stays free of any literal reference to the removed columns.)
-    annotator = "annotator_"
-    forbidden_snapshot_columns = {
-        annotator + "species" + "_score",
-        annotator + "total" + "_score",
-        annotator + "test" + "_reference",
-    }
-    assert forbidden_snapshot_columns.isdisjoint(reader.fieldnames)
-    # The full column list = CamtrapDP block + the six offset columns only
-    # (the leading + trailing block assertions above prove the order).
-    assert [*CAMTRAPDP_OBSERVATION_COLUMNS, *_OFFSET_COLUMNS] == list(
-        _ANNOTATION_SET_COLUMNS
-    )
+    # The ToriTore cols immediately precede the offset block.
+    toritore_slice = reader.fieldnames[
+        -(len(_OFFSET_COLUMNS) + len(_TORITORE_COLUMNS)) : -len(_OFFSET_COLUMNS)
+    ]
+    assert list(toritore_slice) == _TORITORE_COLUMNS
 
     rows = list(reader)
     assert len(rows) == len(annotations)
@@ -171,6 +167,10 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert first["license"] == "CC-BY-4.0"
     # eventID is empty under the canonical scheme.
     assert first["eventID"] == ""
+    # ToriTore proficiency snapshot populated for the gated annotation.
+    assert first["annotator_total_score"] == "0.9100"
+    assert first["annotator_species_score"] == "0.8000"
+    assert first["annotator_test_reference"] == "test#1@20260604142325+9:00"
     # mediaID is the canonical RECORDING id (single source of truth), not the
     # segment id. The segment linkage stays in the trailing extension columns.
     assert first["mediaID"] == str(annotations[0].segment.recording.id)
@@ -183,8 +183,10 @@ async def test_export_columns_and_one_row_per_annotation() -> None:
     assert first["eventStart"] == "2026-06-01T00:00:11.000Z"
 
     second = rows[1]
-    assert second["scientificName"] == "Parus major"
-    assert second["classifiedBy"] == "Bob"
+    assert second["annotator_total_score"] == "0.4200"
+    # Null ToriTore species/test reference render as blank.
+    assert second["annotator_species_score"] == ""
+    assert second["annotator_test_reference"] == ""
 
 
 @pytest.mark.asyncio
@@ -204,6 +206,9 @@ async def test_export_event_times_preserve_subsecond_precision() -> None:
             dataset_name="Forest A",
             scientific_name="Turdus merula",
             annotator_name="Alice",
+            total_score=0.91,
+            species_score=0.8,
+            test_reference=None,
             start_offset=2.45,
             end_offset=2.75,
         ),
@@ -227,7 +232,7 @@ async def test_export_event_times_preserve_subsecond_precision() -> None:
     body = await _collect(service, project_id=project_id, set_id=set_id)
 
     reader = csv.DictReader(io.StringIO(body))
-    # Header shape (CamtrapDP + offset cols) must remain intact.
+    # Header shape (incl. ToriTore cols) must remain intact.
     assert reader.fieldnames == _ANNOTATION_SET_COLUMNS
     rows = list(reader)
     assert len(rows) == 1

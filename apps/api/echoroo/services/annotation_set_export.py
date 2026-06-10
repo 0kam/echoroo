@@ -1,14 +1,21 @@
-"""Annotation-set CSV export service (CamtrapDP + FR-086 + offset columns).
+"""Annotation-set CSV export service (CamtrapDP + ToriTore extension).
 
 This mirrors :mod:`echoroo.services.detection_export` so that ground-truth
 ``TimeRangeAnnotation`` rows can be exported with the SAME CamtrapDP
-``observations.csv`` column shape used by the BirdNET / detection export.
+``observations.csv`` column shape used by the BirdNET / detection export. The
+only difference is three trailing ToriTore per-annotator proficiency columns
+appended **after** the detection export's FR-086 block:
 
-Six segment / recording offset columns are appended after the CamtrapDP /
-FR-086 block so a consumer can locate each annotation both inside its
-segment/clip and inside the source recording: ``segment_id``, ``recording_id``,
-``segment_start_sec``, ``segment_end_sec``, ``recording_start_sec``,
-``recording_end_sec``. ``mediaID``
+* ``annotator_species_score``  — the annotator's per-species correct rate at
+  annotation time.
+* ``annotator_total_score``    — the annotator's latest ToriTore total score.
+* ``annotator_test_reference`` — a human-readable reference to the ToriTore
+  test that produced the snapshot.
+
+Six segment / recording offset columns are appended after the ToriTore block so
+a consumer can locate each annotation both inside its segment/clip and inside
+the source recording: ``segment_id``, ``recording_id``, ``segment_start_sec``,
+``segment_end_sec``, ``recording_start_sec``, ``recording_end_sec``. ``mediaID``
 carries the canonical source-recording UUID (approved 2026-06-09; sourced from
 :mod:`echoroo.services.camtrap` like every other export surface), so the
 segment linkage is preserved via the trailing ``segment_id`` / ``recording_id``
@@ -61,9 +68,18 @@ from echoroo.services.detection_export import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from echoroo.models.project import Project
 
-# Segment / recording offset columns appended AFTER the CamtrapDP / FR-086
-# block so a consumer can locate the annotation both inside the segment/clip and
-# inside the source recording. ``mediaID`` carries the canonical recording UUID
+# Three ToriTore per-annotator proficiency columns appended AFTER the detection
+# export's CamtrapDP + FR-086 block. Kept module-level so the streaming header
+# row and each data row share EXACTLY the same field order.
+_TORITORE_COLUMNS = [
+    "annotator_species_score",
+    "annotator_total_score",
+    "annotator_test_reference",
+]
+
+# Segment / recording offset columns appended AFTER the ToriTore block so a
+# consumer can locate the annotation both inside the segment/clip and inside
+# the source recording. ``mediaID`` carries the canonical recording UUID
 # (single source of truth), so the segment linkage is preserved here via
 # ``segment_id`` + ``recording_id`` + the segment/recording offset columns.
 _OFFSET_COLUMNS = [
@@ -76,9 +92,11 @@ _OFFSET_COLUMNS = [
 ]
 
 # Full ordered column list = the shared CamtrapDP/FR-086 columns, then the
-# six segment/recording offset columns.
+# three ToriTore trailing columns, then the six segment/recording offset
+# columns.
 _ANNOTATION_SET_COLUMNS = [
     *CAMTRAPDP_OBSERVATION_COLUMNS,
+    *_TORITORE_COLUMNS,
     *_OFFSET_COLUMNS,
 ]
 
@@ -194,7 +212,7 @@ class AnnotationSetExportService:
         license_history_url: str,
         recording_h3_map: dict[UUID, int],
     ) -> dict[str, str]:
-        """Render one CamtrapDP + FR-086 + offset row for ``ann``."""
+        """Render one CamtrapDP + FR-086 + ToriTore row for ``ann``."""
         segment = ann.segment
         recording = segment.recording if segment else None
         dataset = recording.dataset if recording and recording.dataset else None
@@ -296,6 +314,10 @@ class AnnotationSetExportService:
             "license_history_url": license_history_url,
             "location_generalization": str(location_generalization),
             "withheld_reason": withheld_reason if withheld_reason is not None else "",
+            # ToriTore per-annotator proficiency snapshot columns.
+            "annotator_species_score": _format_float(ann.annotator_species_score),
+            "annotator_total_score": _format_float(ann.annotator_total_score),
+            "annotator_test_reference": ann.annotator_test_reference or "",
             # Segment / recording identity + offset columns. ``segment_start_sec``
             # is the annotation offset INSIDE the segment/clip; ``recording_*``
             # adds the segment's own offset to locate it inside the recording.
@@ -314,7 +336,7 @@ class AnnotationSetExportService:
         set_id: UUID,
         finalized_only: bool = False,
     ) -> list[dict[str, str]]:
-        """Build every CamtrapDP + offset row dict for a set (no header).
+        """Build every CamtrapDP + ToriTore row dict for a set (no header).
 
         Shared by :meth:`export_csv_stream` (streaming CSV endpoint) and the
         dataset ZIP export so the column logic is defined exactly once.
@@ -352,7 +374,7 @@ class AnnotationSetExportService:
 
     @staticmethod
     def render_csv(rows: list[dict[str, str]]) -> str:
-        """Render header + rows to a CamtrapDP + offset CSV string.
+        """Render header + rows to a CamtrapDP + ToriTore CSV string.
 
         Used by the dataset ZIP export to embed ``annotations.csv``. The column
         order matches the streaming endpoint's header exactly.

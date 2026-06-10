@@ -129,6 +129,11 @@ def _make_annotation_set_annotation() -> SimpleNamespace:
         created_at=datetime(2026, 6, 2, 0, 0, 0, tzinfo=UTC),
         taxon=SimpleNamespace(scientific_name="Parus major"),
         created_by=None,
+        # ToriTore per-annotator proficiency snapshot fields (nullable on the
+        # model); absent here so the export renders them blank.
+        annotator_species_score=None,
+        annotator_total_score=None,
+        annotator_test_reference=None,
     )
 
 

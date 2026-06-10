@@ -1,7 +1,7 @@
 """ToriTore (とりトレ) proficiency integration (preview-only).
 
-Revision ID: 0025
-Revises: 0024
+Revision ID: 0027
+Revises: 0026
 Create Date: 2026-06-08 00:00:00.000000
 
 Adds the schema surface for the ToriTore integration (internal research
@@ -32,8 +32,8 @@ from sqlalchemy.dialects import postgresql as pg
 
 from alembic import op
 
-revision: str = "0025"
-down_revision: str | None = "0024"
+revision: str = "0027"
+down_revision: str | None = "0026"
 branch_labels: str | tuple[str, ...] | None = None
 depends_on: str | tuple[str, ...] | None = None
 
