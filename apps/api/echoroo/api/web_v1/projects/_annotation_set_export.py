@@ -1,21 +1,19 @@
-"""Annotation-set CSV export BFF adapter (CamtrapDP + ToriTore).
+"""Annotation-set CSV export BFF adapter (CamtrapDP + FR-086 + offset columns).
 
 Mirrors the detection CSV export adapter
 (:mod:`echoroo.api.web_v1.projects._detection_export`): a thin endpoint on the
 cookie + CSRF session boundary that fires :func:`gate_action` once with the
 SAME set-view Action used by the annotation-set GET / eligibility endpoints
-(``ANNOTATION_CLIP_GET_ACTION``), validates that the set exists and belongs to
+(``ANNOTATION_SET_GET_ACTION``), validates that the set exists and belongs to
 the project (404 otherwise), then returns a
 :class:`fastapi.responses.StreamingResponse` of the CamtrapDP observations CSV.
 
 The CSV column shape equals the detection export's CamtrapDP + FR-086 block
-plus three trailing ToriTore proficiency columns
-(``annotator_species_score`` / ``annotator_total_score`` /
-``annotator_test_reference``), followed by the six segment / recording offset
-columns (``segment_id``, ``recording_id``, ``segment_start_sec``,
-``segment_end_sec``, ``recording_start_sec``, ``recording_end_sec``). Note that
-``mediaID`` now carries the SEGMENT id (the annotation set is segment-centric);
-the source recording stays available via ``recording_id``. See
+followed by the six segment / recording offset columns (``segment_id``,
+``recording_id``, ``segment_start_sec``, ``segment_end_sec``,
+``recording_start_sec``, ``recording_end_sec``). Note that ``mediaID`` carries
+the canonical source-recording UUID; the segment linkage stays available via
+the trailing ``segment_id`` / ``recording_id`` extension columns. See
 :mod:`echoroo.services.annotation_set_export`.
 
 Permission guard allowlist
@@ -43,7 +41,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 
-from echoroo.core.actions import ANNOTATION_CLIP_GET_ACTION
+from echoroo.core.actions import ANNOTATION_SET_GET_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.core.settings import get_settings
@@ -112,11 +110,11 @@ def _build_content_disposition(name: str | None, fallback_id: UUID) -> str:
     summary="Export annotation set as CSV",
     description=(
         "Export an annotation set's TimeRangeAnnotations as a CamtrapDP "
-        "observations CSV (one row per annotation), including the ToriTore "
-        "per-annotator proficiency columns and the six segment / recording "
+        "observations CSV (one row per annotation), including the FR-086 "
+        "license / generalization columns and the six segment / recording "
         "offset columns (segment_id, recording_id, segment_start_sec, "
         "segment_end_sec, recording_start_sec, recording_end_sec). mediaID "
-        "carries the segment id (was the recording id). Gated by set-view "
+        "carries the canonical source-recording UUID. Gated by set-view "
         "access."
     ),
 )
@@ -127,13 +125,13 @@ async def export_annotation_set_csv(
     current_user: CurrentUser,
     db: DbSession,
 ) -> StreamingResponse:
-    """Stream the annotation-set CamtrapDP + ToriTore CSV.
+    """Stream the annotation-set CamtrapDP + offset CSV.
 
     Uses the SAME set-view gate as the annotation-set GET / eligibility
     endpoints — any member who can view the set may export it.
     """
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SET_GET_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,
@@ -201,7 +199,7 @@ async def export_annotation_set_dataset(
 ) -> Response:
     """Build and return the annotation-set dataset ZIP.
 
-    Uses the SAME set-view gate as the CSV export (``ANNOTATION_CLIP_GET``) —
+    Uses the SAME set-view gate as the CSV export (``ANNOTATION_SET_GET``) —
     it gates audio clip access.
 
     The build is split so it never pins the event loop or blows up memory:
@@ -212,7 +210,7 @@ async def export_annotation_set_dataset(
     :class:`FileResponse` and deleted after the response is sent.
     """
     await gate_action(
-        action=ANNOTATION_CLIP_GET_ACTION,
+        action=ANNOTATION_SET_GET_ACTION,
         project_id=project_id,
         current_user=current_user,
         request=request,

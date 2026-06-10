@@ -3,8 +3,8 @@
  *
  * Mirrors ``detection-export.ts``: a GET against the ``/web-api/v1`` cookie +
  * CSRF session boundary that streams a CamtrapDP observations CSV (one row per
- * TimeRangeAnnotation, including the ToriTore per-annotator proficiency
- * columns). GET requests require no CSRF header.
+ * TimeRangeAnnotation, with the FR-086 license columns and the segment /
+ * recording offset columns). GET requests require no CSRF header.
  */
 
 import { apiClient } from './client';

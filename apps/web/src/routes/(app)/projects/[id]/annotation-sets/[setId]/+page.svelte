@@ -93,7 +93,7 @@
   );
 
   // ============================================================
-  // CSV export (CamtrapDP + ToriTore). Visible to any viewer of the set —
+  // CSV export (CamtrapDP + FR-086 + offset columns). Visible to any viewer of the set —
   // export is a read action, no special role required.
   // ============================================================
   let exporting = $state(false);

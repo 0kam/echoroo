@@ -135,7 +135,7 @@ router.include_router(_custom_models.router)
 # any future ``/detections/{id}/...`` adapter additions.
 router.include_router(_detection_export.router)
 
-# Annotation-set CSV export (CamtrapDP + ToriTore) — mounted BEFORE
+# Annotation-set CSV export (CamtrapDP + FR-086 + offset columns) — mounted BEFORE
 # ``_annotation_sets.router`` so the literal
 # ``/annotation-sets/{set_id}/export/csv`` path is declared adjacent to (and
 # ahead of) the broader annotation-set surface, mirroring how

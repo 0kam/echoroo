@@ -9,7 +9,7 @@ includes confirmed-empty (``is_empty=True``) segments as NEGATIVES.
 
 ZIP layout::
 
-    annotations.csv         CamtrapDP + ToriTore rows (one per finalized
+    annotations.csv         CamtrapDP + FR-086 + offset rows (one per finalized
                             TimeRangeAnnotation; reuses
                             AnnotationSetExportService so the column shape is
                             identical to the CSV-only export).
@@ -111,8 +111,8 @@ class DatasetExportPlan:
 
     Produced by the async path (:meth:`prepare_plan`) and consumed by the sync
     :func:`write_dataset_zip` thread. ``annotations_csv`` is the already
-    rendered CamtrapDP + ToriTore CSV text (no audio dependency); ``segments``
-    is the flat per-segment manifest.
+    rendered CamtrapDP + FR-086 + offset CSV text (no audio dependency);
+    ``segments`` is the flat per-segment manifest.
     """
 
     annotations_csv: str
@@ -312,7 +312,7 @@ class AnnotationSetDatasetExportService:
     ) -> DatasetExportPlan:
         """Do ALL async DB/ORM work and return an ORM-free export plan.
 
-        Renders ``annotations.csv`` (CamtrapDP + ToriTore, scoped to the
+        Renders ``annotations.csv`` (CamtrapDP + FR-086 + offset, scoped to the
         finalized universe so every label row's segment also has a clip) and a
         flat, lazy-attribute-free per-segment manifest. The returned
         :class:`DatasetExportPlan` is safe to hand to the sync
