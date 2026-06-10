@@ -140,13 +140,23 @@ async def _run_annotation_evaluation(evaluation_run_id: UUID) -> dict[str, Any]:
 async def _load_segments(
     db: Any, annotation_set_id: UUID,
 ) -> list[AnnotationSegment]:
-    """Load every non-skipped segment for the set."""
+    """Load every FINALIZED segment for the set (the evaluation universe).
+
+    Only segments with ``status == AnnotationSegmentStatus.ANNOTATED`` are
+    finalized. A confirmed-empty segment (annotator marked "no target calls",
+    ``is_empty=True``) is finalized to ``status == ANNOTATED`` by the segment
+    service, so it stays a valid NEGATIVE and any model detection overlapping
+    it is correctly counted as a False Positive. ``unannotated`` segments mean
+    "not yet finalized" and must be excluded so detections overlapping them are
+    NOT scored (they have no ground truth yet, which would unfairly depress
+    precision). ``skipped`` segments are likewise excluded.
+    """
     from echoroo.models.enums import AnnotationSegmentStatus
 
     stmt = (
         select(AnnotationSegment)
         .where(AnnotationSegment.annotation_set_id == annotation_set_id)
-        .where(AnnotationSegment.status != AnnotationSegmentStatus.SKIPPED)
+        .where(AnnotationSegment.status == AnnotationSegmentStatus.ANNOTATED)
     )
     return list((await db.execute(stmt)).scalars().all())
 
@@ -158,7 +168,13 @@ async def _load_ground_truths(
 
     Each returned dict has keys ``recording_id`` (UUID),
     ``start`` (float, sec), ``end`` (float, sec), ``taxon_id`` (UUID).
+
+    The JOIN is gated on the SAME finalized-status predicate used by
+    :func:`_load_segments` (``status == ANNOTATED``) so the detection-scoping
+    universe and the ground-truth universe stay consistent.
     """
+    from echoroo.models.enums import AnnotationSegmentStatus
+
     stmt = (
         select(TimeRangeAnnotation, AnnotationSegment)
         .join(
@@ -166,6 +182,7 @@ async def _load_ground_truths(
             AnnotationSegment.id == TimeRangeAnnotation.segment_id,
         )
         .where(AnnotationSegment.annotation_set_id == annotation_set_id)
+        .where(AnnotationSegment.status == AnnotationSegmentStatus.ANNOTATED)
     )
     rows: list[dict[str, Any]] = []
     for ann, seg in (await db.execute(stmt)).all():
@@ -191,13 +208,14 @@ async def _load_detections_for_ref(
     """Return detection annotations intersecting the set's segment windows.
 
     Detections are filtered per-recording to those overlapping at least one
-    segment window (``det.start < seg.end AND det.end > seg.start``). This
-    discards detections that fall entirely outside the annotated audio and
+    finalized segment window (``det.start < seg.end AND det.end > seg.start``).
+    This discards detections that fall entirely outside the finalized audio and
     therefore cannot contribute to precision or recall.
 
     Args:
         db: Active async session.
-        segments: Every non-skipped segment of the evaluated set.
+        segments: Every FINALIZED (``status == ANNOTATED``) segment of the
+            evaluated set (the universe produced by :func:`_load_segments`).
         model_ref: Dict with ``kind`` and optional ``model_id``.
 
     Returns:

@@ -30,7 +30,7 @@ import json
 import logging
 import zipfile
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
@@ -54,6 +54,14 @@ from echoroo.models.recording_annotation import (
     RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
 )
 from echoroo.models.site import Site
+from echoroo.services.camtrap import (
+    CAMTRAPDP_OBSERVATION_COLUMNS,
+    deployment_id,
+    event_id,
+    format_event_datetime,
+    media_id,
+    observation_id,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from fastapi import Request
@@ -75,73 +83,10 @@ class _AnnotationEntry(TypedDict):
     label: str
 
 
-# CamtrapDP observations.csv columns in standard order. Extended with four
-# Phase 6 / FR-086 trailing columns appended **after** the CamtrapDP block —
-# CamtrapDP-compliant readers ignore unknown trailing columns, so the
-# extension is non-breaking. NOTE: raw lat/lng / latitude / longitude
-# columns are intentionally absent (FR-028 / SC-016).
-_CAMTRAPDP_COLUMNS = [
-    "observationID",
-    "deploymentID",
-    "mediaID",
-    "eventID",
-    "eventStart",
-    "eventEnd",
-    "observationLevel",
-    "observationType",
-    "deviceSetupType",
-    "scientificName",
-    "count",
-    "lifeStage",
-    "sex",
-    "behavior",
-    "individualID",
-    "individualPositionRadius",
-    "individualPositionAngle",
-    "individualSpeed",
-    "bboxX",
-    "bboxY",
-    "bboxWidth",
-    "bboxHeight",
-    "frequencyLow",
-    "frequencyHigh",
-    "classificationMethod",
-    "classifiedBy",
-    "classificationTimestamp",
-    "classificationProbability",
-    "classificationConfirmation",
-    "observationTags",
-    "observationComments",
-    # FR-086 trailing extensions (non-CamtrapDP):
-    "license",
-    "license_history_url",
-    "location_generalization",
-    "withheld_reason",
-]
-
 # Default H3 resolution exposed to a Member-equivalent exporter when no
 # Site / Recording-level resolution is recorded. Matches the response-filter
 # fallback (echoroo.core.permissions.H3_RES_9) for consistency.
 _DEFAULT_MEMBER_H3_RESOLUTION = 9
-
-
-def _format_event_datetime(
-    recording_datetime: datetime | None,
-    offset_seconds: float,
-) -> str:
-    """Format an absolute ISO 8601 datetime from recording start + offset.
-
-    Args:
-        recording_datetime: Base datetime of the recording (timezone-aware or naive).
-        offset_seconds: Offset in seconds from the recording start.
-
-    Returns:
-        ISO 8601 string with Z suffix, or empty string if datetime is None.
-    """
-    if recording_datetime is None:
-        return ""
-    result = recording_datetime + timedelta(seconds=offset_seconds)
-    return result.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class DetectionExportService:
@@ -240,6 +185,44 @@ class DetectionExportService:
         return site_resolution, None
 
     @staticmethod
+    def compute_export_location_cell(
+        *,
+        project: Project | None,
+        site_h3_index: str | None,
+        site_resolution: int,
+    ) -> tuple[str | None, int, str | None]:
+        """Resolve the EFFECTIVE export H3 cell for one site/deployment.
+
+        Single source of truth for "where on the map does the export reveal
+        this location". It composes the two existing primitives so that the
+        deployment export honours generalization byte-identically to the
+        observation export:
+
+        * :meth:`_compute_export_location_generalization` decides the effective
+          H3 resolution + ``withheld_reason`` from project visibility and the
+          Restricted ``public_location_precision_h3_res`` toggle.
+        * :func:`echoroo.core.response_filter._h3_to_parent` coarsens the
+          precise member cell up to that effective resolution.
+
+        Returns ``(effective_cell_id, effective_resolution, withheld_reason)``.
+        ``effective_cell_id`` is ``None`` when no H3 index is supplied; callers
+        that need a center coordinate derive it from this returned cell so the
+        emitted latitude/longitude never disagrees with the emitted cell id.
+        """
+        # Lazy import keeps this module import-light and avoids a hard
+        # dependency cycle with the permission engine in test contexts.
+        from echoroo.core.response_filter import _h3_to_parent
+
+        effective_resolution, withheld_reason = (
+            DetectionExportService._compute_export_location_generalization(
+                project=project,
+                site_resolution=site_resolution,
+            )
+        )
+        effective_cell = _h3_to_parent(site_h3_index, effective_resolution)
+        return effective_cell, effective_resolution, withheld_reason
+
+    @staticmethod
     def _build_license_history_url(project_id: UUID) -> str:
         """Build the FR-087 ``license_history`` reference URL for the export."""
         return f"/api/v1/projects/{project_id}/license-history"
@@ -260,12 +243,18 @@ class DetectionExportService:
         EXACTLY the same row shape.
         """
         recording = ann.recording
-        dataset_name = recording.dataset.name if recording and recording.dataset else ""
-        recording_uuid = str(recording.id) if recording else ""
+        dataset = recording.dataset if recording and recording.dataset else None
+        # Canonical CamtrapDP join keys (approved 2026-06-09): deploymentID is
+        # the dataset UUID and mediaID is the recording UUID — both sourced from
+        # echoroo.services.camtrap so every export surface emits identical keys.
+        deployment_value = deployment_id(dataset.id) if dataset else ""
+        media_value = media_id(recording.id) if recording else ""
         recording_datetime = recording.datetime if recording else None
 
-        event_start = _format_event_datetime(recording_datetime, ann.start_time)
-        event_end = _format_event_datetime(recording_datetime, ann.end_time)
+        # eventStart/eventEnd are the ANNOTATION's recording-relative time
+        # (ann.start_time / ann.end_time), with sub-second precision preserved.
+        event_start = format_event_datetime(recording_datetime, ann.start_time)
+        event_end = format_event_datetime(recording_datetime, ann.end_time)
 
         machine_sources = {
             DetectionSource.BIRDNET,
@@ -310,10 +299,10 @@ class DetectionExportService:
         )
 
         return {
-            "observationID": str(ann.id),
-            "deploymentID": dataset_name,
-            "mediaID": recording_uuid,
-            "eventID": str(ann.id),
+            "observationID": observation_id(ann.id),
+            "deploymentID": deployment_value,
+            "mediaID": media_value,
+            "eventID": event_id(),
             "eventStart": event_start,
             "eventEnd": event_end,
             "observationLevel": "media",
@@ -387,7 +376,7 @@ class DetectionExportService:
         recording_h3_map = await self._build_recording_h3_resolution_map(annotations)
 
         output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=_CAMTRAPDP_COLUMNS)
+        writer = csv.DictWriter(output, fieldnames=CAMTRAPDP_OBSERVATION_COLUMNS)
         writer.writeheader()
         for ann in annotations:
             writer.writerow(
@@ -470,7 +459,7 @@ class DetectionExportService:
 
         # ----- emit header row (commits the response) ---------------------
         header_buf = io.StringIO()
-        header_writer = csv.DictWriter(header_buf, fieldnames=_CAMTRAPDP_COLUMNS)
+        header_writer = csv.DictWriter(header_buf, fieldnames=CAMTRAPDP_OBSERVATION_COLUMNS)
         header_writer.writeheader()
         yield header_buf.getvalue().encode("utf-8")
 
@@ -499,7 +488,7 @@ class DetectionExportService:
                     return
 
             row_buf = io.StringIO()
-            row_writer = csv.DictWriter(row_buf, fieldnames=_CAMTRAPDP_COLUMNS)
+            row_writer = csv.DictWriter(row_buf, fieldnames=CAMTRAPDP_OBSERVATION_COLUMNS)
             row_writer.writerow(
                 self._build_csv_row(
                     ann,

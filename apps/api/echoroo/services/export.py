@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 from echoroo.services.audio import AudioService
+from echoroo.services.camtrap import deployment_id, media_id
+from echoroo.services.detection_export import DetectionExportService
 from echoroo.services.h3_utils import h3_to_center
 
 
@@ -49,6 +51,9 @@ class ExportService:
         - deploymentEnd: End datetime
         - setupBy: Person who set up
         - cameraID: Recorder ID
+        - h3_cell_id: Effective (possibly generalized) H3 cell id (FR-086 parity)
+        - h3_resolution: Effective H3 resolution of h3_cell_id
+        - withheld_reason: Reason the location was clamped (or empty)
 
         Args:
             dataset_id: Dataset UUID
@@ -78,6 +83,11 @@ class ExportService:
                 "deploymentEnd",
                 "setupBy",
                 "cameraID",
+                # FR-086 trailing extensions — same convention as the
+                # observation export (detection_export / annotation_set_export).
+                "h3_cell_id",
+                "h3_resolution",
+                "withheld_reason",
             ]
         )
 
@@ -92,16 +102,35 @@ class ExportService:
         )
         last_recording = recordings_desc[0] if recordings_desc else None
 
-        # Get site info
+        # Get site info. The location columns honour the project's location
+        # generalization: lat/long are derived from the EFFECTIVE (possibly
+        # coarsened) H3 cell so a Restricted/obscured site never leaks a precise
+        # center and lat/long stays consistent with the emitted h3_cell_id.
         site = dataset.site
         lat = None
         lng = None
+        effective_cell: str | None = None
+        effective_resolution: int | None = None
+        withheld_reason: str | None = None
         if site and site.h3_index_member:
-            lat, lng = h3_to_center(site.h3_index_member)
+            (
+                effective_cell,
+                effective_resolution,
+                withheld_reason,
+            ) = DetectionExportService.compute_export_location_cell(
+                project=dataset.project,
+                site_h3_index=site.h3_index_member,
+                site_resolution=site.h3_index_member_resolution,
+            )
+            if effective_cell:
+                lat, lng = h3_to_center(effective_cell)
 
         writer.writerow(
             [
-                str(dataset.id),
+                # Canonical CamtrapDP join key (approved 2026-06-09):
+                # deploymentID == str(dataset.id), shared with every observation
+                # export so the deployments<->observations join is consistent.
+                deployment_id(dataset.id),
                 str(site.id) if site else "",
                 site.name if site else "",
                 lat if lat else "",
@@ -122,6 +151,11 @@ class ExportService:
                     else ""
                 ),
                 dataset.recorder_id or "",
+                # FR-086 trailing extensions (empty when the deployment has no
+                # site / no H3 index).
+                effective_cell or "",
+                str(effective_resolution) if effective_resolution is not None else "",
+                withheld_reason or "",
             ]
         )
 
@@ -206,8 +240,11 @@ class ExportService:
 
                 writer.writerow(
                     [
-                        str(recording.id),
-                        str(dataset_id),
+                        # Canonical CamtrapDP join keys (approved 2026-06-09):
+                        # mediaID == str(recording.id) and deploymentID ==
+                        # str(dataset.id), shared with every observation export.
+                        media_id(recording.id),
+                        deployment_id(dataset_id),
                         (
                             "audiomoth"
                             if "audiomoth" in recording.filename.lower()

@@ -37,6 +37,7 @@ from fastapi import APIRouter
 from echoroo.api.web_v1 import trusted as trusted_module
 
 from . import (
+    _annotation_set_export,
     _annotation_sets,
     _clips,
     _core,
@@ -133,6 +134,14 @@ router.include_router(_custom_models.router)
 # the literal ``/detections/export/*`` segments win deterministically over
 # any future ``/detections/{id}/...`` adapter additions.
 router.include_router(_detection_export.router)
+
+# Annotation-set CSV export (CamtrapDP + FR-086 + offset columns) — mounted BEFORE
+# ``_annotation_sets.router`` so the literal
+# ``/annotation-sets/{set_id}/export/csv`` path is declared adjacent to (and
+# ahead of) the broader annotation-set surface, mirroring how
+# ``_detection_export`` is mounted ahead of ``_search``. Fires ``gate_action``
+# with the same set-view Action as the annotation-set GET endpoint.
+router.include_router(_annotation_set_export.router)
 
 # Annotation-set ground-truth + segment + evaluation surface (spec/009 PR 4).
 # 18 endpoints covering AnnotationSet CRUD, Palette, Segment lifecycle,
