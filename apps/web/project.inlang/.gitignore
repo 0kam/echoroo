@@ -1,0 +1,17 @@
+# NOTE: this .gitignore is INTENTIONALLY tracked (do not `git rm --cached` it,
+# despite what inlang ^2.5 auto-generates as a header — if inlang ever
+# regenerates this file, restore these rules).
+#
+# Everything is ignored except settings.json, this .gitignore, and
+# cache/plugins/.gitkeep. The .gitkeep keeps the plugin-cache directory
+# present on fresh clones (the dir is bind-mounted into the dev container
+# and paraglide/inlang writes its plugin cache there); real cache contents
+# stay ignored.
+*
+!settings.json
+!.gitignore
+!cache/
+cache/*
+!cache/plugins/
+cache/plugins/*
+!cache/plugins/.gitkeep

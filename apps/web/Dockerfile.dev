@@ -18,7 +18,10 @@ COPY . .
 # Ensure the built-in 'node' user (uid=1000) owns /app so
 # npm / Vite / Paraglide can write caches and generated files
 # without creating root-owned files on bind-mounted host volumes.
-RUN chown -R node:node /app
+# Pre-create /app/src/lib/paraglide before chown: a fresh named volume
+# mounted there inherits node ownership from this image path, letting
+# Vite's paraglide plugin generate the runtime without a manual chown.
+RUN mkdir -p /app/src/lib/paraglide && chown -R node:node /app
 
 USER node
 

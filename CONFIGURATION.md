@@ -68,21 +68,25 @@ A production compose file is not currently present in this repository. `./echoro
 
 ### Machine Learning Settings
 
-Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch) for species detection.
+Echoroo uses machine learning models (BirdNET, Perch — both on TensorFlow) for species detection. The defaults preserve GPU behaviour, so a host with a working GPU needs none of these set.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ECHOROO_ML_USE_GPU` | Enable GPU acceleration for ML models | `true` |
-| `ECHOROO_ML_GPU_DEVICE` | Device specification (`GPU`, `CPU`, `GPU:0`, `GPU:1`) | `GPU` |
-| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per GPU inference | `16` |
-| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `8` |
-| `ECHOROO_ML_WORKERS` | Number of GPU inference workers | `1` |
+| `ECHOROO_ML_USE_GPU` | Use the GPU for inference. `false` forces CPU (`CUDA_VISIBLE_DEVICES=-1`) for both BirdNET and Perch. | `true` |
+| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per inference batch | `16` |
+| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `1` |
+| `ECHOROO_ML_WORKERS` | Number of inference workers | `1` |
+| `ECHOROO_ML_CPU_NUM_THREADS` | Thread cap applied **only** in CPU mode (bounds TF / OpenMP / BLAS pools so CPU inference does not exhaust RAM) | `8` |
+| `ECHOROO_ML_CPU_WARMUP_BATCHES` | Comma-separated Perch warmup batch sizes used **only** in CPU mode (empty = skip warmup). GPU mode always warms up `1,6,10,16`. | `1` |
+| `ECHOROO_ML_GPU_ALLOW_GROWTH` | In GPU mode, set `TF_FORCE_GPU_ALLOW_GROWTH=true` so TF grows GPU memory on demand | `true` |
+| `ECHOROO_WORKER_MEM_LIMIT` | Compose-level RAM cap for the worker container (`0` = unlimited). Set e.g. `24g` on a CPU/Blackwell box. | `0` |
 
 **Performance Tuning:**
 
 - **GPU_BATCH_SIZE:** Higher values improve throughput but require more GPU memory. Reduce if you get `CUDA_ERROR_OUT_OF_MEMORY`.
-- **FEEDERS:** More feeders speed up file I/O but use more CPU. Typical values: 4-16.
+- **FEEDERS:** More feeders speed up file I/O but use more CPU.
 - **WORKERS:** Usually 1 is optimal unless you have multiple GPUs.
+- **CPU mode:** When `ECHOROO_ML_USE_GPU=false`, inference threads are capped to `ECHOROO_ML_CPU_NUM_THREADS` and the Perch warmup shrinks to `ECHOROO_ML_CPU_WARMUP_BATCHES`; pair with `ECHOROO_WORKER_MEM_LIMIT` to bound RAM.
 
 ## Deployment Scenarios
 
