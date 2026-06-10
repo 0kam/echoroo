@@ -19,12 +19,25 @@
     scientificName: string;
     /** Project ID passed to Xeno-canto search API */
     projectId: string;
+    /**
+     * Whether the backend Xeno-canto integration is configured. When false the
+     * "From Xeno-canto" tab is disabled and an explanatory message is shown
+     * instead of the search panel.
+     */
+    xenoCantoEnabled?: boolean;
     /** Called with a single source (upload) or an array of sources (Xeno-canto multi-select) */
     onAdd: (sources: SoundSource | SoundSource[]) => void;
     onCancel: () => void;
   }
 
-  let { modelName, scientificName, projectId, onAdd, onCancel }: Props = $props();
+  let {
+    modelName,
+    scientificName,
+    projectId,
+    xenoCantoEnabled = false,
+    onAdd,
+    onCancel,
+  }: Props = $props();
 
   // Active tab: 'upload' or 'xeno-canto'
   let activeTab = $state<'upload' | 'xeno-canto'>('upload');
@@ -184,18 +197,31 @@
     </button>
     <button
       type="button"
+      disabled={!xenoCantoEnabled}
       onclick={() => (activeTab = 'xeno-canto')}
+      title={xenoCantoEnabled ? undefined : m.search_xeno_canto_not_configured()}
       class="rounded px-3 py-1.5 text-sm font-medium transition-colors
              {activeTab === 'xeno-canto'
                ? 'bg-stone-700 text-white dark:bg-stone-600'
-               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:hover:bg-stone-700'}"
+               : 'border border-stone-300 bg-white text-stone-600 hover:bg-stone-50 dark:border-stone-600 dark:bg-stone-800 dark:hover:bg-stone-700'}
+             {xenoCantoEnabled ? '' : 'cursor-not-allowed opacity-50 hover:bg-white dark:hover:bg-stone-800'}"
     >
       {m.search_from_url()}
     </button>
   </div>
 
+  <!-- Xeno-canto disabled notice (capability flag off) -->
+  {#if !xenoCantoEnabled}
+    <div
+      class="mb-3 rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-stone-700 dark:text-stone-300"
+      role="status"
+    >
+      {m.search_xeno_canto_not_configured()}
+    </div>
+  {/if}
+
   <!-- Xeno-canto search panel -->
-  {#if activeTab === 'xeno-canto'}
+  {#if activeTab === 'xeno-canto' && xenoCantoEnabled}
     <XenoCantoSearchPanel
       {scientificName}
       {projectId}

@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.settings import get_settings
 from echoroo.schemas.search import (
     BatchSearchRequest,
     BatchSearchResponse,
@@ -475,6 +476,7 @@ class SimilaritySearchService:
             total_count=total_count,
             by_model=by_model,
             by_dataset=by_dataset,
+            xeno_canto_enabled=get_settings().xeno_canto_enabled,
         )
 
     async def get_similarity_distribution(

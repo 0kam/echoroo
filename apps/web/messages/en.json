@@ -1372,6 +1372,8 @@
   "search_no_sources_hint": "Click \"Add Source\" to upload an audio file or add a recording from a URL.",
   "search_upload_file": "Upload File",
   "search_from_url": "From Xeno-Canto",
+  "search_xeno_canto_not_configured": "Xeno-canto integration is not configured. Ask an administrator to set XENO_CANTO_API_KEY (from a xeno-canto.org account → API key) to enable Xeno-canto search.",
+  "search_xeno_canto_search_failed": "Xeno-canto search failed. Please try again.",
   "search_drop_zone_text": "Drag and drop an audio file here",
   "search_drop_zone_browse": "or browse",
   "search_drop_zone_formats": "WAV, FLAC, MP3, OGG (max 10 MB)",

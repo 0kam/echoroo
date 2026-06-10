@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from echoroo.api.v1 import api_router
 from echoroo.api.web_v1 import web_v1_router
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
+from echoroo.core.boot_checks import run_boot_checks
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.exceptions import (
     AppException,
@@ -72,6 +73,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
             "DO NOT use in production. ENVIRONMENT=%s",
             settings.ENVIRONMENT,
         )
+    # Fail fast on missing critical infrastructure (Redis / S3) before the
+    # app starts serving. Honours ECHOROO_SKIP_BOOT_CHECKS (set in tests).
+    await run_boot_checks()
     await get_redis_connection()
     await init_rate_limiter()
     yield

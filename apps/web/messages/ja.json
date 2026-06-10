@@ -1372,6 +1372,8 @@
   "search_no_sources_hint": "「音源を追加」をクリックして音声ファイルをアップロードするか、URLから録音を追加してください。",
   "search_upload_file": "ファイルをアップロード",
   "search_from_url": "Xeno-Cantoから",
+  "search_xeno_canto_not_configured": "Xeno-canto連携が設定されていません。Xeno-canto検索を有効にするには、管理者に XENO_CANTO_API_KEY（xeno-canto.org アカウント → API key で取得）の設定を依頼してください。",
+  "search_xeno_canto_search_failed": "Xeno-canto検索に失敗しました。もう一度お試しください。",
   "search_drop_zone_text": "ここに音声ファイルをドラッグ＆ドロップ",
   "search_drop_zone_browse": "または選択",
   "search_drop_zone_formats": "WAV, FLAC, MP3, OGG（最大10 MB）",

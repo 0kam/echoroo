@@ -234,6 +234,36 @@ class Settings(BaseSettings):
     JANITOR_DRY_RUN: bool = True  # default True; flip to False after prod monitoring
     JANITOR_AGE_HOURS: int = 24  # orphan age threshold (hours)
 
+    # Xeno-canto integration.
+    #
+    # The Xeno-canto search/import features require an API key issued from a
+    # xeno-canto.org account (Account → API key). When unset (or left at the
+    # historical placeholder "demo", which the v3 API rejects), the
+    # integration is disabled rather than silently failing at first use —
+    # ``xeno_canto_enabled`` drives both the capability flag exposed to the
+    # frontend and the typed 409 raised by the XC proxy endpoints.
+    XENO_CANTO_API_KEY: str | None = Field(
+        default=None,
+        description=(
+            "Xeno-canto API key (xeno-canto.org account → API key). "
+            "Unset or 'demo' disables the Xeno-canto integration."
+        ),
+    )
+
+    # Boot probes (fail-fast on missing critical config).
+    #
+    # When set to a truthy value the lifespan / worker boot probes
+    # (Redis ping, S3 head_bucket) are skipped entirely. Tests set this so
+    # app construction does not require live Redis / S3. Mirrors the
+    # ``boot_checks`` module's ``_SKIP_ENV`` constant.
+    ECHOROO_SKIP_BOOT_CHECKS: bool = Field(
+        default=False,
+        description=(
+            "When true, skip all startup boot probes (Redis ping, S3 "
+            "head_bucket). Intended for tests / offline tooling."
+        ),
+    )
+
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
@@ -334,6 +364,20 @@ class Settings(BaseSettings):
             if value > 0:
                 sizes.append(value)
         return sizes
+
+    @property
+    def xeno_canto_enabled(self) -> bool:
+        """Return True when a usable Xeno-canto API key is configured.
+
+        The historical code fell back to the literal string ``"demo"`` when
+        ``XENO_CANTO_API_KEY`` was unset; the Xeno-canto v3 API rejects that
+        placeholder, so a deployment without a real key would fail at first
+        use with a confusing upstream error. The integration is considered
+        enabled only when the key is non-empty (after stripping) and not the
+        ``"demo"`` placeholder.
+        """
+        key = (self.XENO_CANTO_API_KEY or "").strip()
+        return bool(key) and key.lower() != "demo"
 
     # Phase 17 backlog A-2 — PII hash CMK rotation (FR-091b dual-write).
     #

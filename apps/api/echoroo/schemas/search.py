@@ -79,6 +79,18 @@ class EmbeddingStatsResponse(BaseModel):
     by_dataset: dict[str, int] = Field(
         ..., description="Count per dataset UUID string, e.g. {'uuid': 1500}"
     )
+    # Capability flag surfaced to the frontend so the search page can disable
+    # the Xeno-canto entry points (and show an explanatory message) when no
+    # API key is configured. The search page already fetches this response at
+    # load, so piggy-backing the flag here avoids a separate capabilities
+    # endpoint (and its permission / contract artifacts).
+    xeno_canto_enabled: bool = Field(
+        default=False,
+        description=(
+            "Whether the Xeno-canto integration is configured "
+            "(XENO_CANTO_API_KEY set to a non-placeholder value)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

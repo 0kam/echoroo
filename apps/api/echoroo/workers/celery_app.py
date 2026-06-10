@@ -262,3 +262,26 @@ app.conf.beat_schedule = {
         "schedule": crontab(hour=3, minute=30),
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# Boot probes — fail fast on missing critical infrastructure (Redis / S3)
+# when a worker process becomes ready, mirroring the FastAPI lifespan probe.
+# The synchronous wrapper drives the async probes on a fresh event loop via
+# ``asyncio.run`` (acceptable inside a Celery signal handler). Honours
+# ``ECHOROO_SKIP_BOOT_CHECKS`` so test workers do not require live infra.
+# ---------------------------------------------------------------------------
+from celery.signals import worker_ready as _worker_ready  # noqa: E402
+
+
+@_worker_ready.connect  # type: ignore[untyped-decorator]
+def _run_boot_checks_on_worker_ready(**_kwargs: object) -> None:
+    """Run startup boot probes when a Celery worker becomes ready.
+
+    A fatal probe failure (Redis unreachable, or S3 unreachable in
+    staging / production) raises ``BootCheckError``, crashing the worker
+    startup loudly instead of letting tasks fail one-by-one later.
+    """
+    from echoroo.core.boot_checks import run_boot_checks_sync
+
+    run_boot_checks_sync()

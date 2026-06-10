@@ -24,6 +24,13 @@ os.environ.setdefault(
     "test-invitation-hmac-key-32-chars-min-padding-xxxxxxxx",
 )
 
+# Startup boot probes (echoroo.core.boot_checks) ping Redis and S3 from the
+# FastAPI lifespan / Celery worker_ready signal. The test suite boots the app
+# via ``create_app`` fixtures without live Redis / S3, so skip the probes by
+# default. Integration tests that exercise the probes themselves unset this
+# via ``monkeypatch.delenv`` / ``monkeypatch.setenv(..., "0")``.
+os.environ.setdefault("ECHOROO_SKIP_BOOT_CHECKS", "1")
+
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa

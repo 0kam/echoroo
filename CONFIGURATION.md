@@ -88,6 +88,38 @@ Echoroo uses machine learning models (BirdNET, Perch — both on TensorFlow) for
 - **WORKERS:** Usually 1 is optimal unless you have multiple GPUs.
 - **CPU mode:** When `ECHOROO_ML_USE_GPU=false`, inference threads are capped to `ECHOROO_ML_CPU_NUM_THREADS` and the Perch warmup shrinks to `ECHOROO_ML_CPU_WARMUP_BATCHES`; pair with `ECHOROO_WORKER_MEM_LIMIT` to bound RAM.
 
+### External Integrations
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `XENO_CANTO_API_KEY` | API key for the [Xeno-canto](https://xeno-canto.org/) recording archive. Required by the "From Xeno-canto" search/import feature on the project search screen. | _(unset)_ |
+
+**Xeno-canto setup:**
+
+1. Register a free account at <https://xeno-canto.org/> (or sign in to an existing one).
+2. Open your account page and copy the value under **Account → API key**.
+3. Set `XENO_CANTO_API_KEY=<your key>` in `.env` and restart the API + worker.
+
+When the key is unset (or left at the placeholder `demo`, which the Xeno-canto v3 API rejects):
+
+- The "From Xeno-canto" tab on the search screen is **disabled** with an explanatory message.
+- The Xeno-canto search endpoint returns HTTP **409** `{ "error": "xeno_canto_not_configured" }` rather than failing with a confusing upstream error.
+
+### Boot Probes (fail-fast on missing infrastructure)
+
+At startup the API (FastAPI lifespan) and each Celery worker run lightweight probes so a misconfigured deployment crashes loudly before serving traffic, instead of surfacing a generic 500 deep inside a user flow.
+
+| Probe | Timeout | Development | Staging / Production |
+|-------|---------|-------------|----------------------|
+| Redis `ping()` | 2s | Hard fail | Hard fail |
+| S3 `head_bucket` | 5s | Log ERROR, continue | Hard fail |
+
+KMS is intentionally **not** probed at boot (production IAM may deny `kms:DescribeKey`); first-use KMS errors are surfaced with an actionable message instead.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ECHOROO_SKIP_BOOT_CHECKS` | Skip all boot probes (Redis ping, S3 head_bucket). Intended for offline tooling / tests. | `0` |
+
 ## Deployment Scenarios
 
 ### 1. Local Development with Docker
