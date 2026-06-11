@@ -13,9 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.database import get_db
 from echoroo.models.enums import DetectionStatus, SearchSessionStatus
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.search_query_embedding import SearchQueryEmbedding
 from echoroo.models.search_session import SearchSession
 
@@ -212,13 +210,13 @@ class SearchSessionService:
         # Fetch all annotations linked to this session
         ann_result = await self.db.execute(
             select(
-                Annotation.recording_id,
-                Annotation.start_time,
-                Annotation.end_time,
-                Annotation.status,
-                Annotation.tag_id,
-                Annotation.id,
-            ).where(Annotation.search_session_id == session_id)
+                RecordingAnnotation.recording_id,
+                RecordingAnnotation.start_time,
+                RecordingAnnotation.end_time,
+                RecordingAnnotation.status,
+                RecordingAnnotation.tag_id,
+                RecordingAnnotation.id,
+            ).where(RecordingAnnotation.search_session_id == session_id)
         )
         annotations = ann_result.all()
 
@@ -268,12 +266,12 @@ class SearchSessionService:
         result = await self.db.execute(
             select(
                 func.count()
-                .filter(Annotation.status == DetectionStatus.CONFIRMED)
+                .filter(RecordingAnnotation.status == DetectionStatus.CONFIRMED)
                 .label("confirmed"),
                 func.count()
-                .filter(Annotation.status == DetectionStatus.REJECTED)
+                .filter(RecordingAnnotation.status == DetectionStatus.REJECTED)
                 .label("rejected"),
-            ).where(Annotation.search_session_id == session_id)
+            ).where(RecordingAnnotation.search_session_id == session_id)
         )
         row = result.one()
 
@@ -395,7 +393,9 @@ class SearchSessionService:
         # of this service queries, so the generated DELETE targets the table that
         # actually carries ``search_session_id``. Scoped to this session only.
         await self.db.execute(
-            delete(Annotation).where(Annotation.search_session_id == session.id)
+            delete(RecordingAnnotation).where(
+                RecordingAnnotation.search_session_id == session.id
+            )
         )
 
         # Clear the session's stored query embeddings (reference-audio vectors).

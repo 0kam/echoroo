@@ -23,9 +23,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import DetectionRunStatus
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
@@ -429,7 +427,7 @@ async def _bulk_insert_annotations(
     total_inserted = 0
     for i in range(0, len(annotation_dicts), BATCH_CHUNK_SIZE):
         chunk = annotation_dicts[i : i + BATCH_CHUNK_SIZE]
-        stmt = pg_insert(Annotation).values(chunk).on_conflict_do_nothing()
+        stmt = pg_insert(RecordingAnnotation).values(chunk).on_conflict_do_nothing()
         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
         total_inserted += cursor.rowcount
     return total_inserted

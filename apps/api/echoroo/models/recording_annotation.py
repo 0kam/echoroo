@@ -1,39 +1,30 @@
 """RecordingAnnotation — recording-level annotation (transitional name).
 
-Phase 13 P1.5 R2 (Codex follow-up — Fatal) introduced this "rich-shape"
-annotation row (``recording_id`` / ``tag_id`` / ``status`` / ``confidence``
-/ ``start_time`` / ``end_time`` / ``freq_low`` / ``freq_high`` /
-``reviewed_by_id`` / ``reviewed_at`` / ``search_session_id`` /
-``detection_run_id``).
+This "rich-shape" annotation row carries ``recording_id`` / ``tag_id`` /
+``status`` / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
+``freq_high`` / ``reviewed_by_id`` / ``reviewed_at`` / ``search_session_id`` /
+``detection_run_id``.
 
 The table ``recording_annotations_DEFERRED`` **exists** in the database: it
 is created by migration ``0011_recording_annotations_placeholder.py`` and is
 actively written and read at runtime. Real callers that depend on it include
-search-session review annotations (queried/deleted by
-``search_session_id`` in :mod:`echoroo.services.search_session`), detection
-review annotations, evaluation, detection export, and annotation projects.
-The ``_DEFERRED`` suffix is a *transitional placeholder name*: it is pending
-the Phase 14+ rename to ``recording_annotations``, NOT a marker that the
-table is absent. The identifier is double-quoted everywhere so PostgreSQL
-preserves the mixed-case suffix.
+the ML classifier (custom-SVM inference + seed/AL sampling), search-session
+review annotations (queried/deleted by ``search_session_id`` in
+:mod:`echoroo.services.search_session`), the detection review grid /
+service, cross-model evaluation, and detection export. The ``_DEFERRED``
+suffix is a *transitional placeholder name*: it is pending a future rename to
+``recording_annotations``, NOT a marker that the table is absent. The
+identifier is double-quoted everywhere so PostgreSQL preserves the mixed-case
+suffix.
 
-When the Phase 14+ migration finalises the schema it will:
-
-* Add the unique constraint ``(recording_id, tag_id, start_time, end_time)``
-  (or similar) for de-duplication
-* Backfill from existing ``Detection`` rows + ``annotations`` rows
-* Reactivate the contract / integration tests skipped in this phase
-* Rename ``__tablename__`` here from ``recording_annotations_DEFERRED`` to
-  ``recording_annotations`` and update this docstring
+A future migration that finalises the schema is expected to rename
+``__tablename__`` here from ``recording_annotations_DEFERRED`` to
+``recording_annotations`` and update this docstring.
 
 Note: :class:`echoroo.models.annotation.Annotation` is the separate, minimal
 detection-based shape (``id`` / ``detection_id`` / ``user_id`` / ``source`` /
 ``taxon_id`` / ``label``) and carries no ``search_session_id`` column;
 callers needing the rich recording-level fields use this model instead.
-
-Spec source of truth: ``/tmp/plan-merged-v5-final.md`` §0.1 "DB 真
-(detection-based)、ORM 縮退" — the rich shape was confirmed as Phase 14+
-deferred, not Phase 13 production.
 """
 
 from __future__ import annotations

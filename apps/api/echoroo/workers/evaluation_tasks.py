@@ -7,18 +7,19 @@ from ``specs/003-annotation/research.md`` §4 and persists aggregated
 :class:`EvaluationResult` rows (one per species + one ``taxon_id IS NULL``
 overall row per model reference).
 
-Source of the detection annotations per model kind:
+Source of the detection annotations per model kind (all read from the live
+:class:`RecordingAnnotation` table ``recording_annotations_DEFERRED``):
 
-- **BirdNET**: rows in ``annotations`` with ``source = 'birdnet'``.
-- **Perch**: rows in ``annotations`` with ``source = 'perch'``.
-- **Custom**: rows in ``annotations`` with ``source = 'custom_svm'`` and
+- **BirdNET**: rows with ``source = 'birdnet'``.
+- **Perch**: rows with ``source = 'perch'``.
+- **Custom**: rows with ``source = 'custom_svm'`` and
   ``detection_run_id`` pointing at a :class:`DetectionRun` whose
   ``model_version`` equals the custom model UUID (this is how
   :meth:`CustomModelService.create_detection_run` persists the linkage).
 
-Species identity for all three sources is carried by ``Annotation.tag_id``
-→ ``Tag.taxon_id``; rows whose tag has no taxon link are discarded
-before scoring (they cannot match any GT row).
+Species identity for all three sources is carried by
+``RecordingAnnotation.tag_id`` → ``Tag.taxon_id``; rows whose tag has no
+taxon link are discarded before scoring (they cannot match any GT row).
 """
 
 from __future__ import annotations
@@ -38,9 +39,7 @@ from echoroo.models.annotation_set import (
 )
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import DetectionSource
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.tag import Tag
 from echoroo.repositories.evaluation import (
     EvaluationResultRepository,
@@ -234,17 +233,17 @@ async def _load_detections_for_ref(
 
     kind = str(model_ref.get("kind"))
     stmt = (
-        select(Annotation, Tag.taxon_id)
-        .join(Tag, Tag.id == Annotation.tag_id)
-        .where(Annotation.recording_id.in_(segments_by_rec.keys()))
+        select(RecordingAnnotation, Tag.taxon_id)
+        .join(Tag, Tag.id == RecordingAnnotation.tag_id)
+        .where(RecordingAnnotation.recording_id.in_(segments_by_rec.keys()))
         .where(Tag.taxon_id.is_not(None))
     )
 
     if kind == "birdnet":
-        stmt = stmt.where(Annotation.source == DetectionSource.BIRDNET)
+        stmt = stmt.where(RecordingAnnotation.source == DetectionSource.BIRDNET)
     elif kind == "perch":
         stmt = stmt.where(
-            Annotation.source.in_(
+            RecordingAnnotation.source.in_(
                 [DetectionSource.PERCH, DetectionSource.PERCH_SEARCH]
             )
         )
@@ -269,8 +268,8 @@ async def _load_detections_for_ref(
             return []
         stmt = stmt.where(
             and_(
-                Annotation.source == DetectionSource.CUSTOM_SVM,
-                Annotation.detection_run_id.in_(run_ids),
+                RecordingAnnotation.source == DetectionSource.CUSTOM_SVM,
+                RecordingAnnotation.detection_run_id.in_(run_ids),
             )
         )
     else:

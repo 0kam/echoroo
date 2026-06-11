@@ -834,9 +834,7 @@ async def _run_custom_model_inference(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             from sqlalchemy.engine import CursorResult
 
-            from echoroo.models.recording_annotation import (
-                RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-            )
+            from echoroo.models.recording_annotation import RecordingAnnotation
 
             total_embeddings = 0
             total_annotations = 0
@@ -932,7 +930,7 @@ async def _run_custom_model_inference(
                 if len(pending_annotation_dicts) >= _INFERENCE_COMMIT_BATCH:
                     async with session_factory() as db:
                         stmt = (
-                            pg_insert(Annotation)
+                            pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
                             .on_conflict_do_nothing()
                         )
@@ -963,7 +961,7 @@ async def _run_custom_model_inference(
                     # Flush smaller batch at end of loop iteration
                     async with session_factory() as db:
                         stmt = (
-                            pg_insert(Annotation)
+                            pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
                             .on_conflict_do_nothing()
                         )
@@ -1354,8 +1352,8 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
             # Step 7: Create Annotation records + SamplingRoundItem records
             # ------------------------------------------------------------------
             from echoroo.models.enums import DetectionSource, DetectionStatus  # noqa: PLC0415
-            from echoroo.models.recording_annotation import (
-                RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)  # noqa: PLC0415
+            from echoroo.models.recording_annotation import (  # noqa: PLC0415
+                RecordingAnnotation,
             )
 
             now = datetime.now(UTC)
@@ -1363,7 +1361,7 @@ async def _generate_seed_samples(model_id: str, round_id: str) -> dict[str, Any]
 
             for sample in samples:
                 row = row_map[sample.embedding_id]
-                annotation = Annotation(
+                annotation = RecordingAnnotation(
                     recording_id=UUID(sample.recording_id),
                     tag_id=target_tag_id,
                     source=DetectionSource.SAMPLING_ROUND,
@@ -1943,8 +1941,8 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
         # Step 8: Load pre-created round, mark it running, then insert items
         # ------------------------------------------------------------------
         from echoroo.models.enums import DetectionSource, DetectionStatus  # noqa: PLC0415
-        from echoroo.models.recording_annotation import (
-            RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)  # noqa: PLC0415
+        from echoroo.models.recording_annotation import (  # noqa: PLC0415
+            RecordingAnnotation,
         )
 
         async with session_factory() as db:
@@ -1975,7 +1973,7 @@ async def _run_al_iteration(model_id: str, round_id: str) -> dict[str, Any]:
                     )
                     continue
 
-                annotation = Annotation(
+                annotation = RecordingAnnotation(
                     recording_id=meta.recording_id,
                     tag_id=target_tag_id,
                     source=DetectionSource.SAMPLING_ROUND,
