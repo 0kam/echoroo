@@ -1,6 +1,5 @@
 """Database models."""
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_comment import AnnotationComment
 from echoroo.models.annotation_set import (
     AnnotationSegment,
@@ -127,7 +126,6 @@ __all__ = [
     # Taxon-driven auto-obscure (Phase 11)
     "IucnSyncAttempt",
     # Detection review models (003-detection-review)
-    "Annotation",
     "AnnotationComment",
     "AnnotationVote",
     "ConfirmedRegion",

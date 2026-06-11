@@ -14,12 +14,13 @@ Entities:
       ``(run, model_ref, taxon_id)`` triple. ``taxon_id = NULL`` is the
       "overall" bucket combining every species together.
 
-The existing detection annotations produced by BirdNET / Perch / Custom
-models are stored in the ``annotations`` table (``echoroo.models.annotation``)
-with ``source`` discriminating the pipeline and ``tag_id -> Tag.taxon_id``
-linking to the canonical ``taxa`` row. For custom models the
-``detection_run_id`` column reaches ``detection_runs``, whose metadata
-identifies the source ``custom_model`` (see worker for matching logic).
+The detection annotations produced by BirdNET / Perch / Custom models are
+stored in the canonical ``recording_annotations`` table
+(``echoroo.models.recording_annotation.RecordingAnnotation``) with ``source``
+discriminating the pipeline and ``tag_id -> Tag.taxon_id`` linking to the
+canonical ``taxa`` row. For custom models the ``detection_run_id`` column
+reaches ``detection_runs``, whose metadata identifies the source
+``custom_model`` (see worker for matching logic).
 """
 
 from __future__ import annotations

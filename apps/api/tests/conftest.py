@@ -1283,7 +1283,12 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("upload_sessions")))
     # Detection review tables (003-detection-review)
     await session.execute(sa.text(_safe_delete("confirmed_regions")))
-    await session.execute(sa.text(_safe_delete("annotations")))
+    # Canonical recording-level annotations (P4 annotation-consolidation).
+    # The minimal ``annotations`` table was dropped by migration 0030; this
+    # canonical table is referenced by annotation_votes / annotation_comments /
+    # sampling_round_items (all deleted above), so it is safe to clear here
+    # before the parent recordings rows are removed.
+    await session.execute(sa.text(_safe_delete("recording_annotations")))
     await session.execute(sa.text(_safe_delete("detection_runs")))
     # Evaluation tables
     await session.execute(sa.text(_safe_delete("evaluation_results")))

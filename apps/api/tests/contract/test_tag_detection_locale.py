@@ -18,8 +18,6 @@ item detection listing.
 
 from __future__ import annotations
 
-
-
 # Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
 # rich-shape ``Annotation`` ORM (``recording_id`` / ``tag_id`` / ``status``
 # / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
@@ -52,7 +50,6 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine.interfaces import DBAPICursor
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
@@ -64,6 +61,7 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import Project
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation as Annotation
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon

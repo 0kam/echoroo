@@ -3,8 +3,8 @@
 This module introduces the *new* annotation subsystem used to produce a
 reference ground-truth dataset that can fairly evaluate detection models
 (BirdNET 3s, Perch 5s, Custom classifiers) regardless of their internal window
-size. The existing detection-review ``Annotation`` and ``AnnotationVote``
-models under ``echoroo.models.annotation`` are deliberately untouched; the new
+size. This subsystem is distinct from the canonical detection-review
+``RecordingAnnotation`` model (``echoroo.models.recording_annotation``); the new
 entity is named ``TimeRangeAnnotation`` to avoid a name collision.
 
 Entities:

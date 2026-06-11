@@ -17,10 +17,11 @@ sampling), search-session review annotations (queried/deleted by
 ``search_session_id`` in :mod:`echoroo.services.search_session`), the
 detection review grid / service, cross-model evaluation, and detection export.
 
-Note: :class:`echoroo.models.annotation.Annotation` is the separate, minimal
-detection-based shape (``id`` / ``detection_id`` / ``user_id`` / ``source`` /
-``taxon_id`` / ``label``) and carries no ``search_session_id`` column;
-callers needing the rich recording-level fields use this model instead.
+Note: an older, minimal detection-based ``Annotation`` model (``id`` /
+``detection_id`` / ``user_id`` / ``source`` / ``taxon_id`` / ``label``) and its
+backing ``annotations`` table were removed in P4 of the annotation-consolidation
+effort (migration ``0030``). ``RecordingAnnotation`` is now the single canonical
+annotation model; all callers use it directly.
 """
 
 from __future__ import annotations

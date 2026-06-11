@@ -28,7 +28,6 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.enums import (
     AnnotationVoteSource,
@@ -234,7 +233,8 @@ class AnnotationVoteService:
         # computed on the fly from those votes in :meth:`get_vote_summary`;
         # ``Detection`` carries the persisted status — re-using it for a
         # persistent recompute is deferred to a future phase.
-        # See ``apps/api/echoroo/models/annotation.py`` module docstring.
+        # See ``apps/api/echoroo/models/recording_annotation.py`` module
+        # docstring.
         return await self.get_vote_summary(
             annotation_id,
             user_id,
@@ -564,34 +564,3 @@ class AnnotationVoteService:
 
     # Sources that bypass consensus requirements — a single decisive vote is sufficient.
     _SINGLE_VOTE_SOURCES = frozenset({DetectionSource.SAMPLING_ROUND})
-
-    async def _update_annotation_status(
-        self,
-        annotation: Annotation,
-        min_votes: int,
-        threshold: float,
-    ) -> None:
-        """Phase 14+ deferred — was: persist annotation.status from votes.
-
-        Phase 13 P1.5 R2 (Codex follow-up — Fatal): the DB-truth minimal
-        ``Annotation`` shape no longer carries a ``status`` column. The
-        consensus state is now computed on the fly in
-        :meth:`get_vote_summary` from the vote tally, and persistence will
-        return when Phase 14+ introduces the ``recording_annotations`` table
-        with its own review-state lifecycle.
-
-        SAMPLING_ROUND single-vote bypass behaviour is also deferred —
-        :class:`echoroo.workers.classifier_tasks` lives on the Phase 14+
-        ``RecordingAnnotation`` shape and will reinstate it.
-
-        Args:
-            annotation: Annotation model (kept for signature compatibility).
-            min_votes: Unused, kept for signature compatibility.
-            threshold: Unused, kept for signature compatibility.
-        """
-        # No-op — Phase 14+ recording_annotations will reinstate persistence.
-        # Kept as a thin shim so any legacy in-tree caller (e.g. background
-        # tasks not exercised by Phase 13) stays compilable; the live API
-        # path no longer calls this method.
-        del annotation, min_votes, threshold
-        return None

@@ -18,8 +18,6 @@ Routes covered:
 
 from __future__ import annotations
 
-
-
 # Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
 # rich-shape ``Annotation`` ORM (``recording_id`` / ``tag_id`` / ``status``
 # / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
@@ -54,7 +52,6 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.dataset import Dataset
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
@@ -66,6 +63,7 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import Project
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation as Annotation
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag

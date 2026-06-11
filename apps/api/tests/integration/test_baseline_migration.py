@@ -69,12 +69,17 @@ EXPECTED_TABLES: tuple[str, ...] = (
 
 
 # Additional support tables carried over from data-model §0 "参考" row
-# (datasets / detections / annotations / tags are still required because the
-# baseline migration creates the whole schema from scratch, per FR-113).
+# (datasets / detections / tags are still required because the baseline
+# migration creates the whole schema from scratch, per FR-113).
+#
+# The minimal ``annotations`` table is intentionally absent here: it is created
+# at baseline-time but dropped later in the chain by migration 0030 (P4 of the
+# annotation-consolidation effort, which repointed sampling_round_items onto
+# ``recording_annotations`` and removed the now-unused minimal table). This
+# assertion runs against the head schema, so ``annotations`` must not appear.
 SUPPORTING_TABLES: tuple[str, ...] = (
     "datasets",
     "detections",
-    "annotations",
     "tags",
 )
 

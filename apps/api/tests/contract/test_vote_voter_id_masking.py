@@ -21,8 +21,6 @@ Also asserts each ``voters[]`` element carries ``source`` and
 
 from __future__ import annotations
 
-
-
 # Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
 # rich-shape ``Annotation`` ORM (``recording_id`` / ``tag_id`` / ``status``
 # / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
@@ -54,7 +52,6 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
-from echoroo.models.annotation import Annotation
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
@@ -68,6 +65,7 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation as Annotation
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
 from echoroo.models.user import User

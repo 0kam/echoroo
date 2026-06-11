@@ -189,8 +189,8 @@ class SearchSessionService:
         """Get results JSONB merged with annotation review statuses.
 
         Fetches the stored search results and merges per-match review status
-        from the annotations table, so the caller gets live review data without
-        needing to re-run the search.
+        from the canonical ``recording_annotations`` table, so the caller gets
+        live review data without needing to re-run the search.
 
         Args:
             session_id: Session UUID to retrieve

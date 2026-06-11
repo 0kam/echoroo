@@ -41,7 +41,6 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.models.annotation import Annotation
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
@@ -54,6 +53,7 @@ from echoroo.models.enums import (
 )
 from echoroo.models.project import Project
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation as Annotation
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
 from echoroo.models.user import User
