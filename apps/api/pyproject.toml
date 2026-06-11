@@ -271,34 +271,38 @@ tests_dir = ["tests/unit/", "tests/security/"]
 # prepended to mutmut's built-in copy list (tests/, pyproject.toml, …), so this
 # is purely additive.
 #
-# W0 mutation-harness fix #3 (this change): the SECOND root cause, surfacing
-# only after fix #1/#2 let the stats run actually reach test setup. Three
+# W0 mutation-harness fix #3: the SECOND layer, surfacing only after fix #1/#2
+# let the stats run reach test setup. Three
 # ``tests/security/authentication/test_trusted_device_*.py`` modules import the
 # ``upgraded_db`` fixture (and ``pg_container``) from
-# ``tests/integration/api/web_v1/test_auth_totp.py``. That fixture shells out to
-# ``uv run alembic -c <ALEMBIC_INI> upgrade head`` with ``cwd=API_ROOT`` to
-# build a throwaway testcontainer schema, where
-# ``API_ROOT = Path(__file__).resolve().parents[4]`` and
-# ``ALEMBIC_INI = API_ROOT / "alembic.ini"``. Because the security tests live in
-# ``tests_dir`` (``tests/security/``), mutmut's ``run_stats`` collects them and
-# runs from cwd=``mutants/``; the copied fixture file then resolves
-# ``API_ROOT`` to ``mutants/`` (a real parent of the copied test file), so
-# ``ALEMBIC_INI`` points at ``mutants/alembic.ini`` and the subprocess cwd is
-# ``mutants/`` — but mutmut copies neither ``alembic.ini`` nor the ``alembic/``
-# migrations dir. ``alembic.ini`` declares ``script_location = alembic`` +
-# ``prepend_sys_path = .`` (both relative to cwd), so ``alembic upgrade head``
-# cannot find its env/scripts and exits non-zero → every trusted-device test
-# ERRORs at setup → ``Failed: alembic upgrade head failed`` → 0 mutants checked
-# → BASELINE FAILED. Copying the ``alembic/`` dir (recursively, via
-# ``copytree``) and ``alembic.ini`` into ``mutants/`` makes the upgrade resolve
-# its config + migrations from cwd=``mutants/`` exactly as it does from
-# ``apps/api/`` in a normal run. The alembic ``env.py`` imports ``echoroo`` via
-# the editable install (resolved through the ``.pth``), not via cwd, so the
-# package copy under ``mutants/`` is irrelevant to the upgrade. ``alembic/`` is
-# small (env.py + script.py.mako + versions/*.py) so the copy is cheap and does
-# not re-pressure the disk-bound runner. ``also_copy`` does not honour glob
-# patterns — entries are taken verbatim — so the bare ``"alembic"`` directory
-# name is the correct form.
+# ``tests/integration/api/web_v1/test_auth_totp.py``. That fixture *used* to
+# shell out to ``uv run alembic -c <ALEMBIC_INI> upgrade head``. Fix #3 copied
+# ``alembic.ini`` + ``alembic/`` into ``mutants/`` so the subprocess could find
+# its config + migrations from cwd=``mutants/``.
+#
+# W0 mutation-harness fix #4 (DECISIVE — stops the layer-peeling): fix #3 made
+# the subprocess *find* its config, but the subprocess still ran ``uv run
+# alembic``, which resolves ``uv`` to the *nearest* venv — ``mutants/.venv``,
+# the throwaway venv mutmut builds — and that copied venv does not carry the
+# editable ``echoroo`` install, so the alembic subprocess died importing
+# ``alembic/env.py`` line 11 (``from echoroo.core.settings import
+# get_settings``) → trusted-device tests ERROR at setup → BASELINE FAILED. The
+# fix is to run the upgrade IN-PROCESS (``alembic.command.upgrade``) inside the
+# ``upgraded_db`` fixtures (see ``tests/_alembic_upgrade.py``), eliminating the
+# ``mutants/.venv`` subprocess entirely: the upgrade now executes in the same
+# interpreter that already has ``echoroo`` importable, so env.py:11 always
+# resolves. The shared helper honours ``ECHOROO_ALEMBIC_DIR`` (exported by the
+# CI mutation step as the real ``$GITHUB_WORKSPACE/apps/api/alembic``) so the
+# in-process upgrade targets real migration source rather than the ``mutants/``
+# copy; absent the var it derives ``apps/api/alembic`` from ``__file__``.
+#
+# The ``also_copy`` entries below are retained as cheap, purely-additive
+# defence-in-depth (README.md is still required for the hatchling metadata
+# resolution; alembic/ + alembic.ini are no longer load-bearing now that the
+# upgrade is in-process, but keeping them costs little and guards any future
+# fixture that still shells out). ``also_copy`` does not honour glob patterns —
+# entries are taken verbatim — so the bare ``"alembic"`` directory name is the
+# correct form.
 also_copy = ["README.md", "alembic", "alembic.ini"]
 # Runner: use python -m pytest for portability across uv and CI venvs.
 # --no-cov avoids coverage overhead per mutant.

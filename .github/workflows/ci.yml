@@ -636,6 +636,13 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
       REDIS_URL: redis://localhost:6379/0
+      # W0 mutation-harness fix #4: the `upgraded_db` test fixtures now run
+      # alembic IN-PROCESS (tests/_alembic_upgrade.py) instead of shelling out
+      # to `uv run alembic` (which died under the mutmut `mutants/.venv`). Under
+      # mutmut the fixture file is copied into `mutants/`, so a `__file__`-derived
+      # path would resolve to `mutants/alembic`. Export the REAL source dir so
+      # the in-process upgrade targets actual migration scripts.
+      ECHOROO_ALEMBIC_DIR: ${{ github.workspace }}/apps/api/alembic
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
