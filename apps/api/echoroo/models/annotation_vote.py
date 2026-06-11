@@ -51,8 +51,8 @@ from echoroo.models.enums import (
 )
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation import Annotation
     from echoroo.models.project import Project
+    from echoroo.models.recording_annotation import RecordingAnnotation
     from echoroo.models.user import User
 
 
@@ -99,9 +99,16 @@ class AnnotationVote(UUIDMixin, Base):
 
     annotation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("annotations.id", ondelete="CASCADE"),
+        # P2 (annotation-consolidation): repointed from the minimal
+        # ``annotations`` table to the canonical
+        # ``"recording_annotations_DEFERRED"`` id-space (migration 0028). Both
+        # production writers (the detection review grid and the search-results
+        # review screen) emit recording_annotation ids; the minimal table has
+        # no production writers. The mixed-case identifier matches
+        # ``RecordingAnnotation.__tablename__`` exactly.
+        ForeignKey("recording_annotations_DEFERRED.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Annotation being voted on",
+        doc="RecordingAnnotation being voted on (P2: recording_annotations id-space).",
     )
     voter_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -173,8 +180,8 @@ class AnnotationVote(UUIDMixin, Base):
     )
 
     # Relationships ------------------------------------------------------ #
-    annotation: Mapped[Annotation] = relationship(
-        "Annotation",
+    annotation: Mapped[RecordingAnnotation] = relationship(
+        "RecordingAnnotation",
         lazy="raise",
     )
     user: Mapped[User] = relationship(

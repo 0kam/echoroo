@@ -10,15 +10,17 @@ classifier, search-session, and detection grid). The ``_DEFERRED`` suffix is a
 transitional placeholder name pending a future rename to
 ``recording_annotations``; it does not imply the table is absent.
 
-The two methods used by the Phase 13 vote API path (:meth:`exists` and
-:meth:`exists_in_project`) are built on the minimal
-:class:`echoroo.models.annotation.Annotation` shape (imported here as
-``MinimalAnnotation``): they reach the project via the parent ``Detection``
-row (``Annotation.detection_id -> Detection.project_id``) and probe the
-``annotations`` table. The two distinct ORM classes — ``RecordingAnnotation``
-(rich shape, ``recording_annotations_DEFERRED``) and ``MinimalAnnotation``
-(minimal shape, ``annotations``) — are kept visually separate so each query
-clearly targets the right table.
+The two existence-probe methods used by the vote / comment / detection API
+paths (:meth:`exists` and :meth:`exists_in_project`) now also operate on the
+:class:`RecordingAnnotation` shape (``recording_annotations_DEFERRED``). This
+is the canonical id-space: the detection review grid and the search-results
+review screen both emit ``recording_annotations_DEFERRED.id`` and POST it to
+the vote / comment endpoints. The minimal ``annotations`` table has no
+production writers, so probing it (as these guards previously did) returned
+``False`` for every real id and silently broke voting. ``exists_in_project``
+scopes ownership via ``RecordingAnnotation.recording_id -> Recording ->
+Dataset.project_id`` — the same join the rich-shape methods use — so a
+cross-project id is correctly rejected (BOLA / IDOR guard).
 """
 
 from __future__ import annotations
@@ -32,8 +34,6 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.expression import cast
 
-from echoroo.models.annotation import Annotation as MinimalAnnotation
-from echoroo.models.detection import Detection
 from echoroo.models.enums import DetectionStatus
 from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.tag import Tag
@@ -71,9 +71,9 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
     """Repository for RecordingAnnotation entity operations.
 
     Bound to :class:`RecordingAnnotation` (the live ``recording_annotations_DEFERRED``
-    table) for the rich-shape methods. The two methods used by the Phase 13
-    vote API path (:meth:`exists` / :meth:`exists_in_project`) query the
-    minimal :class:`MinimalAnnotation` shape instead.
+    table). Both the rich-shape methods and the existence-probe guards used by
+    the vote / comment / detection API paths (:meth:`exists` /
+    :meth:`exists_in_project`) target this canonical id-space.
     """
 
     model = RecordingAnnotation
@@ -122,54 +122,57 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
         return result.scalar_one_or_none()
 
     async def exists(self, annotation_id: UUID) -> bool:
-        """Lightweight existence probe on the minimal :class:`MinimalAnnotation` shape.
+        """Lightweight existence probe on the :class:`RecordingAnnotation` shape.
 
-        Probes the ``annotations`` table for "annotation exists" gating
-        without reading any rich-shape columns. Callers that need the rich
-        recording-level shape use :meth:`get_by_id` (which queries the
-        ``recording_annotations_DEFERRED`` table) instead.
+        Probes the live ``recording_annotations_DEFERRED`` table for
+        "annotation exists" gating without reading any rich-shape columns.
+        Callers that need the full recording-level row use :meth:`get_by_id`.
 
         Args:
-            annotation_id: Annotation's UUID.
+            annotation_id: RecordingAnnotation's UUID.
 
         Returns:
-            ``True`` when the annotation row exists in the minimal
-            ``annotations`` table.
+            ``True`` when the row exists in ``recording_annotations_DEFERRED``.
         """
         result = await self.db.execute(
-            select(MinimalAnnotation.id).where(MinimalAnnotation.id == annotation_id)
+            select(RecordingAnnotation.id).where(
+                RecordingAnnotation.id == annotation_id
+            )
         )
         return result.first() is not None
 
     async def exists_in_project(
         self, annotation_id: UUID, project_id: UUID
     ) -> bool:
-        """Return ``True`` when an annotation belongs to ``project_id``.
+        """Return ``True`` when a recording annotation belongs to ``project_id``.
 
-        Built on the minimal :class:`MinimalAnnotation` shape. The integrity
-        chain is ``Annotation.detection_id -> Detection.project_id`` (FR-005);
-        ``Detection`` is the canonical recording- and project-scoped row.
-        (The rich-shape :class:`RecordingAnnotation` reaches the project via
-        ``recording_id -> Recording -> Dataset`` instead — see
-        :meth:`get_by_id_in_project`.)
+        Probes the live ``recording_annotations_DEFERRED`` table, scoping
+        ownership via the canonical chain
+        ``RecordingAnnotation.recording_id -> Recording.dataset_id ->
+        Dataset.project_id`` (the same join used by :meth:`get_by_id_in_project`
+        and :meth:`list_annotations`).
 
-        Used as a BOLA / IDOR guard before the vote API delegates to
-        :meth:`AnnotationVoteService.cast_vote` /
-        :meth:`get_vote_summary` / :meth:`delete_vote`.
+        Used as a BOLA / IDOR guard before the vote / comment / detection APIs
+        act on the row: a ``recording_annotations`` id that belongs to another
+        project (or is unknown) yields ``False``, so the caller raises 404.
 
         Args:
-            annotation_id: Annotation's UUID.
+            annotation_id: RecordingAnnotation's UUID.
             project_id: Project UUID the annotation must belong to.
 
         Returns:
             ``True`` when the annotation exists in the given project,
-            ``False`` otherwise (also for unknown annotations).
+            ``False`` otherwise (also for unknown / cross-project ids).
         """
+        from echoroo.models.dataset import Dataset
+        from echoroo.models.recording import Recording
+
         result = await self.db.execute(
-            select(MinimalAnnotation.id)
-            .join(Detection, MinimalAnnotation.detection_id == Detection.id)
-            .where(MinimalAnnotation.id == annotation_id)
-            .where(Detection.project_id == project_id)
+            select(RecordingAnnotation.id)
+            .join(Recording, RecordingAnnotation.recording_id == Recording.id)
+            .join(Dataset, Recording.dataset_id == Dataset.id)
+            .where(RecordingAnnotation.id == annotation_id)
+            .where(Dataset.project_id == project_id)
         )
         return result.first() is not None
 

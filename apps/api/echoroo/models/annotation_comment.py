@@ -13,8 +13,8 @@ from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 from echoroo.models.enums import AnnotationVoteSource
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation import Annotation
     from echoroo.models.project import Project
+    from echoroo.models.recording_annotation import RecordingAnnotation
     from echoroo.models.user import User
 
 
@@ -25,7 +25,13 @@ class AnnotationComment(UUIDMixin, TimestampMixin, Base):
 
     annotation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("annotations.id", ondelete="CASCADE"),
+        # P2 (annotation-consolidation): repointed from the minimal
+        # ``annotations`` table to the canonical
+        # ``"recording_annotations_DEFERRED"`` id-space (migration 0028), to
+        # match the vote FK and the recording-annotation ids that the review
+        # screens emit. The mixed-case identifier matches
+        # ``RecordingAnnotation.__tablename__`` exactly.
+        ForeignKey("recording_annotations_DEFERRED.id", ondelete="CASCADE"),
         nullable=False,
     )
     commenter_user_id: Mapped[UUID] = mapped_column(
@@ -49,7 +55,9 @@ class AnnotationComment(UUIDMixin, TimestampMixin, Base):
         nullable=False,
     )
 
-    annotation: Mapped[Annotation] = relationship("Annotation", lazy="raise")
+    annotation: Mapped[RecordingAnnotation] = relationship(
+        "RecordingAnnotation", lazy="raise"
+    )
     commenter: Mapped[User] = relationship(
         "User",
         foreign_keys=[commenter_user_id],

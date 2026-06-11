@@ -202,11 +202,11 @@ class AnnotationVoteService:
         Raises:
             HTTPException: If annotation not found
         """
-        # Phase 13 P1.5 R2 (Codex follow-up — Fatal): existence-only probe
-        # on the DB-truth minimal ``annotations`` table. The legacy
-        # ``get_by_id`` rich-shape load is replaced because the rich-shape
-        # ORM (``RecordingAnnotation``) lives on a Phase 14+ deferred table
-        # that does not exist in the production DB.
+        # P2 (vote FK repoint): existence-only probe keyed on a
+        # recording-annotation id. ``annotation_id`` is a
+        # ``recording_annotations_DEFERRED`` (live recording-annotation table)
+        # id; the probe replaces the legacy ``get_by_id`` rich-shape load and
+        # is project-scoped via the guard at the call site.
         if not await self.annotation_repo.exists(annotation_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -229,11 +229,11 @@ class AnnotationVoteService:
             note=request.note,
         )
 
-        # Phase 13 P1.5 R2 (Codex follow-up — Fatal):
-        # ``Annotation.status`` no longer exists on the DB-truth minimal
-        # shape. The consensus status is computed on the fly from votes in
-        # :meth:`get_vote_summary` and ``Detection`` carries the persisted
-        # status — re-using it for the persistent recompute is Phase 14+.
+        # P2 (vote FK repoint): votes are keyed on recording-annotation
+        # (``recording_annotations_DEFERRED``) ids and the consensus status is
+        # computed on the fly from those votes in :meth:`get_vote_summary`;
+        # ``Detection`` carries the persisted status — re-using it for a
+        # persistent recompute is deferred to a future phase.
         # See ``apps/api/echoroo/models/annotation.py`` module docstring.
         return await self.get_vote_summary(
             annotation_id,

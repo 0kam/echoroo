@@ -42,11 +42,15 @@ import pytest_asyncio
 
 pytestmark = _pytest_phase14_skip.mark.skip(
     reason=(
-        "Phase 14+ deferred — rich-shape Annotation columns (recording_id /"
-        " tag_id / status / start_time / end_time / etc) live on the future"
-        " ``recording_annotations`` table; see ``apps/api/echoroo/models/"
-        "annotation.py`` and ``apps/api/echoroo/models/recording_annotation.py``"
-        " module docstrings."
+        "Superseded by the P2 annotation-consolidation work. The ``annotation_b``"
+        " fixture below constructs the minimal ``Annotation`` model with"
+        " rich-shape kwargs (recording_id / status / start_time / end_time / etc)"
+        " that the minimal shape no longer carries, so it cannot run as written."
+        " The vote / detection cross-project BOLA scenarios it covered are now"
+        " exercised against the canonical ``recording_annotations`` id-space by"
+        " ``tests/integration/api/web_v1/test_detection_votes_real_db.py`` (real"
+        " seeding, no monkeypatch). Re-seed against ``RecordingAnnotation`` to"
+        " reactivate the recording / dataset BOLA cases here."
     ),
 )
 import uuid
