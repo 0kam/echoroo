@@ -5,18 +5,19 @@
  * on annotations as part of the voting review system.
  *
  * Two URL patterns are supported:
- * - `/detections/{id}/votes` for detection review grids (backward compatibility)
+ * - `/detections/{id}/votes` for detection review grids
  * - `/annotations/{id}/votes` for generic annotations (search results, etc.)
+ *
+ * Both target the `/web-api/v1` BFF surface (cookie + CSRF) and delegate
+ * to their legacy `/api/v1` handlers server-side.
  */
 
 import type { VoteSummary, CastVoteRequest, VoteValue, SignalQuality } from '$lib/types/detection';
 import { apiClient } from './client';
 
-// spec/009 PR 3a: the generic annotation-vote path (used by search-result
-// review screens) is migrated to ``/web-api/v1``. The detection-vote path
-// (used by the detection review grid) still targets ``/api/v1`` — moving
-// it requires extending the detection BFF module first.
-const API_BASE = '/api/v1';
+// Both the generic annotation-vote path (spec/009 PR 3a) and the
+// detection-vote path (W2-1, used by the detection review grid) target
+// the ``/web-api/v1`` BFF surface. Mutations carry the CSRF token.
 const WEB_API_BASE = '/web-api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
@@ -44,10 +45,10 @@ function csrfHeaders(): Record<string, string> {
 }
 
 /**
- * Build the vote URL for a detection (legacy path — still ``/api/v1``).
+ * Build the vote URL for a detection (``/web-api/v1`` BFF surface).
  */
 function detectionVoteUrl(projectId: string, detectionId: string): string {
-  return `${API_BASE}/projects/${projectId}/detections/${detectionId}/votes`;
+  return `${WEB_API_BASE}/projects/${projectId}/detections/${detectionId}/votes`;
 }
 
 /**
@@ -92,7 +93,8 @@ export async function castVote(
 
   return apiClient.post<VoteSummary>(
     detectionVoteUrl(projectId, detectionId),
-    body
+    body,
+    { headers: csrfHeaders() }
   );
 }
 
@@ -107,7 +109,8 @@ export async function deleteVote(
   detectionId: string
 ): Promise<VoteSummary> {
   return apiClient.delete<VoteSummary>(
-    detectionVoteUrl(projectId, detectionId)
+    detectionVoteUrl(projectId, detectionId),
+    { headers: csrfHeaders() }
   );
 }
 

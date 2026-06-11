@@ -68,4 +68,8 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # Admin maintenance surface — Celery task triggers (replaces shell access)
     "/web-api/v1/admin/taxon/seed-birdnet POST",
     "/web-api/v1/admin/taxon/sync-vernacular POST",
+    # W2-1 — detection votes (detection review grid)
+    "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes GET",
+    "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes POST",
+    "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes DELETE",
 ]
