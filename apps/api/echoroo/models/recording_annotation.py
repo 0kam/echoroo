@@ -1,25 +1,21 @@
-"""RecordingAnnotation — recording-level annotation (transitional name).
+"""RecordingAnnotation — recording-level annotation (canonical table).
 
 This "rich-shape" annotation row carries ``recording_id`` / ``tag_id`` /
 ``status`` / ``confidence`` / ``start_time`` / ``end_time`` / ``freq_low`` /
 ``freq_high`` / ``reviewed_by_id`` / ``reviewed_at`` / ``search_session_id`` /
 ``detection_run_id``.
 
-The table ``recording_annotations_DEFERRED`` **exists** in the database: it
-is created by migration ``0011_recording_annotations_placeholder.py`` and is
-actively written and read at runtime. Real callers that depend on it include
-the ML classifier (custom-SVM inference + seed/AL sampling), search-session
-review annotations (queried/deleted by ``search_session_id`` in
-:mod:`echoroo.services.search_session`), the detection review grid /
-service, cross-model evaluation, and detection export. The ``_DEFERRED``
-suffix is a *transitional placeholder name*: it is pending a future rename to
-``recording_annotations``, NOT a marker that the table is absent. The
-identifier is double-quoted everywhere so PostgreSQL preserves the mixed-case
-suffix.
-
-A future migration that finalises the schema is expected to rename
-``__tablename__`` here from ``recording_annotations_DEFERRED`` to
-``recording_annotations`` and update this docstring.
+The table is named ``recording_annotations``. It was originally materialised
+by migration ``0011_recording_annotations_placeholder.py`` under the
+transitional placeholder name ``recording_annotations_DEFERRED`` and renamed to
+its final canonical name by migration
+``0029_rename_recording_annotations_final.py`` (P3 of the
+annotation-consolidation effort). The transitional ``_DEFERRED`` suffix is
+gone. The table is actively written and read at runtime. Real callers that
+depend on it include the ML classifier (custom-SVM inference + seed/AL
+sampling), search-session review annotations (queried/deleted by
+``search_session_id`` in :mod:`echoroo.services.search_session`), the
+detection review grid / service, cross-model evaluation, and detection export.
 
 Note: :class:`echoroo.models.annotation.Annotation` is the separate, minimal
 detection-based shape (``id`` / ``detection_id`` / ``user_id`` / ``source`` /
@@ -51,14 +47,13 @@ if TYPE_CHECKING:
 class RecordingAnnotation(UUIDMixin, TimestampMixin, Base):
     """Recording-level annotation (rich shape).
 
-    See the module docstring. ``__tablename__`` points at the existing
-    ``recording_annotations_DEFERRED`` table (created by migration 0011 and
-    actively written/read at runtime). The ``_DEFERRED`` suffix is a
-    transitional placeholder name pending the Phase 14+ rename to
-    ``recording_annotations``; it does not imply the table is absent.
+    See the module docstring. ``__tablename__`` is the canonical
+    ``recording_annotations`` table (materialised by migration 0011, renamed
+    from the transitional ``recording_annotations_DEFERRED`` placeholder to its
+    final name by migration 0029, and actively written/read at runtime).
     """
 
-    __tablename__ = "recording_annotations_DEFERRED"
+    __tablename__ = "recording_annotations"
 
     recording_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -142,5 +137,5 @@ class RecordingAnnotation(UUIDMixin, TimestampMixin, Base):
     def __repr__(self) -> str:
         return (
             f"<RecordingAnnotation(id={self.id}, source={self.source},"
-            f" status={self.status}) DEFERRED Phase14+>"
+            f" status={self.status})>"
         )

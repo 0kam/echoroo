@@ -26,12 +26,13 @@ class AnnotationComment(UUIDMixin, TimestampMixin, Base):
     annotation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         # P2 (annotation-consolidation): repointed from the minimal
-        # ``annotations`` table to the canonical
-        # ``"recording_annotations_DEFERRED"`` id-space (migration 0028), to
-        # match the vote FK and the recording-annotation ids that the review
-        # screens emit. The mixed-case identifier matches
+        # ``annotations`` table to the canonical ``recording_annotations``
+        # id-space (migration 0028 repointed the FK; migration 0029 renamed the
+        # table from its transitional ``recording_annotations_DEFERRED`` name),
+        # to match the vote FK and the recording-annotation ids that the review
+        # screens emit. The target matches
         # ``RecordingAnnotation.__tablename__`` exactly.
-        ForeignKey("recording_annotations_DEFERRED.id", ondelete="CASCADE"),
+        ForeignKey("recording_annotations.id", ondelete="CASCADE"),
         nullable=False,
     )
     commenter_user_id: Mapped[UUID] = mapped_column(

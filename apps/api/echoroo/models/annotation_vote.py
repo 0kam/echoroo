@@ -100,13 +100,14 @@ class AnnotationVote(UUIDMixin, Base):
     annotation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         # P2 (annotation-consolidation): repointed from the minimal
-        # ``annotations`` table to the canonical
-        # ``"recording_annotations_DEFERRED"`` id-space (migration 0028). Both
-        # production writers (the detection review grid and the search-results
-        # review screen) emit recording_annotation ids; the minimal table has
-        # no production writers. The mixed-case identifier matches
+        # ``annotations`` table to the canonical ``recording_annotations``
+        # id-space (migration 0028 repointed the FK; migration 0029 renamed the
+        # table from its transitional ``recording_annotations_DEFERRED`` name).
+        # Both production writers (the detection review grid and the
+        # search-results review screen) emit recording_annotation ids; the
+        # minimal table has no production writers. The target matches
         # ``RecordingAnnotation.__tablename__`` exactly.
-        ForeignKey("recording_annotations_DEFERRED.id", ondelete="CASCADE"),
+        ForeignKey("recording_annotations.id", ondelete="CASCADE"),
         nullable=False,
         doc="RecordingAnnotation being voted on (P2: recording_annotations id-space).",
     )

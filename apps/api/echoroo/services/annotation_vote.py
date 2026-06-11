@@ -204,7 +204,7 @@ class AnnotationVoteService:
         """
         # P2 (vote FK repoint): existence-only probe keyed on a
         # recording-annotation id. ``annotation_id`` is a
-        # ``recording_annotations_DEFERRED`` (live recording-annotation table)
+        # ``recording_annotations`` (live recording-annotation table)
         # id; the probe replaces the legacy ``get_by_id`` rich-shape load and
         # is project-scoped via the guard at the call site.
         if not await self.annotation_repo.exists(annotation_id):
@@ -230,7 +230,7 @@ class AnnotationVoteService:
         )
 
         # P2 (vote FK repoint): votes are keyed on recording-annotation
-        # (``recording_annotations_DEFERRED``) ids and the consensus status is
+        # (``recording_annotations``) ids and the consensus status is
         # computed on the fly from those votes in :meth:`get_vote_summary`;
         # ``Detection`` carries the persisted status — re-using it for a
         # persistent recompute is deferred to a future phase.

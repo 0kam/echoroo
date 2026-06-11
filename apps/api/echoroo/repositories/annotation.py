@@ -3,18 +3,18 @@
 The rich-shape methods (``list_annotations`` / ``species_summary`` /
 ``temporal_summary`` / ``create`` / ``create_batch`` / ``update`` /
 ``delete_by_detection_run``) operate on the :class:`RecordingAnnotation` ORM
-whose ``__tablename__`` is ``recording_annotations_DEFERRED``. That table
-**exists** and is live at runtime (created by migration
-``0011_recording_annotations_placeholder`` and actively written/read by the ML
-classifier, search-session, and detection grid). The ``_DEFERRED`` suffix is a
-transitional placeholder name pending a future rename to
-``recording_annotations``; it does not imply the table is absent.
+whose ``__tablename__`` is ``recording_annotations``. That table
+**exists** and is live at runtime (materialised by migration
+``0011_recording_annotations_placeholder``, renamed from its transitional
+``recording_annotations_DEFERRED`` placeholder name by migration
+``0029_rename_recording_annotations_final``, and actively written/read by the
+ML classifier, search-session, and detection grid).
 
 The two existence-probe methods used by the vote / comment / detection API
 paths (:meth:`exists` and :meth:`exists_in_project`) now also operate on the
-:class:`RecordingAnnotation` shape (``recording_annotations_DEFERRED``). This
+:class:`RecordingAnnotation` shape (``recording_annotations``). This
 is the canonical id-space: the detection review grid and the search-results
-review screen both emit ``recording_annotations_DEFERRED.id`` and POST it to
+review screen both emit ``recording_annotations.id`` and POST it to
 the vote / comment endpoints. The minimal ``annotations`` table has no
 production writers, so probing it (as these guards previously did) returned
 ``False`` for every real id and silently broke voting. ``exists_in_project``
@@ -70,7 +70,7 @@ class SpeciesSummaryRow(TypedDict):
 class AnnotationRepository(BaseRepository[RecordingAnnotation]):
     """Repository for RecordingAnnotation entity operations.
 
-    Bound to :class:`RecordingAnnotation` (the live ``recording_annotations_DEFERRED``
+    Bound to :class:`RecordingAnnotation` (the live ``recording_annotations``
     table). Both the rich-shape methods and the existence-probe guards used by
     the vote / comment / detection API paths (:meth:`exists` /
     :meth:`exists_in_project`) target this canonical id-space.
@@ -124,7 +124,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
     async def exists(self, annotation_id: UUID) -> bool:
         """Lightweight existence probe on the :class:`RecordingAnnotation` shape.
 
-        Probes the live ``recording_annotations_DEFERRED`` table for
+        Probes the live ``recording_annotations`` table for
         "annotation exists" gating without reading any rich-shape columns.
         Callers that need the full recording-level row use :meth:`get_by_id`.
 
@@ -132,7 +132,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
             annotation_id: RecordingAnnotation's UUID.
 
         Returns:
-            ``True`` when the row exists in ``recording_annotations_DEFERRED``.
+            ``True`` when the row exists in ``recording_annotations``.
         """
         result = await self.db.execute(
             select(RecordingAnnotation.id).where(
@@ -146,7 +146,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
     ) -> bool:
         """Return ``True`` when a recording annotation belongs to ``project_id``.
 
-        Probes the live ``recording_annotations_DEFERRED`` table, scoping
+        Probes the live ``recording_annotations`` table, scoping
         ownership via the canonical chain
         ``RecordingAnnotation.recording_id -> Recording.dataset_id ->
         Dataset.project_id`` (the same join used by :meth:`get_by_id_in_project`
@@ -192,7 +192,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
         """List recording annotations using rich-shape filters.
 
         Queries the live :class:`RecordingAnnotation` table
-        (``recording_annotations_DEFERRED``).
+        (``recording_annotations``).
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
@@ -271,7 +271,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
         """Species rollup keyed by tag.
 
         Queries the live :class:`RecordingAnnotation` table
-        (``recording_annotations_DEFERRED``).
+        (``recording_annotations``).
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.detection_run import DetectionRun
@@ -403,7 +403,7 @@ class AnnotationRepository(BaseRepository[RecordingAnnotation]):
         """Hourly detection counts grouped by tag.
 
         Queries the live :class:`RecordingAnnotation` table
-        (``recording_annotations_DEFERRED``).
+        (``recording_annotations``).
         """
         from echoroo.models.dataset import Dataset
         from echoroo.models.recording import Recording
