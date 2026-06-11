@@ -58,8 +58,13 @@ dev = [
     "types-passlib>=1.7.7",
     "pyyaml>=6.0",
     "types-pyyaml>=6.0",
-    # 006 permissions redesign: mutation testing + integration test containers
-    "mutmut>=3.2,<4.0",
+    # 006 permissions redesign: mutation testing + integration test containers.
+    # W0 mutation-harness fix: PINNED to ==3.5.0 (the version uv.lock currently
+    # resolves) so the mutation harness cannot silently drift to a new mutmut
+    # release that changes the run_stats / mutant-generation behaviour the
+    # scripts/run_mutmut.py monkey-patches against. Bump deliberately + re-run
+    # the gate (run-mutation-testing label / workflow_dispatch) when upgrading.
+    "mutmut==3.5.0",
     "testcontainers[postgres,redis]>=4.9,<5.0",
 ]
 
@@ -251,6 +256,54 @@ paths_to_mutate = [
     "echoroo/workers/dormancy_check.py",
 ]
 tests_dir = ["tests/unit/", "tests/security/"]
+# W0 mutation-harness fix (root cause of the 0.0% / 0-mutants-checked gate
+# failures since ~2026-05-09): mutmut copies ``pyproject.toml`` into the
+# generated ``mutants/`` directory (see ``copy_also_copy_files`` in
+# ``mutmut.__main__``) but NOT ``README.md``. When the stats subprocess runs
+# pytest with cwd=``mutants/``, uv / hatchling re-resolves the project's
+# packaging metadata from that cwd; the ``readme = "README.md"`` declaration in
+# ``[project]`` is resolved relative to ``mutants/`` and, because the file is
+# absent there, hatchling raises ``OSError: Readme file does not exist:
+# README.md`` (hatchling/metadata/core.py:531). That OSError surfaces as a
+# pytest collection error, so 0 mutant→test stats are collected and every
+# module reports ``0.0% (0/0, not checked=N)``. Copying ``README.md`` into
+# ``mutants/`` makes the metadata resolution succeed. ``also_copy`` entries are
+# prepended to mutmut's built-in copy list (tests/, pyproject.toml, …), so this
+# is purely additive.
+#
+# W0 mutation-harness fix #3: the SECOND layer, surfacing only after fix #1/#2
+# let the stats run reach test setup. Three
+# ``tests/security/authentication/test_trusted_device_*.py`` modules import the
+# ``upgraded_db`` fixture (and ``pg_container``) from
+# ``tests/integration/api/web_v1/test_auth_totp.py``. That fixture *used* to
+# shell out to ``uv run alembic -c <ALEMBIC_INI> upgrade head``. Fix #3 copied
+# ``alembic.ini`` + ``alembic/`` into ``mutants/`` so the subprocess could find
+# its config + migrations from cwd=``mutants/``.
+#
+# W0 mutation-harness fix #4 (DECISIVE — stops the layer-peeling): fix #3 made
+# the subprocess *find* its config, but the subprocess still ran ``uv run
+# alembic``, which resolves ``uv`` to the *nearest* venv — ``mutants/.venv``,
+# the throwaway venv mutmut builds — and that copied venv does not carry the
+# editable ``echoroo`` install, so the alembic subprocess died importing
+# ``alembic/env.py`` line 11 (``from echoroo.core.settings import
+# get_settings``) → trusted-device tests ERROR at setup → BASELINE FAILED. The
+# fix is to run the upgrade IN-PROCESS (``alembic.command.upgrade``) inside the
+# ``upgraded_db`` fixtures (see ``tests/_alembic_upgrade.py``), eliminating the
+# ``mutants/.venv`` subprocess entirely: the upgrade now executes in the same
+# interpreter that already has ``echoroo`` importable, so env.py:11 always
+# resolves. The shared helper honours ``ECHOROO_ALEMBIC_DIR`` (exported by the
+# CI mutation step as the real ``$GITHUB_WORKSPACE/apps/api/alembic``) so the
+# in-process upgrade targets real migration source rather than the ``mutants/``
+# copy; absent the var it derives ``apps/api/alembic`` from ``__file__``.
+#
+# The ``also_copy`` entries below are retained as cheap, purely-additive
+# defence-in-depth (README.md is still required for the hatchling metadata
+# resolution; alembic/ + alembic.ini are no longer load-bearing now that the
+# upgrade is in-process, but keeping them costs little and guards any future
+# fixture that still shells out). ``also_copy`` does not honour glob patterns —
+# entries are taken verbatim — so the bare ``"alembic"`` directory name is the
+# correct form.
+also_copy = ["README.md", "alembic", "alembic.ini"]
 # Runner: use python -m pytest for portability across uv and CI venvs.
 # --no-cov avoids coverage overhead per mutant.
 # --override-ini=addopts= clears project-level addopts.

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -19,15 +16,13 @@ from echoroo.services.webauthn_service import (
     WebAuthnDuplicateCredentialError,
     WebAuthnReplayDetectedError,
 )
+from tests._alembic_upgrade import upgrade_head_in_process
 from tests.integration.api.web_v1.test_auth import _create_user
 
 try:
     from testcontainers.postgres import PostgresContainer
 except ImportError:  # pragma: no cover - dev extra may be absent locally
     PostgresContainer = None  # type: ignore[assignment,misc]
-
-API_ROOT = Path(__file__).resolve().parents[4]
-ALEMBIC_INI = API_ROOT / "alembic.ini"
 
 
 @pytest.fixture(scope="module")
@@ -47,29 +42,19 @@ def pg_container() -> Iterator[object]:
 
 @pytest.fixture(scope="module")
 def upgraded_db(pg_container: object) -> str:
+    # W0 mutation-harness fix #4: in-process alembic upgrade (no subprocess).
     sync_url = pg_container.get_connection_url()  # type: ignore[attr-defined]
     sync_url = sync_url.replace("postgresql+psycopg2://", "postgresql://")
-    env = {
-        "DATABASE_URL": sync_url.replace("postgresql://", "postgresql+asyncpg://"),
-        "ALEMBIC_SYNC_URL": sync_url,
-        "JWT_SECRET_KEY": "test-jwt-secret-value-with-32-characters",
-        "web_session_secret": "test-web-session-secret-with-32-chars",
-    }
-    result = subprocess.run(
-        ["uv", "run", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
-        cwd=str(API_ROOT),
-        env={**os.environ, **env},
-        capture_output=True,
-        text=True,
-        check=False,
+    async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
+    upgrade_head_in_process(
+        async_url=async_url,
+        sync_url=sync_url,
+        extra_env={
+            "JWT_SECRET_KEY": "test-jwt-secret-value-with-32-characters",
+            "web_session_secret": "test-web-session-secret-with-32-chars",
+        },
     )
-    if result.returncode != 0:
-        pytest.fail(
-            "alembic upgrade head failed.\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
-    return sync_url.replace("postgresql://", "postgresql+asyncpg://")
+    return async_url
 
 
 @pytest.fixture(name="session_factory")
