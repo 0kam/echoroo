@@ -47,6 +47,12 @@ def upgrade() -> None:
     # them before repointing the FK.
     op.execute("DELETE FROM sampling_round_items;")
 
+    # Parent ``sampling_rounds`` rows are intentionally retained (pre-launch,
+    # empty in practice) — only their now-stale child count is reset to match
+    # the purge above. ``status`` is left untouched so any history reads
+    # consistently. ``sample_count`` is the only count column on the model.
+    op.execute("UPDATE sampling_rounds SET sample_count = 0;")
+
     # --- sampling_round_items.annotation_id -> recording_annotations.id ----- #
     op.execute(
         "ALTER TABLE sampling_round_items "

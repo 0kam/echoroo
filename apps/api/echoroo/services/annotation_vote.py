@@ -32,7 +32,6 @@ from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.enums import (
     AnnotationVoteSource,
     ConsensusStatus,
-    DetectionSource,
     DetectionStatus,
     ProjectMemberRole,
     SignalQuality,
@@ -561,6 +560,3 @@ class AnnotationVoteService:
             return ConsensusStatus.REJECTED
 
         return ConsensusStatus.DISPUTED
-
-    # Sources that bypass consensus requirements — a single decisive vote is sufficient.
-    _SINGLE_VOTE_SOURCES = frozenset({DetectionSource.SAMPLING_ROUND})

@@ -35,7 +35,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -397,3 +397,86 @@ async def test_fetch_training_embeddings_returns_confirmed_rad_rows(
     )
     assert len(untargeted) == 1
     assert untargeted[0]["annotation_id"] == str(annotation.id)
+
+
+# ---------------------------------------------------------------------------
+# (d) Third repointed reader — eligibility-count SQL in custom_model service
+# ---------------------------------------------------------------------------
+
+
+async def test_suggest_next_samples_eligibility_count_joins_recording_annotations(
+    db_session: AsyncSession,
+    recording: Recording,
+    tag: Tag,
+    custom_model: CustomModel,
+) -> None:
+    """The AL eligibility-count SQL JOINs sampling_round_items -> recording_annotations.
+
+    ``CustomModelService.suggest_next_samples`` gates active-learning dispatch on
+    a COUNT over ``recording_annotations`` reached via ``sampling_round_items``
+    (``JOIN recording_annotations a ON a.id = sri.annotation_id AND a.status IN
+    ('confirmed','rejected') AND a.tag_id = :target_tag_id``). Like the training
+    reader, this count keys on the repointed id-space; the FK bug would have
+    silently returned 0. Calling the service method directly requires 5 confirmed
+    + 5 rejected labels and dispatches a Celery task, so this thin test executes
+    the *identical* SQL text against the same seeded chain (a confirmed
+    RecordingAnnotation linked to a completed-round sampling_round_item) and
+    asserts the matching tag is counted while an unrelated tag yields 0.
+    """
+    annotation = await _make_recording_annotation(
+        db_session, recording, tag=tag, status=DetectionStatus.CONFIRMED
+    )
+    embedding = await _make_embedding(db_session, recording)
+    round_ = await _make_sampling_round(db_session, custom_model)
+
+    repo = SamplingRoundRepository(db_session)
+    await repo.add_items(
+        round_.id,
+        [
+            {
+                "embedding_id": embedding.id,
+                "sample_type": "easy_positive",
+                "annotation_id": annotation.id,
+            }
+        ],
+    )
+    await db_session.commit()
+
+    # Verbatim copy of the count SQL in
+    # echoroo/services/custom_model.py::suggest_next_samples.
+    count_sql = text("""
+        SELECT
+            COUNT(*) FILTER (WHERE a.status = 'confirmed') AS confirmed_count,
+            COUNT(*) FILTER (WHERE a.status = 'rejected')  AS rejected_count
+        FROM sampling_round_items sri
+        JOIN sampling_rounds sr
+            ON sr.id = sri.sampling_round_id
+            AND sr.custom_model_id = :model_id
+            AND sr.status = 'completed'
+        JOIN recording_annotations a
+            ON a.id = sri.annotation_id
+            AND a.status IN ('confirmed', 'rejected')
+            AND a.tag_id = :target_tag_id
+    """)
+
+    # Matching target_tag_id — the seeded confirmed annotation is counted.
+    matched = (
+        await db_session.execute(
+            count_sql,
+            {"model_id": str(custom_model.id), "target_tag_id": str(tag.id)},
+        )
+    ).one()
+    assert int(matched.confirmed_count or 0) >= 1, (
+        "the confirmed recording_annotation must be counted via the repointed FK"
+    )
+    assert int(matched.rejected_count or 0) == 0
+
+    # Unrelated target_tag_id — the JOIN's tag_id predicate excludes it -> 0.
+    unrelated = (
+        await db_session.execute(
+            count_sql,
+            {"model_id": str(custom_model.id), "target_tag_id": str(uuid4())},
+        )
+    ).one()
+    assert int(unrelated.confirmed_count or 0) == 0
+    assert int(unrelated.rejected_count or 0) == 0
