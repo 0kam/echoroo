@@ -21,8 +21,8 @@ from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 # suffix is a transitional placeholder name pending a future rename to
 # ``recording_annotations``; it does not imply the table is absent. The vote
 # endpoints (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass
-# this service and go through ``services/annotation_vote.py`` on the minimal
-# annotation shape.
+# this service and go through ``services/annotation_vote.py``, where votes are
+# keyed on recording-annotation (``recording_annotations_DEFERRED``) ids.
 from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
