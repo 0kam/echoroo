@@ -50,9 +50,7 @@ from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DetectionSource, DetectionStatus, ProjectVisibility
 from echoroo.models.project import Project
 from echoroo.models.recording import Recording
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.site import Site
 from echoroo.services.camtrap import (
     CAMTRAPDP_OBSERVATION_COLUMNS,
@@ -109,7 +107,7 @@ class DetectionExportService:
 
     async def _build_recording_h3_resolution_map(
         self,
-        annotations: list[Annotation],
+        annotations: list[RecordingAnnotation],
     ) -> dict[UUID, int]:
         """Pre-load the Site H3 resolution for every recording in the export.
 
@@ -229,7 +227,7 @@ class DetectionExportService:
 
     def _build_csv_row(
         self,
-        ann: Annotation,
+        ann: RecordingAnnotation,
         *,
         project: Project | None,
         license_value: str,
@@ -649,7 +647,7 @@ class DetectionExportService:
         dataset_id: UUID | None = None,
         detection_run_id: UUID | None = None,
         search_session_id: UUID | None = None,
-    ) -> list[Annotation]:
+    ) -> list[RecordingAnnotation]:
         """Fetch annotations with all relationships needed for export.
 
         Joins through Recording -> Dataset to enforce project-level scoping.
@@ -666,29 +664,29 @@ class DetectionExportService:
             List of Annotation instances with eagerly loaded relationships
         """
         query = (
-            select(Annotation)
-            .join(Recording, Annotation.recording_id == Recording.id)
+            select(RecordingAnnotation)
+            .join(Recording, RecordingAnnotation.recording_id == Recording.id)
             .join(Dataset, Recording.dataset_id == Dataset.id)
             .where(Dataset.project_id == project_id)
             .options(
-                selectinload(Annotation.recording),
-                selectinload(Annotation.tag),
-                selectinload(Annotation.detection_run),
-                selectinload(Annotation.reviewed_by),
+                selectinload(RecordingAnnotation.recording),
+                selectinload(RecordingAnnotation.tag),
+                selectinload(RecordingAnnotation.detection_run),
+                selectinload(RecordingAnnotation.reviewed_by),
             )
-            .order_by(Recording.filename, Annotation.start_time)
+            .order_by(Recording.filename, RecordingAnnotation.start_time)
         )
 
         if status is not None:
-            query = query.where(Annotation.status == status)
+            query = query.where(RecordingAnnotation.status == status)
         if tag_id is not None:
-            query = query.where(Annotation.tag_id == tag_id)
+            query = query.where(RecordingAnnotation.tag_id == tag_id)
         if dataset_id is not None:
             query = query.where(Recording.dataset_id == dataset_id)
         if detection_run_id is not None:
-            query = query.where(Annotation.detection_run_id == detection_run_id)
+            query = query.where(RecordingAnnotation.detection_run_id == detection_run_id)
         if search_session_id is not None:
-            query = query.where(Annotation.search_session_id == search_session_id)
+            query = query.where(RecordingAnnotation.search_session_id == search_session_id)
 
         result = await self.db.execute(query)
         return list(result.scalars().all())

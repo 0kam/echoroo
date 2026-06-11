@@ -18,9 +18,7 @@ from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DetectionSource, DetectionStatus
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.schemas.detection import DetectionResponse
 from echoroo.schemas.search import SearchAnnotationCreate
 
@@ -100,18 +98,18 @@ async def create_search_annotation(
     TOLERANCE = 0.1
 
     duplicate_check = await db.execute(
-        select(Annotation)
-        .where(Annotation.recording_id == request.recording_id)
-        .where(Annotation.tag_id == request.tag_id)
-        .where(Annotation.start_time >= request.start_time - TOLERANCE)
-        .where(Annotation.start_time <= request.start_time + TOLERANCE)
-        .where(Annotation.end_time >= request.end_time - TOLERANCE)
-        .where(Annotation.end_time <= request.end_time + TOLERANCE)
+        select(RecordingAnnotation)
+        .where(RecordingAnnotation.recording_id == request.recording_id)
+        .where(RecordingAnnotation.tag_id == request.tag_id)
+        .where(RecordingAnnotation.start_time >= request.start_time - TOLERANCE)
+        .where(RecordingAnnotation.start_time <= request.start_time + TOLERANCE)
+        .where(RecordingAnnotation.end_time >= request.end_time - TOLERANCE)
+        .where(RecordingAnnotation.end_time <= request.end_time + TOLERANCE)
         .options(
-            selectinload(Annotation.recording),
-            selectinload(Annotation.tag),
-            selectinload(Annotation.detection_run),
-            selectinload(Annotation.reviewed_by),
+            selectinload(RecordingAnnotation.recording),
+            selectinload(RecordingAnnotation.tag),
+            selectinload(RecordingAnnotation.detection_run),
+            selectinload(RecordingAnnotation.reviewed_by),
         )
         .limit(1)
     )
@@ -121,7 +119,7 @@ async def create_search_annotation(
         return _annotation_to_detection_response(existing)
 
     # Create new annotation
-    annotation = Annotation(
+    annotation = RecordingAnnotation(
         recording_id=request.recording_id,
         tag_id=request.tag_id,
         detection_run_id=None,

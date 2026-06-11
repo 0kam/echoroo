@@ -18,9 +18,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from echoroo.core.database import DbSession
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred (was rich-shape Annotation)
-)
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.schemas.detection import DetectionResponse
 from echoroo.schemas.search import (
     BatchSearchResponse,
@@ -565,11 +563,11 @@ def _clamp_similarity_in_raw(raw: object) -> None:
                     match["similarity"] = max(0.0, min(1.0, float(match["similarity"])))
 
 
-def _annotation_to_detection_response(annotation: Annotation) -> DetectionResponse:
-    """Convert an Annotation ORM instance to a DetectionResponse schema.
+def _annotation_to_detection_response(annotation: RecordingAnnotation) -> DetectionResponse:
+    """Convert a RecordingAnnotation ORM instance to a DetectionResponse schema.
 
     Args:
-        annotation: Annotation ORM instance with relationships loaded
+        annotation: RecordingAnnotation ORM instance with relationships loaded
 
     Returns:
         DetectionResponse schema instance

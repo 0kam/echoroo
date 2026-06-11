@@ -13,20 +13,17 @@ from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
 from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 
-# Phase 13 P1.5 R2 (Codex follow-up — Fatal): the rich-shape detection
-# review service (list / get / create / confirm / reject / change_species /
-# species_summary / temporal_summary / export_csv / export_ml_dataset)
-# operates on the Phase 14+ deferred ``RecordingAnnotation`` ORM bound to a
-# table that does not yet exist. The Phase 6 vote endpoints
-# (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass this
-# service and go through ``services/annotation_vote.py`` which has been
-# rewritten on the DB-truth minimal :class:`Annotation` shape. Phase 14+
-# will reinstate the recording-level review-state lifecycle on a fresh
-# ``recording_annotations`` table; until then any caller of this service
-# fails at runtime with PostgreSQL ``relation does not exist`` — by design.
-from echoroo.models.recording_annotation import (
-    RecordingAnnotation as Annotation,  # Phase 14+ deferred
-)
+# The rich-shape detection review service (list / get / create / confirm /
+# reject / change_species / species_summary / temporal_summary) operates on
+# the :class:`RecordingAnnotation` ORM, whose table
+# ``recording_annotations_DEFERRED`` exists and is live at runtime (created by
+# migration ``0011_recording_annotations_placeholder``). The ``_DEFERRED``
+# suffix is a transitional placeholder name pending a future rename to
+# ``recording_annotations``; it does not imply the table is absent. The vote
+# endpoints (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass
+# this service and go through ``services/annotation_vote.py`` on the minimal
+# annotation shape.
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
@@ -441,7 +438,7 @@ class DetectionService:
                 detail="detection run not found",
             )
 
-        annotation = Annotation(
+        annotation = RecordingAnnotation(
             recording_id=request.recording_id,
             tag_id=request.tag_id,
             detection_run_id=request.detection_run_id,
@@ -696,11 +693,11 @@ class DetectionService:
 
     @staticmethod
     def _to_response(
-        annotation: Annotation,
+        annotation: RecordingAnnotation,
         vote_counts: DetectionVoteCounts | None = None,
         vernacular_map: dict[UUID, str] | None = None,
     ) -> DetectionResponse:
-        """Convert an Annotation model to a DetectionResponse schema.
+        """Convert a RecordingAnnotation model to a DetectionResponse schema.
 
         Args:
             annotation: Annotation model instance
