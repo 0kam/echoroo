@@ -115,10 +115,11 @@ router.include_router(_clips.router)
 # completion + status polling under ``/{project_id}/datasets/{dataset_id}/upload-sessions``.
 router.include_router(_uploads.router)
 
-# Generic annotation votes (spec/009 PR 3a) — ``/{project_id}/annotations/{annotation_id}/votes``.
-# The detection-vote path (``/detections/{id}/votes``) is intentionally not
-# in scope here and remains on ``/api/v1`` until the detection BFF is
-# extended.
+# Annotation + detection votes — generic annotation path
+# (``/{project_id}/annotations/{annotation_id}/votes``, spec/009 PR 3a) plus
+# the detection-vote path (``/{project_id}/detections/{detection_id}/votes``,
+# W2-1) used by the detection review grid. Both delegate to their legacy
+# ``/api/v1`` handlers under cookie + CSRF gating.
 router.include_router(_votes.router)
 
 # Custom-model ML lifecycle (spec/009 PR 3b) — ``/{project_id}/custom-models/...``.
