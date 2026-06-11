@@ -703,6 +703,57 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         license_schema_current = bool(license_schema_current_result.scalar())
 
+        # P4 annotation-consolidation (Alembic 0030): an existing test DB that
+        # pre-dates 0030 still carries the dropped minimal ``annotations`` table
+        # and/or a ``sampling_round_items.annotation_id`` FK that still targets
+        # ``annotations(id)`` instead of ``recording_annotations(id)``. Either
+        # state makes ``tests/integration/test_sampling_fk_repoint_real_db.py``
+        # fail environment-dependently. Probe both so the idempotent heal below
+        # can converge a reused DB before any early return.
+        annotations_table_exists_result = await conn.execute(
+            sa.text("SELECT to_regclass('public.annotations') IS NOT NULL")
+        )
+        annotations_table_exists = bool(annotations_table_exists_result.scalar())
+
+        sampling_fk_recording_annotations_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint"
+                " WHERE conname = 'sampling_round_items_annotation_id_fkey'"
+                " AND conrelid = to_regclass('public.sampling_round_items')"
+                " AND confrelid = to_regclass('public.recording_annotations'))"
+            )
+        )
+        sampling_fk_targets_recording_annotations = bool(
+            sampling_fk_recording_annotations_result.scalar()
+        )
+
+    # P4 annotation-consolidation (Alembic 0030): apply the 0030-equivalent DDL
+    # idempotently. This is a no-op on an already-converged DB (the minimal
+    # ``annotations`` table is gone and the FK already targets
+    # ``recording_annotations``). Mirrors the project_audit_log_fk heal idiom
+    # below: it runs unconditionally before any early return.
+    if annotations_table_exists or not sampling_fk_targets_recording_annotations:
+        async with engine.begin() as conn:
+            # Disjoint id-spaces: any pre-0030 sampling_round_items rows reference
+            # minimal-annotations ids with no recording_annotations counterpart.
+            # Pre-launch (legacy-data compat low priority), purge before repointing.
+            await conn.execute(sa.text("DELETE FROM sampling_round_items;"))
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE sampling_round_items "
+                    "DROP CONSTRAINT IF EXISTS sampling_round_items_annotation_id_fkey;"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE sampling_round_items "
+                    "ADD CONSTRAINT sampling_round_items_annotation_id_fkey "
+                    "FOREIGN KEY (annotation_id) "
+                    "REFERENCES recording_annotations (id) ON DELETE CASCADE;"
+                )
+            )
+            await conn.execute(sa.text("DROP TABLE IF EXISTS annotations;"))
+
     if project_audit_log_exists and project_audit_log_fk_exists:
         async with engine.begin() as conn:
             await conn.execute(
@@ -1283,7 +1334,12 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("upload_sessions")))
     # Detection review tables (003-detection-review)
     await session.execute(sa.text(_safe_delete("confirmed_regions")))
-    await session.execute(sa.text(_safe_delete("annotations")))
+    # Canonical recording-level annotations (P4 annotation-consolidation).
+    # The minimal ``annotations`` table was dropped by migration 0030; this
+    # canonical table is referenced by annotation_votes / annotation_comments /
+    # sampling_round_items (all deleted above), so it is safe to clear here
+    # before the parent recordings rows are removed.
+    await session.execute(sa.text(_safe_delete("recording_annotations")))
     await session.execute(sa.text(_safe_delete("detection_runs")))
     # Evaluation tables
     await session.execute(sa.text(_safe_delete("evaluation_results")))

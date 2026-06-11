@@ -39,14 +39,12 @@ from echoroo.core.permissions import Permission
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.security import hash_password
 from echoroo.core.settings import get_settings
-from echoroo.models.annotation import Annotation
 from echoroo.models.api_key import ApiKey
 from echoroo.models.clip import Clip
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection import Detection
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
-    AnnotationSource,
     DatasetStatus,
     DatasetVisibility,
     DatetimeParseStatus,
@@ -63,6 +61,7 @@ from echoroo.models.enums import (
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
 from echoroo.models.recording import Recording
+from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.user import User
@@ -217,7 +216,7 @@ class ContentFixture:
     embedding: Embedding
     clip: Clip
     detection: Detection
-    annotation: Annotation
+    annotation: RecordingAnnotation
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -858,35 +857,64 @@ async def _upsert_clip(
     return clip
 
 
-async def _upsert_annotation(
+async def _upsert_recording_annotation(
     session: AsyncSession,
     *,
+    recording: Recording,
     detection: Detection,
-) -> Annotation:
+) -> RecordingAnnotation:
+    """Seed one canonical ``recording_annotations`` row for the recording.
+
+    Post-P2 the vote / comment endpoints validate ``annotation_id`` against the
+    ``recording_annotations`` table via the ``recording -> dataset -> project``
+    scope chain (``AnnotationRepository.exists_in_project``). The seeded row
+    therefore MUST hang off the seeded project's recording so that the vote
+    flows exercised by the browser E2E specs
+    (``permissions/seeded-vote-comment.spec.ts`` and ``phase6-vote-flow.spec.ts``
+    via ``E2E_PUBLIC_ANNOTATION_ID`` / ``E2E_RESTRICTED_ANNOTATION_ID``) resolve.
+
+    Field choices:
+      * ``recording_id`` — the seeded recording, anchoring the BOLA scope chain.
+      * ``source`` — ``BIRDNET`` to mirror the seeded detection's model source.
+      * ``status`` — ``UNREVIEWED`` so the annotation is open for voting
+        (the per-source consensus widget starts in the needs-votes state).
+      * ``start_time`` / ``end_time`` — copied from the seeded detection so the
+        annotation aligns with the deterministic fixture clip.
+      * ``tag_id`` — ``None``: the seed never materialises ``tags`` ORM rows, and
+        the vote endpoints do not require a tag (only the project scope chain).
+
+    Idempotent: re-running locates the existing row by
+    (``recording_id``, ``source``, ``start_time``, ``end_time``) and refreshes
+    its mutable fields, following the other ``_upsert_*`` helpers in this file.
+    """
     result = await session.execute(
-        sa.select(Annotation)
+        sa.select(RecordingAnnotation)
         .where(
-            Annotation.detection_id == detection.id,
-            Annotation.source == AnnotationSource.MODEL,
+            RecordingAnnotation.recording_id == recording.id,
+            RecordingAnnotation.source == DetectionSource.BIRDNET,
+            RecordingAnnotation.start_time == detection.start_time,
+            RecordingAnnotation.end_time == detection.end_time,
         )
-        .order_by(Annotation.created_at.asc())
+        .order_by(RecordingAnnotation.created_at.asc())
         .limit(1)
     )
     annotation = result.scalar_one_or_none()
     if annotation is None:
-        annotation = Annotation(
+        annotation = RecordingAnnotation(
             id=uuid4(),
-            detection_id=detection.id,
-            user_id=None,
-            source=AnnotationSource.MODEL,
-            taxon_id=detection.taxon_id,
-            label="E2E permission fixture annotation",
+            recording_id=recording.id,
+            tag_id=None,
+            source=DetectionSource.BIRDNET,
+            status=DetectionStatus.UNREVIEWED,
+            confidence=detection.confidence,
+            start_time=detection.start_time,
+            end_time=detection.end_time,
         )
         session.add(annotation)
     else:
-        annotation.user_id = None
-        annotation.taxon_id = detection.taxon_id
-        annotation.label = "E2E permission fixture annotation"
+        annotation.tag_id = None
+        annotation.status = DetectionStatus.UNREVIEWED
+        annotation.confidence = detection.confidence
 
     await session.flush()
     return annotation
@@ -1040,7 +1068,9 @@ async def _upsert_content(
     )
     embedding = await _upsert_embedding(session, recording=recording)
     clip = await _upsert_clip(session, recording=recording)
-    annotation = await _upsert_annotation(session, detection=detection)
+    annotation = await _upsert_recording_annotation(
+        session, recording=recording, detection=detection
+    )
     return ContentFixture(
         site=site,
         dataset=dataset,

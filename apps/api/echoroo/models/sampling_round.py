@@ -14,9 +14,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
-    from echoroo.models.annotation import Annotation
     from echoroo.models.custom_model import CustomModel
     from echoroo.models.embedding import Embedding
+    from echoroo.models.recording_annotation import RecordingAnnotation
 
 
 class SamplingRound(UUIDMixin, TimestampMixin, Base):
@@ -129,7 +129,7 @@ class SamplingRound(UUIDMixin, TimestampMixin, Base):
 class SamplingRoundItem(UUIDMixin, TimestampMixin, Base):
     """A single sample selected as part of a SamplingRound.
 
-    Links a specific embedding to an annotation and records metadata
+    Links a specific embedding to a recording annotation and records metadata
     about why it was selected (sample type, similarity, decision distance).
 
     Attributes:
@@ -139,7 +139,7 @@ class SamplingRoundItem(UUIDMixin, TimestampMixin, Base):
         sample_type: Category of sample (easy_positive/boundary/others/active_learning)
         similarity: Optional cosine or dot-product similarity score
         decision_distance: Optional distance to SVM decision boundary
-        annotation_id: Foreign key to the associated Annotation
+        annotation_id: Foreign key to the associated RecordingAnnotation
     """
 
     __tablename__ = "sampling_round_items"
@@ -173,9 +173,9 @@ class SamplingRoundItem(UUIDMixin, TimestampMixin, Base):
     )
     annotation_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("annotations.id", ondelete="CASCADE"),
+        ForeignKey("recording_annotations.id", ondelete="CASCADE"),
         nullable=False,
-        doc="Associated Annotation ID",
+        doc="Associated RecordingAnnotation ID",
     )
 
     # Relationships
@@ -184,8 +184,8 @@ class SamplingRoundItem(UUIDMixin, TimestampMixin, Base):
         back_populates="items",
         lazy="raise",
     )
-    annotation: Mapped[Annotation] = relationship(
-        "Annotation",
+    annotation: Mapped[RecordingAnnotation] = relationship(
+        "RecordingAnnotation",
         lazy="raise",
     )
     embedding: Mapped[Embedding] = relationship(

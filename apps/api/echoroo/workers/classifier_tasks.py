@@ -472,7 +472,7 @@ async def _fetch_training_embeddings(
                 ON sr.id = sri.sampling_round_id
                 AND sr.custom_model_id = :model_id
                 AND sr.status = 'completed'
-            JOIN annotations a
+            JOIN recording_annotations a
                 ON a.id = sri.annotation_id
                 AND a.status IN ('confirmed', 'rejected')
                 AND a.tag_id = :target_tag_id
@@ -498,7 +498,7 @@ async def _fetch_training_embeddings(
                 ON sr.id = sri.sampling_round_id
                 AND sr.custom_model_id = :model_id
                 AND sr.status = 'completed'
-            JOIN annotations a
+            JOIN recording_annotations a
                 ON a.id = sri.annotation_id
                 AND a.status IN ('confirmed', 'rejected')
             JOIN embeddings e

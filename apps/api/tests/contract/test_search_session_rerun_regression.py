@@ -2,20 +2,20 @@
 
 Branch ``fix/ws-c-search-session-rerun`` (bug #6): "編集して再検索" (edit &
 re-run) 500'd because :meth:`SearchSessionService.reset_for_rerun` ran a raw
-``DELETE FROM annotations WHERE search_session_id = :sid``. The literal table
-name ``annotations`` (``echoroo/models/annotation.py`` — the minimal
-detection-based shape: id / detection_id / user_id / source / taxon_id / label)
-has **no** ``search_session_id`` column, so PostgreSQL raised
-``UndefinedColumnError`` → 500.
+``DELETE FROM annotations WHERE search_session_id = :sid``. At the time the
+literal table name ``annotations`` was a minimal detection-based shape (id /
+detection_id / user_id / source / taxon_id / label) with **no**
+``search_session_id`` column, so PostgreSQL raised ``UndefinedColumnError`` →
+500. (That minimal ``annotations`` table and its ORM were later removed in P4 of
+the annotation-consolidation effort, migration ``0030``.)
 
-The review-annotation rows that *do* carry ``search_session_id`` live on the
+The review-annotation rows that carry ``search_session_id`` live on the
 ORM model :class:`echoroo.models.recording_annotation.RecordingAnnotation`,
-which maps to the existing ``recording_annotations_DEFERRED`` table (migration
-head 0024). Every other method on :class:`SearchSessionService` already queries
-that model (aliased ``Annotation``); only ``reset_for_rerun`` hardcoded the
-wrong table via raw SQL. The fix is to issue the delete through the same ORM
-model so it targets ``recording_annotations_DEFERRED`` and is scoped to this
-session's review annotations.
+which maps to the canonical ``recording_annotations`` table. Every other method
+on :class:`SearchSessionService` already queries that model; only
+``reset_for_rerun`` hardcoded the wrong table via raw SQL. The fix is to issue
+the delete through the same ORM model so it targets ``recording_annotations``
+and is scoped to this session's review annotations.
 
 Most tests here run ``reset_for_rerun`` against a **real Postgres session**
 (the ``db_session`` fixture) with seeded ``RecordingAnnotation`` rows, so they
@@ -30,7 +30,7 @@ same ``rerun_search_session`` handler). It is the active end-to-end guard that
 the previously-only endpoint-level coverage (``test_search_writes.py``) lacked:
 that whole file is under a Phase-14 skip, so before this class there was no
 running test exercising the real rerun endpoint. This one seeds a COMPLETED
-session with a stale ``recording_annotations_DEFERRED`` row and a stale
+session with a stale ``recording_annotations`` row and a stale
 ``search_query_embeddings`` row, mocks the S3 client + Celery dispatch, and
 asserts the call returns **202** (not a 500 / ``UndefinedColumnError``) with
 the session flipped to PENDING and the stale rows cleared — i.e. it fails
