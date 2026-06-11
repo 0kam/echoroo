@@ -16,13 +16,13 @@ from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 # The rich-shape detection review service (list / get / create / confirm /
 # reject / change_species / species_summary / temporal_summary) operates on
 # the :class:`RecordingAnnotation` ORM, whose table
-# ``recording_annotations_DEFERRED`` exists and is live at runtime (created by
-# migration ``0011_recording_annotations_placeholder``). The ``_DEFERRED``
-# suffix is a transitional placeholder name pending a future rename to
-# ``recording_annotations``; it does not imply the table is absent. The vote
+# ``recording_annotations`` exists and is live at runtime (materialised by
+# migration ``0011_recording_annotations_placeholder`` and renamed from its
+# transitional ``recording_annotations_DEFERRED`` placeholder name by migration
+# ``0029_rename_recording_annotations_final``). The vote
 # endpoints (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass
 # this service and go through ``services/annotation_vote.py``, where votes are
-# keyed on recording-annotation (``recording_annotations_DEFERRED``) ids.
+# keyed on recording-annotation (``recording_annotations``) ids.
 from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository

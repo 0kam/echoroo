@@ -8,7 +8,7 @@ from ``specs/003-annotation/research.md`` §4 and persists aggregated
 overall row per model reference).
 
 Source of the detection annotations per model kind (all read from the live
-:class:`RecordingAnnotation` table ``recording_annotations_DEFERRED``):
+:class:`RecordingAnnotation` table ``recording_annotations``):
 
 - **BirdNET**: rows with ``source = 'birdnet'``.
 - **Perch**: rows with ``source = 'perch'``.

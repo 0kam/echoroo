@@ -389,7 +389,7 @@ class SearchSessionService:
             Updated SearchSession (not yet committed)
         """
         # Delete existing annotations linked to this session. Use the ORM model
-        # (RecordingAnnotation → "recording_annotations_DEFERRED") that the rest
+        # (RecordingAnnotation → "recording_annotations") that the rest
         # of this service queries, so the generated DELETE targets the table that
         # actually carries ``search_session_id``. Scoped to this session only.
         await self.db.execute(
