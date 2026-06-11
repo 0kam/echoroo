@@ -16,6 +16,7 @@
   import { onDestroy, untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages.js';
   import { searchXenoCanto } from '$lib/api/search';
+  import { ApiError } from '$lib/api/client';
   import { generateId } from '$lib/utils/id';
   import type { SoundSource, XenoCantoRecording, XenoCantoSearchResponse } from '$lib/types/search';
 
@@ -180,7 +181,18 @@
         per_page: 20,
       });
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Search failed.';
+      // A stale page may still hit the search route after the backend key was
+      // removed: surface the specific "not configured" message rather than a
+      // generic failure so the user understands why it failed.
+      if (err instanceof ApiError && err.code === 'xeno_canto_not_configured') {
+        error = m.search_xeno_canto_not_configured();
+      } else if (err instanceof ApiError && err.message) {
+        error = err.message;
+      } else if (err instanceof Error && err.message) {
+        error = err.message;
+      } else {
+        error = m.search_xeno_canto_search_failed();
+      }
       results = null;
     } finally {
       isLoading = false;

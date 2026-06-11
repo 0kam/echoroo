@@ -53,6 +53,13 @@ export interface EmbeddingStats {
   by_model: Record<string, number>;
   /** Count per dataset UUID string */
   by_dataset: Record<string, number>;
+  /**
+   * Whether the Xeno-canto integration is configured on the backend
+   * (XENO_CANTO_API_KEY set to a non-placeholder value). Drives whether
+   * the search UI exposes the "From Xeno-canto" entry points. Optional so
+   * older cached responses (without the field) default to disabled.
+   */
+  xeno_canto_enabled?: boolean;
 }
 
 // ============================================

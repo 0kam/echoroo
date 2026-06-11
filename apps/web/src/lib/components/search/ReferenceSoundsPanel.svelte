@@ -19,12 +19,21 @@
     species: TargetSpecies[];
     /** Model name forwarded to SpectrogramClipEditor for min clip duration */
     modelName: string;
+    /** Whether the backend Xeno-canto integration is configured (capability flag) */
+    xenoCantoEnabled?: boolean;
     onSpeciesChange: (species: TargetSpecies[]) => void;
     /** When true, hides add-species controls and renders SpeciesCards in readonly mode */
     readonly?: boolean;
   }
 
-  let { projectId, species, modelName, onSpeciesChange, readonly = false }: Props = $props();
+  let {
+    projectId,
+    species,
+    modelName,
+    xenoCantoEnabled = false,
+    onSpeciesChange,
+    readonly = false,
+  }: Props = $props();
 
   let showSelector = $state(false);
 
@@ -109,6 +118,7 @@
         species={sp}
         {modelName}
         {projectId}
+        {xenoCantoEnabled}
         onUpdate={(updated) => updateSpecies(sp.id, updated)}
         onRemove={() => removeSpecies(sp.id)}
         {readonly}

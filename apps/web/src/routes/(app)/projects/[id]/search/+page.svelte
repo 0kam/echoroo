@@ -409,6 +409,7 @@
         {projectId}
         {species}
         modelName={config.model_name}
+        xenoCantoEnabled={$statsQuery.data?.xeno_canto_enabled ?? false}
         onSpeciesChange={handleSpeciesChange}
       />
 

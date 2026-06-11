@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ipaddress
 import logging
-import os
 import socket
 import urllib.parse
 from collections.abc import AsyncIterator
@@ -21,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 from echoroo.core.actions import XENO_CANTO_AUDIO_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import check_project_access, gate_action
+from echoroo.core.settings import get_settings
 from echoroo.core.url_allowlist import PinnedIPAsyncTransport
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.xeno_canto import XenoCantoRecording, XenoCantoSearchResponse
@@ -175,15 +175,44 @@ def _validate_sonogram_url(url: str) -> tuple[str, str]:
 router = APIRouter(prefix="/projects/{project_id}/xeno-canto", tags=["xeno-canto"])
 
 
-def _get_api_key() -> str:
-    """Return the Xeno-canto API key from the environment.
+def _get_api_key() -> str | None:
+    """Return the configured Xeno-canto API key, or None when disabled.
 
-    Falls back to "demo" for development environments where the key is not set.
+    The previous implementation fell back to the literal string "demo" when
+    ``XENO_CANTO_API_KEY`` was unset. The Xeno-canto v3 API rejects that
+    placeholder, so a deployment without a real key would fail at first use
+    with a confusing upstream error. We now return ``None`` so callers can
+    surface a typed ``xeno_canto_not_configured`` 409 instead.
 
     Returns:
-        Xeno-canto API key string
+        The Xeno-canto API key string, or ``None`` when the integration is
+        not configured (key unset, empty, or the "demo" placeholder).
     """
-    return os.environ.get("XENO_CANTO_API_KEY", "demo")
+    settings = get_settings()
+    if not settings.xeno_canto_enabled:
+        return None
+    return (settings.XENO_CANTO_API_KEY or "").strip()
+
+
+def _xeno_canto_not_configured_exception() -> HTTPException:
+    """Return the typed 409 raised when the Xeno-canto key is not configured.
+
+    The detail dict carries the legacy ``error`` trigger key so the global
+    :func:`echoroo.core.exceptions.http_exception_handler` flattens it to a
+    top-level ``{"error": ..., "message": ...}`` envelope, matching the
+    codebase's contract-coded error shape.
+    """
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "error": "xeno_canto_not_configured",
+            "message": (
+                "Xeno-canto integration is not configured. Set "
+                "XENO_CANTO_API_KEY (xeno-canto.org account -> API key) to "
+                "enable Xeno-canto search and import."
+            ),
+        },
+    )
 
 
 
@@ -619,12 +648,18 @@ async def search_xeno_canto(
 
     Raises:
         403: Access denied to project
+        409: Xeno-canto integration is not configured (no API key)
         502: Upstream Xeno-canto API error
     """
     await check_project_access(project_id, current_user.id, db)
 
-    xc_query = _build_xc_query(query, country, area, quality_min, recording_type)
     api_key = _get_api_key()
+    if api_key is None:
+        # No usable key configured — surface a typed 409 instead of letting
+        # the request hit Xeno-canto with the rejected "demo" placeholder.
+        raise _xeno_canto_not_configured_exception()
+
+    xc_query = _build_xc_query(query, country, area, quality_min, recording_type)
 
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:

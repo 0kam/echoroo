@@ -17,13 +17,23 @@
     modelName: string;
     /** Project ID passed through to AddSourcePanel for Xeno-canto search */
     projectId: string;
+    /** Whether the backend Xeno-canto integration is configured (capability flag) */
+    xenoCantoEnabled?: boolean;
     onUpdate: (species: TargetSpecies) => void;
     onRemove: () => void;
     /** When true, hides add/remove controls and passes readonly down to SourceCards */
     readonly?: boolean;
   }
 
-  let { species, modelName, projectId, onUpdate, onRemove, readonly = false }: Props = $props();
+  let {
+    species,
+    modelName,
+    projectId,
+    xenoCantoEnabled = false,
+    onUpdate,
+    onRemove,
+    readonly = false,
+  }: Props = $props();
 
   let showAddSource = $state(false);
 
@@ -120,6 +130,7 @@
     <AddSourcePanel
       {modelName}
       {projectId}
+      {xenoCantoEnabled}
       scientificName={species.scientific_name}
       onAdd={handleAddSource}
       onCancel={() => (showAddSource = false)}

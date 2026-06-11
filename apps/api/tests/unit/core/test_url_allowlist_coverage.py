@@ -563,9 +563,17 @@ def test_build_pinned_async_client_returns_client_and_pin() -> None:
         # re-validate each Location URL — that is the contract.
         assert client.follow_redirects is False
     finally:
-        # Avoid leaking httpx connection pool warnings
+        # Avoid leaking httpx connection pool warnings. Use ``asyncio.run``
+        # (a fresh, self-contained loop) rather than ``asyncio.get_event_loop``:
+        # the latter raises ``RuntimeError: There is no current event loop`` on
+        # Python 3.11 once any earlier test in the session has run
+        # ``asyncio.run`` (which leaves the main-thread policy with
+        # ``_set_called=True`` and ``_loop=None``, disabling lazy loop
+        # auto-creation). ``test_boot_checks.py::test_run_boot_checks_sync_wrapper``
+        # does exactly that via ``run_boot_checks_sync``.
         import asyncio
-        asyncio.get_event_loop().run_until_complete(client.aclose())
+
+        asyncio.run(client.aclose())
 
 
 def test_build_pinned_async_client_rejects_invalid_url() -> None:
