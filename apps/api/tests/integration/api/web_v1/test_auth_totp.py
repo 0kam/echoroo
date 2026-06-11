@@ -9,6 +9,7 @@ from typing import Any
 import fakeredis.aioredis
 import pyotp
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from tests._alembic_upgrade import upgrade_head_in_process
@@ -62,7 +63,7 @@ def upgraded_db(pg_container: object) -> str:
     return async_url
 
 
-@pytest.fixture(name="session_factory")
+@pytest_asyncio.fixture(name="session_factory")
 async def session_factory_fixture(upgraded_db: str) -> AsyncIterator[object]:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -77,7 +78,7 @@ async def session_factory_fixture(upgraded_db: str) -> AsyncIterator[object]:
         await engine.dispose()
 
 
-@pytest.fixture(name="client")
+@pytest_asyncio.fixture(name="client")
 async def client_fixture(
     monkeypatch: pytest.MonkeyPatch,
     session_factory: object,
