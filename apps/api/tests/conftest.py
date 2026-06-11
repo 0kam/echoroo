@@ -567,6 +567,23 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         audit_v2_col_exists = bool(audit_v2_col_exists_result.scalar())
 
+        # WS-A PR1 (Alembic 0027): probe the GBIF-backbone reconciliation
+        # columns added to ``taxa``. ``Base.metadata.create_all`` runs with
+        # ``checkfirst=True`` so it never alters an existing table — the
+        # columns are added idempotently below if missing. Probing one
+        # representative column is sufficient: the migration adds all six in a
+        # single transaction.
+        taxa_reconciliation_col_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'taxa'"
+                " AND column_name = 'gbif_accepted_usage_key')"
+            )
+        )
+        taxa_reconciliation_col_exists = bool(
+            taxa_reconciliation_col_exists_result.scalar()
+        )
+
         # Existing test DBs may still carry the pre-0017 project_id FK. We
         # drop it below before any early return so hard-deleted projects do
         # not require rewriting append-only audit rows during cleanup.
@@ -714,6 +731,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and invitation_v2_col_exists
         and audit_v2_col_exists
         and token_families_exists
+        and taxa_reconciliation_col_exists
     )
     if non_license_schema_current and not license_schema_current:
         await _sync_0023_license_schema(engine)
@@ -782,6 +800,23 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                         f"WHERE actor_user_id_hash_v2 IS NOT NULL"
                     )
                 )
+
+    # WS-A PR1 (Alembic 0027): idempotent column add for legacy test DBs that
+    # pre-date the GBIF-backbone reconciliation migration. All six columns are
+    # nullable so the add is safe on existing rows.
+    if not taxa_reconciliation_col_exists:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE taxa "
+                    "ADD COLUMN IF NOT EXISTS gbif_accepted_usage_key INTEGER NULL, "
+                    "ADD COLUMN IF NOT EXISTS gbif_match_type VARCHAR(20) NULL, "
+                    "ADD COLUMN IF NOT EXISTS gbif_match_confidence DOUBLE PRECISION NULL, "
+                    "ADD COLUMN IF NOT EXISTS gbif_backbone_version VARCHAR(20) NULL, "
+                    "ADD COLUMN IF NOT EXISTS verbatim_scientific_name VARCHAR(300) NULL, "
+                    "ADD COLUMN IF NOT EXISTS accepted_scientific_name VARCHAR(300) NULL"
+                )
+            )
 
     if not core_exists:
         # Fresh database — build using the raw-SQL path below.
