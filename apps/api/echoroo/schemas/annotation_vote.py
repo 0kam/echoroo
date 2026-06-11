@@ -97,7 +97,7 @@ class VoteSummaryResponse(BaseModel):
 
     Includes aggregate counts, the current user's vote (if any), the computed
     consensus status, and the full list of individual votes (``voters[]``,
-    matching ``VoteAggregateResponse`` in ``contracts/detections.yaml``).
+    matching ``VoteSummaryResponse`` in ``contracts/detections.yaml``).
     """
 
     annotation_id: UUID = Field(..., description="Annotation UUID")
@@ -123,7 +123,7 @@ class VoteSummaryResponse(BaseModel):
     voters: list[VoteResponse] = Field(
         default_factory=list,
         description=(
-            "Individual vote records. Field name matches ``VoteAggregateResponse.voters``"
+            "Individual vote records. Field name matches ``VoteSummaryResponse.voters``"
             " in ``contracts/detections.yaml`` (FR-038 / FR-039)."
         ),
     )

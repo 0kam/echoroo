@@ -126,6 +126,15 @@ class RecordingAnnotation(UUIDMixin, TimestampMixin, Base):
         lazy="raise",
     )
 
+    # NOTE (P5, annotation-consolidation): there is intentionally NO uniqueness
+    # constraint on (recording_id, tag_id, start_time, end_time). Three writer
+    # strategies coexist: custom-SVM / ML bulk inserts use ON CONFLICT DO
+    # NOTHING, sampling / active-learning writers use bare ``db.add()``, and
+    # search annotations dedupe app-side with a ±0.1s time tolerance
+    # (``api/v1/search/annotations.py``). Multi-model detections also
+    # legitimately produce identical (recording, tag, time) rows with NULL
+    # ``detection_run_id``. Adding a DB constraint requires first refactoring
+    # the sampling / AL writers to upsert.
     __table_args__ = (
         Index("ix_recording_annotations_recording", "recording_id"),
         Index("ix_recording_annotations_tag", "tag_id"),

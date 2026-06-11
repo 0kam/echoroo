@@ -306,22 +306,30 @@ jobs:
           echo "E2E_SHARED_TOTP_SECRET=VUO4R45DU5RTBODG63FN7KOE6OOCKCJE" >> "$GITHUB_ENV"
 
       # --- Run the stable seeded smoke subset ---------------------------------
-      # Chosen specs use the shared-TOTP login helper (loginWithSharedTotp) and
-      # the lowest-dependency seeded accounts. They have NO `*_E2E_ENABLED`
-      # opt-in gates, do not require GPU / Celery worker / ML inference, and
-      # exercise login + core authenticated screens / banner stack:
+      # Chosen specs use the shared-TOTP login helper (loginWithSharedTotp) or
+      # seeded API keys, do not require GPU / Celery worker / ML inference, and
+      # exercise login + core authenticated screens / banner stack / vote API:
       #   - no-email-ui-fresh-deployment.spec.ts  (e2e-owner: login + dashboard/
       #     profile/settings; logged-out login page; deleted-route smoke)
       #   - banner-stack.spec.ts                  (e2e-member: notification stack)
+      #   - permissions/seeded-vote-comment.spec.ts (P5 annotation-consolidation:
+      #     role×visibility vote/comment permission matrix against /api/v1 using
+      #     seeded API keys; gated by E2E_VOTE_COMMENT_ENABLED — explicitly
+      #     opted-in below so local `npx playwright test` runs stay unaffected)
       # Playwright starts its own Vite (CI=true → reuseExistingServer:false).
       - name: Run seeded smoke specs (Playwright)
         working-directory: apps/web
         env:
           CI: "true"
+          # Explicit CI opt-in for the seeded vote/comment permission suite.
+          # The gate stays in the spec file so ad-hoc local runs skip it
+          # unless the seeded env is exported.
+          E2E_VOTE_COMMENT_ENABLED: "1"
         run: |
           npx playwright test \
             tests/e2e/no-email-ui-fresh-deployment.spec.ts \
             tests/e2e/banner-stack.spec.ts \
+            tests/e2e/permissions/seeded-vote-comment.spec.ts \
             --reporter=line
 
       # --- Artifacts on failure -----------------------------------------------

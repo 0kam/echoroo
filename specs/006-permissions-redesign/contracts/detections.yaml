@@ -115,7 +115,7 @@ paths:
 
   /projects/{id}/annotations/{annotationId}/votes:
     get:
-      summary: 投票一覧（集計 3 カウント別、非メンバー/Trusted 個票は Owner/Admin のみ）
+      summary: 投票サマリ（per-source 集計 + 個票、非メンバー/Trusted 個票 user_id は Owner/Admin のみ）
       operationId: listAnnotationVotes
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -126,11 +126,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VoteAggregateResponse'
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: annotation が project に属さない（BOLA guard）
 
     post:
       summary: 投票（VOTE permission）
-      description: source は member / guest_authenticated / trusted_user を自動判定
+      description: |
+        - source は member / guest_authenticated / trusted_user を自動判定（FR-037、初回 snapshot は immutable）
+        - 同一ユーザーの再投票は既存票を置換し、status を再計算して更新後サマリを返す
       operationId: createAnnotationVote
       security:
         - apiKeyAuth: []
@@ -144,14 +148,101 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [decision]
-              additionalProperties: false
-              properties:
-                decision: { type: string, enum: [agree, disagree] }
+              $ref: '#/components/schemas/VoteCastRequest'
       responses:
-        "201":
-          description: 投票登録、immutable
+        "200":
+          description: 更新後の投票サマリ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: annotation が project に属さない（BOLA guard）
+
+    delete:
+      summary: 自分の投票を削除（mutating vote action — VOTE permission を共有、FR-037）
+      operationId: deleteAnnotationVote
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: annotationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 削除後の投票サマリ（status 再計算済み）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: annotation が project に属さない、または削除対象の票が無い
+
+  # Detection-scoped alias of the annotation vote surface
+  # (apps/api/echoroo/api/v1/detections.py — same gates, same VoteSummaryResponse).
+  /projects/{id}/detections/{detectionId}/votes:
+    get:
+      summary: Detection 投票サマリ（annotation votes と同一契約）
+      operationId: listDetectionVotes
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: detectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 集計 + 可視個票
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: detection が project に属さない（BOLA guard）
+
+    post:
+      summary: Detection への投票（VOTE permission、再投票は置換）
+      operationId: createDetectionVote
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: detectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoteCastRequest'
+      responses:
+        "200":
+          description: 更新後の投票サマリ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: detection が project に属さない（BOLA guard）
+
+    delete:
+      summary: Detection への自分の投票を削除（VOTE permission を共有）
+      operationId: deleteDetectionVote
+      security:
+        - apiKeyAuth: []
+        - sessionCookie: []
+          csrfToken: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: detectionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 削除後の投票サマリ（status 再計算済み）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoteSummaryResponse'
+        "404":
+          description: detection が project に属さない、または削除対象の票が無い
 
   /projects/{id}/annotations/{annotationId}/comments:
     get:
@@ -235,21 +326,79 @@ components:
           enum: [none, project_toggle, taxon_sensitivity, hidden]
           description: 粗化理由
 
-    VoteAggregateResponse:
+    # ----- Vote schemas (mirror apps/api/echoroo/schemas/annotation_vote.py) -----
+    VoteCastRequest:
+      type: object
+      required: [vote]
+      properties:
+        vote: { type: string, enum: [agree, disagree, unsure] }
+        signal_quality:
+          type: string
+          enum: [solo, dominant, mixed]
+          nullable: true
+          description: vote=agree のときのみ有効な音質評価
+        suggested_tag_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: disagree 時に提案する正しい種 tag
+        note: { type: string, maxLength: 2000, nullable: true }
+
+    VoteUserInfo:
       type: object
       properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        display_name: { type: string, nullable: true }
+
+    VoteResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        annotation_id: { type: string, format: uuid }
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 非メンバー / Trusted 票の user_id は Owner / Admin 以外には null にマスク（投票自体は可視）（FR-039）
+        vote: { type: string, enum: [agree, disagree, unsure] }
+        signal_quality: { type: string, enum: [solo, dominant, mixed], nullable: true }
+        suggested_tag_id: { type: string, format: uuid, nullable: true }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        user:
+          allOf: [{ $ref: '#/components/schemas/VoteUserInfo' }]
+          nullable: true
+          description: user_id がマスクされる場合は省略（null）
+        source: { type: string, enum: [member, guest_authenticated, trusted_user], description: "投票時の関係 snapshot（FR-037、immutable）" }
+        project_role_at_vote:
+          type: string
+          enum: [viewer, member, admin]
+          nullable: true
+          description: 投票時の project role snapshot（source!=member は null）
+
+    VoteSummaryResponse:
+      type: object
+      properties:
+        annotation_id: { type: string, format: uuid }
+        agree_count: { type: integer }
+        disagree_count: { type: integer }
+        unsure_count: { type: integer }
+        user_vote: { type: string, enum: [agree, disagree, unsure], nullable: true }
+        user_signal_quality: { type: string, enum: [solo, dominant, mixed], nullable: true }
+        signal_quality_counts:
+          type: object
+          additionalProperties: { type: integer }
+          description: agree 票の signal_quality 内訳（solo/dominant/mixed）
+        consensus_status: { type: string, enum: [unreviewed, confirmed, rejected] }
+        voters:
+          type: array
+          description: 個票 list。非メンバー / Trusted 票の user_id マスクは VoteResponse 参照（FR-038 / FR-039）
+          items: { $ref: '#/components/schemas/VoteResponse' }
+        # FR-038: per-source aggregate counts（3-source breakdown）
         member_agree: { type: integer }
         member_disagree: { type: integer }
         guest_authenticated_agree: { type: integer }
         guest_authenticated_disagree: { type: integer }
         trusted_user_agree: { type: integer }
         trusted_user_disagree: { type: integer }
-        voters:
-          type: array
-          description: 非メンバー / Trusted 票の個票 user_id は Owner / Admin のみ、他ロールは null にマスク（投票自体は可視）（FR-039）
-          items:
-            type: object
-            properties:
-              user_id: { type: string, format: uuid, nullable: true }
-              source: { type: string, enum: [member, guest_authenticated, trusted_user] }
-              project_role_at_vote: { type: string, nullable: true }
