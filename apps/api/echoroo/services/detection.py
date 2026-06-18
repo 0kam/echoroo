@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy import select as sa_select
+from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.pagination import paginate
 from echoroo.models.annotation_vote import AnnotationVote
@@ -450,7 +451,25 @@ class DetectionService:
             freq_high=request.freq_high,
         )
 
-        created = await self.annotation_repo.create(annotation)
+        # ``DetectionCreate.source`` accepts any ``DetectionSource`` value,
+        # including ``CUSTOM_SVM``. The partial unique index
+        # ``uq_recording_annotations_custom_svm`` (migration 0031) deduplicates
+        # custom_svm rows on
+        # ``(recording_id, tag_id, start_time, end_time, detection_run_id)``, so
+        # an exact-duplicate custom_svm create through this generic path raises
+        # ``IntegrityError`` on flush. Map that to a clean 409 (mirroring
+        # ``RecorderService.create``) rather than letting it bubble up as a 500.
+        # The arbiter is intentionally NOT pushed into the generic
+        # ``annotation_repo.create`` (other sources reuse it and must stay
+        # unconstrained); the conflict is a true duplicate, so 409 is correct.
+        try:
+            created = await self.annotation_repo.create(annotation)
+        except IntegrityError as exc:
+            await self.annotation_repo.db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Duplicate detection",
+            ) from exc
         return self._to_response(created, None)
 
     async def confirm(

@@ -929,10 +929,27 @@ async def _run_custom_model_inference(
                 # Bulk insert accumulated annotations when the buffer is large enough
                 if len(pending_annotation_dicts) >= _INFERENCE_COMMIT_BATCH:
                     async with session_factory() as db:
+                        # Target the partial unique index
+                        # ``uq_recording_annotations_custom_svm`` (migration 0031)
+                        # as the ON CONFLICT arbiter. ``index_where`` MUST match
+                        # the migration predicate verbatim so a re-run of the same
+                        # custom_svm detection_run skips the duplicate rows.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
-                            .on_conflict_do_nothing()
+                            .on_conflict_do_nothing(
+                                index_elements=[
+                                    "recording_id",
+                                    "tag_id",
+                                    "start_time",
+                                    "end_time",
+                                    "detection_run_id",
+                                ],
+                                index_where=text(
+                                    "source = 'custom_svm' "
+                                    "AND detection_run_id IS NOT NULL"
+                                ),
+                            )
                         )
                         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
                         inserted = cursor.rowcount
@@ -960,10 +977,25 @@ async def _run_custom_model_inference(
                 elif pending_annotation_dicts:
                     # Flush smaller batch at end of loop iteration
                     async with session_factory() as db:
+                        # Same partial-index arbiter as the large-buffer branch
+                        # above (migration 0031); ``index_where`` matches the
+                        # migration predicate verbatim.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
-                            .on_conflict_do_nothing()
+                            .on_conflict_do_nothing(
+                                index_elements=[
+                                    "recording_id",
+                                    "tag_id",
+                                    "start_time",
+                                    "end_time",
+                                    "detection_run_id",
+                                ],
+                                index_where=text(
+                                    "source = 'custom_svm' "
+                                    "AND detection_run_id IS NOT NULL"
+                                ),
+                            )
                         )
                         cursor = await db.execute(stmt)  # type: ignore[assignment]
                         inserted = cursor.rowcount

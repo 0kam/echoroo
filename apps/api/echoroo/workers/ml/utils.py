@@ -17,7 +17,7 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -427,7 +427,26 @@ async def _bulk_insert_annotations(
     total_inserted = 0
     for i in range(0, len(annotation_dicts), BATCH_CHUNK_SIZE):
         chunk = annotation_dicts[i : i + BATCH_CHUNK_SIZE]
-        stmt = pg_insert(RecordingAnnotation).values(chunk).on_conflict_do_nothing()
+        # Target the partial unique index ``uq_recording_annotations_custom_svm``
+        # (migration 0031) as the ON CONFLICT arbiter. ``index_where`` MUST match
+        # the migration predicate exactly or PostgreSQL will not infer the index,
+        # so a re-run of the same custom_svm detection_run skips the duplicate
+        # rows instead of accumulating them. The predicate scopes the conflict to
+        # custom_svm only; this writer only emits custom_svm rows.
+        stmt = (
+            pg_insert(RecordingAnnotation)
+            .values(chunk)
+            .on_conflict_do_nothing(
+                index_elements=[
+                    "recording_id",
+                    "tag_id",
+                    "start_time",
+                    "end_time",
+                    "detection_run_id",
+                ],
+                index_where=text("source = 'custom_svm' AND detection_run_id IS NOT NULL"),
+            )
+        )
         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
         total_inserted += cursor.rowcount
     return total_inserted

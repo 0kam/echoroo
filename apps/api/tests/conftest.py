@@ -754,6 +754,29 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
             await conn.execute(sa.text("DROP TABLE IF EXISTS annotations;"))
 
+    # Custom-SVM dedupe (Alembic 0031): partial UNIQUE index deduplicating
+    # custom_svm inference rows in ``recording_annotations``. It is a PARTIAL
+    # index (predicate ``source = 'custom_svm' AND detection_run_id IS NOT
+    # NULL``), so ``Base.metadata.create_all`` cannot represent it and a reused
+    # test DB that pre-dates 0031 would never gain it (the early-return below
+    # fires before the post-``create_all`` index block). Mirror the P4 heal
+    # idiom above: create it idempotently here, unconditionally before any early
+    # return, so the test DB enforces the custom_svm dedupe guard and
+    # ``tests/integration/test_custom_svm_dedupe_real_db.py`` is
+    # environment-independent.
+    async with engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                    uq_recording_annotations_custom_svm
+                ON recording_annotations
+                    (recording_id, tag_id, start_time, end_time, detection_run_id)
+                WHERE source = 'custom_svm' AND detection_run_id IS NOT NULL
+                """
+            )
+        )
+
     if project_audit_log_exists and project_audit_log_fk_exists:
         async with engine.begin() as conn:
             await conn.execute(
