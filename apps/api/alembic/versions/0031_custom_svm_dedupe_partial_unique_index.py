@@ -53,25 +53,36 @@ import sqlalchemy as sa
 
 from alembic import op
 
-# Single source of truth for the index name + columns + partial predicate. The
-# custom_svm writers' ``index_elements`` / ``index_where`` import these SAME
-# constants, so the migration's index definition and every ON CONFLICT arbiter
-# are guaranteed byte-identical (PostgreSQL only infers the partial index as the
-# arbiter when both match it exactly).
-from echoroo.models.recording_annotation import (
-    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
-    CUSTOM_SVM_DEDUP_INDEX_NAME,
-    CUSTOM_SVM_DEDUP_INDEX_WHERE,
-)
+# FROZEN SNAPSHOT — migration immutability principle.
+#
+# The index name / columns / partial predicate below are INLINE LITERALS that
+# captured the values of ``CUSTOM_SVM_DEDUP_INDEX_NAME`` /
+# ``CUSTOM_SVM_DEDUP_INDEX_ELEMENTS`` / ``CUSTOM_SVM_DEDUP_INDEX_WHERE`` at the
+# time this migration was authored. They are deliberately NOT imported from
+# ``echoroo.models.recording_annotation`` so that a future edit to those model
+# constants can never silently change this historical migration's behavior.
+#
+# The LIVE writers (``workers.ml.utils._bulk_insert_annotations`` and the two
+# batch inserts in ``workers.classifier_tasks._run_custom_model_inference``)
+# continue to use the shared ``CUSTOM_SVM_DEDUP_INDEX_*`` constants in
+# ``echoroo/models/recording_annotation.py`` as their ON CONFLICT arbiter. These
+# inline literals MUST stay byte-identical to those constants. Any future change
+# to the index definition must be a NEW migration — do NOT edit these literals.
 
 revision: str = "0031"
 down_revision: str | None = "0030"
 branch_labels: str | tuple[str, ...] | None = None
 depends_on: str | tuple[str, ...] | None = None
 
-_INDEX_NAME = CUSTOM_SVM_DEDUP_INDEX_NAME
-_PARTIAL_PREDICATE = CUSTOM_SVM_DEDUP_INDEX_WHERE
-_INDEX_COLUMNS = list(CUSTOM_SVM_DEDUP_INDEX_ELEMENTS)
+_INDEX_NAME = "uq_recording_annotations_custom_svm"
+_PARTIAL_PREDICATE = "source = 'custom_svm' AND detection_run_id IS NOT NULL"
+_INDEX_COLUMNS = [
+    "recording_id",
+    "tag_id",
+    "start_time",
+    "end_time",
+    "detection_run_id",
+]
 
 
 def upgrade() -> None:
