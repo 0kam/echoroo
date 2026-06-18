@@ -1178,7 +1178,7 @@ async def _upsert_exportable_species_tag(
     ``tags.id`` is the primary key, so the row can live in exactly one project.
     It is scoped to the seeded **public** project — the canonical happy-path
     project for the train-model flow. The defense-in-depth validation in the
-    custom-model create path returns a clean 422 when the flow runs against any
+    custom-model create path returns a clean 404 when the flow runs against any
     other project (e.g. the restricted exportable session), which is the
     intended behaviour.
 
@@ -1541,7 +1541,7 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
             # the row is scoped to the public project (the train-model
             # happy-path); the restricted exportable session reuses the same
             # key but its train-model flow is guarded by the create-path
-            # validation (clean 422) rather than a database 500.
+            # validation (clean 404) rather than a database 500.
             await _upsert_exportable_species_tag(
                 session,
                 project=projects["public"],
