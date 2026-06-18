@@ -13,12 +13,86 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.api.v1 import custom_models as custom_models_api
 from echoroo.middleware.auth import CurrentUser
-from echoroo.schemas.custom_model import CustomModelResponse
+from echoroo.schemas.custom_model import CustomModelCreate, CustomModelResponse
 from echoroo.services.custom_model import CustomModelService
 
 
 async def _noop_gate_action(**_kwargs: object) -> None:
     return None
+
+
+@pytest.mark.asyncio
+async def test_create_custom_model_rejects_unknown_target_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A target_tag_id absent from the project must 404, never reach the FK (500)."""
+
+    class _TagRepository:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        async def get_by_id_in_project(self, _tag_id: object, _project_id: object) -> None:
+            return None
+
+    create_model = AsyncMock()
+    service = cast(CustomModelService, SimpleNamespace(create_model=create_model))
+
+    monkeypatch.setattr(custom_models_api, "gate_action", _noop_gate_action)
+    monkeypatch.setattr(custom_models_api, "TagRepository", _TagRepository)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await custom_models_api.create_custom_model(
+            project_id=uuid4(),
+            request_body=CustomModelCreate(name="m", target_tag_id=uuid4()),
+            request=cast(Request, SimpleNamespace()),
+            current_user=cast(CurrentUser, SimpleNamespace(id=uuid4())),
+            db=cast(AsyncSession, SimpleNamespace()),
+            service=service,
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Target tag not found"
+    create_model.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_create_custom_model_accepts_valid_target_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A target_tag_id present in the project must reach the create service path."""
+
+    class _TagRepository:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        async def get_by_id_in_project(self, _tag_id: object, _project_id: object) -> object:
+            return SimpleNamespace()
+
+    model = SimpleNamespace()
+    create_model = AsyncMock(return_value=model)
+    service = cast(CustomModelService, SimpleNamespace(create_model=create_model))
+
+    monkeypatch.setattr(custom_models_api, "gate_action", _noop_gate_action)
+    monkeypatch.setattr(custom_models_api, "TagRepository", _TagRepository)
+    monkeypatch.setattr(
+        CustomModelResponse,
+        "model_validate",
+        classmethod(lambda _cls, _model: SimpleNamespace()),
+    )
+
+    project_id = uuid4()
+    target_tag_id = uuid4()
+
+    await custom_models_api.create_custom_model(
+        project_id=project_id,
+        request_body=CustomModelCreate(name="m", target_tag_id=target_tag_id),
+        request=cast(Request, SimpleNamespace()),
+        current_user=cast(CurrentUser, SimpleNamespace(id=uuid4())),
+        db=cast(AsyncSession, SimpleNamespace()),
+        service=service,
+    )
+
+    create_model.assert_awaited_once()
 
 
 @pytest.mark.asyncio

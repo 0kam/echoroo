@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pyotp
 import sqlalchemy as sa
@@ -57,6 +57,7 @@ from echoroo.models.enums import (
     ProjectTrustedStatus,
     ProjectVisibility,
     SearchSessionStatus,
+    TagCategory,
 )
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
@@ -64,6 +65,7 @@ from echoroo.models.recording import Recording
 from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
+from echoroo.models.tag import Tag
 from echoroo.models.user import User
 from echoroo.services.api_key_verification import hash_api_key_secret
 from echoroo.services.invitation_service import (
@@ -1159,6 +1161,67 @@ async def _upsert_search_session(
     return search_session
 
 
+async def _upsert_exportable_species_tag(
+    session: AsyncSession,
+    *,
+    project: Project,
+) -> Tag:
+    """Seed the species ``Tag`` row referenced by the exportable search session.
+
+    The exportable search session embeds :data:`EXPORTABLE_SPECIES_KEY` as the
+    ``tag_id`` in its ``species_config`` (and results JSON). The browser
+    "Train Model from Search" flow reads that ``tag_id`` and POSTs it as
+    ``target_tag_id`` when creating a custom model, which is a NOT-NULL FK into
+    ``tags.id``. Without a materialised ``tags`` row the create path fails with a
+    database IntegrityError (HTTP 500), so the seed must provision the row.
+
+    ``tags.id`` is the primary key, so the row can live in exactly one project.
+    It is scoped to the seeded **public** project — the canonical happy-path
+    project for the train-model flow. The defense-in-depth validation in the
+    custom-model create path returns a clean 422 when the flow runs against any
+    other project (e.g. the restricted exportable session), which is the
+    intended behaviour.
+
+    Field choices mirror the exportable session's ``species_config`` so the
+    two stay consistent:
+      * ``id`` — :data:`EXPORTABLE_SPECIES_KEY` (the literal UUID referenced by
+        the seeded session).
+      * ``name`` — ``"Testus permissionis"`` (the deterministic species name).
+      * ``category`` — :data:`TagCategory.SPECIES`.
+      * ``scientific_name`` / ``common_name`` — copied from the session config.
+      * ``taxon_id`` — ``None``: the seed does not materialise global taxa.
+
+    Idempotent: re-running locates the existing row by its primary key and
+    refreshes its mutable fields, following the other ``_upsert_*`` helpers.
+    """
+    tag_id = UUID(EXPORTABLE_SPECIES_KEY)
+    result = await session.execute(
+        sa.select(Tag).where(Tag.id == tag_id).limit(1)
+    )
+    tag = result.scalar_one_or_none()
+    if tag is None:
+        tag = Tag(
+            id=tag_id,
+            project_id=project.id,
+            name="Testus permissionis",
+            category=TagCategory.SPECIES,
+            scientific_name="Testus permissionis",
+            common_name="E2E Seed Species",
+            taxon_id=None,
+        )
+        session.add(tag)
+    else:
+        tag.project_id = project.id
+        tag.name = "Testus permissionis"
+        tag.category = TagCategory.SPECIES
+        tag.scientific_name = "Testus permissionis"
+        tag.common_name = "E2E Seed Species"
+        tag.taxon_id = None
+
+    await session.flush()
+    return tag
+
+
 async def _upsert_exportable_search_session(
     session: AsyncSession,
     *,
@@ -1473,6 +1536,17 @@ async def _seed(prefix: str, password: str) -> dict[str, Any]:
                 )
                 for kind, project in projects.items()
             }
+            # Provision the species Tag referenced by the exportable search
+            # sessions before seeding them. ``tags.id`` is the primary key, so
+            # the row is scoped to the public project (the train-model
+            # happy-path); the restricted exportable session reuses the same
+            # key but its train-model flow is guarded by the create-path
+            # validation (clean 422) rather than a database 500.
+            await _upsert_exportable_species_tag(
+                session,
+                project=projects["public"],
+            )
+
             search_sessions.update(
                 {
                     f"{kind}_exportable": await _upsert_exportable_search_session(
