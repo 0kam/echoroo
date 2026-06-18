@@ -23,6 +23,7 @@ from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.custom_model import CustomModelStatus
 from echoroo.repositories.search_session import SearchSessionRepository
+from echoroo.repositories.tag import TagRepository
 from echoroo.schemas.custom_model import (
     CustomModelApplyResponse,
     CustomModelCreate,
@@ -189,6 +190,17 @@ async def create_custom_model(
         request=request,
         db=db,
     )
+    # Validate the target tag exists in this project before persisting. Without
+    # this guard a stale/foreign tag_id (e.g. a search session whose tags were
+    # never materialised) reaches the NOT-NULL FK on commit and surfaces as a
+    # database IntegrityError (HTTP 500). Mirrors the search-session existence
+    # check above and TagRepository validation in services/detection.py.
+    tag_repo = TagRepository(db)
+    if not await tag_repo.get_by_id_in_project(request_body.target_tag_id, project_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Target tag not found",
+        )
     model = await service.create_model(
         project_id=project_id,
         user_id=current_user.id,
