@@ -12,7 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.pagination import paginate
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.confirmed_region import ConfirmedRegion
-from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
+from echoroo.models.enums import (
+    DetectionSource,
+    DetectionStatus,
+    SignalQuality,
+    VoteType,
+)
 
 # The rich-shape detection review service (list / get / create / confirm /
 # reject / change_species / species_summary / temporal_summary) operates on
@@ -24,7 +29,10 @@ from echoroo.models.enums import DetectionStatus, SignalQuality, VoteType
 # endpoints (``cast_vote`` / ``delete_vote`` / ``get_vote_summary``) bypass
 # this service and go through ``services/annotation_vote.py``, where votes are
 # keyed on recording-annotation (``recording_annotations``) ids.
-from echoroo.models.recording_annotation import RecordingAnnotation
+from echoroo.models.recording_annotation import (
+    CUSTOM_SVM_DEDUP_INDEX_NAME,
+    RecordingAnnotation,
+)
 from echoroo.repositories.annotation import AnnotationRepository, TemporalSummaryRow
 from echoroo.repositories.annotation_vote import AnnotationVoteRepository
 from echoroo.repositories.confirmed_region import ConfirmedRegionRepository
@@ -411,7 +419,29 @@ class DetectionService:
 
         Returns:
             Created detection response
+
+        Raises:
+            HTTPException: 404 if the referenced recording / tag / detection run
+                is not in the project; 422 if a ``custom_svm`` detection omits a
+                ``detection_run_id`` (which would bypass the dedupe index); 409
+                if it exactly duplicates an existing ``custom_svm`` row.
         """
+        # custom_svm rows are deduplicated by the partial unique index
+        # ``uq_recording_annotations_custom_svm`` (migration 0031), whose
+        # predicate requires ``detection_run_id IS NOT NULL``. A custom_svm row
+        # with a NULL detection_run_id falls OUTSIDE the index and could never
+        # be deduped, silently defeating the guard. Reject it up front. Scoped
+        # narrowly to custom_svm — every other source legitimately allows a NULL
+        # detection_run_id (e.g. sampling_round / human / search).
+        if (
+            request.source == DetectionSource.CUSTOM_SVM
+            and request.detection_run_id is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="custom_svm detections require detection_run_id",
+            )
+
         if not await self.recording_repo.exists_in_project(request.recording_id, project_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -457,8 +487,12 @@ class DetectionService:
         # custom_svm rows on
         # ``(recording_id, tag_id, start_time, end_time, detection_run_id)``, so
         # an exact-duplicate custom_svm create through this generic path raises
-        # ``IntegrityError`` on flush. Map that to a clean 409 (mirroring
-        # ``RecorderService.create``) rather than letting it bubble up as a 500.
+        # ``IntegrityError`` on flush. Map ONLY that specific unique-violation to
+        # a clean 409; any OTHER integrity error (FK / NOT NULL / a future
+        # constraint) must NOT be mislabeled "Duplicate detection" — rollback
+        # and re-raise it so the framework surfaces it correctly (mirrors and
+        # improves on ``RecorderService.create``, which string-matches; here we
+        # discriminate on the asyncpg sqlstate + constraint/index name).
         # The arbiter is intentionally NOT pushed into the generic
         # ``annotation_repo.create`` (other sources reuse it and must stay
         # unconstrained); the conflict is a true duplicate, so 409 is correct.
@@ -466,11 +500,50 @@ class DetectionService:
             created = await self.annotation_repo.create(annotation)
         except IntegrityError as exc:
             await self.annotation_repo.db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Duplicate detection",
-            ) from exc
+            if self._is_custom_svm_dedup_violation(exc):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Duplicate detection",
+                ) from exc
+            # Unexpected integrity error (FK / NOT NULL / other unique). Do not
+            # mislabel it as a duplicate detection — re-raise the original.
+            raise
         return self._to_response(created, None)
+
+    @staticmethod
+    def _is_custom_svm_dedup_violation(exc: IntegrityError) -> bool:
+        """Return True only for a unique violation on the custom_svm dedup index.
+
+        SQLAlchemy wraps the driver error in ``exc.orig``. Under asyncpg the
+        wrapped error exposes ``sqlstate`` (``'23505'`` = ``unique_violation``)
+        and, via its ``__cause__`` diagnostics, the offending constraint/index
+        name. We require BOTH the unique-violation sqlstate AND the
+        ``uq_recording_annotations_custom_svm`` index name so that any other
+        integrity error (FK violation, NOT NULL, a future unique constraint) is
+        NOT mapped to 409. Falls back to a defensive string match on the index
+        name if the structured attributes are unavailable.
+        """
+        orig = getattr(exc, "orig", None)
+        if orig is None:
+            return False
+
+        # asyncpg: ``sqlstate`` is on the wrapped error (and/or its cause).
+        sqlstate = getattr(orig, "sqlstate", None)
+        cause = getattr(orig, "__cause__", None)
+        if sqlstate is None and cause is not None:
+            sqlstate = getattr(cause, "sqlstate", None)
+        if sqlstate != "23505":
+            return False
+
+        # asyncpg surfaces the index/constraint name via the exception's
+        # ``constraint_name`` diagnostic (on the cause), else fall back to the
+        # rendered message text.
+        constraint_name = None
+        if cause is not None:
+            constraint_name = getattr(cause, "constraint_name", None)
+        if constraint_name == CUSTOM_SVM_DEDUP_INDEX_NAME:
+            return True
+        return CUSTOM_SVM_DEDUP_INDEX_NAME in str(orig)
 
     async def confirm(
         self,

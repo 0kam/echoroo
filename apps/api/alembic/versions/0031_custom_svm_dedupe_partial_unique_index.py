@@ -36,8 +36,13 @@ would be btree-distinct anyway (NULLs never collide in a unique index), so
 constraining it would be pointless; excluding it keeps the predicate explicit
 and self-documenting.
 
-Index creatability: at migration time the dev DB has 0 custom_svm rows and 0
-duplicates, so the unique index builds cleanly. Alembic runs migrations inside a
+Index creatability: a DB that has already run custom_svm inference may carry
+EXACT-duplicate rows produced by re-running the same ``detection_run`` before
+this guard existed. ``CREATE UNIQUE INDEX`` over those would fail, so the
+upgrade FIRST deduplicates the pre-existing custom_svm rows (keeping one
+deterministic representative per conflict group) and only then creates the
+index. The dedup DELETE is a no-op on a clean DB (e.g. the dev DB at migration
+time, which has 0 custom_svm rows). Alembic runs migrations inside a
 transaction (``alembic/env.py``), so this uses a plain ``CREATE INDEX`` (NOT
 ``CONCURRENTLY``).
 """
@@ -48,20 +53,78 @@ import sqlalchemy as sa
 
 from alembic import op
 
+# Single source of truth for the index name + columns + partial predicate. The
+# custom_svm writers' ``index_elements`` / ``index_where`` import these SAME
+# constants, so the migration's index definition and every ON CONFLICT arbiter
+# are guaranteed byte-identical (PostgreSQL only infers the partial index as the
+# arbiter when both match it exactly).
+from echoroo.models.recording_annotation import (
+    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
+    CUSTOM_SVM_DEDUP_INDEX_NAME,
+    CUSTOM_SVM_DEDUP_INDEX_WHERE,
+)
+
 revision: str = "0031"
 down_revision: str | None = "0030"
 branch_labels: str | tuple[str, ...] | None = None
 depends_on: str | tuple[str, ...] | None = None
 
-
-# Index name + the exact partial predicate. The writers' ``index_where=`` MUST
-# match this predicate verbatim or PostgreSQL will not infer the index as the
-# ON CONFLICT arbiter.
-_INDEX_NAME = "uq_recording_annotations_custom_svm"
-_PARTIAL_PREDICATE = "source = 'custom_svm' AND detection_run_id IS NOT NULL"
+_INDEX_NAME = CUSTOM_SVM_DEDUP_INDEX_NAME
+_PARTIAL_PREDICATE = CUSTOM_SVM_DEDUP_INDEX_WHERE
+_INDEX_COLUMNS = list(CUSTOM_SVM_DEDUP_INDEX_ELEMENTS)
 
 
 def upgrade() -> None:
+    # Pre-launch: a DB that already ran custom_svm inference can hold EXACT
+    # re-run artifact duplicates (same conflict tuple, distinct uuid4 ids)
+    # because the old ON CONFLICT DO NOTHING arbitrated on the PK only. Those
+    # would make the unique index un-buildable, so delete the duplicates here,
+    # keeping ONE deterministic representative per conflict group: the earliest
+    # ``created_at`` row, with ``id`` (cast to text) as a deterministic
+    # tiebreaker (PostgreSQL has no ``MIN(uuid)`` aggregate, and ties on
+    # ``created_at`` are possible). The DELETE is scoped to the EXACT index
+    # predicate (custom_svm + non-null detection_run_id) so it touches nothing
+    # outside the index's domain, and is a no-op when there are no duplicates
+    # (idempotent / safe on a clean DB).
+    #
+    # FK-cascade note (pre-launch data policy): any annotation_votes / comments
+    # attached to a deleted duplicate row cascade away with it. This is accepted
+    # — these are exact re-run artifacts, not distinct human-reviewed rows.
+    op.execute(
+        sa.text(
+            """
+            DELETE FROM recording_annotations a
+            USING (
+                SELECT id
+                FROM (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY
+                                recording_id,
+                                tag_id,
+                                start_time,
+                                end_time,
+                                detection_run_id
+                            ORDER BY created_at ASC, id::text ASC
+                        ) AS rn
+                    FROM recording_annotations
+                    WHERE source = 'custom_svm'
+                      AND detection_run_id IS NOT NULL
+                      -- NULL-distinct semantics: the partial UNIQUE index treats
+                      -- NULL tag_id rows as DISTINCT (they never collide), so a
+                      -- group of NULL-tag_id custom_svm rows is index-legal and
+                      -- must NOT be collapsed. Excluding them here makes the
+                      -- dedup faithful to the index. Do NOT "simplify" this away.
+                      AND tag_id IS NOT NULL
+                ) ranked
+                WHERE ranked.rn > 1
+            ) dup
+            WHERE a.id = dup.id
+            """
+        )
+    )
+
     # PARTIAL UNIQUE index scoped to custom_svm inference rows. The predicate
     # restricts the constraint to that source only, leaving every other writer
     # (sampling_round / birdnet / perch / perch_search / similarity_search /
@@ -69,7 +132,7 @@ def upgrade() -> None:
     op.create_index(
         _INDEX_NAME,
         "recording_annotations",
-        ["recording_id", "tag_id", "start_time", "end_time", "detection_run_id"],
+        _INDEX_COLUMNS,
         unique=True,
         postgresql_where=sa.text(_PARTIAL_PREDICATE),
     )

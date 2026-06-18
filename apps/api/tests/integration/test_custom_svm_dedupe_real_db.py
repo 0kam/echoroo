@@ -44,7 +44,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -405,3 +405,264 @@ async def test_detection_service_create_duplicate_custom_svm_returns_409(
 
     # No phantom row was committed by the failed create.
     assert await _count_custom_svm(db_session, run_id) == 1
+
+
+# ---------------------------------------------------------------------------
+# (e) Migration dedup SQL — duplicates collapse to one deterministic survivor
+# ---------------------------------------------------------------------------
+
+
+# Migration 0031's dedup DELETE, copied verbatim from
+# ``alembic/versions/0031_custom_svm_dedupe_partial_unique_index.py`` upgrade().
+# Run here against a throwaway scratch table (the live ``recording_annotations``
+# already carries the unique index, so duplicates cannot be seeded there) to
+# regression-guard the dedup logic itself.
+_MIGRATION_0031_DEDUP_DELETE = """
+DELETE FROM {table} a
+USING (
+    SELECT id
+    FROM (
+        SELECT
+            id,
+            ROW_NUMBER() OVER (
+                PARTITION BY
+                    recording_id,
+                    tag_id,
+                    start_time,
+                    end_time,
+                    detection_run_id
+                ORDER BY created_at ASC, id::text ASC
+            ) AS rn
+        FROM {table}
+        WHERE source = 'custom_svm'
+          AND detection_run_id IS NOT NULL
+          -- NULL-distinct semantics: the partial UNIQUE index treats NULL
+          -- tag_id rows as DISTINCT, so a NULL-tag_id custom_svm group is
+          -- index-legal and must NOT be collapsed. Mirrors the migration.
+          AND tag_id IS NOT NULL
+    ) ranked
+    WHERE ranked.rn > 1
+) dup
+WHERE a.id = dup.id
+"""
+
+
+async def test_migration_0031_dedup_collapses_duplicates_to_one(
+    db_session: AsyncSession,
+) -> None:
+    """The migration's dedup DELETE keeps exactly one row per conflict group.
+
+    Builds an isolated scratch table (mirroring the columns the migration's
+    DELETE references but WITHOUT the unique index, so duplicates can be
+    seeded), inserts two identical custom_svm rows plus control rows that must
+    survive (a different source, a NULL-run custom_svm row, a distinct
+    custom_svm tuple, and Group Q: two custom_svm rows identical except BOTH
+    having a NULL tag_id), runs the migration's exact DELETE, and asserts: the
+    duplicate group collapsed to the earliest-``created_at`` survivor, every
+    control row persisted (including BOTH Group-Q NULL-tag_id rows, which the
+    index's NULL-distinct semantics keep), and a second DELETE is a no-op
+    (idempotent).
+    """
+    table = "scratch_ra_0031_dedup"
+    await db_session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    await db_session.execute(
+        text(
+            f"""
+            CREATE TABLE {table} (
+                id uuid PRIMARY KEY,
+                recording_id uuid NOT NULL,
+                tag_id uuid NULL,
+                detection_run_id uuid NULL,
+                source text NOT NULL,
+                start_time double precision NOT NULL,
+                end_time double precision NOT NULL,
+                created_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+
+    rec, tag_id, run = uuid4(), uuid4(), uuid4()
+    dup_early, dup_late = uuid4(), uuid4()
+
+    async def _insert(
+        row_id: UUID,
+        source: str,
+        run_id: UUID | None,
+        *,
+        start: float = 3.0,
+        end: float = 6.0,
+        created_offset: str = "now()",
+        tag: UUID | None = tag_id,
+    ) -> None:
+        await db_session.execute(
+            text(
+                f"INSERT INTO {table}"
+                " (id, recording_id, tag_id, detection_run_id, source,"
+                "  start_time, end_time, created_at)"
+                " VALUES (:id, :rec, :tag, :run, :source, :start, :end,"
+                f" {created_offset})"
+            ),
+            {
+                "id": row_id,
+                "rec": rec,
+                "tag": tag,
+                "run": run_id,
+                "source": source,
+                "start": start,
+                "end": end,
+            },
+        )
+
+    # Two identical custom_svm rows; dup_early has the earlier created_at.
+    await _insert(
+        dup_early, "custom_svm", run, created_offset="now() - interval '1 hour'"
+    )
+    await _insert(dup_late, "custom_svm", run)
+    # Control rows that must survive the scoped DELETE.
+    await _insert(uuid4(), "sampling_round", run)  # different source
+    await _insert(uuid4(), "custom_svm", None)  # NULL run -> outside predicate
+    await _insert(uuid4(), "custom_svm", run, start=9.0, end=12.0)  # distinct tuple
+
+    # Group Q: two custom_svm rows identical on (recording, start, end, run) but
+    # BOTH tag_id NULL. PostgreSQL unique indexes treat NULLs as DISTINCT, so the
+    # partial index would NOT reject these — both are index-legal. The dedup
+    # DELETE must therefore leave BOTH intact (regression for the NULL-distinct
+    # over-delete bug: the unguarded PARTITION BY grouped NULL tag_ids together).
+    q1, q2 = uuid4(), uuid4()
+    await _insert(q1, "custom_svm", run, start=15.0, end=18.0, tag=None)
+    await _insert(q2, "custom_svm", run, start=15.0, end=18.0, tag=None)
+
+    before = (
+        await db_session.execute(text(f"SELECT count(*) FROM {table}"))
+    ).scalar_one()
+    assert before == 7
+
+    first = await db_session.execute(
+        text(_MIGRATION_0031_DEDUP_DELETE.format(table=table))
+    )
+    assert first.rowcount == 1, "exactly one duplicate must be deleted"
+
+    survivors = (
+        await db_session.execute(
+            text(
+                f"SELECT id FROM {table}"
+                " WHERE source = 'custom_svm' AND detection_run_id = :run"
+                " AND start_time = 3.0 AND end_time = 6.0"
+            ),
+            {"run": run},
+        )
+    ).scalars().all()
+    assert survivors == [dup_early], "earliest created_at row must survive"
+
+    # Group Q: BOTH NULL-tag_id custom_svm rows must survive (NULL-distinct).
+    group_q = (
+        await db_session.execute(
+            text(
+                f"SELECT id FROM {table}"
+                " WHERE source = 'custom_svm' AND detection_run_id = :run"
+                " AND tag_id IS NULL AND start_time = 15.0 AND end_time = 18.0"
+            ),
+            {"run": run},
+        )
+    ).scalars().all()
+    assert sorted(group_q) == sorted([q1, q2]), (
+        "both NULL-tag_id custom_svm rows must survive (index treats NULLs as"
+        " DISTINCT, so the dedup must not collapse them)"
+    )
+
+    total = (
+        await db_session.execute(text(f"SELECT count(*) FROM {table}"))
+    ).scalar_one()
+    assert total == 6, "only the single duplicate is removed; controls persist"
+
+    # Idempotent: a second DELETE on the now-clean table removes nothing.
+    second = await db_session.execute(
+        text(_MIGRATION_0031_DEDUP_DELETE.format(table=table))
+    )
+    assert second.rowcount == 0
+
+    await db_session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    await db_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# (f) 409 discrimination — only the custom_svm unique violation maps to 409
+# ---------------------------------------------------------------------------
+
+
+async def test_non_unique_integrity_error_is_not_mapped_to_409(
+    db_session: AsyncSession,
+    recording: Recording,
+    tag: Tag,
+) -> None:
+    """A non-unique IntegrityError (FK violation) is NOT mislabeled as 409.
+
+    Drives a genuine asyncpg foreign-key violation (a custom_svm row whose
+    ``detection_run_id`` references a non-existent detection run) through the
+    repository create path and asserts the service's discriminator
+    (``_is_custom_svm_dedup_violation``) returns ``False`` for it — so the
+    generic ``create`` would re-raise rather than return "Duplicate detection".
+    The matching positive case (a real duplicate IS 409) is covered by
+    ``test_detection_service_create_duplicate_custom_svm_returns_409`` above.
+    """
+    bogus_run_id = uuid4()  # no matching detection_runs row -> FK violation
+    repo = AnnotationRepository(db_session)
+    annotation = RecordingAnnotation(
+        recording_id=recording.id,
+        tag_id=tag.id,
+        detection_run_id=bogus_run_id,
+        source=DetectionSource.CUSTOM_SVM,
+        status=DetectionStatus.UNREVIEWED,
+        confidence=0.91,
+        start_time=3.0,
+        end_time=6.0,
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        await repo.create(annotation)
+    await db_session.rollback()
+
+    # The discriminator must reject this FK violation (sqlstate 23503, not
+    # 23505) so it is never mapped to the 409 "Duplicate detection".
+    assert (
+        DetectionService._is_custom_svm_dedup_violation(exc_info.value) is False
+    )
+
+
+# ---------------------------------------------------------------------------
+# (g) custom_svm + NULL detection_run_id via the create path -> 422
+# ---------------------------------------------------------------------------
+
+
+async def test_detection_service_create_custom_svm_without_run_returns_422(
+    db_session: AsyncSession,
+    recording: Recording,
+    tag: Tag,
+    project: Project,
+) -> None:
+    """A custom_svm create with no detection_run_id is rejected with 422.
+
+    The partial dedupe index's predicate requires ``detection_run_id IS NOT
+    NULL``, so a custom_svm row with a NULL run would silently bypass the
+    dedupe guard. ``DetectionService.create`` enforces the invariant up front,
+    returning HTTP 422 before any DB write.
+    """
+    service = DetectionService(
+        annotation_repo=AnnotationRepository(db_session),
+        confirmed_region_repo=ConfirmedRegionRepository(db_session),
+    )
+    create_req = DetectionCreate(
+        recording_id=recording.id,
+        tag_id=tag.id,
+        detection_run_id=None,
+        source=DetectionSource.CUSTOM_SVM,
+        confidence=0.91,
+        start_time=3.0,
+        end_time=6.0,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.create(project_id=project.id, request=create_req)
+    assert exc_info.value.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "custom_svm" in str(exc_info.value.detail)

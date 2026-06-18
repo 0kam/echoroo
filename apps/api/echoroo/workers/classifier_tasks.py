@@ -834,7 +834,11 @@ async def _run_custom_model_inference(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             from sqlalchemy.engine import CursorResult
 
-            from echoroo.models.recording_annotation import RecordingAnnotation
+            from echoroo.models.recording_annotation import (
+                CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
+                CUSTOM_SVM_DEDUP_INDEX_WHERE,
+                RecordingAnnotation,
+            )
 
             total_embeddings = 0
             total_annotations = 0
@@ -931,24 +935,20 @@ async def _run_custom_model_inference(
                     async with session_factory() as db:
                         # Target the partial unique index
                         # ``uq_recording_annotations_custom_svm`` (migration 0031)
-                        # as the ON CONFLICT arbiter. ``index_where`` MUST match
-                        # the migration predicate verbatim so a re-run of the same
-                        # custom_svm detection_run skips the duplicate rows.
+                        # as the ON CONFLICT arbiter. The columns + predicate come
+                        # from the shared constants in
+                        # ``models.recording_annotation`` so they can never drift
+                        # from the migration's index definition; a re-run of the
+                        # same custom_svm detection_run thus skips the duplicate
+                        # rows.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
                             .on_conflict_do_nothing(
-                                index_elements=[
-                                    "recording_id",
-                                    "tag_id",
-                                    "start_time",
-                                    "end_time",
-                                    "detection_run_id",
-                                ],
-                                index_where=text(
-                                    "source = 'custom_svm' "
-                                    "AND detection_run_id IS NOT NULL"
+                                index_elements=list(
+                                    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS
                                 ),
+                                index_where=text(CUSTOM_SVM_DEDUP_INDEX_WHERE),
                             )
                         )
                         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
@@ -978,23 +978,16 @@ async def _run_custom_model_inference(
                     # Flush smaller batch at end of loop iteration
                     async with session_factory() as db:
                         # Same partial-index arbiter as the large-buffer branch
-                        # above (migration 0031); ``index_where`` matches the
-                        # migration predicate verbatim.
+                        # above (migration 0031); columns + predicate come from
+                        # the shared constants in ``models.recording_annotation``.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
                             .on_conflict_do_nothing(
-                                index_elements=[
-                                    "recording_id",
-                                    "tag_id",
-                                    "start_time",
-                                    "end_time",
-                                    "detection_run_id",
-                                ],
-                                index_where=text(
-                                    "source = 'custom_svm' "
-                                    "AND detection_run_id IS NOT NULL"
+                                index_elements=list(
+                                    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS
                                 ),
+                                index_where=text(CUSTOM_SVM_DEDUP_INDEX_WHERE),
                             )
                         )
                         cursor = await db.execute(stmt)  # type: ignore[assignment]

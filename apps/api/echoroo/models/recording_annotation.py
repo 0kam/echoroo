@@ -45,6 +45,37 @@ if TYPE_CHECKING:
     from echoroo.models.user import User
 
 
+# ---------------------------------------------------------------------------
+# Custom-SVM dedupe: single source of truth for the partial unique index
+# ---------------------------------------------------------------------------
+#
+# Migration ``0031_custom_svm_dedupe_partial_unique_index`` creates the PARTIAL
+# UNIQUE index ``uq_recording_annotations_custom_svm`` scoping a uniqueness
+# constraint to custom-SVM inference rows. The three custom-SVM writers
+# (``workers.ml.utils._bulk_insert_annotations`` and the two batch inserts in
+# ``workers.classifier_tasks._run_custom_model_inference``) name that index as
+# their ``ON CONFLICT`` arbiter. For PostgreSQL to infer the partial index as
+# the arbiter, the writers' ``index_elements`` + ``index_where`` MUST match the
+# migration's columns + predicate byte-for-byte. Defining them ONCE here (and
+# importing them into every writer, the migration, and the conftest heal block)
+# guarantees the predicate can never drift between the index and its arbiters.
+CUSTOM_SVM_DEDUP_INDEX_NAME = "uq_recording_annotations_custom_svm"
+CUSTOM_SVM_DEDUP_INDEX_ELEMENTS: tuple[str, ...] = (
+    "recording_id",
+    "tag_id",
+    "start_time",
+    "end_time",
+    "detection_run_id",
+)
+# The exact partial predicate. Kept as a plain ``str`` (not a ``text()``) so it
+# is trivially reusable in every consumer: ``sa.text(...)`` in the migration,
+# ``text(...)`` as ``on_conflict_do_nothing(index_where=...)`` in the writers,
+# and inline in the conftest heal DDL.
+CUSTOM_SVM_DEDUP_INDEX_WHERE = (
+    "source = 'custom_svm' AND detection_run_id IS NOT NULL"
+)
+
+
 class RecordingAnnotation(UUIDMixin, TimestampMixin, Base):
     """Recording-level annotation (rich shape).
 

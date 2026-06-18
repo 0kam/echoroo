@@ -23,7 +23,11 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.enums import DetectionRunStatus
-from echoroo.models.recording_annotation import RecordingAnnotation
+from echoroo.models.recording_annotation import (
+    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
+    CUSTOM_SVM_DEDUP_INDEX_WHERE,
+    RecordingAnnotation,
+)
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
@@ -405,11 +409,13 @@ async def _bulk_insert_annotations(
     db: AsyncSession,
     annotation_dicts: list[dict[str, Any]],
 ) -> int:
-    """Bulk-insert annotations using raw SQL, skipping any duplicates.
+    """Bulk-insert annotations, skipping rows that collide on the custom_svm partial unique index.
 
     Much faster than ORM create_batch() because it avoids per-row refresh
-    and relationship loading. Uses INSERT ... ON CONFLICT DO NOTHING to
-    handle any potential duplicates from retries.
+    and relationship loading. Uses INSERT ... ON CONFLICT DO NOTHING targeting
+    the partial unique index ``uq_recording_annotations_custom_svm`` so that
+    re-running the same custom_svm detection_run skips rows already present
+    instead of accumulating duplicates.
 
     Args:
         db: SQLAlchemy async session.
@@ -428,23 +434,19 @@ async def _bulk_insert_annotations(
     for i in range(0, len(annotation_dicts), BATCH_CHUNK_SIZE):
         chunk = annotation_dicts[i : i + BATCH_CHUNK_SIZE]
         # Target the partial unique index ``uq_recording_annotations_custom_svm``
-        # (migration 0031) as the ON CONFLICT arbiter. ``index_where`` MUST match
-        # the migration predicate exactly or PostgreSQL will not infer the index,
-        # so a re-run of the same custom_svm detection_run skips the duplicate
-        # rows instead of accumulating them. The predicate scopes the conflict to
-        # custom_svm only; this writer only emits custom_svm rows.
+        # (migration 0031) as the ON CONFLICT arbiter. The columns + predicate
+        # come from the shared constants in ``models.recording_annotation`` so
+        # they can never drift from the migration's index definition; PostgreSQL
+        # only infers the partial index as the arbiter when both match it
+        # exactly. A re-run of the same custom_svm detection_run thus skips the
+        # duplicate rows instead of accumulating them. The predicate scopes the
+        # conflict to custom_svm only; this writer only emits custom_svm rows.
         stmt = (
             pg_insert(RecordingAnnotation)
             .values(chunk)
             .on_conflict_do_nothing(
-                index_elements=[
-                    "recording_id",
-                    "tag_id",
-                    "start_time",
-                    "end_time",
-                    "detection_run_id",
-                ],
-                index_where=text("source = 'custom_svm' AND detection_run_id IS NOT NULL"),
+                index_elements=list(CUSTOM_SVM_DEDUP_INDEX_ELEMENTS),
+                index_where=text(CUSTOM_SVM_DEDUP_INDEX_WHERE),
             )
         )
         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]

@@ -764,18 +764,69 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # return, so the test DB enforces the custom_svm dedupe guard and
     # ``tests/integration/test_custom_svm_dedupe_real_db.py`` is
     # environment-independent.
+    #
+    # Robustness: (a) no-op when the table does not exist yet (fresh DB before
+    # ``create_all`` runs the table); (b) if an index of the same name already
+    # exists, verify its definition still carries the expected columns +
+    # predicate and DROP+recreate it if it has drifted (e.g. a stale partial
+    # index from an earlier shape), otherwise leave it untouched.
     async with engine.begin() as conn:
-        await conn.execute(
-            sa.text(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS
-                    uq_recording_annotations_custom_svm
-                ON recording_annotations
-                    (recording_id, tag_id, start_time, end_time, detection_run_id)
-                WHERE source = 'custom_svm' AND detection_run_id IS NOT NULL
-                """
-            )
+        table_exists = bool(
+            (
+                await conn.execute(
+                    sa.text(
+                        "SELECT to_regclass('public.recording_annotations')"
+                        " IS NOT NULL"
+                    )
+                )
+            ).scalar()
         )
+        if table_exists:
+            existing_def = (
+                await conn.execute(
+                    sa.text(
+                        "SELECT indexdef FROM pg_indexes"
+                        " WHERE schemaname = 'public'"
+                        " AND indexname = 'uq_recording_annotations_custom_svm'"
+                    )
+                )
+            ).scalar()
+
+            # Markers the live index definition must contain (pg renders the
+            # predicate / column list normalised, so substring-match the salient
+            # tokens rather than the exact DDL string).
+            _expected_markers = (
+                "UNIQUE",
+                "recording_id",
+                "tag_id",
+                "start_time",
+                "end_time",
+                "detection_run_id",
+                "custom_svm",
+                "detection_run_id IS NOT NULL",
+            )
+            if existing_def is not None and not all(
+                marker in existing_def for marker in _expected_markers
+            ):
+                # Drifted definition — drop so the canonical CREATE below wins.
+                await conn.execute(
+                    sa.text(
+                        "DROP INDEX IF EXISTS"
+                        " uq_recording_annotations_custom_svm"
+                    )
+                )
+
+            await conn.execute(
+                sa.text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS
+                        uq_recording_annotations_custom_svm
+                    ON recording_annotations
+                        (recording_id, tag_id, start_time, end_time, detection_run_id)
+                    WHERE source = 'custom_svm' AND detection_run_id IS NOT NULL
+                    """
+                )
+            )
 
     if project_audit_log_exists and project_audit_log_fk_exists:
         async with engine.begin() as conn:
