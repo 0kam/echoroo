@@ -763,6 +763,9 @@ class TestContractSecuritySchemePresence:
             "/web-api/v1/auth/",
             "/api/v1/auth/",
             "/api/v1/setup/",
+            # W2-2-A BFF mirror of the public, pre-session setup bootstrap
+            # endpoints (no user/session/CSRF token exists yet).
+            "/web-api/v1/setup/",
             "/health",
             "/openapi.json",
             "/docs",

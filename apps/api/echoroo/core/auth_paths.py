@@ -87,6 +87,11 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
     "/web-api/v1/auth/confirm-identity-for-2fa-reset",
     "/web-api/v1/auth/confirm-identity-for-2fa-reset/redeem",
     "/web-api/v1/auth/logout",
+    # Setup bootstrap runs before any user/session/CSRF token exists
+    # (W2-2-A BFF mirror of /api/v1/setup/*). ``/initialize`` is a POST so
+    # it must also be CSRF-exempt (EXEMPT_PATHS re-exports this tuple).
+    "/web-api/v1/setup/status",
+    "/web-api/v1/setup/initialize",
 )
 
 

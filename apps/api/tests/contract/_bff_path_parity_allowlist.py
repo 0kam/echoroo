@@ -72,4 +72,7 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes GET",
     "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes POST",
     "/web-api/v1/projects/{project_id}/detections/{detection_id}/votes DELETE",
+    # W2-2-A — first-run setup wizard (unauth + CSRF-exempt bootstrap)
+    "/web-api/v1/setup/status GET",
+    "/web-api/v1/setup/initialize POST",
 ]

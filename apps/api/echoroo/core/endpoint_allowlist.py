@@ -563,6 +563,29 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # W2-2-A — BFF mirror of the two /api/v1/setup/* bootstrap paths. They
+    # run before any user/session exists and delegate verbatim to the
+    # legacy handlers, so they carry no gate_action and stay SETUP_BOOTSTRAP.
+    AllowlistEntry(
+        path_pattern="/web-api/v1/setup/status",
+        methods=frozenset({"GET"}),
+        category=AllowlistCategory.SETUP_BOOTSTRAP,
+        reason="Bootstrap status probe; runs before any user account exists",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#setup",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/setup/initialize",
+        methods=frozenset({"POST"}),
+        category=AllowlistCategory.SETUP_BOOTSTRAP,
+        reason="First-run bootstrap; only callable while no users exist",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#setup",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     # ---- token_auth_only: invitation accept/decline ----------------------
     # The {token} path segment IS the credential. {project_id} is the
     # routing namespace for the invitation. AD-5 mandates explicit

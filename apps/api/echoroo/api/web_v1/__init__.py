@@ -14,6 +14,7 @@ from echoroo.api.web_v1 import auth_confirm_identity as auth_confirm_identity_mo
 from echoroo.api.web_v1 import detection_runs as detection_runs_module
 from echoroo.api.web_v1 import licenses as licenses_module
 from echoroo.api.web_v1 import me as me_module
+from echoroo.api.web_v1 import setup as setup_module
 from echoroo.api.web_v1 import taxa as taxa_module
 from echoroo.api.web_v1 import users as users_module
 from echoroo.api.web_v1.account import router as account_router
@@ -82,5 +83,14 @@ web_v1_router.include_router(admin_licenses_module.router)
 # ``/admin/licenses`` paths declared on the admin router keep priority
 # over the bare ``/licenses`` prefix declared here.
 web_v1_router.include_router(licenses_module.router)
+# W2-2-A — first-run setup wizard BFF mirror of ``/api/v1/setup/*``.
+# ``GET /setup/status`` + ``POST /setup/initialize`` run *before* any
+# user/session/CSRF token exists, so both paths are listed in
+# ``core.auth_paths.PUBLIC_AUTH_PATHS`` (auth + CSRF bypass) and
+# classified ``SETUP_BOOTSTRAP`` in ``core.endpoint_allowlist`` (no
+# ``gate_action``). The adapters delegate verbatim to the legacy
+# handlers, which own the 403 already-setup guard and the no-store
+# response headers.
+web_v1_router.include_router(setup_module.router)
 
 __all__ = ["web_v1_router"]

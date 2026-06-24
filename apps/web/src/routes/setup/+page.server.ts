@@ -13,7 +13,7 @@ function getServerApiUrl(): string {
 
 export const load: PageServerLoad = async () => {
   try {
-    const response = await fetch(`${getServerApiUrl()}/api/v1/setup/status`);
+    const response = await fetch(`${getServerApiUrl()}/web-api/v1/setup/status`);
     if (!response.ok) {
       throw new Error(`API returned ${response.status}`);
     }

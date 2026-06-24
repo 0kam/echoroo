@@ -20,5 +20,7 @@ export type { SetupCompleteResponse, SetupInitializeRequest };
 export async function initializeSetup(
   data: SetupInitializeRequest
 ): Promise<SetupCompleteResponse> {
-  return apiClient.post<SetupCompleteResponse>('/api/v1/setup/initialize', data);
+  // W2-2-A: routed through the web_v1 BFF. Setup is unauthenticated and
+  // CSRF-exempt (pre-session bootstrap), so no csrfHeaders are required.
+  return apiClient.post<SetupCompleteResponse>('/web-api/v1/setup/initialize', data);
 }
