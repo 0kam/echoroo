@@ -834,7 +834,11 @@ async def _run_custom_model_inference(
             from sqlalchemy.dialects.postgresql import insert as pg_insert
             from sqlalchemy.engine import CursorResult
 
-            from echoroo.models.recording_annotation import RecordingAnnotation
+            from echoroo.models.recording_annotation import (
+                CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
+                CUSTOM_SVM_DEDUP_INDEX_WHERE,
+                RecordingAnnotation,
+            )
 
             total_embeddings = 0
             total_annotations = 0
@@ -929,10 +933,23 @@ async def _run_custom_model_inference(
                 # Bulk insert accumulated annotations when the buffer is large enough
                 if len(pending_annotation_dicts) >= _INFERENCE_COMMIT_BATCH:
                     async with session_factory() as db:
+                        # Target the partial unique index
+                        # ``uq_recording_annotations_custom_svm`` (migration 0031)
+                        # as the ON CONFLICT arbiter. The columns + predicate come
+                        # from the shared constants in
+                        # ``models.recording_annotation`` so they can never drift
+                        # from the migration's index definition; a re-run of the
+                        # same custom_svm detection_run thus skips the duplicate
+                        # rows.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
-                            .on_conflict_do_nothing()
+                            .on_conflict_do_nothing(
+                                index_elements=list(
+                                    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS
+                                ),
+                                index_where=text(CUSTOM_SVM_DEDUP_INDEX_WHERE),
+                            )
                         )
                         cursor: CursorResult[tuple[()]] = await db.execute(stmt)  # type: ignore[assignment]
                         inserted = cursor.rowcount
@@ -960,10 +977,18 @@ async def _run_custom_model_inference(
                 elif pending_annotation_dicts:
                     # Flush smaller batch at end of loop iteration
                     async with session_factory() as db:
+                        # Same partial-index arbiter as the large-buffer branch
+                        # above (migration 0031); columns + predicate come from
+                        # the shared constants in ``models.recording_annotation``.
                         stmt = (
                             pg_insert(RecordingAnnotation)
                             .values(pending_annotation_dicts)
-                            .on_conflict_do_nothing()
+                            .on_conflict_do_nothing(
+                                index_elements=list(
+                                    CUSTOM_SVM_DEDUP_INDEX_ELEMENTS
+                                ),
+                                index_where=text(CUSTOM_SVM_DEDUP_INDEX_WHERE),
+                            )
                         )
                         cursor = await db.execute(stmt)  # type: ignore[assignment]
                         inserted = cursor.rowcount
