@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -47,11 +47,12 @@ AnnotationServiceDep = Annotated[
 ]
 
 
-@router.patch(
-    "/{annotation_id}",
-    response_model=TimeRangeAnnotationResponse,
-    summary="Update a TimeRangeAnnotation",
-)
+# W2-3 PR-4: the public ``/api/v1/annotations/*`` routes were unmounted in favour
+# of the project-scoped ``/web-api/v1/projects/{project_id}/annotations/*`` BFF
+# surface (``echoroo.api.web_v1.projects._annotation_sets``). The handlers below
+# are left as plain importable functions (no ``@router`` decorators) because the
+# BFF delegates to them via ``legacy_time_range_annotations.{update_annotation,
+# delete_annotation,create_annotation_note}(...)`` and reuses ``AnnotationServiceDep``.
 async def update_annotation(
     annotation_id: UUID,
     request: TimeRangeAnnotationUpdate,
@@ -61,11 +62,6 @@ async def update_annotation(
     return await service.update(annotation_id, request)
 
 
-@router.delete(
-    "/{annotation_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a TimeRangeAnnotation",
-)
 async def delete_annotation(
     annotation_id: UUID,
     current_user: CurrentUser,
@@ -74,12 +70,6 @@ async def delete_annotation(
     await service.delete(annotation_id)
 
 
-@router.post(
-    "/{annotation_id}/notes",
-    response_model=AnnotationNoteResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Attach a note to a TimeRangeAnnotation",
-)
 async def create_annotation_note(
     annotation_id: UUID,
     request: AnnotationNoteCreate,
