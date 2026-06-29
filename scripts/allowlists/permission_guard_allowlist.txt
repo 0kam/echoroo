@@ -88,7 +88,9 @@ apps/api/echoroo/api/v1/projects.py:list_projects:missing-permission-guard  # le
 apps/api/echoroo/api/v1/projects.py:remove_project_member:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/projects.py:update_project:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/projects.py:update_project_member_role:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recorders.py:list_recorders:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-1: ``api/v1/recorders.py:list_recorders`` route unmounted (now a
+# helper delegated to by the ``/web-api/v1/recorders`` BFF). The surviving BFF
+# entry for ``web_v1/_recorders.py:list_recorders`` is retained below.
 apps/api/echoroo/api/v1/recordings.py:delete_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/recordings.py:download_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/recordings.py:get_playback_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
@@ -171,10 +173,12 @@ apps/api/echoroo/api/web_v1/projects/_tags.py:get_tag:missing-permission-guard  
 apps/api/echoroo/api/web_v1/projects/_tags.py:list_tags:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_uploads.py:get_upload_session_status:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 
-# spec/009 PR 4 thin BFF adapters — same Phase 3 US11 T1xx scope as the legacy
-# api/v1/recorders.py entry above. The BFF delegates to the legacy ``list_recorders``
-# handler (which itself is allowlisted) and adds no guard of its own — the
-# public recorder catalog has no project_id to gate on; auth alone is sufficient.
+# spec/009 PR 4 thin BFF adapter (Phase 3 US11 T1xx scope). The BFF delegates
+# to ``echoroo.api.v1.recorders.list_recorders``, which since W2-3 PR-1 is a
+# plain importable helper (its ``/api/v1/recorders`` route was unmounted, so it
+# no longer needs its own allowlist entry). This ``/web-api/v1/recorders`` route
+# adds no guard of its own — the public recorder catalog has no project_id to
+# gate on; auth alone is sufficient.
 apps/api/echoroo/api/web_v1/_recorders.py:list_recorders:missing-permission-guard  # spec/009 PR 4: thin adapter (legacy unguarded)
 
 # spec/009 PR 5 thin admin BFF adapters — sibling of the 14

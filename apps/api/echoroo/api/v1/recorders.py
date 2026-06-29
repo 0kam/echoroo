@@ -28,12 +28,12 @@ def get_recorder_service(db: DbSession) -> RecorderService:
 RecorderServiceDep = Annotated[RecorderService, Depends(get_recorder_service)]
 
 
-@router.get(
-    "",
-    response_model=RecorderListResponse,
-    summary="List all recorders",
-    description="Get a paginated list of all audio recording devices. Requires authentication.",
-)
+# W2-3 PR-1: the public ``GET /api/v1/recorders`` route registration was
+# unmounted in favour of the ``/web-api/v1/recorders`` BFF surface
+# (``echoroo.api.web_v1._recorders``). The handler below is intentionally
+# left as a plain importable function (no ``@router`` decorator) because the
+# BFF adapter delegates to it via ``legacy_recorders.list_recorders(...)``.
+# Keep ``get_recorder_service`` / ``RecorderServiceDep`` importable too.
 async def list_recorders(
     current_user: CurrentUser,  # noqa: ARG001 - used for auth dependency
     service: RecorderServiceDep,
