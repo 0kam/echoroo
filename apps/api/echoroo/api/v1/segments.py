@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
@@ -46,11 +46,12 @@ def get_segment_service(db: DbSession) -> AnnotationSegmentService:
 SegmentServiceDep = Annotated[AnnotationSegmentService, Depends(get_segment_service)]
 
 
-@router.get(
-    "/{segment_id}",
-    response_model=AnnotationSegmentDetailResponse,
-    summary="Get segment detail with annotations and notes",
-)
+# W2-3 PR-3: the public ``/api/v1/segments/*`` routes were unmounted in favour of
+# the project-scoped ``/web-api/v1/projects/{project_id}/segments/*`` BFF surface
+# (``echoroo.api.web_v1.projects._annotation_sets``). The handlers below are left
+# as plain importable functions (no ``@router`` decorators) because the BFF
+# delegates to them via ``legacy_segments.{get_segment,update_segment,
+# create_annotation,create_segment_note}(...)`` and reuses ``SegmentServiceDep``.
 async def get_segment(
     segment_id: UUID,
     current_user: CurrentUser,
@@ -59,11 +60,6 @@ async def get_segment(
     return await service.get_detail(segment_id)
 
 
-@router.patch(
-    "/{segment_id}",
-    response_model=AnnotationSegmentDetailResponse,
-    summary="Update segment lifecycle (status, is_empty)",
-)
 async def update_segment(
     segment_id: UUID,
     request: AnnotationSegmentStatusUpdate,
@@ -75,12 +71,6 @@ async def update_segment(
     )
 
 
-@router.post(
-    "/{segment_id}/annotations",
-    response_model=TimeRangeAnnotationResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a TimeRangeAnnotation inside a segment",
-)
 async def create_annotation(
     segment_id: UUID,
     request: TimeRangeAnnotationCreate,
@@ -92,12 +82,6 @@ async def create_annotation(
     )
 
 
-@router.post(
-    "/{segment_id}/notes",
-    response_model=AnnotationNoteResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Attach a note to a segment",
-)
 async def create_segment_note(
     segment_id: UUID,
     request: AnnotationNoteCreate,

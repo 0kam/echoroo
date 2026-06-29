@@ -93,9 +93,12 @@ api_router.include_router(_evaluation.run_router)
 
 # Ground-truth annotation routers (003-annotation A2)
 from echoroo.api.v1 import annotation_sets as _annotation_sets  # noqa: E402
-from echoroo.api.v1 import segments as _segments  # noqa: E402
 from echoroo.api.v1 import time_range_annotations as _time_range_annotations  # noqa: E402
 
 api_router.include_router(_annotation_sets.router)
-api_router.include_router(_segments.router)
+# W2-3 PR-3: the public ``/api/v1/segments/*`` routes were unmounted in favour
+# of the project-scoped ``/web-api/v1/projects/{project_id}/segments/*`` BFF. The
+# legacy handlers survive as importable helpers (``echoroo.api.v1.segments``)
+# delegated to by ``echoroo.api.web_v1.projects._annotation_sets``; only the v1
+# route registration is removed here.
 api_router.include_router(_time_range_annotations.router)
