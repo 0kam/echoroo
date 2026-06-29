@@ -75,4 +75,11 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # W2-2-A — first-run setup wizard (unauth + CSRF-exempt bootstrap)
     "/web-api/v1/setup/status GET",
     "/web-api/v1/setup/initialize POST",
+    # W2-2 B+C — self-scoped profile + API-token endpoints (GET /me already
+    # migrated; these add the remaining five as transport-only delegators).
+    "/web-api/v1/users/me PATCH",
+    "/web-api/v1/users/me/password PUT",
+    "/web-api/v1/users/me/api-tokens GET",
+    "/web-api/v1/users/me/api-tokens POST",
+    "/web-api/v1/users/me/api-tokens/{token_id} DELETE",
 ]

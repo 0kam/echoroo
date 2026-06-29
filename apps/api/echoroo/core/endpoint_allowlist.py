@@ -437,6 +437,54 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
+    # ---- user_scoped_only: /web-api/v1/users/me/* (W2-2 B+C) --------------
+    # BFF mirrors of the five self-scoped /api/v1/users/me* profile +
+    # API-token endpoints above. Each delegates verbatim to the legacy v1
+    # handler and operates strictly on the authenticated session user
+    # (resolved via ``CurrentUser``); there is no project context and no
+    # cross-user side effect, so — exactly like the /api/v1/users/me*
+    # entries above — they carry NO ``gate_action`` and stay
+    # USER_SCOPED_ONLY.
+    AllowlistEntry(
+        path_pattern="/web-api/v1/users/me",
+        methods=frozenset({"GET", "PATCH"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason="Per-user self-service profile; no project context applies",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#user-self",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/users/me/password",
+        methods=frozenset({"PUT"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason="Per-user password change; scoped strictly to the principal",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#user-self",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/users/me/api-tokens",
+        methods=frozenset({"GET", "POST"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason="Per-user API token list/create; scoped to the principal",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#user-self",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
+    AllowlistEntry(
+        path_pattern="/web-api/v1/users/me/api-tokens/{token_id}",
+        methods=frozenset({"DELETE"}),
+        category=AllowlistCategory.USER_SCOPED_ONLY,
+        reason="Per-user API token revoke; scoped strictly to the principal",
+        owner=_DEFAULT_OWNER,
+        spec_ref=f"{_SPEC_006}#user-self",
+        expiry=None,
+        last_reviewed_at=_TODAY_REVIEWED,
+    ),
     # ---- external_proxy: xeno-canto search -------------------------------
     # NOTE: xeno-canto search is mounted under
     #   /api/v1/projects/{project_id}/xeno-canto/search
