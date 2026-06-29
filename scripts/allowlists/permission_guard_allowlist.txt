@@ -113,10 +113,9 @@ apps/api/echoroo/api/v1/search/sessions.py:update_search_session:missing-permiss
 apps/api/echoroo/api/v1/search/similarity.py:get_embedding_stats:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/similarity.py:search_similar:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/similarity.py:search_similar_by_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/segments.py:create_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/segments.py:create_segment_note:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/segments.py:get_segment:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/segments.py:update_segment:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-3: ``api/v1/segments.py`` routes unmounted (now helpers delegated to by
+# the project-scoped ``/web-api/v1/projects/{project_id}/segments/*`` BFF, which
+# gate_action-guards each handler — no thin-adapter allowlist entry required).
 apps/api/echoroo/api/v1/settings.py:get_embedding_model:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/sites.py:create_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/sites.py:delete_site:missing-permission-guard  # legacy: Phase 3 US11 T1xx

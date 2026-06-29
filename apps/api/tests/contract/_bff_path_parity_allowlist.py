@@ -85,4 +85,10 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # W2-3 PR-1 — public recorder catalog: the ``/api/v1/recorders`` list route
     # was unmounted; the surviving provider is the ``/web-api/v1/recorders`` BFF.
     "/web-api/v1/recorders GET",
+    # W2-3 PR-3 — annotation segments: the unscoped ``/api/v1/segments/*`` routes
+    # were unmounted in favour of the project-scoped BFF surface.
+    "/web-api/v1/projects/{project_id}/segments/{segment_id} GET",
+    "/web-api/v1/projects/{project_id}/segments/{segment_id} PATCH",
+    "/web-api/v1/projects/{project_id}/segments/{segment_id}/annotations POST",
+    "/web-api/v1/projects/{project_id}/segments/{segment_id}/notes POST",
 ]
