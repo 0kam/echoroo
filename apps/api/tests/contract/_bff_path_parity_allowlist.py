@@ -104,4 +104,16 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/evaluation-runs GET",
     "/web-api/v1/projects/{project_id}/evaluation-runs/{run_id} GET",
     "/web-api/v1/projects/{project_id}/evaluation-runs/{run_id} DELETE",
+    # W2-3 PR-6 — annotation-set CRUD/palette/nested-segments: the unscoped
+    # ``/api/v1/annotation-sets/*`` browser routes were unmounted in favour of the
+    # project-scoped BFF surface (``dispatch_sampling`` / ``POST /{set_id}/sample``
+    # has no BFF twin yet and stays mounted on v1).
+    "/web-api/v1/projects/{project_id}/annotation-sets GET",
+    "/web-api/v1/projects/{project_id}/annotation-sets POST",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id} GET",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id} PATCH",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id} DELETE",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/palette POST",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/palette/{species_id} DELETE",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/segments GET",
 ]

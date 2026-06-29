@@ -69,11 +69,15 @@ AnnotationSegmentListPaginationDep = Annotated[
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "",
-    response_model=AnnotationSetListResponse,
-    summary="List annotation sets",
-)
+# W2-3 PR-6: the browser-facing ``/api/v1/annotation-sets/*`` CRUD + palette +
+# nested-segments routes were unmounted in favour of the project-scoped
+# ``/web-api/v1/projects/{project_id}/annotation-sets/*`` BFF surface
+# (``echoroo.api.web_v1.projects._annotation_sets``). The eight handlers below
+# are left as plain importable functions (no ``@router`` decorators) because the
+# BFF delegates to them via ``legacy_annotation_sets.<fn>(...)`` and reuses
+# ``AnnotationSetServiceDep``. The ``dispatch_sampling`` route (POST
+# ``/{set_id}/sample``) is KEPT mounted — it has no BFF twin yet — so this is a
+# MIXED router: ``router``/``include_router`` stay in place.
 async def list_annotation_sets(
     current_user: CurrentUser,
     service: AnnotationSetServiceDep,
@@ -91,12 +95,6 @@ async def list_annotation_sets(
     )
 
 
-@router.post(
-    "",
-    response_model=AnnotationSetDetailResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create an annotation set",
-)
 async def create_annotation_set(
     request: AnnotationSetCreate,
     current_user: CurrentUser,
@@ -105,11 +103,6 @@ async def create_annotation_set(
     return await service.create(user_id=current_user.id, request=request)
 
 
-@router.get(
-    "/{set_id}",
-    response_model=AnnotationSetDetailResponse,
-    summary="Get annotation set detail",
-)
 async def get_annotation_set(
     set_id: UUID,
     current_user: CurrentUser,
@@ -122,11 +115,6 @@ async def get_annotation_set(
     return await service.get_detail(set_id, locale=locale)
 
 
-@router.patch(
-    "/{set_id}",
-    response_model=AnnotationSetDetailResponse,
-    summary="Update annotation set metadata",
-)
 async def update_annotation_set(
     set_id: UUID,
     request: AnnotationSetUpdate,
@@ -136,11 +124,6 @@ async def update_annotation_set(
     return await service.update(set_id, request)
 
 
-@router.delete(
-    "/{set_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an annotation set",
-)
 async def delete_annotation_set(
     set_id: UUID,
     current_user: CurrentUser,
@@ -173,11 +156,6 @@ async def dispatch_sampling(
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "/{set_id}/segments",
-    response_model=AnnotationSegmentListResponse,
-    summary="List segments in a set",
-)
 async def list_set_segments(
     set_id: UUID,
     current_user: CurrentUser,
@@ -200,12 +178,6 @@ async def list_set_segments(
 # ---------------------------------------------------------------------------
 
 
-@router.post(
-    "/{set_id}/palette",
-    response_model=PaletteEntryResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Add a species to the palette",
-)
 async def add_palette_species(
     set_id: UUID,
     request: PaletteItemCreate,
@@ -215,11 +187,6 @@ async def add_palette_species(
     return await service.add_palette(set_id, request)
 
 
-@router.delete(
-    "/{set_id}/palette/{species_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Remove a species from the palette",
-)
 async def remove_palette_species(
     set_id: UUID,
     species_id: UUID,
