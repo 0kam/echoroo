@@ -91,4 +91,9 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/segments/{segment_id} PATCH",
     "/web-api/v1/projects/{project_id}/segments/{segment_id}/annotations POST",
     "/web-api/v1/projects/{project_id}/segments/{segment_id}/notes POST",
+    # W2-3 PR-4 — time-range annotations: the unscoped ``/api/v1/annotations/*``
+    # routes were unmounted in favour of the project-scoped BFF surface.
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id} PATCH",
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id} DELETE",
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/notes POST",
 ]

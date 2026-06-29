@@ -134,9 +134,10 @@ apps/api/echoroo/api/v1/taxa.py:gbif_search_taxa:missing-permission-guard  # leg
 apps/api/echoroo/api/v1/taxa.py:get_taxon:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/taxa.py:list_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/taxa.py:search_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/time_range_annotations.py:create_annotation_note:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/time_range_annotations.py:delete_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/time_range_annotations.py:update_annotation:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-4: ``api/v1/time_range_annotations.py`` routes unmounted (now helpers
+# delegated to by the project-scoped ``/web-api/v1/projects/{project_id}/
+# annotations/*`` BFF, which gate_action-guards each handler — no thin-adapter
+# allowlist entry required).
 apps/api/echoroo/api/v1/uploads.py:complete_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/uploads.py:create_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/uploads.py:get_upload_session_status:missing-permission-guard  # legacy: Phase 3 US11 T1xx
