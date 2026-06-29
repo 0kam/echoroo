@@ -2,7 +2,6 @@
 
 import asyncio
 import re
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient, Response
@@ -66,7 +65,7 @@ class TestSetupFlow:
             6. Attempt second setup (should fail)
         """
         # Step 1: Check initial status
-        response = await client.get("/api/v1/setup/status")
+        response = await client.get("/web-api/v1/setup/status")
         assert response.status_code == 200
         _assert_no_store_headers(response)
         assert response.json()["setup_required"] is True
@@ -78,7 +77,7 @@ class TestSetupFlow:
             "password": "SuperSecurePassword123!",
             "display_name": "System Administrator",
         }
-        response = await client.post("/api/v1/setup/initialize", json=setup_data)
+        response = await client.post("/web-api/v1/setup/initialize", json=setup_data)
         assert response.status_code == 201
         _assert_no_store_headers(response)
 
@@ -95,7 +94,7 @@ class TestSetupFlow:
         assert data["webauthn_registration_url"].endswith(data["bootstrap_token"])
 
         # Step 3: Verify setup status changed
-        response = await client.get("/api/v1/setup/status")
+        response = await client.get("/web-api/v1/setup/status")
         assert response.status_code == 200
         _assert_no_store_headers(response)
         assert response.json()["setup_required"] is False
@@ -145,7 +144,7 @@ class TestSetupFlow:
 
         # Step 6: Attempt second setup (should fail)
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "second@example.com",
                 "password": "AnotherPassword123!",
@@ -183,7 +182,7 @@ class TestSetupFlow:
 
         # Attempt setup
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "SecurePassword123!",
@@ -212,7 +211,7 @@ class TestSetupFlow:
         )
 
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin-audit-failure@example.com",
                 "password": "SuperSecurePassword123!",
@@ -247,8 +246,8 @@ class TestSetupFlow:
         }
 
         first_response, second_response = await asyncio.gather(
-            client.post("/api/v1/setup/initialize", json=first_payload),
-            client.post("/api/v1/setup/initialize", json=second_payload),
+            client.post("/web-api/v1/setup/initialize", json=first_payload),
+            client.post("/web-api/v1/setup/initialize", json=second_payload),
         )
 
         responses = [first_response, second_response]

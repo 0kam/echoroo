@@ -762,9 +762,9 @@ class TestContractSecuritySchemePresence:
         _SKIP_PREFIXES = (
             "/web-api/v1/auth/",
             "/api/v1/auth/",
-            "/api/v1/setup/",
-            # W2-2-A BFF mirror of the public, pre-session setup bootstrap
-            # endpoints (no user/session/CSRF token exists yet).
+            # W2-3 PR-2 unmounted ``/api/v1/setup/*``; only the W2-2-A BFF mirror
+            # of the public, pre-session setup bootstrap endpoints survives
+            # (no user/session/CSRF token exists yet).
             "/web-api/v1/setup/",
             "/health",
             "/openapi.json",

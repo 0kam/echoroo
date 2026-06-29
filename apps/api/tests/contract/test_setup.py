@@ -32,7 +32,7 @@ def _patch_setup_external_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 class TestSetupStatusEndpoint:
-    """Test GET /api/v1/setup/status endpoint contract."""
+    """Test GET /web-api/v1/setup/status endpoint contract."""
 
     async def test_get_setup_status_initial(
         self, client: AsyncClient, db_session: AsyncSession
@@ -44,7 +44,7 @@ class TestSetupStatusEndpoint:
             - setup_required: true
             - setup_completed: false
         """
-        response = await client.get("/api/v1/setup/status")
+        response = await client.get("/web-api/v1/setup/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -65,7 +65,7 @@ class TestSetupStatusEndpoint:
         """
         # First, complete the initial setup
         await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "SecurePassword123!",
@@ -74,7 +74,7 @@ class TestSetupStatusEndpoint:
         )
 
         # Then check status
-        response = await client.get("/api/v1/setup/status")
+        response = await client.get("/web-api/v1/setup/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -84,7 +84,7 @@ class TestSetupStatusEndpoint:
 
 @pytest.mark.asyncio
 class TestSetupInitializeEndpoint:
-    """Test POST /api/v1/setup/initialize endpoint contract."""
+    """Test POST /web-api/v1/setup/initialize endpoint contract."""
 
     async def test_initialize_setup_success(
         self, client: AsyncClient, db_session: AsyncSession
@@ -98,7 +98,7 @@ class TestSetupInitializeEndpoint:
             - User is marked as superuser and verified
         """
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "SecurePassword123!",
@@ -150,7 +150,7 @@ class TestSetupInitializeEndpoint:
             - display_name is None or empty
         """
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "SecurePassword123!",
@@ -171,7 +171,7 @@ class TestSetupInitializeEndpoint:
             - Status 422 (Validation Error)
         """
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "not-an-email",
                 "password": "SecurePassword123!",
@@ -189,7 +189,7 @@ class TestSetupInitializeEndpoint:
             - Status 422 (Validation Error)
         """
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "short",
@@ -209,7 +209,7 @@ class TestSetupInitializeEndpoint:
         """
         # First setup
         await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "admin@example.com",
                 "password": "SecurePassword123!",
@@ -218,7 +218,7 @@ class TestSetupInitializeEndpoint:
 
         # Second attempt should fail
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={
                 "email": "another@example.com",
                 "password": "AnotherPassword123!",
@@ -239,18 +239,18 @@ class TestSetupInitializeEndpoint:
         """
         # Missing password
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={"email": "admin@example.com"},
         )
         assert response.status_code == 422
 
         # Missing email
         response = await client.post(
-            "/api/v1/setup/initialize",
+            "/web-api/v1/setup/initialize",
             json={"password": "SecurePassword123!"},
         )
         assert response.status_code == 422
 
         # Empty body
-        response = await client.post("/api/v1/setup/initialize", json={})
+        response = await client.post("/web-api/v1/setup/initialize", json={})
         assert response.status_code == 422

@@ -30,13 +30,11 @@ def _user_agent(request: Request) -> str:
     return request.headers.get("user-agent") or ""
 
 
-@router.get(
-    "/status",
-    response_model=SetupStatusResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Get setup status",
-    description="Check if initial setup is required or has been completed",
-)
+# W2-3 PR-2: the public ``GET /api/v1/setup/status`` route registration was
+# unmounted in favour of the ``/web-api/v1/setup/status`` BFF surface
+# (``echoroo.api.web_v1.setup``). The handler below is intentionally left as a
+# plain importable function (no ``@router`` decorator) because the BFF mirror
+# delegates to it via ``legacy_setup.get_setup_status(...)``.
 async def get_setup_status(
     db: AsyncSession = Depends(get_db),
 ) -> SetupStatusResponse:
@@ -51,24 +49,10 @@ async def get_setup_status(
     return await service.get_setup_status()
 
 
-@router.post(
-    "/initialize",
-    response_model=SetupCompleteResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Initialize system setup",
-    description="Create the first admin user and complete initial setup",
-    responses={
-        201: {
-            "description": "Setup completed successfully, admin user created",
-        },
-        403: {
-            "description": "Setup already completed or users already exist",
-        },
-        422: {
-            "description": "Validation error (invalid email or short password)",
-        },
-    },
-)
+# W2-3 PR-2: the public ``POST /api/v1/setup/initialize`` route registration was
+# unmounted in favour of the ``/web-api/v1/setup/initialize`` BFF surface. The
+# handler below stays importable (no ``@router`` decorator); the BFF mirror
+# delegates to it via ``legacy_setup.initialize_setup(...)``.
 async def initialize_setup(
     request: Request,
     response: Response,

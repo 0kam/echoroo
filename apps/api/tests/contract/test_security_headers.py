@@ -142,7 +142,9 @@ async def test_x_content_type_options_on_api_v1(
     client: AsyncClient,
 ) -> None:
     """Programmatic /api/v1/* responses also carry nosniff header."""
-    response = await client.get("/api/v1/setup/status")
+    # W2-3 PR-2 unmounted /api/v1/setup/status; use another live /api/v1/*
+    # route (unauthenticated → 401, still < 500) to exercise the v1 mount.
+    response = await client.get("/api/v1/projects")
     assert response.status_code < 500
     assert response.headers.get("x-content-type-options") == "nosniff"
 
@@ -281,7 +283,9 @@ async def test_security_headers_on_public_endpoint(
     client: AsyncClient,
 ) -> None:
     """Even public endpoints (setup/status) carry all security headers."""
-    response = await client.get("/api/v1/setup/status")
+    # W2-3 PR-2: the public setup-status probe now lives only on the BFF mirror,
+    # which the NoStoreSetupMiddleware still covers (no-store assertion holds).
+    response = await client.get("/web-api/v1/setup/status")
     assert response.status_code < 500
     assert response.headers.get("x-frame-options") == "DENY"
     cc = response.headers.get("cache-control", "")
