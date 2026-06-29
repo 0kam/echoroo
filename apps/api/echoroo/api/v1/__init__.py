@@ -16,7 +16,6 @@ from echoroo.api.v1 import (
     h3,
     licenses,
     projects,
-    recorders,
     recordings,
     setup,
     sites,
@@ -45,7 +44,11 @@ api_router.include_router(clips.router)
 api_router.include_router(h3.router)
 api_router.include_router(tags.router)
 api_router.include_router(taxa.router)
-api_router.include_router(recorders.router)
+# W2-3 PR-1: the public ``/api/v1/recorders`` list route was unmounted in
+# favour of the ``/web-api/v1/recorders`` BFF surface. The legacy handler
+# survives as an importable helper (``echoroo.api.v1.recorders.list_recorders``)
+# delegated to by ``echoroo.api.web_v1._recorders``; only the v1 route
+# registration is removed here.
 api_router.include_router(admin.router)
 # spec/012 — public license list (FR-001/FR-002/FR-017). Bearer surface
 # mirroring ``echoroo.api.web_v1.licenses``. Any authenticated caller

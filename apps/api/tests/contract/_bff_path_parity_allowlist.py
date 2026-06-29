@@ -82,4 +82,7 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/users/me/api-tokens GET",
     "/web-api/v1/users/me/api-tokens POST",
     "/web-api/v1/users/me/api-tokens/{token_id} DELETE",
+    # W2-3 PR-1 — public recorder catalog: the ``/api/v1/recorders`` list route
+    # was unmounted; the surviving provider is the ``/web-api/v1/recorders`` BFF.
+    "/web-api/v1/recorders GET",
 ]
