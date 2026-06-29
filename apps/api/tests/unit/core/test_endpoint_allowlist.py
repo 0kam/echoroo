@@ -129,7 +129,8 @@ class TestIsAllowlisted:
             ("/api/v1/users/me/password", "PUT"),
             ("/health", "GET"),
             ("/openapi.json", "GET"),
-            ("/api/v1/setup/status", "GET"),
+            # W2-3 PR-2: the bootstrap status probe now lives only on the BFF.
+            ("/web-api/v1/setup/status", "GET"),
         ],
     )
     def test_known_allowlisted_paths(self, path: str, method: str) -> None:

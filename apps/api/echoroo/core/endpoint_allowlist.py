@@ -591,27 +591,13 @@ ALLOWLIST: list[AllowlistEntry] = [
         last_reviewed_at=_TODAY_REVIEWED,
     ),
     # ---- setup_bootstrap --------------------------------------------------
-    AllowlistEntry(
-        path_pattern="/api/v1/setup/status",
-        methods=frozenset({"GET"}),
-        category=AllowlistCategory.SETUP_BOOTSTRAP,
-        reason="Bootstrap status probe; runs before any user account exists",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#setup",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    AllowlistEntry(
-        path_pattern="/api/v1/setup/initialize",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.SETUP_BOOTSTRAP,
-        reason="First-run bootstrap; only callable while no users exist",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#setup",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
-    # W2-2-A — BFF mirror of the two /api/v1/setup/* bootstrap paths. They
+    # W2-3 PR-2: the legacy ``/api/v1/setup/{status,initialize}`` bootstrap
+    # entries were dropped here when their v1 route registrations were
+    # unmounted (the surviving surface is the ``/web-api/v1/setup/*`` BFF
+    # below). The legacy handlers remain importable helpers the BFF delegates
+    # to, but they no longer register an ``/api/v1`` path to allowlist.
+    #
+    # W2-2-A — BFF mirror of the two original setup bootstrap paths. They
     # run before any user/session exists and delegate verbatim to the
     # legacy handlers, so they carry no gate_action and stay SETUP_BOOTSTRAP.
     AllowlistEntry(

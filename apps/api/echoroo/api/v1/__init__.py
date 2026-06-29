@@ -17,7 +17,6 @@ from echoroo.api.v1 import (
     licenses,
     projects,
     recordings,
-    setup,
     sites,
     tags,
     taxa,
@@ -33,7 +32,11 @@ from echoroo.api.v1 import (
 api_router = APIRouter(prefix="/api/v1")
 
 # Include sub-routers
-api_router.include_router(setup.router)
+# W2-3 PR-2: the public ``/api/v1/setup/*`` bootstrap routes were unmounted in
+# favour of the ``/web-api/v1/setup/*`` BFF surface. The legacy handlers survive
+# as importable helpers (``echoroo.api.v1.setup.{get_setup_status,initialize_setup}``)
+# delegated to by ``echoroo.api.web_v1.setup``; only the v1 route registration
+# is removed here.
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(projects.router)
