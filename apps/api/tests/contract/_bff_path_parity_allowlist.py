@@ -96,4 +96,12 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id} PATCH",
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id} DELETE",
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/notes POST",
+    # W2-3 PR-5 — cross-model evaluation: the unscoped ``/api/v1/annotation-sets/
+    # */evaluate`` + ``/api/v1/evaluation-runs*`` routes were unmounted in favour
+    # of the project-scoped BFF surface (the unscoped ``GET /evaluation-runs``
+    # alias has no twin and was dropped outright).
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/evaluate POST",
+    "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/evaluation-runs GET",
+    "/web-api/v1/projects/{project_id}/evaluation-runs/{run_id} GET",
+    "/web-api/v1/projects/{project_id}/evaluation-runs/{run_id} DELETE",
 ]
