@@ -102,12 +102,16 @@ async def _annotation_set_project_id(
 # ---------------------------------------------------------------------------
 
 
-@annotation_set_router.post(
-    "/{annotation_set_id}/evaluate",
-    response_model=EvaluationRunResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Create an evaluation run for an annotation set",
-)
+# W2-3 PR-5: the public ``/api/v1/annotation-sets/*/evaluate`` and
+# ``/api/v1/evaluation-runs*`` routes were unmounted in favour of the
+# project-scoped ``/web-api/v1/projects/{project_id}/...`` evaluation BFF surface
+# (``echoroo.api.web_v1.projects._annotation_sets``). The handlers below are left
+# as plain importable functions (no ``@router`` decorators) because the BFF
+# delegates to them via ``legacy_evaluation.{create_evaluation_run,
+# list_evaluation_runs_for_set,get_evaluation_run,delete_evaluation_run}(...)``
+# and reuses ``EvaluationServiceDep``. ``list_evaluation_runs`` (the unscoped
+# ``GET /evaluation-runs`` alias) has no BFF twin and becomes a dead-but-
+# importable helper, left in place for the W2-3 global-cleanup PR.
 async def create_evaluation_run(
     annotation_set_id: UUID,
     payload: EvaluationRunCreate,
@@ -134,11 +138,6 @@ async def create_evaluation_run(
     )
 
 
-@annotation_set_router.get(
-    "/{annotation_set_id}/evaluation-runs",
-    response_model=EvaluationRunListResponse,
-    summary="List evaluation runs for an annotation set",
-)
 async def list_evaluation_runs_for_set(
     annotation_set_id: UUID,
     request: Request,
@@ -167,11 +166,6 @@ async def list_evaluation_runs_for_set(
     )
 
 
-@run_router.get(
-    "",
-    response_model=EvaluationRunListResponse,
-    summary="List evaluation runs (filter by annotation_set_id)",
-)
 async def list_evaluation_runs(
     request: Request,
     current_user: CurrentUser,
@@ -202,11 +196,6 @@ async def list_evaluation_runs(
     )
 
 
-@run_router.get(
-    "/{run_id}",
-    response_model=EvaluationSummary,
-    summary="Get an evaluation run with grouped results",
-)
 async def get_evaluation_run(
     run_id: UUID,
     request: Request,
@@ -229,11 +218,6 @@ async def get_evaluation_run(
     return await service.get_summary(run_id)
 
 
-@run_router.delete(
-    "/{run_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete an evaluation run",
-)
 async def delete_evaluation_run(
     run_id: UUID,
     request: Request,
