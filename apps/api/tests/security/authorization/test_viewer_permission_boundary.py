@@ -17,15 +17,75 @@ directly (no normalization to Authenticated).
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
+
+
+async def _bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 PR-7 moved the generic annotation-vote endpoints to the
+    ``/web-api/v1`` BFF, which sits behind the CSRF middleware. A plain
+    ``Authorization: Bearer`` POST would be rejected at the CSRF layer (403)
+    before the VOTE permission gate runs, so the vote-boundary test below seeds
+    a refresh token, exchanges it for an access token + ``X-CSRF-Token``, and
+    sends both — letting the request reach ``gate_action`` and 403 on VOTE.
+    """
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -165,11 +225,17 @@ class TestViewerForbidden:
     async def test_cast_vote_is_403(
         self,
         client: AsyncClient,
-        viewer_headers: dict[str, str],
+        db_session: AsyncSession,
+        viewer_user: User,
         viewer_member: ProjectMember,
         test_project: Project,
     ) -> None:
         """POST /projects/{id}/annotations/{id}/votes (VOTE) → 403 for Viewer.
+
+        W2-3 PR-7: the generic vote endpoint now lives on the ``/web-api/v1``
+        BFF (CSRF-guarded), so the request uses a seeded CSRF session
+        (``_bff_session_headers``) — a plain Bearer POST would 403 at the CSRF
+        layer before the VOTE gate runs, masking the permission check.
 
         Phase 16 Batch 6e (2026-04-29) middleware-ordering fix: the
         Phase 6 :class:`VoteCastRequest` schema requires the field
@@ -178,9 +244,10 @@ class TestViewerForbidden:
         ``vote`` before the permission gate fires. Send a contract-shaped
         body so the gate has a chance to deny on VOTE.
         """
+        session_headers = await _bff_session_headers(client, db_session, viewer_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/annotations/{_FAKE_UUID}/votes",
-            headers=viewer_headers,
+            f"/web-api/v1/projects/{test_project.id}/annotations/{_FAKE_UUID}/votes",
+            headers=session_headers,
             json={"vote": "agree"},
         )
         # 403 = permission denied (correct); 404 = annotation not found but

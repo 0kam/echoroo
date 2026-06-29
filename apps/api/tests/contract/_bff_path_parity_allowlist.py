@@ -116,4 +116,10 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/palette POST",
     "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/palette/{species_id} DELETE",
     "/web-api/v1/projects/{project_id}/annotation-sets/{set_id}/segments GET",
+    # W2-3 PR-7 — generic annotation votes: the ``/api/v1/projects/{project_id}/
+    # annotations/{id}/votes`` routes were unmounted in favour of the BFF surface
+    # (the W2-1 ``detections/{id}/votes`` entries above are a separate surface).
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes GET",
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes POST",
+    "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes DELETE",
 ]

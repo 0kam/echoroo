@@ -72,12 +72,13 @@ def get_vote_service(db: DbSession) -> AnnotationVoteService:
 VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 
 
-@router.get(
-    "/{annotation_id}/votes",
-    response_model=VoteSummaryResponse,
-    summary="Get vote summary for annotation",
-    description="Get vote counts and individual votes for any annotation in the project",
-)
+# W2-3 PR-7: the generic ``/api/v1/projects/{project_id}/annotations/{id}/votes``
+# routes were unmounted in favour of the ``/web-api/v1/projects/{project_id}/
+# annotations/{annotation_id}/votes`` BFF surface
+# (``echoroo.api.web_v1.projects._votes``). The three handlers below are left as
+# plain importable functions (no ``@router`` decorators) because the BFF
+# delegates to them via ``legacy_annotation_votes.{get_annotation_votes,
+# cast_annotation_vote,delete_annotation_vote}(...)`` and reuses ``VoteServiceDep``.
 async def get_annotation_votes(
     project_id: UUID,
     annotation_id: UUID,
@@ -151,13 +152,6 @@ async def get_annotation_votes(
     )
 
 
-@router.post(
-    "/{annotation_id}/votes",
-    response_model=VoteSummaryResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Cast vote on annotation",
-    description="Cast or update a vote on any annotation in the project",
-)
 async def cast_annotation_vote(
     project_id: UUID,
     annotation_id: UUID,
@@ -256,13 +250,6 @@ async def cast_annotation_vote(
     return summary
 
 
-@router.delete(
-    "/{annotation_id}/votes",
-    response_model=VoteSummaryResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Remove vote from annotation",
-    description="Remove the current user's vote from any annotation in the project",
-)
 async def delete_annotation_vote(
     project_id: UUID,
     annotation_id: UUID,
