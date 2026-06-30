@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Annotated, TypeVar
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request
 
 from echoroo.core.actions import (
     SITE_CREATE_ACTION,
@@ -95,12 +95,12 @@ def _filter_site_response(
     return site
 
 
-@router.get(
-    "",
-    response_model=SiteListResponse,
-    summary="List sites",
-    description="Get all sites for a project",
-)
+# W2-3 PR-8: the browser-facing ``/api/v1/projects/{project_id}/sites/*`` routes
+# were unmounted in favour of the ``/web-api/v1/projects/{project_id}/sites/*`` BFF
+# (``echoroo.api.web_v1.projects._sites``). The five handlers below are left as
+# plain importable functions (no ``@router`` decorators) because the BFF delegates
+# to them via ``legacy_sites.<fn>(...)`` and reuses ``SiteServiceDep`` + the
+# ``_filter_site_response`` H3-masking helper.
 async def list_sites(
     project_id: UUID,
     request: Request,
@@ -145,13 +145,6 @@ async def list_sites(
     return response
 
 
-@router.post(
-    "",
-    response_model=SiteResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create site",
-    description="Create a new site in a project (admin only)",
-)
 async def create_site(
     project_id: UUID,
     request: SiteCreate,
@@ -195,12 +188,6 @@ async def create_site(
     return _filter_site_response(site=site, request=http_request, project=project)
 
 
-@router.get(
-    "/{site_id}",
-    response_model=SiteDetailResponse,
-    summary="Get site",
-    description="Get site details with statistics",
-)
 async def get_site(
     project_id: UUID,
     site_id: UUID,
@@ -241,12 +228,6 @@ async def get_site(
     return _filter_site_response(site=site, request=request, project=project)
 
 
-@router.patch(
-    "/{site_id}",
-    response_model=SiteResponse,
-    summary="Update site",
-    description="Update site settings (admin only)",
-)
 async def update_site(
     project_id: UUID,
     site_id: UUID,
@@ -294,12 +275,6 @@ async def update_site(
     return _filter_site_response(site=site, request=http_request, project=project)
 
 
-@router.delete(
-    "/{site_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete site",
-    description="Delete site and all associated data (admin only)",
-)
 async def delete_site(
     project_id: UUID,
     site_id: UUID,

@@ -23,13 +23,13 @@ class TestSiteEndpoints:
     async def test_list_sites_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites - List sites."""
+        """Test GET /web-api/v1/projects/{project_id}/sites - List sites."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -46,13 +46,13 @@ class TestSiteEndpoints:
     async def test_list_sites_with_pagination(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites with pagination."""
+        """Test GET /web-api/v1/projects/{project_id}/sites with pagination."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             params={"page": 1, "page_size": 10},
         )
 
@@ -66,21 +66,21 @@ class TestSiteEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites requires authentication."""
-        response = await client.get(f"/api/v1/projects/{test_project_id}/sites")
+        """Test GET /web-api/v1/projects/{project_id}/sites requires authentication."""
+        response = await client.get(f"/web-api/v1/projects/{test_project_id}/sites")
 
         assert response.status_code == 401
 
     async def test_list_sites_no_access(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites without project access."""
+        """Test GET /web-api/v1/projects/{project_id}/sites without project access."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers_other,
         )
 
         assert response.status_code == 403
@@ -88,19 +88,19 @@ class TestSiteEndpoints:
     async def test_create_site_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites - Create site."""
+        """Test POST /web-api/v1/projects/{project_id}/sites - Create site."""
         site_data = {
             "name": "Test Site",
             "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
 
@@ -117,18 +117,18 @@ class TestSiteEndpoints:
     async def test_create_site_invalid_h3_index(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites with invalid H3 index."""
+        """Test POST /web-api/v1/projects/{project_id}/sites with invalid H3 index."""
         site_data = {
             "name": "Test Site",
             "h3_index_member": "invalid_h3_index",
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
 
@@ -138,7 +138,7 @@ class TestSiteEndpoints:
     async def test_create_site_accepts_h3_resolutions_5_through_15(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         resolution: int,
     ) -> None:
@@ -149,8 +149,8 @@ class TestSiteEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
 
@@ -162,11 +162,11 @@ class TestSiteEndpoints:
     async def test_create_site_duplicate_name(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites with duplicate name."""
+        """Test POST /web-api/v1/projects/{project_id}/sites with duplicate name."""
         # Create first site
         site_data = {
             "name": "Duplicate Site",
@@ -174,8 +174,8 @@ class TestSiteEndpoints:
         }
 
         response1 = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
         assert response1.status_code == 201
@@ -187,8 +187,8 @@ class TestSiteEndpoints:
         }
 
         response2 = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data2,
         )
 
@@ -199,14 +199,14 @@ class TestSiteEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/sites requires authentication."""
         site_data = {
             "name": "Test Site",
             "h3_index_member": "8928308280fffff",
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
+            f"/web-api/v1/projects/{test_project_id}/sites",
             json=site_data,
         )
 
@@ -215,17 +215,17 @@ class TestSiteEndpoints:
     async def test_create_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/sites denies non-members.
+        """Test POST /web-api/v1/projects/{project_id}/sites denies non-members.
 
         Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9 / T280
         spec gave MEMBER role ``Permission.MANAGE_SITE`` (see
         ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``). So a
         member-role caller can in fact create sites; the legacy
         "not admin = 403" expectation predates that change. Repoint
-        the assertion to ``auth_headers_other`` (Authenticated
+        the assertion to ``csrf_headers_other`` (Authenticated
         non-member) — that role has zero project permissions and is
         the canonical 403-producing identity for site mutations.
         """
@@ -235,8 +235,8 @@ class TestSiteEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers_other,
             json=site_data,
         )
 
@@ -245,11 +245,11 @@ class TestSiteEndpoints:
     async def test_get_site_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites/{site_id} - Get site."""
+        """Test GET /web-api/v1/projects/{project_id}/sites/{site_id} - Get site."""
         # Create a site first
         site_data = {
             "name": "Test Site",
@@ -257,16 +257,16 @@ class TestSiteEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
         site_id = create_response.json()["id"]
 
         # Get the site
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites/{site_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{site_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -282,14 +282,14 @@ class TestSiteEndpoints:
     async def test_get_site_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -300,10 +300,10 @@ class TestSiteEndpoints:
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/sites/{site_id} requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/sites/{site_id} requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}"
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}"
         )
 
         assert response.status_code == 401
@@ -311,11 +311,11 @@ class TestSiteEndpoints:
     async def test_update_site_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} - Update site."""
+        """Test PATCH /web-api/v1/projects/{project_id}/sites/{site_id} - Update site."""
         # Create a site first
         site_data = {
             "name": "Original Site",
@@ -323,8 +323,8 @@ class TestSiteEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
         site_id = create_response.json()["id"]
@@ -335,8 +335,8 @@ class TestSiteEndpoints:
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/sites/{site_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{site_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -348,13 +348,13 @@ class TestSiteEndpoints:
     async def test_update_site_accepts_intermediate_h3_resolution(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """PATCH stores updated H3 member cells with resolutions inside 5-15."""
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json={
                 "name": "Resolution Update Site",
                 "h3_index_member": h3.latlng_to_cell(35.681236, 139.767125, 15),
@@ -365,8 +365,8 @@ class TestSiteEndpoints:
 
         res10_cell = h3.latlng_to_cell(35.681236, 139.767125, 10)
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/sites/{site_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{site_id}",
+            headers=csrf_headers,
             json={"h3_index_member": res10_cell},
         )
 
@@ -378,16 +378,16 @@ class TestSiteEndpoints:
     async def test_update_site_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
+        """Test PATCH /web-api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Site"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -396,23 +396,23 @@ class TestSiteEndpoints:
     async def test_update_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+        """Test PATCH /web-api/v1/projects/{project_id}/sites/{site_id} denies non-members.
 
         Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
         :func:`test_create_site_not_admin` — MEMBER role has
         ``MANAGE_SITE`` so a member caller would 404 (site not found)
-        instead of 403. Use ``auth_headers_other`` to pin the
+        instead of 403. Use ``csrf_headers_other`` to pin the
         Authenticated non-member 403 path.
         """
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Site"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}",
+            headers=csrf_headers_other,
             json=update_data,
         )
 
@@ -421,11 +421,11 @@ class TestSiteEndpoints:
     async def test_delete_site_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} - Delete site."""
+        """Test DELETE /web-api/v1/projects/{project_id}/sites/{site_id} - Delete site."""
         # Create a site first
         site_data = {
             "name": "Site to Delete",
@@ -433,38 +433,38 @@ class TestSiteEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/sites",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites",
+            headers=csrf_headers,
             json=site_data,
         )
         site_id = create_response.json()["id"]
 
         # Delete the site
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sites/{site_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{site_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 204
 
         # Verify site is deleted
         get_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/sites/{site_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{site_id}",
+            headers=csrf_headers,
         )
         assert get_response.status_code == 404
 
     async def test_delete_site_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
+        """Test DELETE /web-api/v1/projects/{project_id}/sites/{site_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -472,20 +472,20 @@ class TestSiteEndpoints:
     async def test_delete_site_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} denies non-members.
+        """Test DELETE /web-api/v1/projects/{project_id}/sites/{site_id} denies non-members.
 
         Phase 16 Batch 6e (2026-04-29) downstream drift fix: see
         :func:`test_create_site_not_admin` — MEMBER role has
-        ``MANAGE_SITE``. Use ``auth_headers_other`` for the
+        ``MANAGE_SITE``. Use ``csrf_headers_other`` for the
         canonical 403 (Authenticated non-member) path.
         """
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}",
+            headers=csrf_headers_other,
         )
 
         assert response.status_code == 403
@@ -495,10 +495,10 @@ class TestSiteEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/sites/{site_id} requires authentication."""
+        """Test DELETE /web-api/v1/projects/{project_id}/sites/{site_id} requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/sites/{fake_id}"
+            f"/web-api/v1/projects/{test_project_id}/sites/{fake_id}"
         )
 
         assert response.status_code == 401

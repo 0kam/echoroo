@@ -16,7 +16,6 @@ from echoroo.api.v1 import (
     licenses,
     projects,
     recordings,
-    sites,
     tags,
     taxa,
     uploads,
@@ -39,7 +38,11 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(projects.router)
-api_router.include_router(sites.router)
+# W2-3 PR-8: the public ``/api/v1/projects/{project_id}/sites/*`` routes were
+# unmounted in favour of the ``/web-api/v1/.../sites/*`` BFF. The legacy handlers
+# survive as importable helpers (``echoroo.api.v1.sites``) delegated to by
+# ``echoroo.api.web_v1.projects._sites``; only the v1 route registration is
+# removed here.
 api_router.include_router(datasets.router)
 api_router.include_router(recordings.router)
 api_router.include_router(clips.router)

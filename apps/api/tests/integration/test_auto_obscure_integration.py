@@ -397,7 +397,10 @@ class TestNoRawCoordinatesInResponses:
         t653_auth_headers: dict[str, str],
     ) -> None:
         """GET /sites must not expose lat/lng/latitude/longitude."""
-        url = _project_url(t653_public_project.id, "sites")
+        # W2-3 PR-8: site listing moved to the /web-api/v1 BFF. Only the sites
+        # case is repointed here; ``_project_url`` stays on /api/v1 for the
+        # detections / recordings cases (those routes are still mounted).
+        url = f"/web-api/v1/projects/{t653_public_project.id}/sites"
         resp = await client.get(url, headers=t653_auth_headers)
         assert resp.status_code in (200, 404), (
             f"Unexpected status from GET {url}: {resp.status_code}"

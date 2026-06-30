@@ -1,9 +1,14 @@
 """Fixtures for contract tests."""
 
+from uuid import UUID
+
 import pytest
+import sqlalchemy as sa
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
@@ -137,6 +142,78 @@ async def auth_headers_other(db_session: AsyncSession, other_user: User) -> dict
     """
     access_token = create_access_token({"sub": str(other_user.id)})
     return {"Authorization": f"Bearer {access_token}"}
+
+
+async def bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 unmounts the legacy ``/api/v1`` browser routes; their behaviour now
+    lives on the ``/web-api/v1`` BFF, which sits behind the CSRF middleware
+    (``apps/api/echoroo/middleware/csrf.py``). A mutation that omits either the
+    session cookie or the ``X-CSRF-Token`` header is rejected with 403 before the
+    permission gate runs, so contract tests that exercise BFF mutations seed a
+    refresh token, exchange it at ``/web-api/v1/auth/refresh`` for an access token
+    + ``X-CSRF-Token``, and send both.
+    """
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
+
+@pytest.fixture
+async def csrf_headers(
+    client: AsyncClient, db_session: AsyncSession, test_user: User
+) -> dict[str, str]:
+    """CSRF-capable BFF session headers for ``test_user`` (mutations on /web-api/v1)."""
+    return await bff_session_headers(client, db_session, test_user)
+
+
+@pytest.fixture
+async def csrf_headers_other(
+    client: AsyncClient, db_session: AsyncSession, other_user: User
+) -> dict[str, str]:
+    """CSRF-capable BFF session headers for ``other_user`` (non-member 403 cases)."""
+    return await bff_session_headers(client, db_session, other_user)
 
 
 @pytest.fixture
