@@ -259,14 +259,14 @@ class TestTagLocaleEndpoints:
     async def test_list_tags_default_locale_returns_english_vernacular(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         tag_with_taxon: Tag,
     ) -> None:
         """Default ``locale=en`` populates the English vernacular name."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
         )
         assert response.status_code == 200
         items = response.json()["items"]
@@ -278,14 +278,14 @@ class TestTagLocaleEndpoints:
     async def test_list_tags_locale_ja_returns_japanese_vernacular(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         tag_with_taxon: Tag,
     ) -> None:
         """``locale=ja`` returns the Japanese vernacular entry."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert response.status_code == 200
@@ -296,14 +296,14 @@ class TestTagLocaleEndpoints:
     async def test_list_tags_without_taxon_id_returns_null_vernacular(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         tag_without_taxon: Tag,
     ) -> None:
         """Tags with no ``taxon_id`` surface ``vernacular_name = null``."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert response.status_code == 200
@@ -314,14 +314,14 @@ class TestTagLocaleEndpoints:
     async def test_list_tags_orphan_taxon_returns_null_vernacular(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         tag_with_orphan_taxon: Tag,
     ) -> None:
         """Tag linked to a taxon with no vernacular rows stays ``None``."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert response.status_code == 200
@@ -334,14 +334,14 @@ class TestTagLocaleEndpoints:
     async def test_get_tag_detail_locale_ja(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         tag_with_taxon: Tag,
     ) -> None:
         """``GET /tags/{tag_id}?locale=ja`` populates vernacular_name."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/{tag_with_taxon.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{tag_with_taxon.id}",
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert response.status_code == 200
@@ -351,13 +351,13 @@ class TestTagLocaleEndpoints:
     async def test_list_tags_rejects_unsupported_locale(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Locale outside the ``en|ja`` allow-list fails validation."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"locale": "fr"},
         )
         assert response.status_code == 422

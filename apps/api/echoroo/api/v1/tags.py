@@ -50,12 +50,11 @@ def get_tag_service(db: DbSession) -> TagService:
 TagServiceDep = Annotated[TagService, Depends(get_tag_service)]
 
 
-@router.get(
-    "",
-    response_model=TagListResponse,
-    summary="List tags",
-    description="List tags for a project with optional category and search filters",
-)
+# W2-3 PR-9: the browser-facing ``/api/v1/projects/{project_id}/tags/*`` routes
+# were unmounted in favour of the ``/web-api/v1/projects/{project_id}/tags/*`` BFF
+# (``echoroo.api.web_v1.projects._tags``). The seven handlers below are left as
+# plain importable functions (no ``@router`` decorators) because the BFF delegates
+# to them via ``legacy_tags.<fn>(...)`` and reuses ``TagServiceDep``.
 async def list_tags(
     project_id: UUID,
     current_user: CurrentUser,
@@ -102,13 +101,6 @@ async def list_tags(
     )
 
 
-@router.post(
-    "",
-    response_model=TagResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create tag",
-    description="Create a new tag for a project",
-)
 async def create_tag(
     project_id: UUID,
     request: TagCreate,
@@ -157,12 +149,6 @@ async def create_tag(
     return tag
 
 
-@router.get(
-    "/gbif-suggest",
-    response_model=list[GBIFSuggestion],
-    summary="GBIF species suggestions",
-    description="Get species name suggestions from the GBIF API",
-)
 async def gbif_suggest(
     project_id: UUID,
     current_user: CurrentUser,
@@ -190,12 +176,6 @@ async def gbif_suggest(
     return await service.gbif_suggest(query=q, limit=limit)
 
 
-@router.get(
-    "/statistics",
-    response_model=list[TagStatistic],
-    summary="Tag usage statistics",
-    description="Get tag usage statistics for a project",
-)
 async def get_statistics(
     project_id: UUID,
     current_user: CurrentUser,
@@ -225,12 +205,6 @@ async def get_statistics(
     return await service.get_statistics(project_id=project_id, locale=locale)
 
 
-@router.get(
-    "/{tag_id}",
-    response_model=TagDetailResponse,
-    summary="Get tag detail",
-    description="Get tag details including child tags",
-)
 async def get_tag(
     project_id: UUID,
     tag_id: UUID,
@@ -262,12 +236,6 @@ async def get_tag(
     return await service.get_detail(tag_id=tag_id, locale=locale)
 
 
-@router.patch(
-    "/{tag_id}",
-    response_model=TagResponse,
-    summary="Update tag",
-    description="Update tag name, parent, or common name",
-)
 async def update_tag(
     project_id: UUID,
     tag_id: UUID,
@@ -320,12 +288,6 @@ async def update_tag(
     return tag
 
 
-@router.delete(
-    "/{tag_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete tag",
-    description="Delete a tag by ID",
-)
 async def delete_tag(
     project_id: UUID,
     tag_id: UUID,
