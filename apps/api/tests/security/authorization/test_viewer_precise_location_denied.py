@@ -37,10 +37,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +54,7 @@ from echoroo.core.permissions import (
     compute_effective_permissions,
     compute_effective_resolution,
 )
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectMemberRole,
     ProjectStatus,
@@ -304,6 +306,59 @@ async def _seed_restricted_project_with_viewer(
     return project, site
 
 
+async def _bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 PR-8 moved the site GET onto the ``/web-api/v1`` BFF, which treats a
+    plain ``create_access_token`` Bearer as anonymous (401 on a RESTRICTED
+    project). Seed a refresh token, exchange it at ``/web-api/v1/auth/refresh``
+    for the session-bound access token + ``X-CSRF-Token``, and send both.
+    """
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
+
 @pytest.mark.asyncio
 class TestViewerPreciseLocationHttpSurface:
     """End-to-end FR-022 coverage via the sites endpoint."""
@@ -314,7 +369,6 @@ class TestViewerPreciseLocationHttpSurface:
         db_session: AsyncSession,
         t405_owner: User,
         t405_viewer: User,
-        t405_viewer_headers: dict[str, str],
     ) -> None:
         """Toggle OFF + Viewer ⇒ ``h3_index`` is coarsened to the ceiling."""
         project, site = await _seed_restricted_project_with_viewer(
@@ -324,9 +378,13 @@ class TestViewerPreciseLocationHttpSurface:
             allow_precise=False,
         )
 
+        # W2-3 PR-8: site GET moved to the /web-api/v1 BFF (same legacy handler
+        # + _filter_site_response H3 masking; CSRF skips GET). The BFF needs a
+        # real session, so build one for the viewer rather than a plain Bearer.
+        session_headers = await _bff_session_headers(client, db_session, t405_viewer)
         response = await client.get(
-            f"/api/v1/projects/{project.id}/sites/{site.id}",
-            headers=t405_viewer_headers,
+            f"/web-api/v1/projects/{project.id}/sites/{site.id}",
+            headers=session_headers,
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -367,7 +425,6 @@ class TestViewerPreciseLocationHttpSurface:
         db_session: AsyncSession,
         t405_owner: User,
         t405_viewer: User,
-        t405_viewer_headers: dict[str, str],
     ) -> None:
         """Toggle ON + Viewer ⇒ ``h3_index`` keeps the original member cell."""
         project, site = await _seed_restricted_project_with_viewer(
@@ -377,9 +434,13 @@ class TestViewerPreciseLocationHttpSurface:
             allow_precise=True,
         )
 
+        # W2-3 PR-8: site GET moved to the /web-api/v1 BFF (same legacy handler
+        # + _filter_site_response H3 masking; CSRF skips GET). The BFF needs a
+        # real session, so build one for the viewer rather than a plain Bearer.
+        session_headers = await _bff_session_headers(client, db_session, t405_viewer)
         response = await client.get(
-            f"/api/v1/projects/{project.id}/sites/{site.id}",
-            headers=t405_viewer_headers,
+            f"/web-api/v1/projects/{project.id}/sites/{site.id}",
+            headers=session_headers,
         )
         assert response.status_code == 200, response.text
         body = response.json()

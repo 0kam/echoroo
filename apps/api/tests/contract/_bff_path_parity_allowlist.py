@@ -122,4 +122,11 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes GET",
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes POST",
     "/web-api/v1/projects/{project_id}/annotations/{annotation_id}/votes DELETE",
+    # W2-3 PR-8 — project sites CRUD: the ``/api/v1/projects/{id}/sites*`` routes
+    # were unmounted in favour of the project-scoped BFF surface.
+    "/web-api/v1/projects/{project_id}/sites GET",
+    "/web-api/v1/projects/{project_id}/sites POST",
+    "/web-api/v1/projects/{project_id}/sites/{site_id} GET",
+    "/web-api/v1/projects/{project_id}/sites/{site_id} PATCH",
+    "/web-api/v1/projects/{project_id}/sites/{site_id} DELETE",
 ]
