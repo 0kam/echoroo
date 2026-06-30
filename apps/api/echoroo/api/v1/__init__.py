@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from echoroo.api.v1 import (
     admin,
     annotation_comments,
-    annotation_votes,
     auth,
     clips,
     confirmed_regions,
@@ -68,9 +67,12 @@ api_router.include_router(detection_runs.models_router)
 api_router.include_router(uploads.router)
 # Similarity search router
 api_router.include_router(search_module.router)
-# Generic annotation vote endpoints (must be before search annotations_router
-# to avoid route conflicts on /projects/{project_id}/annotations/{id}/votes)
-api_router.include_router(annotation_votes.router)
+# W2-3 PR-7: the generic ``/api/v1/projects/{project_id}/annotations/{id}/votes``
+# endpoints were unmounted in favour of the ``/web-api/v1/.../votes`` BFF. The
+# legacy handlers survive as importable helpers (``echoroo.api.v1.annotation_votes``)
+# delegated to by ``echoroo.api.web_v1.projects._votes``; only the v1 route
+# registration is removed here. (The former "must be before annotations_router"
+# ordering note no longer applies — there is no v1 /votes route to collide.)
 # Phase 17 follow-up — register annotation comments router that
 # echoroo/api/v1/annotation_comments.py declared in Phase 3 but never
 # wired into the app factory (its module docstring still flagged this
