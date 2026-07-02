@@ -1,6 +1,6 @@
 """Fixtures for contract tests."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -214,6 +214,48 @@ async def csrf_headers_other(
 ) -> dict[str, str]:
     """CSRF-capable BFF session headers for ``other_user`` (non-member 403 cases)."""
     return await bff_session_headers(client, db_session, other_user)
+
+
+@pytest.fixture
+async def superuser(db_session: AsyncSession) -> User:
+    """Create a platform superuser (User row + active ``superusers`` entry).
+
+    spec/006 (Permissions redesign) stripped ``users.is_superuser``; the new
+    SOT is the ``superusers`` allow-list table. The auth middleware stamps
+    ``user.is_superuser = True`` when an active row is found, so we seed BOTH
+    the user and the allow-list row here. Used by ``/web-api/v1/admin/*`` tests
+    to reach the 2xx path (pattern copied from ``t044_superuser`` in
+    ``test_admin_licenses_delete.py``).
+    """
+    user = User(
+        email="superuser@example.com",
+        password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
+        display_name="Superuser",
+        security_stamp="contract-stamp-superuser",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    await db_session.execute(
+        sa.text(
+            """
+            INSERT INTO superusers (id, user_id, added_by_id, added_at)
+            VALUES (:id, :uid, :uid, NOW())
+            """
+        ),
+        {"id": uuid4(), "uid": user.id},
+    )
+    await db_session.commit()
+    return user
+
+
+@pytest.fixture
+async def csrf_headers_superuser(
+    client: AsyncClient, db_session: AsyncSession, superuser: User
+) -> dict[str, str]:
+    """CSRF-capable BFF session headers for ``superuser`` (admin 2xx cases)."""
+    return await bff_session_headers(client, db_session, superuser)
 
 
 @pytest.fixture

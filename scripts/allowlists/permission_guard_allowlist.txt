@@ -16,20 +16,12 @@
 # Phase 2.11 P1-a baseline established 2026-04-25 (replacing the file-
 # level baseline from Phase 2.10 #7). Each entry inherits the same
 # "Phase 3 US11 T1xx" cleanup target.
-apps/api/echoroo/api/v1/admin.py:create_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:create_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:delete_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:delete_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:get_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:get_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:get_system_settings:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:list_licenses:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:list_recorders:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:list_users:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:update_license:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:update_recorder:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:update_system_settings:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/admin.py:update_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-11: the 14 ``api/v1/admin.py`` routes (users / settings / licenses /
+# recorders) were unmounted (now helpers delegated to by the ``/web-api/v1/admin/*``
+# BFF, which gate_action-guards each handler via ``_admin_users`` / ``_admin_settings``
+# / ``_admin_licenses`` / ``_admin_recorders`` — those BFF entries are retained below).
+# The legacy handlers keep ``_gate_admin_platform_action`` internally but no longer
+# register a route, so their own allowlist entries were dropped.
 # W2-3 PR-6: the eight browser-facing ``api/v1/annotation_sets.py`` CRUD/palette/
 # nested-segments routes were unmounted (now helpers delegated to by the
 # project-scoped ``/web-api/v1/projects/{project_id}/annotation-sets/*`` BFF,

@@ -1,10 +1,9 @@
-"""Contract tests for ``DELETE /admin/licenses/{license_id}`` (spec/012).
+"""Contract tests for ``DELETE /web-api/v1/admin/licenses/{license_id}`` (spec/012).
 
 Locks the 409 envelope shape from
 ``specs/012-license-master-unification/contracts/admin-licenses-delete.yaml``
-on BOTH the Bearer (``/api/v1/admin/licenses/{id}``) AND the BFF
-(``/web-api/v1/admin/licenses/{id}``) surfaces. Cases mirror the rev.2
-tasks.md T037..T041 spec sheet:
+on the BFF (``/web-api/v1/admin/licenses/{id}``) surface. Cases mirror the
+rev.2 tasks.md T037..T041 spec sheet:
 
 * 204 — no dependents.
 * 409 — project-only dependency (project_count>0, dataset_count=0).
@@ -12,10 +11,12 @@ tasks.md T037..T041 spec sheet:
 * 409 — both dependencies.
 * 404 — unknown license id.
 
-Every case asserts against BOTH endpoints so the contract is locked
-end-to-end at every customer touch-point. The race-recovery branch is
-covered at the service layer in ``tests/unit/services/test_license_service.py``
-to keep the contract suite focused on the wire shape.
+W2-3 PR-11 unmounted the Bearer (``/api/v1/admin/licenses/{id}``) surface;
+the four Bearer-variant cases were dropped and only the cookie + CSRF BFF
+variants remain (the BFF delegates to the same legacy handler, so the wire
+shape is identical). The race-recovery branch is covered at the service
+layer in ``tests/unit/services/test_license_service.py`` to keep the contract
+suite focused on the wire shape.
 """
 
 from __future__ import annotations
@@ -28,7 +29,6 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.auth import issue_access_token
-from echoroo.core.jwt import create_access_token
 from echoroo.core.settings import get_settings
 from echoroo.middleware.csrf import issue_csrf_token
 from echoroo.models.dataset import Dataset
@@ -42,12 +42,11 @@ from echoroo.models.recorder import Recorder
 from echoroo.models.site import Site
 from echoroo.models.user import User
 
-API_PATH = "/api/v1/admin/licenses"
 BFF_PATH = "/web-api/v1/admin/licenses"
 
-# Both surfaces share the same wire body for 409 / 404. The contract
-# YAML at ``contracts/admin-licenses-delete.yaml`` is the single source
-# of truth; the assertions below reference its fields verbatim.
+# The contract YAML at ``contracts/admin-licenses-delete.yaml`` is the single
+# source of truth for the 409 / 404 wire body; the assertions below reference
+# its fields verbatim.
 EXPECTED_409_FIELDS = {"error_code", "message", "short_name", "project_count", "dataset_count"}
 
 
@@ -101,15 +100,6 @@ async def t044_superuser(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-def t044_superuser_headers(t044_superuser: User) -> dict[str, str]:
-    return {
-        "Authorization": (
-            f"Bearer {create_access_token({'sub': str(t044_superuser.id)})}"
-        )
-    }
-
-
-@pytest.fixture
 async def t044_superuser_session_auth(
     db_session: AsyncSession,
     t044_superuser: User,
@@ -141,22 +131,6 @@ async def t044_superuser_session_auth(
         },
         "cookies": {settings.web_session_cookie_name: str(session_id)},
     }
-
-
-@pytest.fixture
-async def deletable_license(db_session: AsyncSession) -> License:
-    """A standalone license with no dependents — safe to delete."""
-    lic = License(
-        id="t044-standalone",
-        name="T044 Standalone",
-        short_name="T044-STANDALONE",
-        url=None,
-        description="License with no dependents — used by the 204 case.",
-    )
-    db_session.add(lic)
-    await db_session.commit()
-    await db_session.refresh(lic)
-    return lic
 
 
 async def _make_project(
@@ -240,7 +214,7 @@ async def _make_dataset(
 
 
 # ---------------------------------------------------------------------------
-# 204 — no dependents (both surfaces)
+# 204 — no dependents (BFF surface)
 # ---------------------------------------------------------------------------
 
 
@@ -248,29 +222,14 @@ async def _make_dataset(
 class TestDeleteLicenseSucceedsWhenNoDependents:
     """T037 — 204 No Content when no projects/datasets reference the license."""
 
-    async def test_bearer_surface_returns_204(
-        self,
-        client: AsyncClient,
-        deletable_license: License,
-        t044_superuser_headers: dict[str, str],
-    ) -> None:
-        response = await client.delete(
-            f"{API_PATH}/{deletable_license.id}",
-            headers=t044_superuser_headers,
-        )
-        assert response.status_code == 204, response.text
-        assert response.content == b""
-
     async def test_bff_surface_returns_204(
         self,
         client: AsyncClient,
         db_session: AsyncSession,
         t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
-        # Re-seed a fresh row — the Bearer-surface test above may have
-        # consumed the shared ``deletable_license`` fixture in another
-        # ordering. Tests run in their own db_session transaction so the
-        # row needs an explicit insert here.
+        # Seed a fresh standalone row for the BFF delete. Tests run in their
+        # own db_session transaction so the row needs an explicit insert here.
         await db_session.execute(
             sa.text(
                 "INSERT INTO licenses (id, name, short_name, url, description, "
@@ -289,21 +248,23 @@ class TestDeleteLicenseSucceedsWhenNoDependents:
 
 
 # ---------------------------------------------------------------------------
-# 409 — license_in_use envelope (both surfaces, three dependency permutations)
+# 409 — license_in_use envelope (BFF surface, three dependency permutations)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 class TestDeleteLicenseRefuses409:
-    """T038 + T039 + T040 — 409 envelope on the two surfaces."""
+    """T038 + T039 + T040 — 409 envelope on the BFF surface."""
 
-    async def test_project_only_dependency_bearer(
+    async def test_project_only_dependency_bff(
         self,
         client: AsyncClient,
         db_session: AsyncSession,
         t044_superuser: User,
-        t044_superuser_headers: dict[str, str],
+        t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
+        # Only a project references the license-under-test, so only the
+        # project count is non-zero.
         lic = License(
             id="t044-project-only",
             name="T044 Project-Only",
@@ -319,7 +280,7 @@ class TestDeleteLicenseRefuses409:
         )
 
         response = await client.delete(
-            f"{API_PATH}/{lic.id}", headers=t044_superuser_headers
+            f"{BFF_PATH}/{lic.id}", **t044_superuser_session_auth
         )
         assert response.status_code == 409, response.text
         body = response.json()
@@ -376,45 +337,6 @@ class TestDeleteLicenseRefuses409:
         assert body["project_count"] == 0
         assert body["dataset_count"] == 1
 
-    async def test_both_dependencies_bearer(
-        self,
-        client: AsyncClient,
-        db_session: AsyncSession,
-        t044_superuser: User,
-        t044_superuser_headers: dict[str, str],
-    ) -> None:
-        lic = License(
-            id="t044-both",
-            name="T044 Both",
-            short_name="T044-BOTH",
-        )
-        db_session.add(lic)
-        await db_session.commit()
-
-        project = await _make_project(
-            db_session,
-            owner=t044_superuser,
-            license_id=lic.id,
-            name="T044 Both Project",
-        )
-        await _make_dataset(
-            db_session,
-            project=project,
-            owner=t044_superuser,
-            license_id=lic.id,
-            name="T044 Both Dataset",
-        )
-
-        response = await client.delete(
-            f"{API_PATH}/{lic.id}", headers=t044_superuser_headers
-        )
-        assert response.status_code == 409, response.text
-        body = response.json()
-        assert body["error_code"] == "license_in_use"
-        assert body["short_name"] == "T044-BOTH"
-        assert body["project_count"] == 1
-        assert body["dataset_count"] == 1
-
     async def test_both_dependencies_bff(
         self,
         client: AsyncClient,
@@ -422,7 +344,7 @@ class TestDeleteLicenseRefuses409:
         t044_superuser: User,
         t044_superuser_session_auth: dict[str, dict[str, str]],
     ) -> None:
-        """Same as above on the BFF surface — the response shape is identical."""
+        """Both project + dataset dependencies on the BFF surface."""
         lic = License(
             id="t044-both-bff",
             name="T044 Both BFF",
@@ -457,23 +379,13 @@ class TestDeleteLicenseRefuses409:
 
 
 # ---------------------------------------------------------------------------
-# 404 — unknown license id (both surfaces)
+# 404 — unknown license id (BFF surface)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 class TestDeleteLicense404:
-    """T041 — 404 on the two surfaces when the license id does not exist."""
-
-    async def test_unknown_id_bearer_returns_404(
-        self,
-        client: AsyncClient,
-        t044_superuser_headers: dict[str, str],
-    ) -> None:
-        response = await client.delete(
-            f"{API_PATH}/does-not-exist", headers=t044_superuser_headers
-        )
-        assert response.status_code == 404, response.text
+    """T041 — 404 on the BFF surface when the license id does not exist."""
 
     async def test_unknown_id_bff_returns_404(
         self,

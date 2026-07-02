@@ -15,9 +15,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.superuser import Superuser
 from echoroo.models.user import User
+from tests.integration.conftest import bff_session_headers
 
 # ---------------------------------------------------------------------------
 # Shared fixtures (Phase 13 schema — Superuser SOT in dedicated table)
@@ -52,21 +52,21 @@ async def superuser(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def superuser_headers(superuser: User) -> dict[str, str]:
-    """Create authentication headers for superuser.
+async def superuser_headers(
+    client: AsyncClient, db_session: AsyncSession, superuser: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the superuser.
 
-    Args:
-        superuser: Superuser instance
-
-    Returns:
-        Headers with Bearer token
+    W2-3 PR-11 unmounted the legacy ``/api/v1/admin/*`` Bearer routes; the
+    settings flow now rides the cookie + CSRF ``/web-api/v1/admin/settings``
+    BFF, so a real session (issued via ``POST /web-api/v1/auth/refresh``) is
+    required — a plain ``create_access_token`` Bearer is treated as anonymous.
     """
-    access_token = create_access_token({"sub": str(superuser.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+    return await bff_session_headers(client, db_session, superuser)
 
 
 # ---------------------------------------------------------------------------
-# /api/v1/admin/settings — live endpoint, integration flow active.
+# /web-api/v1/admin/settings — live endpoint, integration flow active.
 # ---------------------------------------------------------------------------
 
 
@@ -78,21 +78,24 @@ async def test_full_admin_settings_flow(
 
     Mirrors the settings half of the legacy ``test_full_admin_flow`` and
     relies on the JSONB-backed ``system_settings`` endpoints implemented
-    in :mod:`echoroo.services.admin`. The ``updated_by_id`` FK is
+    in :mod:`echoroo.services.admin` (now served by the
+    ``/web-api/v1/admin/settings`` BFF). The ``updated_by_id`` FK is
     stamped automatically by the auth dependency
     (:func:`echoroo.middleware.auth._stamp_superuser_status`).
     """
 
     # 1. Initial read — empty until a write lands; the contract just
     #    requires a 200 with a JSON object body.
-    response = await client.get("/api/v1/admin/settings", headers=superuser_headers)
+    response = await client.get(
+        "/web-api/v1/admin/settings", headers=superuser_headers
+    )
     assert response.status_code == 200
     initial = response.json()
     assert isinstance(initial, dict)
 
     # 2. Update three settings in a single PATCH.
     response = await client.patch(
-        "/api/v1/admin/settings",
+        "/web-api/v1/admin/settings",
         headers=superuser_headers,
         json={
             "registration_mode": "invitation",
@@ -105,7 +108,9 @@ async def test_full_admin_settings_flow(
 
     # 3. Re-read and confirm the JSONB values round-trip as native
     #    Python types (string / boolean / int).
-    response = await client.get("/api/v1/admin/settings", headers=superuser_headers)
+    response = await client.get(
+        "/web-api/v1/admin/settings", headers=superuser_headers
+    )
     assert response.status_code == 200
     settings = response.json()
     assert settings["registration_mode"]["value"] == "invitation"
@@ -114,13 +119,15 @@ async def test_full_admin_settings_flow(
 
     # 4. Partial update — only one field — must still 200 and persist.
     response = await client.patch(
-        "/api/v1/admin/settings",
+        "/web-api/v1/admin/settings",
         headers=superuser_headers,
         json={"session_timeout_minutes": 45},
     )
     assert response.status_code == 200
 
-    response = await client.get("/api/v1/admin/settings", headers=superuser_headers)
+    response = await client.get(
+        "/web-api/v1/admin/settings", headers=superuser_headers
+    )
     assert response.status_code == 200
     settings = response.json()
     assert settings["session_timeout_minutes"]["value"] == 45
@@ -130,18 +137,21 @@ async def test_full_admin_settings_flow(
 
 
 # ---------------------------------------------------------------------------
-# /api/v1/admin/users — Phase 4 stub. Skipped pending admin-API rewrite.
+# /web-api/v1/admin/users — skipped: activate/deactivate scenario no longer
+# maps to the spec/006 schema. The paths are pre-pointed at the BFF surface
+# (W2-3 PR-11) for when the scenario is rebuilt.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.skip(
     reason=(
-        "Legacy /api/v1/admin/users integration flow — the underlying "
-        "endpoint is now live (spec/011 follow-up un-stub) but this "
-        "scenario asserts an activate/deactivate round-trip that no "
-        "longer maps to the spec/006 schema (no persisted ``is_active`` "
-        "column). The smoke coverage in ``tests/contract/test_admin.py`` "
-        "TestListUsers + TestUpdateUser is the new authoritative surface."
+        "Admin users integration flow — the underlying "
+        "/web-api/v1/admin/users endpoint is live (spec/011 follow-up "
+        "un-stub) but this scenario asserts an activate/deactivate "
+        "round-trip that no longer maps to the spec/006 schema (no "
+        "persisted ``is_active`` column). The smoke coverage in "
+        "``tests/contract/test_admin.py`` TestListUsers + TestUpdateUser is "
+        "the new authoritative surface."
     )
 )
 async def test_full_admin_user_management_flow(
@@ -160,7 +170,7 @@ async def test_full_admin_user_management_flow(
     6. Promoting user to superuser
     """
     # 1. List all users initially
-    response = await client.get("/api/v1/admin/users", headers=superuser_headers)
+    response = await client.get("/web-api/v1/admin/users", headers=superuser_headers)
     assert response.status_code == 200
     initial_data = response.json()
     initial_count = initial_data["total"]
@@ -178,7 +188,7 @@ async def test_full_admin_user_management_flow(
 
     # 3. Find the new user through search
     response = await client.get(
-        "/api/v1/admin/users",
+        "/web-api/v1/admin/users",
         headers=superuser_headers,
         params={"search": "newuser"},
     )
@@ -190,14 +200,14 @@ async def test_full_admin_user_management_flow(
 
     # 4. Deactivate the user
     response = await client.patch(
-        f"/api/v1/admin/users/{user_id}",
+        f"/web-api/v1/admin/users/{user_id}",
         headers=superuser_headers,
         json={"is_active": False},
     )
     assert response.status_code == 200
 
     # 5. Verify final user count
-    response = await client.get("/api/v1/admin/users", headers=superuser_headers)
+    response = await client.get("/web-api/v1/admin/users", headers=superuser_headers)
     assert response.status_code == 200
     final_data = response.json()
     assert final_data["total"] == initial_count + 1

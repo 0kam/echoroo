@@ -100,12 +100,13 @@ def _gate_admin_platform_action(
         )
 
 
-@router.get(
-    "/users",
-    response_model=AdminUserListResponse,
-    summary="List all users (superuser only)",
-    description="Get a paginated list of all users with optional filtering by search term and active status.",
-)
+# W2-3 PR-11: the browser-facing ``/api/v1/admin/*`` routes (users / settings /
+# licenses / recorders) were unmounted in favour of the ``/web-api/v1/admin/*``
+# BFF (``echoroo.api.web_v1._admin_users`` / ``_admin_settings`` /
+# ``_admin_licenses`` / ``_admin_recorders``). The 14 handlers below are left as
+# plain importable functions (no ``@router`` decorators) because the BFF delegates
+# to them via ``legacy_admin.<fn>(...)`` and reuses ``_gate_admin_platform_action``
+# / ``license_in_use_response``.
 async def list_users(
     request: Request,
     db: DbSession,
@@ -149,12 +150,6 @@ async def list_users(
     )
 
 
-@router.patch(
-    "/users/{user_id}",
-    response_model=UserResponse,
-    summary="Update user status (superuser only)",
-    description="Update user's active status, superuser status, or email verification status.",
-)
 async def update_user(
     user_id: UUID,
     request: AdminUserUpdateRequest,
@@ -189,12 +184,6 @@ async def update_user(
     return UserResponse.model_validate(user)
 
 
-@router.get(
-    "/settings",
-    response_model=dict[str, SystemSettingResponse],
-    summary="Get system settings (superuser only)",
-    description="Get all system configuration settings.",
-)
 async def get_system_settings(
     request: Request,
     db: DbSession,
@@ -222,12 +211,6 @@ async def get_system_settings(
     return await admin_service.get_system_settings()
 
 
-@router.patch(
-    "/settings",
-    status_code=status.HTTP_200_OK,
-    summary="Update system settings (superuser only)",
-    description="Update system configuration settings.",
-)
 async def update_system_settings(
     request: SystemSettingsUpdateRequest,
     http_request: Request,
@@ -273,12 +256,6 @@ async def update_system_settings(
 # License endpoints
 
 
-@router.get(
-    "/licenses",
-    response_model=LicenseListResponse,
-    summary="List all licenses (superuser only)",
-    description="Get a list of all available content licenses.",
-)
 async def list_licenses(
     request: Request,
     db: DbSession,
@@ -306,13 +283,6 @@ async def list_licenses(
     return await license_service.list_licenses()
 
 
-@router.post(
-    "/licenses",
-    response_model=LicenseResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a new license (superuser only)",
-    description="Create a new content license type.",
-)
 async def create_license(
     request: LicenseCreate,
     http_request: Request,
@@ -344,12 +314,6 @@ async def create_license(
     return await license_service.create_license(request)
 
 
-@router.get(
-    "/licenses/{license_id}",
-    response_model=LicenseResponse,
-    summary="Get license by ID (superuser only)",
-    description="Get detailed information about a specific license.",
-)
 async def get_license(
     license_id: str,
     request: Request,
@@ -380,12 +344,6 @@ async def get_license(
     return await license_service.get_license(license_id)
 
 
-@router.patch(
-    "/licenses/{license_id}",
-    response_model=LicenseResponse,
-    summary="Update license (superuser only)",
-    description="Update an existing content license.",
-)
 async def update_license(
     license_id: str,
     request: LicenseUpdate,
@@ -446,41 +404,6 @@ def license_in_use_response(error: LicenseInUseError) -> JSONResponse:
     )
 
 
-@router.delete(
-    "/licenses/{license_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    response_model=None,
-    summary="Delete license (superuser only)",
-    description=(
-        "Delete a content license type. spec/012 FR-006 / FR-012 / FR-015: "
-        "the operation is refused with 409 when at least one project or "
-        "dataset still references the license; the response body includes "
-        "both dependency counts plus the offending ``short_name`` so the "
-        "admin UI can render an actionable refusal."
-    ),
-    responses={
-        status.HTTP_404_NOT_FOUND: {
-            "description": "License id does not exist.",
-        },
-        status.HTTP_409_CONFLICT: {
-            "description": "License is still referenced by projects/datasets.",
-            "content": {
-                "application/json": {
-                    "example": {
-                        "error_code": "license_in_use",
-                        "message": (
-                            "License 'CC-BY' is still in use; reassign or "
-                            "remove dependents first"
-                        ),
-                        "short_name": "CC-BY",
-                        "project_count": 3,
-                        "dataset_count": 7,
-                    }
-                }
-            },
-        }
-    },
-)
 async def delete_license(
     license_id: str,
     request: Request,
@@ -517,12 +440,6 @@ async def delete_license(
 # Recorder endpoints
 
 
-@router.get(
-    "/recorders",
-    response_model=RecorderListResponse,
-    summary="List all recorders (superuser only)",
-    description="Get a paginated list of all audio recording devices.",
-)
 async def list_recorders(
     request: Request,
     db: DbSession,
@@ -559,13 +476,6 @@ async def list_recorders(
     )
 
 
-@router.post(
-    "/recorders",
-    response_model=RecorderResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a new recorder (superuser only)",
-    description="Create a new audio recording device entry.",
-)
 async def create_recorder(
     request: RecorderCreate,
     http_request: Request,
@@ -597,12 +507,6 @@ async def create_recorder(
     return await recorder_service.create_recorder(request)
 
 
-@router.get(
-    "/recorders/{recorder_id}",
-    response_model=RecorderResponse,
-    summary="Get recorder by ID (superuser only)",
-    description="Get detailed information about a specific recorder.",
-)
 async def get_recorder(
     recorder_id: str,
     request: Request,
@@ -633,12 +537,6 @@ async def get_recorder(
     return await recorder_service.get_recorder(recorder_id)
 
 
-@router.patch(
-    "/recorders/{recorder_id}",
-    response_model=RecorderResponse,
-    summary="Update recorder (superuser only)",
-    description="Update an existing audio recording device.",
-)
 async def update_recorder(
     recorder_id: str,
     request: RecorderUpdate,
@@ -672,12 +570,6 @@ async def update_recorder(
     return await recorder_service.update_recorder(recorder_id, request)
 
 
-@router.delete(
-    "/recorders/{recorder_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete recorder (superuser only)",
-    description="Delete an audio recording device.",
-)
 async def delete_recorder(
     recorder_id: str,
     request: Request,
