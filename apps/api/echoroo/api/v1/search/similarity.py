@@ -195,15 +195,6 @@ async def search_similar_by_audio(
             Path(tmp_path).unlink()
 
 
-@router.get(
-    "/embedding-stats",
-    response_model=EmbeddingStatsResponse,
-    summary="Embedding statistics",
-    description=(
-        "Get statistics about stored embeddings for a project, "
-        "broken down by model and dataset."
-    ),
-)
 async def get_embedding_stats(
     project_id: UUID,
     service: AuthorizedSearchServiceDep,

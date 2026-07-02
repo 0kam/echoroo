@@ -56,15 +56,6 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "/sessions",
-    response_model=SearchSessionListResponse,
-    summary="List search sessions",
-    description=(
-        "List paginated batch search sessions for a project, ordered by creation date descending. "
-        "Pass ?locale=ja to receive locale-specific common names in species_config."
-    ),
-)
 async def list_search_sessions(
     project_id: UUID,
     db: DbSession,
@@ -114,15 +105,6 @@ async def list_search_sessions(
     return SearchSessionListResponse(sessions=items, total=total)
 
 
-@router.get(
-    "/sessions/{session_id}",
-    response_model=SearchSessionResponse,
-    summary="Get search session detail",
-    description=(
-        "Get full search session detail with review status merged into results. "
-        "Pass ?locale=ja to receive locale-specific common names in results and species_config."
-    ),
-)
 async def get_search_session(
     project_id: UUID,
     session_id: UUID,
@@ -197,12 +179,6 @@ async def get_search_session(
     return response
 
 
-@router.delete(
-    "/sessions/{session_id}",
-    status_code=204,
-    summary="Delete search session",
-    description="Delete a search session. S3 reference audio files are cleaned up on a best-effort basis.",
-)
 async def delete_search_session(
     project_id: UUID,
     session_id: UUID,
@@ -251,12 +227,6 @@ async def delete_search_session(
     return Response(status_code=204)
 
 
-@router.patch(
-    "/sessions/{session_id}",
-    response_model=SearchSessionResponse,
-    summary="Update search session",
-    description="Update a search session's name.",
-)
 async def update_search_session(
     project_id: UUID,
     session_id: UUID,
@@ -292,19 +262,6 @@ async def update_search_session(
     return SearchSessionResponse.model_validate(session)
 
 
-@router.put(
-    "/sessions/{session_id}/rerun",
-    response_model=SearchJobAcceptedResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Re-run a search session with updated reference sources",
-    description=(
-        "Update a session's species_config and re-run the search. "
-        "Clears existing results, review annotations, and stored query "
-        "embeddings, resets status to pending, and dispatches a new Celery "
-        "search task that regenerates the query embeddings. "
-        "Send as multipart/form-data with a 'metadata' JSON field and optional audio files."
-    ),
-)
 async def rerun_search_session(
     project_id: UUID,
     session_id: UUID,
@@ -990,16 +947,6 @@ def _write_recordings_csv(
     return csv_content, filename
 
 
-@router.get(
-    "/sessions/{session_id}/export-recordings",
-    summary="Export search summary: all recordings × all species as CSV",
-    description=(
-        "Export a search summary CSV with one row per (recording × species). "
-        "All recordings in the project's datasets are included (even those with no "
-        "matching embeddings). Similarity is computed against each species' stored "
-        "query vectors. Rows are sorted by recording_datetime ASC."
-    ),
-)
 async def export_search_session_recordings_csv(
     project_id: UUID,
     session_id: UUID,
@@ -1120,11 +1067,6 @@ async def export_search_session_recordings_csv(
     )
 
 
-@router.get(
-    "/sessions/{session_id}/export/csv",
-    summary="Export session annotations as CSV",
-    description="Export all annotations linked to a search session as a CSV file.",
-)
 async def export_search_session_csv(
     project_id: UUID,
     session_id: UUID,
@@ -1209,17 +1151,6 @@ async def export_search_session_csv(
 # ---------------------------------------------------------------------------
 
 
-@router.get(
-    "/sessions/{session_id}/distribution",
-    response_model=SessionDistributionResponse,
-    summary="Get similarity distribution for a search session",
-    description=(
-        "Compute a histogram of cosine similarities for all project embeddings "
-        "against the session's reference vectors. Uses SQL aggregation for efficiency "
-        "— individual vectors are never loaded into Python. "
-        "Query vectors are derived from the top stored matches for each species."
-    ),
-)
 async def get_session_similarity_distribution(
     project_id: UUID,
     session_id: UUID,
@@ -1290,17 +1221,6 @@ async def get_session_similarity_distribution(
     )
 
 
-@router.get(
-    "/sessions/{session_id}/time-distribution",
-    response_model=SessionTimeDistributionResponse,
-    summary="Get time-of-day similarity distribution for a search session",
-    description=(
-        "Compute average cosine similarity grouped by (date, hour) for all "
-        "project embeddings against the session's reference vectors. "
-        "Returns one cell per (date, hour) combination with average similarity "
-        "and embedding count. Useful for rendering time-of-day heatmaps."
-    ),
-)
 async def get_session_time_distribution(
     project_id: UUID,
     session_id: UUID,
@@ -1377,16 +1297,6 @@ async def get_session_time_distribution(
     )
 
 
-@router.get(
-    "/sessions/{session_id}/sample",
-    response_model=SessionSampleResponse,
-    summary="Randomly sample embeddings within a similarity range",
-    description=(
-        "Return a random sample of embeddings whose cosine similarity to the "
-        "session's reference vectors falls within [min_similarity, max_similarity]. "
-        "Useful for exploring which sounds exist in a specific similarity band."
-    ),
-)
 async def sample_session_similarity_range(
     project_id: UUID,
     session_id: UUID,

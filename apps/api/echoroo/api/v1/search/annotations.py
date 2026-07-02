@@ -27,18 +27,6 @@ logger = logging.getLogger(__name__)
 annotations_router = APIRouter(prefix="/projects/{project_id}/annotations", tags=["search"])
 
 
-@annotations_router.post(
-    "",
-    response_model=DetectionResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create annotation from search match",
-    description=(
-        "Create an annotation record from a similarity search match. "
-        "If an annotation already exists for the same recording, tag, and time range "
-        "(within 0.1 s tolerance), the existing annotation is returned instead of "
-        "creating a duplicate."
-    ),
-)
 async def create_search_annotation(
     project_id: UUID,
     request: SearchAnnotationCreate,

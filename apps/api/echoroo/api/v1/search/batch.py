@@ -389,19 +389,6 @@ async def _prepare_batch_job(
     )
 
 
-@router.post(
-    "/batch",
-    response_model=SearchJobAcceptedResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Batch species search by uploaded audio (async)",
-    description=(
-        "Upload reference audio clips for multiple species and find similar sounds "
-        "across the project simultaneously. Returns immediately with a job_id; "
-        "poll GET /jobs/{job_id} for status and results. "
-        "Send as multipart/form-data with a 'metadata' JSON field and audio files "
-        "named source_0, source_1, etc. Supports up to 20 species and 10 sources each."
-    ),
-)
 async def batch_search(
     project_id: UUID,
     current_user: CurrentUser,
@@ -504,16 +491,6 @@ async def batch_search(
     )
 
 
-@router.get(
-    "/jobs/{job_id}",
-    response_model=SearchJobStatusResponse,
-    summary="Get batch search job status",
-    description=(
-        "Poll the status of an async batch search job. "
-        "Returns progress while processing, and full results when completed. "
-        "Pass ?locale=ja to receive locale-specific common names in results."
-    ),
-)
 async def get_search_job(
     project_id: UUID,
     job_id: str,

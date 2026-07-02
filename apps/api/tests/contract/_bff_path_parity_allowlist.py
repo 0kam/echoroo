@@ -231,4 +231,25 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/detections/{detection_id}/change-species POST",
     "/web-api/v1/projects/{project_id}/detections/export/csv GET",
     "/web-api/v1/projects/{project_id}/detections/export/ml-dataset GET",
+    # W2-3 PR-18 — similarity-search sessions / batch / stats / annotation: the 14
+    # browser-superseded ``/api/v1/projects/{id}/search*`` routes (10 session
+    # CRUD/export/distribution/sample handlers + POST /batch + GET /jobs/{job_id}
+    # + GET /embedding-stats) and the search-annotation
+    # ``POST /projects/{id}/annotations`` were unmounted in favour of the BFF
+    # surface. The three KEEP routes (reference-audio / similar / similar-by-audio)
+    # stay on v1 and are not declared here.
+    "/web-api/v1/projects/{project_id}/search/sessions GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id} GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id} PATCH",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id} DELETE",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/rerun PUT",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/distribution GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/time-distribution GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/sample GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/export/csv GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/export-recordings GET",
+    "/web-api/v1/projects/{project_id}/search/batch POST",
+    "/web-api/v1/projects/{project_id}/search/jobs/{job_id} GET",
+    "/web-api/v1/projects/{project_id}/search/embedding-stats GET",
+    "/web-api/v1/projects/{project_id}/annotations POST",
 ]

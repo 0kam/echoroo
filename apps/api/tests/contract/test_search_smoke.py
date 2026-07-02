@@ -7,7 +7,7 @@ Provides a safety net before the upcoming refactor of
   - 403/404 cross-tenant (another user's session → whichever the code returns)
   - 404 not-found (syntactically valid but non-existent UUID)
 
-Routes covered (all mounted under /api/v1/projects/{project_id}/search):
+Routes covered (all mounted under /web-api/v1/projects/{project_id}/search):
   1  GET  /embedding-stats
   2  GET  /sessions
   3  GET  /sessions/{session_id}
@@ -17,6 +17,15 @@ Routes covered (all mounted under /api/v1/projects/{project_id}/search):
   7  GET  /sessions/{session_id}/sample
   8  GET  /sessions/{session_id}/export-recordings
   9  GET  /sessions/{session_id}/export/csv
+
+W2-3 PR-18: the legacy ``/api/v1/.../search*`` routes were unmounted; their
+behaviour now lives on the ``/web-api/v1`` BFF (``_search.py`` thin adapters
+delegating to the legacy handlers as importable helpers). The request paths
+below were repointed to ``/web-api/v1``. Every authenticated request — GET
+reads included — uses a session-bound token: the contract app treats a plain
+Bearer as anonymous on the ``/web-api/v1`` BFF surface (the PR-8+ rule), so
+owner reads use ``csrf_headers`` and cross-tenant reads use
+``csrf_headers_other``. Unauthenticated (no-header) 401 cases are unchanged.
 """
 
 from __future__ import annotations
@@ -338,7 +347,7 @@ async def test_search_session_other_project(
 
 
 def _search_base(project_id: str) -> str:
-    """Return the base URL prefix for the search router.
+    """Return the base URL prefix for the search BFF router.
 
     Args:
         project_id: Project UUID string
@@ -346,7 +355,7 @@ def _search_base(project_id: str) -> str:
     Returns:
         URL prefix string
     """
-    return f"/api/v1/projects/{project_id}/search"
+    return f"/web-api/v1/projects/{project_id}/search"
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +370,7 @@ class TestEmbeddingStats:
     async def test_happy_path_empty(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Returns 200 with empty-state shape when no embeddings exist.
@@ -371,7 +380,7 @@ class TestEmbeddingStats:
         """
         resp = await client.get(
             f"{_search_base(test_project_id)}/embedding-stats",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -396,27 +405,27 @@ class TestEmbeddingStats:
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
         """GET /embedding-stats for a project that other_user cannot access → 403."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/embedding-stats",
-            headers=auth_headers_other,
+            headers=csrf_headers_other,
         )
         assert resp.status_code == 403
 
     async def test_with_real_embedding(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         search_embedding: Embedding,  # noqa: ARG002  # side-effect: seeds one embedding row
     ) -> None:
         """Seeding one embedding row → total_count == 1."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/embedding-stats",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -436,13 +445,13 @@ class TestListSessions:
     async def test_happy_path_empty(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Returns 200 with empty list when no sessions exist."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -465,20 +474,20 @@ class TestListSessions:
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
         """GET /sessions for a project other_user cannot access → 403."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions",
-            headers=auth_headers_other,
+            headers=csrf_headers_other,
         )
         assert resp.status_code == 403
 
     async def test_pagination_limit(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
         test_project: Project,
@@ -499,7 +508,7 @@ class TestListSessions:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"limit": 1},
         )
         assert resp.status_code == 200
@@ -510,13 +519,13 @@ class TestListSessions:
     async def test_locale_ja_no_500(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """locale=ja parameter does not cause a 500 (enrichment is best-effort)."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert resp.status_code == 200
@@ -534,14 +543,14 @@ class TestGetSession:
     async def test_happy_path(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """Returns 200 with full session fields."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -564,27 +573,27 @@ class TestGetSession:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Session belonging to another project → 404 (scoped query returns nothing)."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         # The service scopes by project_id so another project's session returns 404
         assert resp.status_code == 404
@@ -592,14 +601,14 @@ class TestGetSession:
     async def test_locale_ja_no_500(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """locale=ja does not cause a 500."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert resp.status_code == 200
@@ -617,7 +626,7 @@ class TestUpdateSession:
     async def test_happy_path_rename(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
@@ -625,7 +634,7 @@ class TestUpdateSession:
         new_name = "Renamed Smoke Session"
         resp = await client.patch(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
             json={"name": new_name},
         )
         assert resp.status_code == 200
@@ -634,7 +643,7 @@ class TestUpdateSession:
         # Follow-up GET must reflect the new name
         get_resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert get_resp.status_code == 200
         assert get_resp.json()["name"] == new_name
@@ -654,13 +663,13 @@ class TestUpdateSession:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """PATCH on non-existent session UUID → 404."""
         resp = await client.patch(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}",
-            headers=auth_headers,
+            headers=csrf_headers,
             json={"name": "ghost"},
         )
         assert resp.status_code == 404
@@ -668,14 +677,14 @@ class TestUpdateSession:
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """PATCH session from another project → 404 (scoped query)."""
         resp = await client.patch(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}",
-            headers=auth_headers,
+            headers=csrf_headers,
             json={"name": "should-not-rename"},
         )
         assert resp.status_code == 404
@@ -693,14 +702,14 @@ class TestSessionDistribution:
     async def test_happy_path(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """Returns 200 with expected distribution shape."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -713,14 +722,14 @@ class TestSessionDistribution:
     async def test_explicit_bin_width(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """Explicit bin_width param is accepted and response shape is correct."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"bin_width": 0.1},
         )
         assert resp.status_code == 200
@@ -729,7 +738,7 @@ class TestSessionDistribution:
     async def test_species_key_filter(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
@@ -737,7 +746,7 @@ class TestSessionDistribution:
         species_key = "aaaaaaaa-0000-0000-0000-000000000001"
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"species_key": species_key},
         )
         assert resp.status_code == 200
@@ -756,34 +765,34 @@ class TestSessionDistribution:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Distribution for another project's session → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_zero_vector_embedding_does_not_crash(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
         search_recording: Recording,
@@ -813,7 +822,7 @@ class TestSessionDistribution:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -838,14 +847,14 @@ class TestSessionTimeDistribution:
     async def test_happy_path(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """Returns 200 with expected time-distribution shape."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/time-distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -868,27 +877,27 @@ class TestSessionTimeDistribution:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/time-distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Time-distribution for another project's session → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}/time-distribution",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
@@ -905,14 +914,14 @@ class TestSessionSample:
     async def test_happy_path(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """Returns 200 with expected sample response shape."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/sample",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -925,14 +934,14 @@ class TestSessionSample:
     async def test_with_similarity_range_and_limit(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """min_similarity / max_similarity / limit params are accepted."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/sample",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"min_similarity": 0.0, "max_similarity": 0.5, "limit": 5},
         )
         assert resp.status_code == 200
@@ -953,27 +962,27 @@ class TestSessionSample:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/sample",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Sample from another project's session → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}/sample",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
@@ -995,7 +1004,7 @@ class TestExportRecordings:
     async def test_happy_path(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
@@ -1008,7 +1017,7 @@ class TestExportRecordings:
         """
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
@@ -1040,14 +1049,14 @@ class TestExportRecordings:
     async def test_locale_en_explicit_no_500(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
         """locale=en (explicit) returns 200 CSV."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"locale": "en"},
         )
         assert resp.status_code == 200
@@ -1055,7 +1064,7 @@ class TestExportRecordings:
     async def test_locale_ja_no_500_with_gbif_mocked(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
         monkeypatch: pytest.MonkeyPatch,
@@ -1078,7 +1087,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         assert resp.status_code == 200
@@ -1095,7 +1104,7 @@ class TestExportRecordings:
     async def test_locale_ja_no_500_when_enrichment_expires_session(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
         monkeypatch: pytest.MonkeyPatch,
@@ -1139,7 +1148,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
             params={"locale": "ja"},
         )
         # Must NOT be 500. If the route still holds the ORM session and
@@ -1173,34 +1182,34 @@ class TestExportRecordings:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Export-recordings for another project's session → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_dataset_id_filter(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_project: Project,
         search_site: Site,
@@ -1253,7 +1262,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         body = resp.text
@@ -1265,7 +1274,7 @@ class TestExportRecordings:
     async def test_no_recordings_empty_csv(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_project: Project,
         search_site: Site,
@@ -1301,7 +1310,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
@@ -1324,7 +1333,7 @@ class TestExportRecordings:
     async def test_results_malformed_404(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
         db_session: AsyncSession,
@@ -1342,7 +1351,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
         assert resp.json().get("detail") == "Session has no results to export"
@@ -1350,7 +1359,7 @@ class TestExportRecordings:
     async def test_empty_species_results_404(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
         db_session: AsyncSession,
@@ -1368,7 +1377,7 @@ class TestExportRecordings:
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export-recordings",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
         assert (
@@ -1393,7 +1402,7 @@ class TestExportCsv:
     async def test_happy_path_no_annotations(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session: SearchSession,
     ) -> None:
@@ -1404,7 +1413,7 @@ class TestExportCsv:
         """
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session.id}/export/csv",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
@@ -1427,26 +1436,26 @@ class TestExportCsv:
     async def test_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Non-existent session UUID → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/export/csv",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404
 
     async def test_cross_tenant(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_search_session_other_project: SearchSession,
     ) -> None:
         """Export/csv for another project's session → 404."""
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{test_search_session_other_project.id}/export/csv",
-            headers=auth_headers,
+            headers=csrf_headers,
         )
         assert resp.status_code == 404

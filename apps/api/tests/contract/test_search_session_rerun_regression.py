@@ -24,9 +24,10 @@ raw ``DELETE FROM annotations`` (``UndefinedColumnError``) and passes with the
 ORM-based delete.
 
 In addition, :class:`TestRerunEndpointRegression` drives the **actual HTTP
-endpoint** ``PUT /api/v1/projects/{project_id}/search/sessions/{session_id}/rerun``
-(the route the frontend's BFF adapter delegates to — both surfaces share the
-same ``rerun_search_session`` handler). It is the active end-to-end guard that
+endpoint** ``PUT /web-api/v1/projects/{project_id}/search/sessions/{session_id}/rerun``
+(W2-3 PR-18: the legacy ``/api/v1`` route was unmounted; the BFF adapter
+delegates to the same ``rerun_search_session`` handler). It is the active
+end-to-end guard that
 the previously-only endpoint-level coverage (``test_search_writes.py``) lacked:
 that whole file is under a Phase-14 skip, so before this class there was no
 running test exercising the real rerun endpoint. This one seeds a COMPLETED
@@ -572,8 +573,11 @@ class TestRerunEndpointRegression:
 
     @staticmethod
     def _rerun_url(project_id: object, session_id: object) -> str:
+        # W2-3 PR-18: the legacy ``PUT /api/v1/.../rerun`` route was unmounted;
+        # the BFF adapter at ``/web-api/v1`` delegates to the same
+        # ``rerun_search_session`` handler. Repointed for source correctness.
         return (
-            f"/api/v1/projects/{project_id}/search/sessions/{session_id}/rerun"
+            f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}/rerun"
         )
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
@@ -585,7 +589,7 @@ class TestRerunEndpointRegression:
         mock_get_s3_client: MagicMock,
         mock_run_batch_search: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         db_session: AsyncSession,
         test_project: Project,
         test_user: User,
@@ -658,7 +662,7 @@ class TestRerunEndpointRegression:
 
         resp = await client.put(
             self._rerun_url(test_project.id, session.id),
-            headers=auth_headers,
+            headers=csrf_headers,
             data={"metadata": metadata},
             files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
         )
