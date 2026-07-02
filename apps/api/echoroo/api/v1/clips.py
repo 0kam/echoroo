@@ -4,7 +4,7 @@ import asyncio
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from echoroo.core.actions import (
     CLIP_AUDIO_ACTION,
@@ -72,12 +72,15 @@ ClipServiceDep = Annotated[ClipService, Depends(get_clip_service)]
 
 
 # T076: CRUD endpoints
-@router.get(
-    "",
-    response_model=ClipListResponse,
-    summary="List clips",
-    description="List clips for a recording with pagination and sorting",
-)
+#
+# W2-3 PR-13 (2026-07-02): the 6 browser-superseded clip CRUD/generate routes
+# (list/create/get/update/delete/generate) were unmounted from ``/api/v1`` in
+# favour of the project-scoped ``/web-api/v1`` BFF surface
+# (``web_v1/projects/_media.py`` for the two GETs, ``_clips.py`` for the four
+# mutations). The handler bodies stay as importable helpers that the BFF
+# adapters delegate to (function-as-helper); only their ``@router`` decorators
+# were removed. The audio / spectrogram / download media routes below KEEP
+# their decorators — they are not yet migrated.
 async def list_clips(
     project_id: UUID,
     recording_id: UUID,
@@ -128,13 +131,6 @@ async def list_clips(
     )
 
 
-@router.post(
-    "",
-    response_model=ClipDetailResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create clip",
-    description="Create a new clip from a recording",
-)
 async def create_clip(
     project_id: UUID,
     recording_id: UUID,
@@ -183,12 +179,6 @@ async def create_clip(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@router.get(
-    "/{clip_id}",
-    response_model=ClipDetailResponse,
-    summary="Get clip",
-    description="Get clip by ID with recording details",
-)
 async def get_clip(
     project_id: UUID,
     recording_id: UUID,
@@ -242,12 +232,6 @@ async def get_clip(
     )
 
 
-@router.patch(
-    "/{clip_id}",
-    response_model=ClipDetailResponse,
-    summary="Update clip",
-    description="Update clip time range or notes",
-)
 async def update_clip(
     project_id: UUID,
     recording_id: UUID,
@@ -301,12 +285,6 @@ async def update_clip(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
-@router.delete(
-    "/{clip_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete clip",
-    description="Delete a clip by ID",
-)
 async def delete_clip(
     project_id: UUID,
     recording_id: UUID,
@@ -343,12 +321,6 @@ async def delete_clip(
 
 
 # T077: Generate endpoint
-@router.post(
-    "/generate",
-    response_model=ClipGenerateResponse,
-    summary="Generate clips",
-    description="Auto-generate clips from recording with specified length and overlap",
-)
 async def generate_clips(
     project_id: UUID,
     recording_id: UUID,

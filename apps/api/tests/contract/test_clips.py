@@ -1,6 +1,21 @@
 """Contract tests for clips API endpoints.
 
 Tests verify that endpoints conform to the data management specification.
+
+W2-3 PR-13 (2026-07-02): the 6 browser-superseded ``/api/v1/projects/{id}/
+recordings/{rid}/clips*`` CRUD + generate routes were unmounted in favour of
+the project-scoped ``/web-api/v1`` BFF (``_media.py`` GETs + ``_clips.py``
+mutations). The BFF sits behind the session + CSRF middleware, so every
+authenticated request — GET included — routes through a real
+``bff_session_headers`` session (``csrf_headers`` for the owner,
+``csrf_headers_other`` for the authenticated non-member 403 path). A plain
+``create_access_token`` Bearer is treated as anonymous, so the no-auth cases
+stay at 401 (auth fires before the permission gate). Clip writes gate on
+``MANAGE_DATASET`` which MEMBER holds, so the owner session reaches 2xx (there
+is no member-403 case, unlike datasets).
+
+The audio / spectrogram / download media routes (``TestClipAudioEndpoints``)
+KEEP their ``/api/v1`` Bearer semantics — they are not migrated in this PR.
 """
 
 from datetime import UTC, datetime
@@ -145,14 +160,14 @@ class TestClipEndpoints:
     async def test_list_clips_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips - List clips."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips - List clips."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -169,14 +184,14 @@ class TestClipEndpoints:
     async def test_list_clips_with_sorting(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips with sorting."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips with sorting."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            headers=csrf_headers,
             params={
                 "page": 1,
                 "page_size": 50,
@@ -196,9 +211,9 @@ class TestClipEndpoints:
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips"
         )
 
         assert response.status_code == 401
@@ -206,11 +221,11 @@ class TestClipEndpoints:
     async def test_create_clip_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips - Create clip."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips - Create clip."""
         clip_data = {
             "start_time": 5.0,
             "end_time": 8.0,
@@ -218,8 +233,8 @@ class TestClipEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            headers=csrf_headers,
             json=clip_data,
         )
 
@@ -237,19 +252,19 @@ class TestClipEndpoints:
     async def test_create_clip_validation_error_start_after_end(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips with invalid time range."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips with invalid time range."""
         clip_data = {
             "start_time": 10.0,
             "end_time": 5.0,  # end before start
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            headers=csrf_headers,
             json=clip_data,
         )
 
@@ -259,19 +274,19 @@ class TestClipEndpoints:
     async def test_create_clip_validation_error_exceeds_duration(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips exceeding recording duration."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips exceeding recording duration."""
         clip_data = {
             "start_time": 0.0,
             "end_time": 100.0,  # exceeds recording duration
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            headers=csrf_headers,
             json=clip_data,
         )
 
@@ -285,14 +300,14 @@ class TestClipEndpoints:
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips requires authentication."""
         clip_data = {
             "start_time": 0.0,
             "end_time": 3.0,
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips",
             json=clip_data,
         )
 
@@ -301,15 +316,15 @@ class TestClipEndpoints:
     async def test_get_clip_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Get clip."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Get clip."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -325,15 +340,15 @@ class TestClipEndpoints:
     async def test_get_clip_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -345,9 +360,9 @@ class TestClipEndpoints:
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}"
         )
 
         assert response.status_code == 401
@@ -355,12 +370,12 @@ class TestClipEndpoints:
     async def test_update_clip_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Update clip."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Update clip."""
         update_data = {
             "start_time": 1.0,
             "end_time": 4.0,
@@ -368,8 +383,8 @@ class TestClipEndpoints:
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -382,20 +397,20 @@ class TestClipEndpoints:
     async def test_update_clip_validation_error(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with invalid data."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with invalid data."""
         update_data = {
             "start_time": 10.0,
             "end_time": 5.0,  # end before start
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -405,17 +420,17 @@ class TestClipEndpoints:
     async def test_update_clip_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"note": "Test note"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -428,11 +443,11 @@ class TestClipEndpoints:
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
         update_data = {"note": "Test note"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}",
             json=update_data,
         )
 
@@ -441,12 +456,12 @@ class TestClipEndpoints:
     async def test_delete_clip_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         db_session: AsyncSession,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Delete clip."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} - Delete clip."""
         # Create a clip to delete
         clip = Clip(
             recording_id=test_recording_for_clips.id,
@@ -460,31 +475,31 @@ class TestClipEndpoints:
 
         # Delete the clip
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{clip_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{clip_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 204
 
         # Verify clip is deleted
         get_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{clip_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{clip_id}",
+            headers=csrf_headers,
         )
         assert get_response.status_code == 404
 
     async def test_delete_clip_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -496,9 +511,9 @@ class TestClipEndpoints:
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} requires authentication."""
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}"
         )
 
         assert response.status_code == 401
@@ -511,19 +526,19 @@ class TestClipGenerateEndpoint:
     async def test_generate_clips_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate - Generate clips."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate - Generate clips."""
         generate_data = {
             "clip_length": 3.0,
             "overlap": 0.0,
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
+            headers=csrf_headers,
             json=generate_data,
         )
 
@@ -539,11 +554,11 @@ class TestClipGenerateEndpoint:
     async def test_generate_clips_with_overlap(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate with overlap."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate with overlap."""
         generate_data = {
             "clip_length": 5.0,
             "overlap": 0.5,  # 50% overlap (valid range: 0-0.99)
@@ -552,8 +567,8 @@ class TestClipGenerateEndpoint:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
+            headers=csrf_headers,
             json=generate_data,
         )
 
@@ -564,18 +579,18 @@ class TestClipGenerateEndpoint:
     async def test_generate_clips_validation_error(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate with invalid parameters."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate with invalid parameters."""
         generate_data = {
             "clip_length": -1.0,  # invalid length
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
+            headers=csrf_headers,
             json=generate_data,
         )
 
@@ -587,13 +602,13 @@ class TestClipGenerateEndpoint:
         test_project_id: str,
         test_recording_for_clips: Recording,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate requires authentication."""
         generate_data = {
             "clip_length": 3.0,
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/generate",
             json=generate_data,
         )
 

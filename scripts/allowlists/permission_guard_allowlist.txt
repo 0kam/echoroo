@@ -29,15 +29,9 @@
 # required). ``dispatch_sampling`` (POST ``/{set_id}/sample``) stays mounted and
 # unguarded, so its entry is retained below.
 apps/api/echoroo/api/v1/annotation_sets.py:dispatch_sampling:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:create_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:delete_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/clips.py:download_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:generate_clips:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:get_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/clips.py:get_clip_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/clips.py:get_clip_spectrogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:list_clips:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:update_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:create_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:delete_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:list_confirmed_regions:missing-permission-guard  # legacy: Phase 3 US11 T1xx

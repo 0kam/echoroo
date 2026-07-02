@@ -174,4 +174,15 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/auto-detect POST",
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/test POST",
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/apply POST",
+    # W2-3 PR-13 — recording clip CRUD + auto-generate: the 6 browser-superseded
+    # ``/api/v1/projects/{id}/recordings/{rid}/clips*`` routes were unmounted in
+    # favour of the BFF surface (``_media.py`` GETs + ``_clips.py`` mutations).
+    # The audio / spectrogram / download media GETs stay on v1 and are not
+    # declared here.
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips POST",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/generate POST",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} PATCH",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} DELETE",
 ]
