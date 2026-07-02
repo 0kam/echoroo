@@ -70,8 +70,8 @@ _API_V1_PUBLIC_PATHS: frozenset[str] = frozenset(
     {
         # W2-3 PR-2 unmounted ``/api/v1/setup/initialize`` (now served only by
         # the ``/web-api/v1/setup/initialize`` BFF mirror).
+        # W2-3 login PR (Option C) deleted ``/api/v1/auth/login`` outright.
         "/api/v1/auth/register",
-        "/api/v1/auth/login",
         "/api/v1/auth/logout",
         "/api/v1/auth/refresh",
     }

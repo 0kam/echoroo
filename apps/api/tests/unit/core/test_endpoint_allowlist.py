@@ -121,7 +121,6 @@ class TestIsAllowlisted:
     @pytest.mark.parametrize(
         ("path", "method"),
         [
-            ("/api/v1/auth/login", "POST"),
             ("/web-api/v1/auth/login", "POST"),
             ("/web-api/v1/auth/2fa/challenge", "POST"),
             ("/api/v1/users/me", "GET"),
@@ -159,8 +158,9 @@ class TestIsAllowlisted:
         assert is_allowlisted(path, "POST")
 
     def test_wrong_method_does_not_match(self) -> None:
-        # /api/v1/auth/login is POST-only.
-        assert not is_allowlisted("/api/v1/auth/login", "GET")
+        # /web-api/v1/auth/login is POST-only (W2-3 Option C removed the
+        # legacy /api/v1 login entry together with its route).
+        assert not is_allowlisted("/web-api/v1/auth/login", "GET")
 
     def test_xeno_canto_search_is_external_proxy(self) -> None:
         path = "/api/v1/projects/8b3a5f12-1234-4abc-9def-0123456789ab/xeno-canto/search"
