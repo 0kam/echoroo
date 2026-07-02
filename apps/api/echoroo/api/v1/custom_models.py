@@ -80,12 +80,15 @@ def get_custom_model_service(db: DbSession) -> CustomModelService:
 CustomModelServiceDep = Annotated[CustomModelService, Depends(get_custom_model_service)]
 
 
-@router.get(
-    "",
-    response_model=CustomModelListResponse,
-    summary="List custom models",
-    description="List custom models for a project with optional tag filter",
-)
+# W2-3 PR-15: the browser-facing ``/api/v1/projects/{project_id}/custom-models*``
+# routes (list / create / get / update / delete / train / status / apply /
+# detection-runs / seed-samples / suggest-samples / sampling-rounds list+detail)
+# were unmounted in favour of the ``/web-api/v1/.../custom-models*`` BFF
+# (``echoroo.api.web_v1.projects._custom_models``). The 13 handlers below are
+# left as plain importable functions (no ``@router`` decorators) because the BFF
+# delegates to them via ``legacy_custom_models.<fn>(...)`` and reuses
+# ``CustomModelServiceDep`` / ``SeedSamplingBody``. The ``router`` object above
+# is now route-less and no longer mounted in ``echoroo.api.v1.__init__``.
 async def list_custom_models(
     project_id: UUID,
     request: Request,
@@ -146,13 +149,6 @@ async def list_custom_models(
     return CustomModelListResponse(models=models, total=total)
 
 
-@router.post(
-    "",
-    response_model=CustomModelResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create custom model",
-    description="Create a new custom model in DRAFT status. Requires TRAIN_MODEL permission.",
-)
 async def create_custom_model(
     project_id: UUID,
     request_body: CustomModelCreate,
@@ -209,12 +205,6 @@ async def create_custom_model(
     return CustomModelResponse.model_validate(model)
 
 
-@router.get(
-    "/{model_id}",
-    response_model=CustomModelResponse,
-    summary="Get custom model",
-    description="Get a custom model by ID",
-)
 async def get_custom_model(
     project_id: UUID,
     model_id: UUID,
@@ -254,12 +244,6 @@ async def get_custom_model(
     return CustomModelResponse.model_validate(model)
 
 
-@router.patch(
-    "/{model_id}",
-    response_model=CustomModelResponse,
-    summary="Update custom model",
-    description="Update a custom model's name and description (only allowed in DRAFT status). Requires TRAIN_MODEL permission.",
-)
 async def update_custom_model(
     project_id: UUID,
     model_id: UUID,
@@ -316,12 +300,6 @@ async def update_custom_model(
     return CustomModelResponse.model_validate(updated)
 
 
-@router.delete(
-    "/{model_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete custom model",
-    description="Delete a custom model and its S3 artifact if present",
-)
 async def delete_custom_model(
     project_id: UUID,
     model_id: UUID,
@@ -358,12 +336,6 @@ async def delete_custom_model(
     await service.delete_model(model)
 
 
-@router.post(
-    "/{model_id}/train",
-    response_model=CustomModelResponse,
-    summary="Start model training",
-    description="Dispatch a Celery training task. Allowed only when status is DRAFT or FAILED. Requires TRAIN_MODEL permission.",
-)
 async def train_custom_model(
     project_id: UUID,
     model_id: UUID,
@@ -424,12 +396,6 @@ async def train_custom_model(
     return CustomModelResponse.model_validate(updated)
 
 
-@router.get(
-    "/{model_id}/status",
-    response_model=CustomModelResponse,
-    summary="Get training status",
-    description="Lightweight polling endpoint to check the current training status",
-)
 async def get_custom_model_status(
     project_id: UUID,
     model_id: UUID,
@@ -469,17 +435,6 @@ async def get_custom_model_status(
     return CustomModelResponse.model_validate(model)
 
 
-@router.post(
-    "/{model_id}/apply",
-    response_model=CustomModelApplyResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Apply custom model to dataset",
-    description=(
-        "Apply a trained custom SVM model to all Perch embeddings in a dataset, "
-        "creating detection annotations for clips above the confidence threshold. "
-        "Requires TRAIN_MODEL permission."
-    ),
-)
 async def apply_custom_model(
     project_id: UUID,
     model_id: UUID,
@@ -571,16 +526,6 @@ async def apply_custom_model(
     )
 
 
-@router.get(
-    "/{model_id}/detection-runs",
-    response_model=CustomModelDetectionRunListResponse,
-    summary="List recent detection runs",
-    description=(
-        "List recent DetectionRuns created by applying this custom model, "
-        "ordered most-recent-first. Intended for polling the status of "
-        "in-flight apply jobs on the model detail page."
-    ),
-)
 async def list_custom_model_detection_runs(
     project_id: UUID,
     model_id: UUID,
@@ -639,18 +584,6 @@ async def list_custom_model_detection_runs(
     return CustomModelDetectionRunListResponse(runs=items, total=len(items))
 
 
-@router.post(
-    "/{model_id}/seed-samples",
-    response_model=SamplingRoundResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Start seed sampling",
-    description=(
-        "Generate three-category seed samples (easy_positive, boundary, others) "
-        "for a model using the provided reference embeddings as query vectors. "
-        "Only allowed when the model is in DRAFT or FAILED status. "
-        "Requires TRAIN_MODEL permission."
-    ),
-)
 async def create_seed_samples(
     project_id: UUID,
     model_id: UUID,
@@ -758,19 +691,6 @@ async def create_seed_samples(
     )
 
 
-@router.post(
-    "/{model_id}/suggest-samples",
-    response_model=SamplingRoundResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Suggest active learning samples",
-    description=(
-        "Run one active learning iteration: trains a lightweight SVM on existing labeled data, "
-        "scores all unlabeled project embeddings to find the most uncertain samples, "
-        "and creates a new SamplingRound for human review. "
-        "Requires at least one completed sampling round with sufficient labels "
-        "(>=5 positive + >=5 negative). Requires TRAIN_MODEL permission."
-    ),
-)
 async def suggest_next_samples(
     project_id: UUID,
     model_id: UUID,
@@ -841,12 +761,6 @@ async def suggest_next_samples(
     )
 
 
-@router.get(
-    "/{model_id}/sampling-rounds",
-    response_model=SamplingRoundListResponse,
-    summary="List sampling rounds",
-    description="List all sampling rounds for a custom model, ordered by round_number",
-)
 async def list_sampling_rounds(
     project_id: UUID,
     model_id: UUID,
@@ -907,12 +821,6 @@ async def list_sampling_rounds(
     return SamplingRoundListResponse(rounds=round_responses, total=len(round_responses))
 
 
-@router.get(
-    "/{model_id}/sampling-rounds/{round_id}",
-    response_model=SamplingRoundResponse,
-    summary="Get sampling round",
-    description="Get a single sampling round with all its items (annotation status included)",
-)
 async def get_sampling_round(
     project_id: UUID,
     model_id: UUID,

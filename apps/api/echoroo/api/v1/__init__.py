@@ -7,7 +7,6 @@ from echoroo.api.v1 import (
     auth,
     clips,
     confirmed_regions,
-    custom_models,
     datasets,
     detection_runs,
     detections,
@@ -102,8 +101,13 @@ api_router.include_router(search_module.router)
 api_router.include_router(annotation_comments.router)
 # Search annotation creation router
 api_router.include_router(search_module.annotations_router)
-# Custom model router
-api_router.include_router(custom_models.router)
+# W2-3 PR-15: the public ``/api/v1/projects/{project_id}/custom-models*`` routes
+# (13 handlers: list / create / get / update / delete / train / status / apply /
+# detection-runs / seed-samples / suggest-samples / sampling-rounds list+detail)
+# were unmounted in favour of the ``/web-api/v1/.../custom-models*`` BFF. The
+# legacy handlers survive as importable helpers (``echoroo.api.v1.custom_models``)
+# delegated to by ``echoroo.api.web_v1.projects._custom_models``; only the v1
+# route registration is removed here.
 # Xeno-canto proxy router
 api_router.include_router(xeno_canto.router)
 
