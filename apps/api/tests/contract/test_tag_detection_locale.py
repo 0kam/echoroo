@@ -14,6 +14,12 @@ These tests cover the end-to-end behaviour exposed by the API:
 The tests also assert the underlying helper (``resolve_vernacular_names``)
 emits exactly one ``SELECT ... taxon_vernacular_names`` query for a 100+
 item detection listing.
+
+W2-3 PR-17 (2026-07-02): the ``/api/v1/.../detections`` list route was
+unmounted; the detection-list request paths were repointed to the surviving
+``/web-api/v1`` BFF for source correctness (the single-detection GET stays on
+``/api/v1``). This module stays skip-marked under the Phase 14+
+recording_annotations deferral.
 """
 
 from __future__ import annotations
@@ -395,7 +401,7 @@ class TestDetectionLocaleEndpoints:
         await db_session.commit()
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
             params={"locale": "ja"},
         )
@@ -427,7 +433,7 @@ class TestDetectionLocaleEndpoints:
         await db_session.commit()
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
             params={"locale": "ja"},
         )
@@ -461,7 +467,7 @@ class TestDetectionLocaleEndpoints:
         await db_session.commit()
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
             params={"locale": "ja"},
         )

@@ -2,6 +2,17 @@
 
 Tests verify that endpoints conform to the OpenAPI specification for
 Feature 003: Detection Review.
+
+W2-3 PR-17 (2026-07-02): the 10 browser-superseded detection routes
+(list / species-summary / temporal-data / create / change-species /
+export-csv / export-ml-dataset + the three vote handlers) were unmounted
+from ``/api/v1``. The list / species-summary GET request paths and the
+create / change-species mutation paths in this module were repointed to the
+``/web-api/v1`` BFF for source correctness (mutations use ``csrf_headers``;
+GETs keep a plain Bearer via ``auth_headers`` — CurrentUser accepts either).
+The four single-detection routes (get / confirm / reject / delete) stay
+mounted on ``/api/v1`` and their calls were left untouched. This module
+stays skip-marked under the Phase 14+ recording_annotations deferral.
 """
 
 
@@ -204,9 +215,9 @@ class TestDetectionListEndpoints:
         auth_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections - empty list initially."""
+        """Test GET /web-api/v1/projects/{project_id}/detections - empty list initially."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
         )
 
@@ -228,9 +239,9 @@ class TestDetectionListEndpoints:
         test_project_id: str,
         test_annotation: Annotation,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections - returns annotations."""
+        """Test GET /web-api/v1/projects/{project_id}/detections - returns annotations."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
         )
 
@@ -256,9 +267,9 @@ class TestDetectionListEndpoints:
         test_project_id: str,
         test_annotation: Annotation,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections with status filter."""
+        """Test GET /web-api/v1/projects/{project_id}/detections with status filter."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
             params={"status": "unreviewed"},
         )
@@ -275,9 +286,9 @@ class TestDetectionListEndpoints:
         auth_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections pagination params."""
+        """Test GET /web-api/v1/projects/{project_id}/detections pagination params."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             headers=auth_headers,
             params={"page": 1, "page_size": 10},
         )
@@ -293,9 +304,9 @@ class TestDetectionListEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/detections requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections"
+            f"/web-api/v1/projects/{test_project_id}/detections"
         )
 
         assert response.status_code == 401
@@ -311,9 +322,9 @@ class TestDetectionSpeciesSummary:
         auth_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections/species-summary - empty."""
+        """Test GET /web-api/v1/projects/{project_id}/detections/species-summary - empty."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/species-summary",
+            f"/web-api/v1/projects/{test_project_id}/detections/species-summary",
             headers=auth_headers,
         )
 
@@ -332,9 +343,9 @@ class TestDetectionSpeciesSummary:
         test_project_id: str,
         test_annotation: Annotation,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections/species-summary - with data."""
+        """Test GET /web-api/v1/projects/{project_id}/detections/species-summary - with data."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/species-summary",
+            f"/web-api/v1/projects/{test_project_id}/detections/species-summary",
             headers=auth_headers,
         )
 
@@ -357,9 +368,9 @@ class TestDetectionSpeciesSummary:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detections/species-summary requires auth."""
+        """Test GET /web-api/v1/projects/{project_id}/detections/species-summary requires auth."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/species-summary"
+            f"/web-api/v1/projects/{test_project_id}/detections/species-summary"
         )
 
         assert response.status_code == 401
@@ -372,12 +383,12 @@ class TestDetectionCRUDEndpoints:
     async def test_create_detection(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_id: str,
         test_species_tag_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detections - create detection."""
+        """Test POST /web-api/v1/projects/{project_id}/detections - create detection."""
         detection_data = {
             "recording_id": test_recording_id,
             "tag_id": test_species_tag_id,
@@ -390,8 +401,8 @@ class TestDetectionCRUDEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detections",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detections",
+            headers=csrf_headers,
             json=detection_data,
         )
 
@@ -415,9 +426,9 @@ class TestDetectionCRUDEndpoints:
         test_project_id: str,
         test_recording_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detections requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/detections requires authentication."""
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detections",
+            f"/web-api/v1/projects/{test_project_id}/detections",
             json={"recording_id": test_recording_id, "source": "birdnet", "start_time": 0.0, "end_time": 3.0},
         )
 
@@ -465,14 +476,15 @@ class TestDetectionCRUDEndpoints:
         self,
         client: AsyncClient,
         auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_id: str,
     ) -> None:
         """Test DELETE /api/v1/projects/{project_id}/detections/{detection_id}."""
-        # First create a detection
+        # First create a detection via the BFF (create was unmounted in W2-3 PR-17)
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detections",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detections",
+            headers=csrf_headers,
             json={"recording_id": test_recording_id, "source": "human", "start_time": 0.0, "end_time": 3.0},
         )
         assert create_response.status_code == 201
@@ -543,14 +555,15 @@ class TestDetectionReviewEndpoints:
         self,
         client: AsyncClient,
         auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_id: str,
     ) -> None:
         """Test POST /api/v1/projects/{project_id}/detections/{detection_id}/reject."""
-        # Create a fresh annotation to reject
+        # Create a fresh annotation to reject via the BFF (create was unmounted in W2-3 PR-17)
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detections",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detections",
+            headers=csrf_headers,
             json={"recording_id": test_recording_id, "source": "birdnet", "start_time": 20.0, "end_time": 23.0},
         )
         assert create_response.status_code == 201
@@ -572,12 +585,12 @@ class TestDetectionReviewEndpoints:
     async def test_change_species(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_annotation_id: str,
         test_species_tag_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detections/{detection_id}/change-species."""
+        """Test POST /web-api/v1/projects/{project_id}/detections/{detection_id}/change-species."""
         change_data = {
             "new_tag_id": test_species_tag_id,
             "start_time": 11.0,
@@ -585,8 +598,8 @@ class TestDetectionReviewEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detections/{test_annotation_id}/change-species",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detections/{test_annotation_id}/change-species",
+            headers=csrf_headers,
             json=change_data,
         )
 

@@ -68,6 +68,19 @@ from echoroo.services.taxon_sensitivity_service import (
 
 router = APIRouter(prefix="/projects/{project_id}/detections", tags=["detections"])
 
+# W2-3 PR-17 (2026-07-02): the 10 browser-superseded detection routes were
+# unmounted from ``/api/v1`` in favour of the project-scoped ``/web-api/v1`` BFF
+# surface. Their handler bodies remain importable (function-as-helper) — the BFF
+# thin delegates import them via ``legacy_detections.*``:
+#   - list_detections / get_species_summary / get_temporal_data /
+#     create_detection / change_species -> ``web_v1/projects/_detections.py``
+#   - export_csv / export_ml_dataset -> ``web_v1/projects/_detection_export.py``
+#   - get_votes / cast_vote / delete_vote -> ``web_v1/projects/_votes.py``
+# Only the ``@router`` decorators were removed; every function body, module
+# symbol (voter-classification helpers, streaming logic) and schema stays.
+# The 4 single-detection routes below KEEP their decorators on ``/api/v1``:
+#   get_detection / confirm_detection / reject_detection / delete_detection.
+
 
 def get_detection_service(db: DbSession) -> DetectionService:
     """Get DetectionService instance.
@@ -255,12 +268,6 @@ def _mask_species_summary_item_names(
             setattr(item, field, MASKED_SPECIES_LABEL)
 
 
-@router.get(
-    "",
-    response_model=DetectionListResponse,
-    summary="List detections",
-    description="List detection annotations for a project with optional filters",
-)
 async def list_detections(
     project_id: UUID,
     request: Request,
@@ -361,12 +368,6 @@ async def list_detections(
     return result
 
 
-@router.get(
-    "/species-summary",
-    response_model=SpeciesSummaryResponse,
-    summary="Species detection summary",
-    description="Get detection counts and statistics grouped by species tag",
-)
 async def get_species_summary(
     project_id: UUID,
     request: Request,
@@ -436,11 +437,6 @@ async def get_species_summary(
     return result
 
 
-@router.get(
-    "/export/csv",
-    summary="Export detections as CSV",
-    description="Export detection annotations as CSV with optional filters",
-)
 async def export_csv(
     project_id: UUID,
     request: Request,
@@ -508,11 +504,6 @@ async def export_csv(
     )
 
 
-@router.get(
-    "/export/ml-dataset",
-    summary="Export ML training dataset",
-    description="Export confirmed detections as a ZIP-archived ML training dataset",
-)
 async def export_ml_dataset(
     project_id: UUID,
     request: Request,
@@ -567,12 +558,6 @@ async def export_ml_dataset(
     )
 
 
-@router.get(
-    "/temporal-data",
-    response_model=DetectionTemporalDataResponse,
-    summary="Detection temporal data",
-    description="Get hourly detection counts grouped by species, date, and hour for visualization",
-)
 async def get_temporal_data(
     project_id: UUID,
     request: Request,
@@ -727,13 +712,6 @@ async def get_detection(
     return result
 
 
-@router.post(
-    "",
-    response_model=DetectionResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create detection",
-    description="Create a new detection annotation",
-)
 async def create_detection(
     project_id: UUID,
     request: DetectionCreate,
@@ -906,12 +884,6 @@ async def reject_detection(
     )
 
 
-@router.post(
-    "/{detection_id}/change-species",
-    response_model=DetectionResponse,
-    summary="Change species",
-    description="Change the species tag of a detection annotation",
-)
 async def change_species(
     project_id: UUID,
     detection_id: UUID,
@@ -969,12 +941,6 @@ async def change_species(
     )
 
 
-@router.get(
-    "/{detection_id}/votes",
-    response_model=VoteSummaryResponse,
-    summary="Get vote summary",
-    description="Get vote counts and individual votes for a detection annotation",
-)
 async def get_votes(
     project_id: UUID,
     detection_id: UUID,
@@ -1038,13 +1004,6 @@ async def get_votes(
     )
 
 
-@router.post(
-    "/{detection_id}/votes",
-    response_model=VoteSummaryResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Cast vote",
-    description="Cast or update a vote on a detection annotation",
-)
 async def cast_vote(
     project_id: UUID,
     detection_id: UUID,
@@ -1126,13 +1085,6 @@ async def cast_vote(
     return summary
 
 
-@router.delete(
-    "/{detection_id}/votes",
-    response_model=VoteSummaryResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Remove vote",
-    description="Remove the current user's vote from a detection annotation",
-)
 async def delete_vote(
     project_id: UUID,
     detection_id: UUID,

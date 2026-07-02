@@ -219,4 +219,16 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/custom-models/{model_id}/suggest-samples POST",
     "/web-api/v1/projects/{project_id}/custom-models/{model_id}/sampling-rounds GET",
     "/web-api/v1/projects/{project_id}/custom-models/{model_id}/sampling-rounds/{round_id} GET",
+    # W2-3 PR-17 — detection mutations + exports: the 10 browser-superseded
+    # ``/api/v1/projects/{id}/detections*`` routes (list / species-summary /
+    # temporal-data / create / change-species / export-csv / export-ml-dataset +
+    # the three vote handlers) were unmounted in favour of the BFF surface. The
+    # list / species-summary / temporal-data GET paths (PR D) and the three vote
+    # GET/POST/DELETE paths (W2-1) were already declared above; only the create
+    # POST, change-species POST, and the two export GETs are new here. The 4
+    # single-detection routes (get/confirm/reject/delete) stay on v1.
+    "/web-api/v1/projects/{project_id}/detections POST",
+    "/web-api/v1/projects/{project_id}/detections/{detection_id}/change-species POST",
+    "/web-api/v1/projects/{project_id}/detections/export/csv GET",
+    "/web-api/v1/projects/{project_id}/detections/export/ml-dataset GET",
 ]

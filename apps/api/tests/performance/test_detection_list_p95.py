@@ -1,9 +1,10 @@
 """T992a — Detection list 100 items p95 < 800 ms (NFR-004 complement).
 
 Same methodology as ``test_recording_list_p95.py`` but for the detections
-endpoint ``GET /api/v1/projects/{id}/detections?page_size=50`` (max 50 per
-page due to endpoint limit). We iterate twice to reach ~100 detections
-in the response across two pages and measure the p95 per request.
+endpoint ``GET /web-api/v1/projects/{id}/detections?page_size=50`` (max 50
+per page due to endpoint limit; the ``/api/v1`` route was unmounted in W2-3
+PR-17). We iterate twice to reach ~100 detections in the response across two
+pages and measure the p95 per request.
 
 CI skip
 -------
@@ -159,11 +160,14 @@ async def test_detection_list_p95_under_budget(
     t992a_detections: list[Detection],
     t992a_owner: User,
 ) -> None:
-    """p95 < 800 ms for GET /api/v1/projects/{id}/detections?page_size=50."""
+    """p95 < 800 ms for GET /web-api/v1/projects/{id}/detections?page_size=50."""
     headers = {
         "Authorization": f"Bearer {create_access_token({'sub': str(t992a_owner.id)})}"
     }
-    url = f"/api/v1/projects/{t992a_project.id}/detections?page_size=50"
+    # W2-3 PR-17: detection list route unmounted from /api/v1; the surviving
+    # surface is the /web-api/v1 BFF twin (CurrentUser-gated — a plain
+    # create_access_token Bearer for a real user is resolved by AuthService).
+    url = f"/web-api/v1/projects/{t992a_project.id}/detections?page_size=50"
 
     latencies: list[float] = []
     for _ in range(_NUM_ITERATIONS):
@@ -219,7 +223,7 @@ async def test_detection_list_endpoint_accessible(
         "Authorization": f"Bearer {create_access_token({'sub': str(t992a_owner.id)})}"
     }
     resp = await client.get(
-        f"/api/v1/projects/{t992a_project.id}/detections?page_size=50",
+        f"/web-api/v1/projects/{t992a_project.id}/detections?page_size=50",
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
