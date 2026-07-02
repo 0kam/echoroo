@@ -11,9 +11,11 @@
 # Inline comments use TWO SPACES + #.
 
 # Phase 2.11 P1-a baseline 2026-04-25.
-apps/api/echoroo/api/v1/detections.py:change_species:missing-response-filter  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-17: the ``api/v1/detections.py:{change_species,create_detection}``
+# response-filter entries were dropped here when those v1 routes were unmounted;
+# the surviving surface is the ``/web-api/v1`` BFF (``_detections.py`` entries
+# retained below). The confirm/get/reject routes stay mounted on ``/api/v1``.
 apps/api/echoroo/api/v1/detections.py:confirm_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:create_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:get_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:reject_detection:missing-response-filter  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/annotations.py:create_search_annotation:missing-response-filter  # legacy: Phase 3 US11 T1xx

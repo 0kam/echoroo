@@ -17,10 +17,13 @@ handler the ``/web-api/v1`` BFF delegates to — so the existence guard, the
 end-to-end. The bug shipped precisely because the prior tests monkeypatched the
 guard away; this test would have caught it.
 
-Auth uses the integration ``client`` fixture's plain-JWT Bearer shim against
-``/api/v1`` (the BFF cookie+CSRF transport is covered separately by the smoke
-suite). The authorization gate, BOLA guard, vote service, and FK are identical
-on both mounts.
+W2-3 PR-17 (2026-07-02): the three ``/api/v1/.../detections/{id}/votes``
+routes were unmounted; this suite now drives the surviving ``/web-api/v1``
+BFF mount (which delegates to the very same legacy handler body). Auth
+therefore uses a CSRF-capable BFF session (``bff_session_headers``) instead
+of a plain-JWT Bearer, because the BFF sits behind the CSRF middleware and
+treats a plain ``create_access_token`` Bearer as anonymous. The authorization
+gate, BOLA guard, vote service, and FK are identical on both mounts.
 """
 
 from __future__ import annotations
@@ -33,7 +36,6 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
@@ -49,6 +51,7 @@ from echoroo.models.recording import Recording
 from echoroo.models.recording_annotation import RecordingAnnotation
 from echoroo.models.site import Site
 from echoroo.models.user import User
+from tests.integration.conftest import bff_session_headers
 
 pytestmark = pytest.mark.asyncio
 
@@ -171,9 +174,15 @@ async def _add_member(
     await db.commit()
 
 
-def _headers(user: User) -> dict[str, str]:
-    token = create_access_token({"sub": str(user.id)})
-    return {"Authorization": f"Bearer {token}"}
+async def _headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for ``user``.
+
+    W2-3 PR-17 unmounted the ``/api/v1`` vote routes; the surviving surface is
+    the BFF, which rejects a plain ``create_access_token`` Bearer as anonymous.
+    """
+    return await bff_session_headers(client, db, user)
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +234,7 @@ async def viewer_in_project(
 
 
 def _votes_url(project_id: UUID, annotation_id: UUID) -> str:
-    return f"/api/v1/projects/{project_id}/detections/{annotation_id}/votes"
+    return f"/web-api/v1/projects/{project_id}/detections/{annotation_id}/votes"
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +256,7 @@ async def test_cast_get_delete_vote_real_db(
     pid``, GET reflects the cast, and DELETE removes the row.
     """
     url = _votes_url(project.id, annotation.id)
-    headers = _headers(member_in_project)
+    headers = await _headers(client, db_session, member_in_project)
 
     # POST → 200 and a persisted vote row keyed on the recording_annotation id.
     resp = await client.post(url, headers=headers, json={"vote": "agree"})
@@ -310,13 +319,16 @@ async def test_cast_vote_cross_project_is_404_bola(
     # URL uses project (where the member has VOTE) but the cross-project id.
     url = _votes_url(project.id, other_annotation.id)
     resp = await client.post(
-        url, headers=_headers(member_in_project), json={"vote": "agree"}
+        url,
+        headers=await _headers(client, db_session, member_in_project),
+        json={"vote": "agree"},
     )
     assert resp.status_code == 404, resp.text
 
 
 async def test_cast_vote_viewer_is_403(
     client: AsyncClient,
+    db_session: AsyncSession,
     project: Project,
     annotation: RecordingAnnotation,
     viewer_in_project: User,
@@ -324,19 +336,24 @@ async def test_cast_vote_viewer_is_403(
     """A VIEWER (no VOTE permission) is rejected at the gate with 403."""
     url = _votes_url(project.id, annotation.id)
     resp = await client.post(
-        url, headers=_headers(viewer_in_project), json={"vote": "agree"}
+        url,
+        headers=await _headers(client, db_session, viewer_in_project),
+        json={"vote": "agree"},
     )
     assert resp.status_code == 403, resp.text
 
 
 async def test_cast_vote_unknown_annotation_is_404(
     client: AsyncClient,
+    db_session: AsyncSession,
     project: Project,
     member_in_project: User,
 ) -> None:
     """An unknown recording_annotation id → 404 (guard miss)."""
     url = _votes_url(project.id, uuid4())
     resp = await client.post(
-        url, headers=_headers(member_in_project), json={"vote": "agree"}
+        url,
+        headers=await _headers(client, db_session, member_in_project),
+        json={"vote": "agree"},
     )
     assert resp.status_code == 404, resp.text

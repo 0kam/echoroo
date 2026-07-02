@@ -20,9 +20,12 @@ Tests:
 4. **Re-vote immutability** → changing the vote value does NOT recompute
    ``source`` / ``project_role_at_vote`` (FR-037).
 
-The tests use the ``/api/v1/projects/.../detections/{id}/votes`` route via
-the bearer token path so we exercise the same gate + service code that
-production traffic hits.
+W2-3 PR-17 (2026-07-02): the ``/api/v1/.../detections/{id}/votes`` routes
+were unmounted; the tests now target the surviving ``/web-api/v1`` BFF mount
+(which delegates to the same legacy gate + service code), authenticating via
+a CSRF-capable ``bff_session_headers`` session instead of a plain Bearer.
+This module stays skip-marked under the Phase 14+ recording_annotations
+deferral, so the migration is not exercised yet.
 """
 
 from __future__ import annotations
@@ -58,7 +61,6 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.annotation_vote import AnnotationVote
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
@@ -269,23 +271,39 @@ async def t310_annotation(
 # ---------------------------------------------------------------------------
 
 
-def _bearer(user: User) -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token({'sub': str(user.id)})}"}
+async def _bff_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for ``user``.
+
+    ``bff_session_headers`` is imported locally (not at module scope) so the
+    new W2-3 PR-17 dependency does not add an E402 module-level import after
+    this suite's ``pytestmark`` skip block (matching the PR-16 precedent).
+    """
+    from tests.contract.conftest import bff_session_headers
+
+    return await bff_session_headers(client, db, user)
 
 
 @pytest.fixture
-def t310_member_headers(t310_member: User) -> dict[str, str]:
-    return _bearer(t310_member)
+async def t310_member_headers(
+    client: AsyncClient, db_session: AsyncSession, t310_member: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t310_member)
 
 
 @pytest.fixture
-def t310_guest_authenticated_headers(t310_guest_authenticated: User) -> dict[str, str]:
-    return _bearer(t310_guest_authenticated)
+async def t310_guest_authenticated_headers(
+    client: AsyncClient, db_session: AsyncSession, t310_guest_authenticated: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t310_guest_authenticated)
 
 
 @pytest.fixture
-def t310_owner_headers(t310_owner: User) -> dict[str, str]:
-    return _bearer(t310_owner)
+async def t310_owner_headers(
+    client: AsyncClient, db_session: AsyncSession, t310_owner: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t310_owner)
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +349,7 @@ async def _fetch_vote_columns(
 
 
 def _vote_endpoint(project_id: UUID, detection_id: UUID) -> str:
-    return f"/api/v1/projects/{project_id}/detections/{detection_id}/votes"
+    return f"/web-api/v1/projects/{project_id}/detections/{detection_id}/votes"
 
 
 # ---------------------------------------------------------------------------

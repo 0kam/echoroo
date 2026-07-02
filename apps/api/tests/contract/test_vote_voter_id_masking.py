@@ -17,6 +17,13 @@ The viewer roles tested:
 
 Also asserts each ``voters[]`` element carries ``source`` and
 ``project_role_at_vote`` (so the UI can render the FR-038 breakdown).
+
+W2-3 PR-17 (2026-07-02): the ``/api/v1/.../detections/{id}/votes`` routes
+were unmounted; the request paths were repointed to the surviving
+``/web-api/v1`` BFF mount and the ``t313_*_headers`` fixtures now build a
+CSRF-capable ``bff_session_headers`` session (the BFF treats a plain Bearer
+as anonymous). This module stays skip-marked under the Phase 14+
+recording_annotations deferral, so the migration is not exercised yet.
 """
 
 from __future__ import annotations
@@ -51,7 +58,6 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
@@ -342,40 +348,62 @@ async def t313_annotation(
 # ---------------------------------------------------------------------------
 
 
-def _bearer(user: User) -> dict[str, str]:
-    return {"Authorization": f"Bearer {create_access_token({'sub': str(user.id)})}"}
+async def _bff_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for ``user``.
+
+    ``bff_session_headers`` is imported locally (not at module scope) so the
+    new W2-3 PR-17 dependency does not add an E402 module-level import after
+    this suite's ``pytestmark`` skip block (matching the PR-16 precedent).
+    """
+    from tests.contract.conftest import bff_session_headers
+
+    return await bff_session_headers(client, db, user)
 
 
 @pytest.fixture
-def t313_owner_headers(t313_owner: User) -> dict[str, str]:
-    return _bearer(t313_owner)
+async def t313_owner_headers(
+    client: AsyncClient, db_session: AsyncSession, t313_owner: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t313_owner)
 
 
 @pytest.fixture
-def t313_admin_headers(t313_admin: User) -> dict[str, str]:
-    return _bearer(t313_admin)
+async def t313_admin_headers(
+    client: AsyncClient, db_session: AsyncSession, t313_admin: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t313_admin)
 
 
 @pytest.fixture
-def t313_member_headers(t313_member: User) -> dict[str, str]:
-    return _bearer(t313_member)
+async def t313_member_headers(
+    client: AsyncClient, db_session: AsyncSession, t313_member: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t313_member)
 
 
 @pytest.fixture
-def t313_viewer_headers(t313_viewer: User) -> dict[str, str]:
-    return _bearer(t313_viewer)
+async def t313_viewer_headers(
+    client: AsyncClient, db_session: AsyncSession, t313_viewer: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t313_viewer)
 
 
 @pytest.fixture
-def t313_guest_voter_headers(t313_guest_voter: User) -> dict[str, str]:
-    return _bearer(t313_guest_voter)
+async def t313_guest_voter_headers(
+    client: AsyncClient, db_session: AsyncSession, t313_guest_voter: User
+) -> dict[str, str]:
+    return await _bff_headers(client, db_session, t313_guest_voter)
 
 
 @pytest.fixture
-def t313_other_guest_viewer_headers(
+async def t313_other_guest_viewer_headers(
+    client: AsyncClient,
+    db_session: AsyncSession,
     t313_other_guest_viewer: User,
 ) -> dict[str, str]:
-    return _bearer(t313_other_guest_viewer)
+    return await _bff_headers(client, db_session, t313_other_guest_viewer)
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +425,7 @@ async def t313_mixed_votes(
 ) -> dict[str, UUID]:
     """Cast 1 member agree + 1 guest_authenticated disagree on the annotation."""
     member_resp = await client.post(
-        f"/api/v1/projects/{t313_public_project.id}/detections/"
+        f"/web-api/v1/projects/{t313_public_project.id}/detections/"
         f"{t313_annotation.id}/votes",
         headers=t313_member_headers,
         json={"vote": "agree"},
@@ -405,7 +433,7 @@ async def t313_mixed_votes(
     assert member_resp.status_code in {200, 201}, member_resp.text
 
     guest_resp = await client.post(
-        f"/api/v1/projects/{t313_public_project.id}/detections/"
+        f"/web-api/v1/projects/{t313_public_project.id}/detections/"
         f"{t313_annotation.id}/votes",
         headers=t313_guest_voter_headers,
         json={"vote": "disagree"},
@@ -424,7 +452,7 @@ async def t313_mixed_votes(
 
 
 def _votes_endpoint(project_id: UUID, detection_id: UUID) -> str:
-    return f"/api/v1/projects/{project_id}/detections/{detection_id}/votes"
+    return f"/web-api/v1/projects/{project_id}/detections/{detection_id}/votes"
 
 
 def _find_vote_for_user(

@@ -2,6 +2,13 @@
 
 Tests verify that the CSV and ML dataset export endpoints conform to the
 OpenAPI specification for Feature 003: Detection Review.
+
+W2-3 PR-17 (2026-07-02): the two ``/api/v1/.../detections/export/{csv,
+ml-dataset}`` routes were unmounted; their surviving surface is the
+``/web-api/v1`` BFF (``_detection_export.py`` thin adapters). The request
+paths below were repointed to ``/web-api/v1`` for source correctness. This
+module stays skip-marked under the Phase 14+ recording_annotations deferral
+(see the ``pytestmark`` below), so the migration is not exercised yet.
 """
 
 
@@ -231,7 +238,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv returns empty CSV with headers when no data."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
         )
 
@@ -249,7 +256,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv returns all expected CSV column headers."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
         )
 
@@ -271,7 +278,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv returns CSV with detection data."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
         )
 
@@ -290,7 +297,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv with status filter returns only matching detections."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
             params={"status": "confirmed"},
         )
@@ -308,7 +315,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv with confirmed status filter includes confirmed detections."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
             params={"status": "confirmed"},
         )
@@ -325,7 +332,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv sets Content-Disposition header for file download."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv",
             headers=auth_headers,
         )
 
@@ -340,7 +347,7 @@ class TestDetectionCSVExport:
     ) -> None:
         """Test GET /export/csv requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/csv"
+            f"/web-api/v1/projects/{test_project_id}/detections/export/csv"
         )
 
         assert response.status_code == 401
@@ -358,7 +365,7 @@ class TestDetectionMLDatasetExport:
     ) -> None:
         """Test GET /export/ml-dataset returns ZIP even with no confirmed data."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/ml-dataset",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/ml-dataset",
             headers=auth_headers,
         )
 
@@ -375,7 +382,7 @@ class TestDetectionMLDatasetExport:
     ) -> None:
         """Test GET /export/ml-dataset returns application/zip content type."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/ml-dataset",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/ml-dataset",
             headers=auth_headers,
         )
 
@@ -390,7 +397,7 @@ class TestDetectionMLDatasetExport:
     ) -> None:
         """Test GET /export/ml-dataset sets Content-Disposition header for download."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/ml-dataset",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/ml-dataset",
             headers=auth_headers,
         )
 
@@ -407,7 +414,7 @@ class TestDetectionMLDatasetExport:
     ) -> None:
         """Test GET /export/ml-dataset returns non-empty ZIP with confirmed detections."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/ml-dataset",
+            f"/web-api/v1/projects/{test_project_id}/detections/export/ml-dataset",
             headers=auth_headers,
         )
 
@@ -423,7 +430,7 @@ class TestDetectionMLDatasetExport:
     ) -> None:
         """Test GET /export/ml-dataset requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detections/export/ml-dataset"
+            f"/web-api/v1/projects/{test_project_id}/detections/export/ml-dataset"
         )
 
         assert response.status_code == 401

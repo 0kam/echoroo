@@ -36,16 +36,19 @@ apps/api/echoroo/api/v1/confirmed_regions.py:create_confirmed_region:missing-per
 apps/api/echoroo/api/v1/confirmed_regions.py:delete_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:list_confirmed_regions:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/datasets.py:export_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:change_species:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-17: the 10 browser-superseded ``api/v1/detections.py`` routes
+# (list/species-summary/export-csv/export-ml-dataset/temporal-data/create/
+# change-species and the three vote handlers) were unmounted from ``/api/v1``
+# in favour of the project-scoped ``/web-api/v1`` BFF (``_detections.py`` /
+# ``_detection_export.py`` / ``_votes.py`` delegates import these bodies as
+# helpers). The dead fingerprints (change_species/create_detection/export_csv/
+# export_ml_dataset/get_species_summary/get_temporal_data/list_detections)
+# were dropped; the vote handlers never had entries (centrally gated). The 4
+# single-detection routes (get/confirm/reject/delete) stay mounted, so their
+# entries are retained below.
 apps/api/echoroo/api/v1/detections.py:confirm_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:create_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:delete_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:export_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:export_ml_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:get_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:get_species_summary:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:get_temporal_data:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detections.py:list_detections:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:reject_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/h3.py:get_h3_from_coordinates:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/h3.py:validate_h3:missing-permission-guard  # legacy: Phase 3 US11 T1xx

@@ -5,6 +5,11 @@ Tests verify the actual content and structure of exported data, including:
 - CSV filter behavior by status, tag, and dataset
 - ML dataset ZIP archive structure and file contents
 - metadata.json schema validation
+
+W2-3 PR-17 (2026-07-02): the two ``/api/v1/.../detections/export/{csv,
+ml-dataset}`` routes were unmounted; the request paths below were repointed
+to the surviving ``/web-api/v1`` BFF surface for source correctness. This
+module stays skip-marked under the Phase 14+ recording_annotations deferral.
 """
 
 
@@ -310,7 +315,7 @@ async def test_csv_export_correct_columns(
 ) -> None:
     """Test that CSV export contains all expected columns in the correct order."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
     )
 
@@ -345,7 +350,7 @@ async def test_csv_export_unreviewed_annotation_data(
 ) -> None:
     """Test that CSV export includes correct data for unreviewed annotations."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
     )
 
@@ -378,7 +383,7 @@ async def test_csv_export_confirmed_annotation_verified_true(
 ) -> None:
     """Test that confirmed annotations have verified=true in CSV export."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
         params={"status": "confirmed"},
     )
@@ -405,7 +410,7 @@ async def test_csv_export_rejected_annotation_verified_false(
 ) -> None:
     """Test that rejected annotations have verified=false in CSV export."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
         params={"status": "rejected"},
     )
@@ -433,7 +438,7 @@ async def test_csv_export_filter_by_status_unreviewed(
 ) -> None:
     """Test CSV export filtered by unreviewed status returns only unreviewed rows."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
         params={"status": "unreviewed"},
     )
@@ -460,7 +465,7 @@ async def test_csv_export_filter_by_tag(
 ) -> None:
     """Test CSV export filtered by tag_id returns only matching annotations."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
         params={"tag_id": str(export_species_tag.id)},
     )
@@ -487,7 +492,7 @@ async def test_csv_export_filter_by_dataset(
 ) -> None:
     """Test CSV export filtered by dataset_id returns only annotations from that dataset."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/csv",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/csv",
         headers=auth_headers,
         params={"dataset_id": str(export_dataset.id)},
     )
@@ -512,7 +517,7 @@ async def test_csv_export_no_annotations_outside_project(
     # Request with a fake project ID - should return empty CSV
     fake_project_id = "00000000-0000-0000-0000-000000000000"
     response = await client.get(
-        f"/api/v1/projects/{fake_project_id}/detections/export/csv",
+        f"/web-api/v1/projects/{fake_project_id}/detections/export/csv",
         headers=auth_headers,
     )
 
@@ -538,7 +543,7 @@ async def test_ml_dataset_zip_contains_expected_files(
 ) -> None:
     """Test that ML dataset ZIP contains annotations.csv, metadata.json, and README.txt."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -559,7 +564,7 @@ async def test_ml_dataset_metadata_json_schema(
 ) -> None:
     """Test that metadata.json in ML dataset ZIP has the correct schema structure."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -595,7 +600,7 @@ async def test_ml_dataset_metadata_counts_empty(
 ) -> None:
     """Test that metadata.json reports zero counts when no data exists."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -618,7 +623,7 @@ async def test_ml_dataset_annotations_csv_columns(
 ) -> None:
     """Test that annotations.csv in ML dataset ZIP has expected column headers."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -651,7 +656,7 @@ async def test_ml_dataset_positive_entry_from_confirmed_annotation(
 ) -> None:
     """Test that confirmed annotations appear as positive entries in ML dataset."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -689,7 +694,7 @@ async def test_ml_dataset_negative_entry_from_confirmed_region(
 ) -> None:
     """Test that confirmed regions without overlapping annotations appear as negative entries."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -725,7 +730,7 @@ async def test_ml_dataset_total_entries_equals_positive_plus_negative(
 ) -> None:
     """Test that total_entries in metadata equals positive_count + negative_count."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 
@@ -745,7 +750,7 @@ async def test_ml_dataset_readme_is_human_readable(
 ) -> None:
     """Test that README.txt in ML dataset ZIP is non-empty and contains key information."""
     response = await client.get(
-        f"/api/v1/projects/{test_project.id}/detections/export/ml-dataset",
+        f"/web-api/v1/projects/{test_project.id}/detections/export/ml-dataset",
         headers=auth_headers,
     )
 

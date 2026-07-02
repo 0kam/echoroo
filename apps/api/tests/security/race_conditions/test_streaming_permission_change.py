@@ -76,6 +76,68 @@ def _make_bearer_token(user_id: Any) -> str:
     return _create_jwt_token({"sub": str(user_id)})
 
 
+async def _bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 PR-17 unmounted the ``/api/v1/.../detections/export/csv`` route; the
+    surviving surface is the ``/web-api/v1`` BFF, which sits behind the CSRF
+    middleware and treats a plain JWT Bearer as anonymous (``Session cookie
+    required`` → 401). Seed a refresh token, exchange it at
+    ``/web-api/v1/auth/refresh`` for a session-bound access token +
+    ``X-CSRF-Token``, and send both (mirrors the PR-16 helper in
+    ``tests/security/authorization/test_viewer_permission_boundary.py``). The
+    ``POST /web-api/v1/auth/refresh`` route is mounted by ``create_app`` on both
+    the shim ``client`` and the ``unshimmed_rbac_client`` apps, so the same
+    flow authenticates against either fixture.
+    """
+    import sqlalchemy as sa
+
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+    from echoroo.core.settings import get_settings
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": uuid.UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": uuid.UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": uuid.UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # unshimmed_rbac_client fixture (no Batch 6c JWT shim)
 # ---------------------------------------------------------------------------
@@ -140,6 +202,18 @@ async def unshimmed_rbac_client(
 
     TwoFactorEnforcementMiddleware.dispatch = _patched_two_factor_dispatch  # type: ignore[method-assign]
 
+    # W2-3 PR-17: the ``/web-api/v1/auth/refresh`` endpoint reads refresh
+    # tokens through the module-level ``AsyncSessionLocal`` binding in
+    # ``echoroo.api.web_v1.auth`` (``SqlTokenStore(AsyncSessionLocal)``).
+    # The global conftest rebinds that symbol only for the standard shim
+    # ``client`` fixture, so without this rebind the unshimmed app's token
+    # store would read the *production* database, never find the seeded
+    # refresh token, and revoke the family as a replay (401).
+    import echoroo.api.web_v1.auth as _web_auth_mod
+
+    _original_auth_session_local = _web_auth_mod.AsyncSessionLocal
+    _web_auth_mod.AsyncSessionLocal = factory  # type: ignore[assignment]
+
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -147,6 +221,9 @@ async def unshimmed_rbac_client(
         ) as http_client:
             yield http_client
     finally:
+        _web_auth_mod.AsyncSessionLocal = (  # type: ignore[assignment]
+            _original_auth_session_local
+        )
         TwoFactorEnforcementMiddleware.dispatch = (  # type: ignore[method-assign]
             _original_two_factor_dispatch
         )
@@ -254,9 +331,10 @@ async def test_csv_export_succeeds_when_member_at_call_time(
 ) -> None:
     """Member user can reach the CSV export endpoint — positive smoke test.
 
-    Uses the shim-active client: a JWT Bearer token synthesises a
-    full-scope Principal so the RBAC intersection is a no-op. The test
-    only asserts the endpoint is reachable (not 401).
+    W2-3 PR-17: the export route now lives on the ``/web-api/v1`` BFF, which
+    rejects a plain JWT Bearer as anonymous (``Session cookie required`` → 401);
+    the test therefore seeds a real CSRF session for the member. It only asserts
+    the endpoint is reachable (not 401).
     """
     owner = await _make_user(db_session, email=f"t973_pos_o_{uuid.uuid4().hex[:6]}@example.com")
     member = await _make_user(db_session, email=f"t973_pos_m_{uuid.uuid4().hex[:6]}@example.com")
@@ -264,13 +342,13 @@ async def test_csv_export_succeeds_when_member_at_call_time(
     await _add_member(db_session, project=project, user=member, role=ProjectMemberRole.MEMBER)
     await db_session.commit()
 
-    token = _make_bearer_token(member.id)
+    headers = await _bff_session_headers(client, db_session, member)
     response = await client.get(
-        f"/api/v1/projects/{project.id}/detections/export/csv",
-        headers={"Authorization": f"Bearer {token}"},
+        f"/web-api/v1/projects/{project.id}/detections/export/csv",
+        headers=headers,
     )
     assert response.status_code != 401, (
-        "Member with JWT (shim active) must not receive 401 on CSV export, "
+        "Member with a seeded CSRF session must not receive 401 on CSV export, "
         f"got {response.status_code}: {response.text!r}"
     )
 
@@ -315,10 +393,16 @@ async def test_csv_export_when_membership_revoked_before_request(
       * ``404``: anti-enumeration response — endpoint hides the project
         from the demoted caller.
 
-    Once the production ``remove_member`` flow auto-revokes project-scoped
-    api_keys (tracked separately), tighten this assertion to ``== 401`` and
-    seed ``ApiKey.revoked_at`` together with the membership delete, or
-    drop ``allow_export`` from ``_make_project`` to expose the 403 path.
+    Once the production ``remove_member`` flow auto-revokes the demoted
+    caller's access (tracked separately), tighten this assertion to ``== 401``
+    or drop ``allow_export`` from ``_make_project`` to expose the 403 path.
+
+    W2-3 PR-17: the export route moved to the ``/web-api/v1`` BFF, so the
+    caller authenticates via a CSRF session (not an ``/api/v1`` API key). The
+    session is minted **while the user is still a Member**, then the
+    ``ProjectMember`` row is deleted — the session itself stays valid, only the
+    project permission is dropped, exactly reproducing the revoked-before-request
+    scenario against the surviving surface.
     """
     import sqlalchemy as sa
 
@@ -328,9 +412,11 @@ async def test_csv_export_when_membership_revoked_before_request(
     await _add_member(
         db_session, project=project, user=ex_member, role=ProjectMemberRole.MEMBER
     )
-    # Seed an API key for ex_member so they can authenticate via /api/v1/*.
-    raw_key = await _seed_api_key(db_session, user=ex_member, project=project)
     await db_session.commit()
+
+    # Mint the CSRF session WHILE the user is still a Member (the session
+    # outlives the membership; only the permission is revoked below).
+    headers = await _bff_session_headers(unshimmed_rbac_client, db_session, ex_member)
 
     # Revoke membership.
     await db_session.execute(
@@ -342,12 +428,12 @@ async def test_csv_export_when_membership_revoked_before_request(
     await db_session.commit()
 
     response = await unshimmed_rbac_client.get(
-        f"/api/v1/projects/{project.id}/detections/export/csv",
-        headers={"Authorization": f"Bearer {raw_key}"},
+        f"/web-api/v1/projects/{project.id}/detections/export/csv",
+        headers=headers,
     )
     assert response.status_code in (200, 401, 403, 404), (
         "Revoked-membership CSV export must produce a spec'd outcome "
-        "(200 = Restricted+allow_export drop-down, 401 = future api_key "
+        "(200 = Restricted+allow_export drop-down, 401 = future session "
         "auto-revoke, 403 = explicit deny, 404 = anti-enumeration), "
         f"got {response.status_code}: {response.text!r}"
     )
@@ -408,12 +494,12 @@ async def test_csv_stream_aborts_when_permission_revoked_mid_stream(
         yield b"observationID\r\n"
         yield stream_guard.SENTINEL_BYTES
 
+    headers = await _bff_session_headers(client, db_session, member)
     export_module.DetectionExportService.export_csv_stream = _truncated_stream  # type: ignore[method-assign]
     try:
-        token = _make_bearer_token(member.id)
         response = await client.get(
-            f"/api/v1/projects/{project.id}/detections/export/csv",
-            headers={"Authorization": f"Bearer {token}"},
+            f"/web-api/v1/projects/{project.id}/detections/export/csv",
+            headers=headers,
         )
         # Hybrid Contract: status was already committed before the
         # revoke fires, so it stays 200. The guarantee is body-level
