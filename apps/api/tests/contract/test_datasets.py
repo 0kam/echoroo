@@ -1,9 +1,19 @@
 """Contract tests for datasets API endpoints.
 
 Tests verify that endpoints conform to the data management specification.
+
+W2-3 PR-12 (2026-07-02): the 12 browser-superseded ``/api/v1/projects/{id}/
+datasets*`` routes were unmounted in favour of the project-scoped
+``/web-api/v1/projects/{project_id}/datasets*`` BFF (export stays on v1). The
+BFF sits behind the session + CSRF middleware, so every authenticated request
+— GET included — routes through a real ``bff_session_headers`` session
+(``csrf_headers`` for the owner, ``csrf_headers_other`` for the authenticated
+non-member 403 path, an inline member session for the not-admin 403 path). A
+plain ``create_access_token`` Bearer is treated as anonymous, so the no-auth
+cases stay at 401 (auth fires before the permission gate).
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -12,9 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
+from tests.contract.conftest import bff_session_headers
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project, ProjectMember
+    from echoroo.models.user import User
 
 
 @pytest.fixture
@@ -49,13 +61,13 @@ class TestDatasetEndpoints:
     async def test_list_datasets_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets - List datasets."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets - List datasets."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -72,14 +84,14 @@ class TestDatasetEndpoints:
     async def test_list_datasets_with_filters(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets with filters."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets with filters."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             params={
                 "page": 1,
                 "page_size": 10,
@@ -98,21 +110,27 @@ class TestDatasetEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets requires authentication."""
-        response = await client.get(f"/api/v1/projects/{test_project_id}/datasets")
+        """Test GET /web-api/v1/projects/{project_id}/datasets requires authentication."""
+        response = await client.get(f"/web-api/v1/projects/{test_project_id}/datasets")
 
         assert response.status_code == 401
 
     async def test_list_datasets_no_access(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets without project access."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets without project access.
+
+        The canonical 403 path is now an authenticated non-member
+        (``csrf_headers_other``) — that identity holds a real session but no
+        project membership, so the request reaches the permission gate and is
+        denied ``VIEW_DATASET_LIST``.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers_other,
         )
 
         assert response.status_code == 403
@@ -120,11 +138,11 @@ class TestDatasetEndpoints:
     async def test_create_dataset_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets - Create dataset.
+        """Test POST /web-api/v1/projects/{project_id}/datasets - Create dataset.
 
         Phase 16 Batch 6e (2026-04-29) downstream drift fix: the legacy
         ``audio_dir`` field has been removed from
@@ -142,8 +160,8 @@ class TestDatasetEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
 
@@ -164,11 +182,11 @@ class TestDatasetEndpoints:
     async def test_create_dataset_minimal(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets with minimal fields."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets with minimal fields."""
         dataset_data = {
             "site_id": str(test_site.id),
             "name": "Minimal Dataset",
@@ -176,8 +194,8 @@ class TestDatasetEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
 
@@ -189,10 +207,10 @@ class TestDatasetEndpoints:
     async def test_create_dataset_invalid_site(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets with invalid site ID."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets with invalid site ID."""
         dataset_data = {
             "site_id": "00000000-0000-0000-0000-000000000000",
             "name": "Test Dataset",
@@ -200,8 +218,8 @@ class TestDatasetEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
 
@@ -210,11 +228,11 @@ class TestDatasetEndpoints:
     async def test_create_dataset_duplicate_name(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets with duplicate name."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets with duplicate name."""
         dataset_data = {
             "site_id": str(test_site.id),
             "name": "Duplicate Dataset",
@@ -223,8 +241,8 @@ class TestDatasetEndpoints:
 
         # Create first dataset
         response1 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         assert response1.status_code == 201
@@ -237,8 +255,8 @@ class TestDatasetEndpoints:
         }
 
         response2 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data2,
         )
 
@@ -247,17 +265,17 @@ class TestDatasetEndpoints:
     async def test_create_dataset_validation_error(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets with invalid data."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets with invalid data."""
         dataset_data = {
             "name": "",  # empty name should fail
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
 
@@ -266,12 +284,19 @@ class TestDatasetEndpoints:
     async def test_create_dataset_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        db_session: AsyncSession,
+        member_user: "User",  # noqa: F821
         test_project_id: str,
         test_member: "ProjectMember",  # noqa: F821
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets requires admin role."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets requires admin role.
+
+        Dataset writes gate on ``MANAGE_DATASET_ADMIN`` (admin + owner only), so
+        a MEMBER-role caller with a real session reaches the gate and is denied
+        with 403. The session is built inline from ``member_user``.
+        """
+        member_headers = await bff_session_headers(client, db_session, member_user)
         dataset_data = {
             "site_id": str(test_site.id),
             "name": "Test Dataset",
@@ -279,8 +304,8 @@ class TestDatasetEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=member_headers,
             json=dataset_data,
         )
 
@@ -289,11 +314,11 @@ class TestDatasetEndpoints:
     async def test_get_dataset_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id} - Get dataset."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id} - Get dataset."""
         # Create a dataset first
         dataset_data = {
             "site_id": str(test_site.id),
@@ -302,16 +327,16 @@ class TestDatasetEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
 
         # Get the dataset
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -326,14 +351,14 @@ class TestDatasetEndpoints:
     async def test_get_dataset_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -343,10 +368,10 @@ class TestDatasetEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id} requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id} requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}"
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}"
         )
 
         assert response.status_code == 401
@@ -354,11 +379,11 @@ class TestDatasetEndpoints:
     async def test_update_dataset_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/datasets/{dataset_id} - Update dataset."""
+        """Test PATCH /web-api/v1/projects/{project_id}/datasets/{dataset_id} - Update dataset."""
         # Create a dataset first
         dataset_data = {
             "site_id": str(test_site.id),
@@ -367,8 +392,8 @@ class TestDatasetEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
@@ -380,8 +405,8 @@ class TestDatasetEndpoints:
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -393,16 +418,16 @@ class TestDatasetEndpoints:
     async def test_update_dataset_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
+        """Test PATCH /web-api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Dataset"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -411,17 +436,23 @@ class TestDatasetEndpoints:
     async def test_update_dataset_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        db_session: AsyncSession,
+        member_user: "User",  # noqa: F821
         test_project_id: str,
         test_member: "ProjectMember",  # noqa: F821
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/datasets/{dataset_id} requires admin role."""
+        """Test PATCH /web-api/v1/projects/{project_id}/datasets/{dataset_id} requires admin role.
+
+        MEMBER role lacks ``MANAGE_DATASET_ADMIN``; the inline member session
+        reaches the gate and is denied with 403 before any 404 lookup.
+        """
+        member_headers = await bff_session_headers(client, db_session, member_user)
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"name": "Updated Dataset"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}",
+            headers=member_headers,
             json=update_data,
         )
 
@@ -430,11 +461,11 @@ class TestDatasetEndpoints:
     async def test_delete_dataset_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/datasets/{dataset_id} - Delete dataset."""
+        """Test DELETE /web-api/v1/projects/{project_id}/datasets/{dataset_id} - Delete dataset."""
         # Create a dataset first
         dataset_data = {
             "site_id": str(test_site.id),
@@ -443,38 +474,38 @@ class TestDatasetEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
 
         # Delete the dataset
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 204
 
         # Verify dataset is deleted
         get_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}",
+            headers=csrf_headers,
         )
         assert get_response.status_code == 404
 
     async def test_delete_dataset_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
+        """Test DELETE /web-api/v1/projects/{project_id}/datasets/{dataset_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -482,15 +513,21 @@ class TestDatasetEndpoints:
     async def test_delete_dataset_not_admin(
         self,
         client: AsyncClient,
-        auth_headers_member: dict[str, str],
+        db_session: AsyncSession,
+        member_user: "User",  # noqa: F821
         test_project_id: str,
         test_member: "ProjectMember",  # noqa: F821
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/datasets/{dataset_id} requires admin role."""
+        """Test DELETE /web-api/v1/projects/{project_id}/datasets/{dataset_id} requires admin role.
+
+        MEMBER role lacks ``MANAGE_DATASET_ADMIN``; the inline member session
+        reaches the gate and is denied with 403.
+        """
+        member_headers = await bff_session_headers(client, db_session, member_user)
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}",
+            headers=member_headers,
         )
 
         assert response.status_code == 403
@@ -503,11 +540,11 @@ class TestDatasetImportEndpoints:
     async def test_start_import_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/import - Start import."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets/{dataset_id}/import - Start import."""
         # Create a dataset first
         dataset_data = {
             "site_id": str(test_site.id),
@@ -516,8 +553,8 @@ class TestDatasetImportEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
@@ -529,8 +566,8 @@ class TestDatasetImportEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/import",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}/import",
+            headers=csrf_headers,
             json=import_data,
         )
 
@@ -546,16 +583,16 @@ class TestDatasetImportEndpoints:
     async def test_start_import_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/import with non-existent ID."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets/{dataset_id}/import with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         import_data: dict[str, object] = {}
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/import",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}/import",
+            headers=csrf_headers,
             json=import_data,
         )
 
@@ -566,12 +603,12 @@ class TestDatasetImportEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/import requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets/{dataset_id}/import requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         import_data: dict[str, object] = {}
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/import",
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}/import",
             json=import_data,
         )
 
@@ -585,11 +622,11 @@ class TestDatasetStatisticsEndpoints:
     async def test_get_statistics_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id}/statistics - Get statistics."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id}/statistics - Get statistics."""
         # Create a dataset first
         dataset_data = {
             "site_id": str(test_site.id),
@@ -598,16 +635,16 @@ class TestDatasetStatisticsEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
 
         # Get statistics
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -628,7 +665,7 @@ class TestDatasetStatisticsEndpoints:
     async def test_get_statistics_uses_dataset_timezone(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
     ) -> None:
@@ -641,15 +678,15 @@ class TestDatasetStatisticsEndpoints:
         }
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json=dataset_data,
         )
         dataset_id = create_response.json()["id"]
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -658,7 +695,7 @@ class TestDatasetStatisticsEndpoints:
     async def test_get_statistics_timezone_bucket_values(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_site: Site,
         db_session: AsyncSession,
@@ -673,8 +710,8 @@ class TestDatasetStatisticsEndpoints:
         """
         # Create a dataset with Asia/Tokyo timezone.
         dataset_resp = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets",
+            headers=csrf_headers,
             json={
                 "site_id": str(test_site.id),
                 "name": "TZ Bucket Value Dataset",
@@ -686,7 +723,7 @@ class TestDatasetStatisticsEndpoints:
 
         # Insert a recording whose UTC datetime crosses a date boundary when
         # converted to JST: 2026-01-01 23:30 UTC == 2026-01-02 08:30 JST.
-        utc_instant = datetime(2026, 1, 1, 23, 30, 0, tzinfo=timezone.utc)
+        utc_instant = datetime(2026, 1, 1, 23, 30, 0, tzinfo=UTC)
         recording = Recording(
             dataset_id=dataset_id,
             filename="tz_test_recording.wav",
@@ -703,8 +740,8 @@ class TestDatasetStatisticsEndpoints:
 
         # Fetch statistics and verify local-time buckets.
         stats_resp = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{dataset_id}/statistics",
+            headers=csrf_headers,
         )
         assert stats_resp.status_code == 200, stats_resp.text
         data = stats_resp.json()
@@ -735,14 +772,14 @@ class TestDatasetStatisticsEndpoints:
     async def test_get_statistics_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id}/statistics with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id}/statistics with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/statistics",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}/statistics",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -752,10 +789,10 @@ class TestDatasetStatisticsEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/datasets/{dataset_id}/statistics requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/datasets/{dataset_id}/statistics requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_id}/statistics"
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_id}/statistics"
         )
 
         assert response.status_code == 401

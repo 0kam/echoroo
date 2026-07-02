@@ -161,4 +161,17 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/admin/licenses/{license_id} GET",
     "/web-api/v1/admin/licenses/{license_id} PATCH",
     "/web-api/v1/admin/licenses/{license_id} DELETE",
+    # W2-3 PR-12 — dataset CRUD + import + datetime-config: the 12
+    # browser-superseded ``/api/v1/projects/{id}/datasets*`` routes were
+    # unmounted in favour of the BFF surface (export stays on v1). The GET
+    # list / detail / statistics / datetime-config paths were already declared
+    # by PR D above; only the mutation + lifecycle paths are new here.
+    "/web-api/v1/projects/{project_id}/datasets POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id} PATCH",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id} DELETE",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/import POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/import-status GET",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/auto-detect POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/test POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/datetime-config/apply POST",
 ]
