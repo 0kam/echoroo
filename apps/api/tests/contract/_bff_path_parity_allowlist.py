@@ -194,4 +194,22 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/detection-runs POST",
     "/web-api/v1/projects/{project_id}/detection-runs/{run_id}/retry POST",
     "/web-api/v1/projects/{project_id}/detection-runs/{run_id}/cancel POST",
+    # W2-3 PR-15 — custom-model (custom-SVM classifier) surface: the 13
+    # ``/api/v1/projects/{id}/custom-models*`` routes (list / create / get /
+    # update / delete / train / status / apply / detection-runs / seed-samples /
+    # suggest-samples / sampling-rounds list+detail) were unmounted in favour of
+    # the ``/web-api/v1/.../custom-models*`` BFF surface.
+    "/web-api/v1/projects/{project_id}/custom-models GET",
+    "/web-api/v1/projects/{project_id}/custom-models POST",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id} GET",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id} PATCH",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id} DELETE",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/train POST",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/status GET",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/apply POST",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/detection-runs GET",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/seed-samples POST",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/suggest-samples POST",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/sampling-rounds GET",
+    "/web-api/v1/projects/{project_id}/custom-models/{model_id}/sampling-rounds/{round_id} GET",
 ]

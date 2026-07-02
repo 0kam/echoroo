@@ -17,15 +17,75 @@ correct assertion for Member on forbidden endpoints.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.jwt import create_access_token
+from echoroo.core.settings import get_settings
 from echoroo.models.enums import ProjectMemberRole, ProjectVisibility
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.user import User
+
+
+async def _bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 PR-15 moved the custom-model endpoints to the ``/web-api/v1`` BFF,
+    which sits behind the CSRF middleware. A plain ``Authorization: Bearer``
+    POST would be rejected at the CSRF layer (403) before the TRAIN_MODEL
+    permission gate runs, so the custom-model boundary tests below seed a
+    refresh token, exchange it for an access token + ``X-CSRF-Token``, and send
+    both — letting the request reach ``gate_action`` and decide on TRAIN_MODEL.
+    """
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -231,11 +291,17 @@ class TestMemberForbidden:
     async def test_create_custom_model_is_403(
         self,
         client: AsyncClient,
-        member_headers: dict[str, str],
+        db_session: AsyncSession,
+        member_user: User,
         member_membership: ProjectMember,
         test_project: Project,
     ) -> None:
         """POST /projects/{id}/custom-models (TRAIN_MODEL) → 403 for Member.
+
+        W2-3 PR-15 unmounted the ``/api/v1`` custom-model routes; the request
+        now lands on the ``/web-api/v1`` BFF (CSRF-guarded), so it uses a
+        seeded CSRF session (``_bff_session_headers``) — a plain Bearer POST
+        would 403 at the CSRF layer before the TRAIN_MODEL gate runs.
 
         Phase 16 Batch 6e (2026-04-29) middleware-ordering fix: FastAPI
         resolves request body Pydantic validation **as part of**
@@ -247,9 +313,10 @@ class TestMemberForbidden:
         on the implementation side; the test simply needs to send a
         body the schema accepts.
         """
+        session_headers = await _bff_session_headers(client, db_session, member_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/custom-models",
-            headers=member_headers,
+            f"/web-api/v1/projects/{test_project.id}/custom-models",
+            headers=session_headers,
             json={
                 "name": "Test Model",
                 "description": "A test model",
@@ -265,14 +332,20 @@ class TestMemberForbidden:
     async def test_train_custom_model_is_403(
         self,
         client: AsyncClient,
-        member_headers: dict[str, str],
+        db_session: AsyncSession,
+        member_user: User,
         member_membership: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/custom-models/{m}/train (TRAIN_MODEL) → 403 for Member."""
+        """POST /projects/{id}/custom-models/{m}/train (TRAIN_MODEL) → 403 for Member.
+
+        W2-3 PR-15 moved this route to the CSRF-guarded ``/web-api/v1`` BFF,
+        so the request uses a seeded CSRF session (``_bff_session_headers``).
+        """
+        session_headers = await _bff_session_headers(client, db_session, member_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/train",
-            headers=member_headers,
+            f"/web-api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/train",
+            headers=session_headers,
             json={},
         )
         assert response.status_code == 403, (
@@ -283,11 +356,15 @@ class TestMemberForbidden:
     async def test_apply_custom_model_is_403(
         self,
         client: AsyncClient,
-        member_headers: dict[str, str],
+        db_session: AsyncSession,
+        member_user: User,
         member_membership: ProjectMember,
         test_project: Project,
     ) -> None:
         """POST /projects/{id}/custom-models/{m}/apply (TRAIN_MODEL) → 403 for Member.
+
+        W2-3 PR-15 moved this route to the CSRF-guarded ``/web-api/v1`` BFF,
+        so the request uses a seeded CSRF session (``_bff_session_headers``).
 
         Phase 16 Batch 6e (2026-04-29) middleware-ordering fix: ``dataset_id``
         is a **query** parameter on this endpoint (not a body field), so
@@ -295,9 +372,10 @@ class TestMemberForbidden:
         missing query before the permission gate ran. Pass it via
         ``params=`` so the gate decides on TRAIN_MODEL.
         """
+        session_headers = await _bff_session_headers(client, db_session, member_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/apply",
-            headers=member_headers,
+            f"/web-api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/apply",
+            headers=session_headers,
             params={"dataset_id": _FAKE_UUID},
         )
         assert response.status_code == 403, (
@@ -351,14 +429,20 @@ class TestAdminAllowed:
     async def test_create_custom_model_not_forbidden(
         self,
         client: AsyncClient,
-        admin_headers: dict[str, str],
+        db_session: AsyncSession,
+        admin_user: User,
         admin_membership: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/custom-models (TRAIN_MODEL) → not 401/403 for Admin."""
+        """POST /projects/{id}/custom-models (TRAIN_MODEL) → not 401/403 for Admin.
+
+        W2-3 PR-15 moved this route to the CSRF-guarded ``/web-api/v1`` BFF,
+        so the request uses a seeded CSRF session (``_bff_session_headers``).
+        """
+        session_headers = await _bff_session_headers(client, db_session, admin_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/custom-models",
-            headers=admin_headers,
+            f"/web-api/v1/projects/{test_project.id}/custom-models",
+            headers=session_headers,
             json={
                 "name": "Admin Model",
                 "description": "Created by admin",
@@ -373,19 +457,24 @@ class TestAdminAllowed:
     async def test_train_custom_model_not_forbidden(
         self,
         client: AsyncClient,
-        admin_headers: dict[str, str],
+        db_session: AsyncSession,
+        admin_user: User,
         admin_membership: ProjectMember,
         test_project: Project,
     ) -> None:
         """POST /projects/{id}/custom-models/{m}/train (TRAIN_MODEL) → not 401/403 for Admin.
 
+        W2-3 PR-15 moved this route to the CSRF-guarded ``/web-api/v1`` BFF,
+        so the request uses a seeded CSRF session (``_bff_session_headers``).
+
         The model ID is a fake UUID, so the gate passes (Admin has TRAIN_MODEL)
         but the service returns 404 (model not found). 404 here proves the gate
         did NOT block the Admin.
         """
+        session_headers = await _bff_session_headers(client, db_session, admin_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/train",
-            headers=admin_headers,
+            f"/web-api/v1/projects/{test_project.id}/custom-models/{_FAKE_UUID}/train",
+            headers=session_headers,
             json={},
         )
         assert response.status_code not in (401, 403), (
