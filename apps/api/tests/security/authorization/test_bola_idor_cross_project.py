@@ -77,6 +77,67 @@ from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.recording import RecordingRepository
 
+
+async def _bff_session_headers(
+    client: AsyncClient, db: AsyncSession, user: User
+) -> dict[str, str]:
+    """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
+
+    W2-3 PR-16 unmounts the ``/api/v1`` recording list / detail / spectrogram
+    routes; the cross-project BOLA behaviour now lives on the ``/web-api/v1``
+    BFF, which sits behind the CSRF middleware. A plain ``create_access_token``
+    Bearer is treated as anonymous there, so the cross-project cases seed a
+    refresh token, exchange it for an access token + ``X-CSRF-Token``, and send
+    both — letting the request reach the BOLA guard and 404.
+    """
+    from uuid import UUID
+
+    import sqlalchemy as sa
+
+    from echoroo.api.web_v1.auth import _issue_web_refresh_token
+    from echoroo.core.settings import get_settings
+
+    token, record = _issue_web_refresh_token(
+        user_id=user.id, security_stamp=user.security_stamp
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO token_families (family_id, user_id, created_at) "
+            "VALUES (:family_id, :user_id, :created_at)"
+        ),
+        {
+            "family_id": UUID(record.family_id),
+            "user_id": record.user_id,
+            "created_at": record.issued_at,
+        },
+    )
+    await db.execute(
+        sa.text(
+            "INSERT INTO refresh_tokens "
+            "(jti, user_id, family_id, issued_at, expires_at) "
+            "VALUES (:jti, :user_id, :family_id, :issued_at, :expires_at)"
+        ),
+        {
+            "jti": UUID(record.jti),
+            "user_id": record.user_id,
+            "family_id": UUID(record.family_id),
+            "issued_at": record.issued_at,
+            "expires_at": record.expires_at,
+        },
+    )
+    await db.commit()
+    client.cookies.clear()
+    response = await client.post(
+        "/web-api/v1/auth/refresh",
+        cookies={get_settings().web_refresh_cookie_name: token},
+    )
+    assert response.status_code == 200, response.text
+    return {
+        "Authorization": f"Bearer {response.json()['access_token']}",
+        "X-CSRF-Token": response.headers["X-CSRF-Token"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Fixtures — users, projects, and cross-project resources
 # ---------------------------------------------------------------------------
@@ -282,6 +343,18 @@ def member_a_headers(member_a_user: User) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest_asyncio.fixture
+async def member_a_session_headers(
+    client: AsyncClient, db_session: AsyncSession, member_a_user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session for member_a_user.
+
+    Used by the recording list / detail / spectrogram cross-project cases
+    that were moved from ``/api/v1`` to the ``/web-api/v1`` BFF in W2-3 PR-16.
+    """
+    return await _bff_session_headers(client, db_session, member_a_user)
+
+
 # ---------------------------------------------------------------------------
 # Unit tests — pure repository logic (no HTTP, no DB dependency)
 # These run regardless of test database availability.
@@ -379,15 +452,19 @@ class TestRecordingBOLA:
     async def test_get_recording_cross_project_is_404(
         self,
         client: AsyncClient,
-        member_a_headers: dict[str, str],
+        member_a_session_headers: dict[str, str],
         member_a_membership: ProjectMember,
         project_a: Project,
         recording_b: Recording,
     ) -> None:
-        """GET /projects/{A}/recordings/{recording_B_id} → 404."""
+        """GET /web-api/v1/projects/{A}/recordings/{recording_B_id} → 404.
+
+        W2-3 PR-16: the recording detail route moved to the ``/web-api/v1`` BFF,
+        so the cross-project case runs against a CSRF session.
+        """
         response = await client.get(
-            f"/api/v1/projects/{project_a.id}/recordings/{recording_b.id}",
-            headers=member_a_headers,
+            f"/web-api/v1/projects/{project_a.id}/recordings/{recording_b.id}",
+            headers=member_a_session_headers,
         )
         assert response.status_code == 404, (
             f"Expected 404 for cross-project recording GET, got {response.status_code}: "
@@ -415,15 +492,19 @@ class TestRecordingBOLA:
     async def test_get_recording_spectrogram_cross_project_is_404(
         self,
         client: AsyncClient,
-        member_a_headers: dict[str, str],
+        member_a_session_headers: dict[str, str],
         member_a_membership: ProjectMember,
         project_a: Project,
         recording_b: Recording,
     ) -> None:
-        """GET /projects/{A}/recordings/{recording_B_id}/spectrogram → 404."""
+        """GET /web-api/v1/projects/{A}/recordings/{recording_B_id}/spectrogram → 404.
+
+        W2-3 PR-16: the spectrogram route moved to the ``/web-api/v1`` BFF, so
+        the cross-project case runs against a CSRF session.
+        """
         response = await client.get(
-            f"/api/v1/projects/{project_a.id}/recordings/{recording_b.id}/spectrogram",
-            headers=member_a_headers,
+            f"/web-api/v1/projects/{project_a.id}/recordings/{recording_b.id}/spectrogram",
+            headers=member_a_session_headers,
         )
         assert response.status_code == 404, (
             f"Expected 404 for cross-project spectrogram, got {response.status_code}: "
@@ -461,16 +542,21 @@ class TestDatasetBOLA:
     async def test_list_recordings_cross_project_dataset_is_404(
         self,
         client: AsyncClient,
-        member_a_headers: dict[str, str],
+        member_a_session_headers: dict[str, str],
         member_a_membership: ProjectMember,
         project_a: Project,
         dataset_b: Dataset,
     ) -> None:
-        """GET /projects/{A}/recordings?dataset_id={dataset_B_id} → 404."""
+        """GET /web-api/v1/projects/{A}/recordings?dataset_id={dataset_B_id} → 404.
+
+        W2-3 PR-16: the recording list route was reimplemented on the
+        ``/web-api/v1`` BFF (``list_public_recordings``), so the cross-project
+        dataset-filter case runs against a CSRF session.
+        """
         response = await client.get(
-            f"/api/v1/projects/{project_a.id}/recordings",
+            f"/web-api/v1/projects/{project_a.id}/recordings",
             params={"dataset_id": str(dataset_b.id)},
-            headers=member_a_headers,
+            headers=member_a_session_headers,
         )
         assert response.status_code == 404, (
             f"Expected 404 for cross-project dataset filter, got {response.status_code}: "

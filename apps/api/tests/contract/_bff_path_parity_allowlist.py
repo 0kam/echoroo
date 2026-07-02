@@ -37,6 +37,13 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/audio GET",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback GET",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram GET",
+    # W2-3 PR-16 — recording update/delete: the 2 browser-superseded
+    # ``/api/v1/projects/{id}/recordings/{rid}`` PATCH/DELETE routes were
+    # unmounted in favour of the BFF surface (``_recordings.py`` mutations).
+    # The GET detail/audio/playback/spectrogram entries above were already
+    # declared for the media/read BFF adapters.
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id} PATCH",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id} DELETE",
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/export GET",
     # PR D — annotation mutations
     "/web-api/v1/projects/{project_id}/datasets GET",
