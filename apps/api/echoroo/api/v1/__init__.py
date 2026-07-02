@@ -99,8 +99,16 @@ api_router.include_router(search_module.router)
 # /projects/{id}/annotations/{annotationId}/comments path drifts from
 # the live OpenAPI surface (Codex Round X follow-up #4).
 api_router.include_router(annotation_comments.router)
-# Search annotation creation router
-api_router.include_router(search_module.annotations_router)
+# W2-3 PR-18: the browser-superseded search routes (10 session CRUD/export/
+# distribution/sample handlers + POST /batch + GET /jobs/{job_id} +
+# GET /embedding-stats on ``search_module.router``, plus the search-annotation
+# ``POST /projects/{project_id}/annotations`` on ``search_module.annotations_router``)
+# were unmounted in favour of the ``/web-api/v1/.../search*`` +
+# ``/web-api/v1/.../annotations`` BFF. The legacy handlers survive as importable
+# helpers (``echoroo.api.v1.search.{sessions,batch,similarity,annotations}``)
+# delegated to by ``echoroo.api.web_v1.projects._search``. The ``annotations_router``
+# include is removed here; ``search_module.router`` stays mounted for the three
+# KEEP routes (reference-audio / similar / similar-by-audio).
 # W2-3 PR-15: the public ``/api/v1/projects/{project_id}/custom-models*`` routes
 # (13 handlers: list / create / get / update / delete / train / status / apply /
 # detection-runs / seed-samples / suggest-samples / sampling-rounds list+detail)

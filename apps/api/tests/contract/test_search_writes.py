@@ -83,7 +83,12 @@ _EMBEDDING_DIM = 1536  # Perch v2
 
 
 def _search_base(project_id: str) -> str:
-    """Return the base search URL prefix.
+    """Return the base search URL prefix for the KEEP routes (v1).
+
+    W2-3 PR-18: only the three KEEP routes (POST /similar, POST
+    /similar-by-audio, GET /sessions/{id}/reference-audio/{idx}) stay mounted on
+    ``/api/v1``; the batch / jobs / session-write / annotation routes were
+    unmounted and their callers use :func:`_search_bff_base` instead.
 
     Args:
         project_id: Project UUID string
@@ -92,6 +97,30 @@ def _search_base(project_id: str) -> str:
         URL prefix string
     """
     return f"/api/v1/projects/{project_id}/search"
+
+
+def _search_bff_base(project_id: str) -> str:
+    """Return the base search URL prefix for the unmounted routes (BFF).
+
+    W2-3 PR-18: the browser-superseded search routes were unmounted from
+    ``/api/v1`` in favour of the ``/web-api/v1`` BFF. This suite is skip-marked
+    (Phase 14+), so the repoint is for source correctness only.
+
+    NOTE for the Phase 14+ un-skip: callers of this helper still use the
+    plain-Bearer ``auth_headers`` / ``auth_headers_other`` fixtures, which
+    the ``/web-api/v1`` surface treats as anonymous (401). Before
+    reactivating, switch every ``_search_bff_base`` caller to the
+    session-bound ``csrf_headers`` / ``csrf_headers_other`` fixtures
+    (PR-8+ rule); the ``_search_base`` (v1 KEEP-route) callers keep
+    ``auth_headers``.
+
+    Args:
+        project_id: Project UUID string
+
+    Returns:
+        URL prefix string
+    """
+    return f"/web-api/v1/projects/{project_id}/search"
 
 
 def _make_minimal_wav(num_frames: int = 100, sample_rate: int = 16000) -> bytes:
@@ -716,7 +745,7 @@ class TestBatchSearch:
         )
 
         resp = await client.post(
-            f"{_search_base(test_project_id)}/batch",
+            f"{_search_bff_base(test_project_id)}/batch",
             headers=auth_headers,
             data={"metadata": metadata},
             files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
@@ -754,7 +783,7 @@ class TestBatchSearch:
             test_project_id: Project UUID string
         """
         resp = await client.post(
-            f"{_search_base(test_project_id)}/batch",
+            f"{_search_bff_base(test_project_id)}/batch",
             data={"metadata": "{}"},
         )
         assert resp.status_code == 401
@@ -773,7 +802,7 @@ class TestBatchSearch:
             test_project_id: Project UUID string
         """
         resp = await client.post(
-            f"{_search_base(test_project_id)}/batch",
+            f"{_search_bff_base(test_project_id)}/batch",
             headers=auth_headers_other,
             data={"metadata": "{}"},
         )
@@ -793,7 +822,7 @@ class TestBatchSearch:
             test_project_id: Project UUID string
         """
         resp = await client.post(
-            f"{_search_base(test_project_id)}/batch",
+            f"{_search_bff_base(test_project_id)}/batch",
             headers=auth_headers,
             data={"metadata": "this is not json"},
         )
@@ -829,7 +858,7 @@ class TestGetSearchJob:
 
         with patch("celery.result.AsyncResult", return_value=mock_result):
             resp = await client.get(
-                f"{_search_base(test_project_id)}/jobs/{job_id}",
+                f"{_search_bff_base(test_project_id)}/jobs/{job_id}",
                 headers=auth_headers,
             )
         assert resp.status_code == 200
@@ -868,7 +897,7 @@ class TestGetSearchJob:
 
         with patch("celery.result.AsyncResult", return_value=mock_result):
             resp = await client.get(
-                f"{_search_base(test_project_id)}/jobs/running-job-id",
+                f"{_search_bff_base(test_project_id)}/jobs/running-job-id",
                 headers=auth_headers,
             )
         assert resp.status_code == 200
@@ -888,7 +917,7 @@ class TestGetSearchJob:
             test_project_id: Project UUID string
         """
         resp = await client.get(
-            f"{_search_base(test_project_id)}/jobs/some-job-id",
+            f"{_search_bff_base(test_project_id)}/jobs/some-job-id",
         )
         assert resp.status_code == 401
 
@@ -906,7 +935,7 @@ class TestGetSearchJob:
             test_project_id: Project UUID string
         """
         resp = await client.get(
-            f"{_search_base(test_project_id)}/jobs/some-job-id",
+            f"{_search_bff_base(test_project_id)}/jobs/some-job-id",
             headers=auth_headers_other,
         )
         assert resp.status_code == 403
@@ -957,7 +986,7 @@ class TestDeleteSession:
 
         session_id = str(completed_session.id)
         resp = await client.delete(
-            f"{_search_base(test_project_id)}/sessions/{session_id}",
+            f"{_search_bff_base(test_project_id)}/sessions/{session_id}",
             headers=auth_headers,
         )
         assert resp.status_code == 204
@@ -995,7 +1024,7 @@ class TestDeleteSession:
             completed_session: Existing session (should not be deleted)
         """
         resp = await client.delete(
-            f"{_search_base(test_project_id)}/sessions/{completed_session.id}",
+            f"{_search_bff_base(test_project_id)}/sessions/{completed_session.id}",
         )
         assert resp.status_code == 401
 
@@ -1025,7 +1054,7 @@ class TestDeleteSession:
         # But here we want to use test_user's token against the other session's
         # actual project_id, which test_user has no access to → 403.
         resp = await client.delete(
-            f"/api/v1/projects/{other_project_session.project_id}/sessions/{other_project_session.id}",
+            f"/web-api/v1/projects/{other_project_session.project_id}/search/sessions/{other_project_session.id}",
             headers=auth_headers,
         )
         assert resp.status_code in {403, 404}
@@ -1044,7 +1073,7 @@ class TestDeleteSession:
             test_project_id: Project UUID string
         """
         resp = await client.delete(
-            f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}",
+            f"{_search_bff_base(test_project_id)}/sessions/{FAKE_UUID}",
             headers=auth_headers,
         )
         assert resp.status_code == 404
@@ -1136,7 +1165,7 @@ class TestRerunSession:
         )
 
         resp = await client.put(
-            f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
+            f"{_search_bff_base(test_project_id)}/sessions/{completed_session.id}/rerun",
             headers=auth_headers,
             data={"metadata": metadata},
             files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
@@ -1188,7 +1217,7 @@ class TestRerunSession:
             completed_session: Existing session
         """
         resp = await client.put(
-            f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
+            f"{_search_bff_base(test_project_id)}/sessions/{completed_session.id}/rerun",
             data={"metadata": "{}"},
         )
         assert resp.status_code == 401
@@ -1209,7 +1238,7 @@ class TestRerunSession:
             completed_session: Session owned by test_user
         """
         resp = await client.put(
-            f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
+            f"{_search_bff_base(test_project_id)}/sessions/{completed_session.id}/rerun",
             headers=auth_headers_other,
             data={"metadata": "{}"},
         )
@@ -1242,7 +1271,7 @@ class TestRerunSession:
             }
         )
         resp = await client.put(
-            f"{_search_base(test_project_id)}/sessions/{FAKE_UUID}/rerun",
+            f"{_search_bff_base(test_project_id)}/sessions/{FAKE_UUID}/rerun",
             headers=auth_headers,
             data={"metadata": metadata},
         )
@@ -1337,7 +1366,7 @@ class TestRerunSession:
             pytest.raises((RuntimeError, BaseExceptionGroup)) as exc_info,
         ):
             await client.put(
-                f"{_search_base(test_project_id)}/sessions/{completed_session.id}/rerun",
+                f"{_search_bff_base(test_project_id)}/sessions/{completed_session.id}/rerun",
                 headers=auth_headers,
                 data={"metadata": metadata},
                 files={"source_0": ("source_0.wav", wav_bytes, "audio/wav")},
@@ -1544,10 +1573,15 @@ class TestStreamReferenceAudio:
 
 @pytest.mark.asyncio
 class TestCreateSearchAnnotation:
-    """Smoke tests for POST /api/v1/projects/{project_id}/annotations."""
+    """Smoke tests for POST /web-api/v1/projects/{project_id}/annotations."""
 
     def _annotations_url(self, project_id: str) -> str:
         """Build the annotation creation URL.
+
+        W2-3 PR-18: the legacy search-annotation ``POST /api/v1/projects/{id}/
+        annotations`` route was unmounted; the BFF adapter delegates to the same
+        ``create_search_annotation`` handler. Repointed for source correctness
+        (this suite is skip-marked, Phase 14+).
 
         Args:
             project_id: Project UUID string
@@ -1555,7 +1589,7 @@ class TestCreateSearchAnnotation:
         Returns:
             URL string for the annotations endpoint
         """
-        return f"/api/v1/projects/{project_id}/annotations"
+        return f"/web-api/v1/projects/{project_id}/annotations"
 
     async def test_happy_path_creates_annotation(
         self,
