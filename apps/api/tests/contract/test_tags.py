@@ -58,13 +58,13 @@ class TestTagListEndpoints:
     async def test_list_tags_empty(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags - empty list initially."""
+        """Test GET /web-api/v1/projects/{project_id}/tags - empty list initially."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -82,14 +82,14 @@ class TestTagListEndpoints:
     async def test_list_tags_with_category_filter(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag: Tag,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags with category filter."""
+        """Test GET /web-api/v1/projects/{project_id}/tags with category filter."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"category": "species"},
         )
 
@@ -104,14 +104,14 @@ class TestTagListEndpoints:
     async def test_list_tags_with_search_filter(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag: Tag,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags with search filter."""
+        """Test GET /web-api/v1/projects/{project_id}/tags with search filter."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"search": "Parus"},
         )
 
@@ -124,14 +124,14 @@ class TestTagListEndpoints:
     async def test_list_tags_pagination(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag: Tag,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags pagination params."""
+        """Test GET /web-api/v1/projects/{project_id}/tags pagination params."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             params={"page": 1, "page_size": 10},
         )
 
@@ -146,8 +146,8 @@ class TestTagListEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags requires authentication."""
-        response = await client.get(f"/api/v1/projects/{test_project_id}/tags")
+        """Test GET /web-api/v1/projects/{project_id}/tags requires authentication."""
+        response = await client.get(f"/web-api/v1/projects/{test_project_id}/tags")
 
         assert response.status_code == 401
 
@@ -159,10 +159,10 @@ class TestTagCreateEndpoints:
     async def test_create_species_tag(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/tags - create species tag."""
+        """Test POST /web-api/v1/projects/{project_id}/tags - create species tag."""
         tag_data = {
             "name": "Turdus merula",
             "category": "species",
@@ -172,8 +172,8 @@ class TestTagCreateEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             json=tag_data,
         )
 
@@ -194,11 +194,11 @@ class TestTagCreateEndpoints:
     async def test_create_tag_with_parent_id(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/tags - create tag with parent_id (hierarchy)."""
+        """Test POST /web-api/v1/projects/{project_id}/tags - create tag with parent_id (hierarchy)."""
         tag_data = {
             "name": "Parus major subspecies",
             "category": "species",
@@ -206,8 +206,8 @@ class TestTagCreateEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             json=tag_data,
         )
 
@@ -220,18 +220,18 @@ class TestTagCreateEndpoints:
     async def test_create_tag_validation_error(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/tags - validation error on empty name."""
+        """Test POST /web-api/v1/projects/{project_id}/tags - validation error on empty name."""
         tag_data = {
             "name": "",  # empty name should fail validation
             "category": "species",
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             json=tag_data,
         )
 
@@ -242,11 +242,11 @@ class TestTagCreateEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/tags requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/tags requires authentication."""
         tag_data = {"name": "Test Tag", "category": "species"}
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/tags",
+            f"/web-api/v1/projects/{test_project_id}/tags",
             json=tag_data,
         )
 
@@ -260,14 +260,14 @@ class TestTagDetailEndpoints:
     async def test_get_tag_detail(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/{tag_id} - get detail with children."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/{tag_id} - get detail with children."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/{test_tag_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{test_tag_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -291,14 +291,14 @@ class TestTagDetailEndpoints:
     async def test_get_tag_detail_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/{tag_id} - not found."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/{tag_id} - not found."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -309,9 +309,9 @@ class TestTagDetailEndpoints:
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/{test_tag_id}",
+            f"/web-api/v1/projects/{test_project_id}/tags/{test_tag_id}",
         )
 
         assert response.status_code == 401
@@ -319,19 +319,19 @@ class TestTagDetailEndpoints:
     async def test_update_tag(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/tags/{tag_id} - update tag."""
+        """Test PATCH /web-api/v1/projects/{project_id}/tags/{tag_id} - update tag."""
         update_data = {
             "name": "Updated Parus major",
             "common_name": "Updated great tit",
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/tags/{test_tag_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{test_tag_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -344,14 +344,14 @@ class TestTagDetailEndpoints:
     async def test_update_tag_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/tags/{tag_id} - not found."""
+        """Test PATCH /web-api/v1/projects/{project_id}/tags/{tag_id} - not found."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/tags/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{fake_id}",
+            headers=csrf_headers,
             json={"name": "Should Fail"},
         )
 
@@ -363,9 +363,9 @@ class TestTagDetailEndpoints:
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
+        """Test PATCH /web-api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/tags/{test_tag_id}",
+            f"/web-api/v1/projects/{test_project_id}/tags/{test_tag_id}",
             json={"name": "Should Fail"},
         )
 
@@ -374,14 +374,14 @@ class TestTagDetailEndpoints:
     async def test_delete_tag(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/tags/{tag_id} - delete tag."""
+        """Test DELETE /web-api/v1/projects/{project_id}/tags/{tag_id} - delete tag."""
         # First create a tag to delete
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/tags",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags",
+            headers=csrf_headers,
             json={"name": "Tag To Delete", "category": "quality"},
         )
         assert create_response.status_code == 201
@@ -389,30 +389,30 @@ class TestTagDetailEndpoints:
 
         # Delete the tag
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/tags/{tag_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{tag_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 204
 
         # Verify tag is deleted
         get_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/{tag_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{tag_id}",
+            headers=csrf_headers,
         )
         assert get_response.status_code == 404
 
     async def test_delete_tag_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/tags/{tag_id} - not found."""
+        """Test DELETE /web-api/v1/projects/{project_id}/tags/{tag_id} - not found."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/tags/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -423,9 +423,9 @@ class TestTagDetailEndpoints:
         test_project_id: str,
         test_tag_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
+        """Test DELETE /web-api/v1/projects/{project_id}/tags/{tag_id} requires authentication."""
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/tags/{test_tag_id}",
+            f"/web-api/v1/projects/{test_project_id}/tags/{test_tag_id}",
         )
 
         assert response.status_code == 401
@@ -438,13 +438,13 @@ class TestGBIFSuggestEndpoints:
     async def test_gbif_suggest(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/gbif-suggest - returns suggestions list."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/gbif-suggest - returns suggestions list."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/gbif-suggest",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/gbif-suggest",
+            headers=csrf_headers,
             params={"q": "Parus"},
         )
 
@@ -464,9 +464,9 @@ class TestGBIFSuggestEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/gbif-suggest requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/gbif-suggest requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/gbif-suggest",
+            f"/web-api/v1/projects/{test_project_id}/tags/gbif-suggest",
             params={"q": "Parus"},
         )
 
@@ -480,14 +480,14 @@ class TestTagStatisticsEndpoints:
     async def test_get_statistics(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_tag: Tag,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/statistics - returns list."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/statistics - returns list."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/statistics",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/tags/statistics",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -509,9 +509,9 @@ class TestTagStatisticsEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/tags/statistics requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/tags/statistics requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/tags/statistics",
+            f"/web-api/v1/projects/{test_project_id}/tags/statistics",
         )
 
         assert response.status_code == 401

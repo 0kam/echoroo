@@ -16,7 +16,6 @@ from echoroo.api.v1 import (
     licenses,
     projects,
     recordings,
-    tags,
     taxa,
     uploads,
     users,
@@ -47,7 +46,11 @@ api_router.include_router(datasets.router)
 api_router.include_router(recordings.router)
 api_router.include_router(clips.router)
 api_router.include_router(h3.router)
-api_router.include_router(tags.router)
+# W2-3 PR-9: the public ``/api/v1/projects/{project_id}/tags/*`` routes were
+# unmounted in favour of the ``/web-api/v1/.../tags/*`` BFF. The legacy handlers
+# survive as importable helpers (``echoroo.api.v1.tags``) delegated to by
+# ``echoroo.api.web_v1.projects._tags``; only the v1 route registration is
+# removed here.
 api_router.include_router(taxa.router)
 # W2-3 PR-1: the public ``/api/v1/recorders`` list route was unmounted in
 # favour of the ``/web-api/v1/recorders`` BFF surface. The legacy handler

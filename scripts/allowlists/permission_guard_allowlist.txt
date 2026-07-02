@@ -118,13 +118,11 @@ apps/api/echoroo/api/v1/settings.py:get_embedding_model:missing-permission-guard
 # W2-3 PR-8: the five ``api/v1/sites.py`` routes were unmounted (now helpers
 # delegated to by the ``/web-api/v1/.../sites/*`` BFF, which gate_action-guards
 # each handler — no thin-adapter allowlist entry required).
-apps/api/echoroo/api/v1/tags.py:create_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:delete_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:gbif_suggest:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:get_statistics:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:get_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:list_tags:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/tags.py:update_tag:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-9: the seven ``api/v1/tags.py`` routes were unmounted (now helpers
+# delegated to by the ``/web-api/v1/.../tags/*`` BFF). The mutating BFF handlers
+# (create/update/delete) gate_action-guard themselves, so no entry is needed for
+# them; the four BFF read endpoints stay thin adapters (their allowlist entries
+# are retained below).
 apps/api/echoroo/api/v1/taxa.py:create_taxon_from_gbif:missing-permission-guard  # WS-A: ungated global taxa reference write (auth-only, no project scope), like search_taxa/gbif_search_taxa
 apps/api/echoroo/api/v1/taxa.py:gbif_search_taxa:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/taxa.py:get_taxon:missing-permission-guard  # legacy: Phase 3 US11 T1xx
@@ -159,10 +157,12 @@ apps/api/echoroo/api/web_v1/users.py:list_api_tokens:missing-permission-guard  #
 apps/api/echoroo/api/web_v1/users.py:create_api_token:missing-permission-guard  # W2-2 B+C: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/users.py:revoke_api_token:missing-permission-guard  # W2-2 B+C: thin adapter (legacy unguarded)
 
-# spec/009 PR 3a thin BFF adapters — same Phase 3 US11 T1xx scope as the legacy
-# api/v1/tags.py and api/v1/uploads.py read-endpoint entries above. The BFF
-# delegates to the legacy handler (which itself is allowlisted) and adds no
-# guard of its own pending TAG_LIST/GET/GBIF/STATISTICS/UPLOAD_GET Action introduction.
+# spec/009 PR 3a thin BFF adapters (Phase 3 US11 T1xx scope). The BFF delegates
+# to the legacy handler and adds no guard of its own pending TAG_LIST/GET/GBIF/
+# STATISTICS/UPLOAD_GET Action introduction. Note: the legacy ``api/v1/tags.py``
+# handlers are now plain importable helpers (their routes were unmounted in
+# W2-3 PR-9, so their own allowlist entries were dropped); the ``api/v1/uploads.py``
+# read endpoint above is still a mounted, allowlisted route.
 apps/api/echoroo/api/web_v1/projects/_tags.py:gbif_suggest:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_tags.py:get_statistics:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_tags.py:get_tag:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)

@@ -129,4 +129,14 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/sites/{site_id} GET",
     "/web-api/v1/projects/{project_id}/sites/{site_id} PATCH",
     "/web-api/v1/projects/{project_id}/sites/{site_id} DELETE",
+    # W2-3 PR-9 — project tags CRUD + GBIF suggest + statistics: the
+    # ``/api/v1/projects/{id}/tags*`` routes were unmounted in favour of the
+    # project-scoped BFF surface.
+    "/web-api/v1/projects/{project_id}/tags GET",
+    "/web-api/v1/projects/{project_id}/tags POST",
+    "/web-api/v1/projects/{project_id}/tags/gbif-suggest GET",
+    "/web-api/v1/projects/{project_id}/tags/statistics GET",
+    "/web-api/v1/projects/{project_id}/tags/{tag_id} GET",
+    "/web-api/v1/projects/{project_id}/tags/{tag_id} PATCH",
+    "/web-api/v1/projects/{project_id}/tags/{tag_id} DELETE",
 ]
