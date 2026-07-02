@@ -93,12 +93,6 @@ DatasetServiceDep = Annotated[DatasetService, Depends(get_dataset_service)]
 
 
 # T044: CRUD endpoints
-@router.get(
-    "",
-    response_model=DatasetListResponse,
-    summary="List datasets",
-    description="Get all datasets for a project with pagination and filters",
-)
 async def list_datasets(
     project_id: UUID,
     request: Request,
@@ -160,13 +154,6 @@ async def list_datasets(
     )
 
 
-@router.post(
-    "",
-    response_model=DatasetDetailResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create dataset",
-    description="Create a new dataset in a project (admin only)",
-)
 async def create_dataset(
     project_id: UUID,
     request: DatasetCreate,
@@ -231,12 +218,6 @@ async def create_dataset(
     return response
 
 
-@router.get(
-    "/{dataset_id}",
-    response_model=DatasetDetailResponse,
-    summary="Get dataset",
-    description="Get dataset details with statistics",
-)
 async def get_dataset(
     project_id: UUID,
     dataset_id: UUID,
@@ -285,12 +266,6 @@ async def get_dataset(
     return response
 
 
-@router.patch(
-    "/{dataset_id}",
-    response_model=DatasetDetailResponse,
-    summary="Update dataset",
-    description="Update dataset settings (admin only)",
-)
 async def update_dataset(
     project_id: UUID,
     dataset_id: UUID,
@@ -358,12 +333,6 @@ async def update_dataset(
     return response
 
 
-@router.delete(
-    "/{dataset_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete dataset",
-    description="Delete dataset and all associated recordings (admin only)",
-)
 async def delete_dataset(
     project_id: UUID,
     dataset_id: UUID,
@@ -398,12 +367,6 @@ async def delete_dataset(
 
 
 # T045: Import endpoints
-@router.post(
-    "/{dataset_id}/import",
-    response_model=ImportStatusResponse,
-    summary="Start dataset import",
-    description="Start importing recordings from a validated upload session",
-)
 async def start_import(
     project_id: UUID,
     dataset_id: UUID,
@@ -517,12 +480,6 @@ async def start_import(
     )
 
 
-@router.get(
-    "/{dataset_id}/import-status",
-    response_model=ImportStatusResponse,
-    summary="Get import status",
-    description="Get current import/processing status of dataset",
-)
 async def get_import_status(
     project_id: UUID,
     dataset_id: UUID,
@@ -568,12 +525,6 @@ async def get_import_status(
 
 
 # T046: Statistics endpoint
-@router.get(
-    "/{dataset_id}/statistics",
-    response_model=DatasetStatisticsResponse,
-    summary="Get dataset statistics",
-    description="Get detailed statistics about dataset recordings",
-)
 async def get_dataset_statistics(
     project_id: UUID,
     dataset_id: UUID,
@@ -707,12 +658,6 @@ async def export_dataset(
 # Datetime configuration endpoints
 
 
-@router.get(
-    "/{dataset_id}/datetime-config",
-    response_model=DatetimeConfigResponse,
-    summary="Get datetime config",
-    description="Get datetime parsing configuration and parse status summary for a dataset",
-)
 async def get_datetime_config(
     project_id: UUID,
     dataset_id: UUID,
@@ -768,12 +713,6 @@ async def get_datetime_config(
     )
 
 
-@router.post(
-    "/{dataset_id}/datetime-config/auto-detect",
-    response_model=DatetimeAutoDetectResponse,
-    summary="Auto-detect datetime pattern",
-    description="Auto-detect datetime pattern from sample filenames in the dataset",
-)
 async def auto_detect_datetime(
     project_id: UUID,
     dataset_id: UUID,
@@ -824,12 +763,6 @@ async def auto_detect_datetime(
     )
 
 
-@router.post(
-    "/{dataset_id}/datetime-config/test",
-    response_model=list[DatetimeTestResult],
-    summary="Test datetime pattern",
-    description="Test a datetime pattern against sample filenames from the dataset",
-)
 async def test_datetime_pattern(
     project_id: UUID,
     dataset_id: UUID,
@@ -874,12 +807,6 @@ async def test_datetime_pattern(
     return [DatetimeTestResult(**r) for r in results]
 
 
-@router.post(
-    "/{dataset_id}/datetime-config/apply",
-    response_model=DatetimeApplyResponse,
-    summary="Apply datetime pattern",
-    description="Apply a datetime pattern to all recordings in the dataset (admin only)",
-)
 async def apply_datetime_pattern(
     project_id: UUID,
     dataset_id: UUID,
