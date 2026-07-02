@@ -1,37 +1,36 @@
-"""Contract tests for license admin endpoints.
+"""Contract tests for license admin endpoints (``/web-api/v1/admin/licenses``).
 
-Note (Phase 16 Batch 6b): Tests target ``/api/v1/admin/licenses`` which
-follows the legacy superuser flow (``users.is_superuser``) and the User
-factory references columns dropped in Phase 13. Skipped pending the
-admin/licenses re-baseline against the new ``superusers`` table SOT.
+W2-3 PR-11: the legacy ``/api/v1/admin/licenses`` routes were unmounted;
+their behaviour now lives on the cookie + CSRF ``/web-api/v1/admin/licenses``
+BFF (``echoroo.api.web_v1._admin_licenses``). Every authenticated request
+rides a real session issued via ``POST /web-api/v1/auth/refresh`` (a plain
+Bearer is treated as anonymous on the BFF surface, and a non-member session
+without CSRF masks the permission check). The superuser is now promoted via
+the spec/006 ``superusers`` allow-list table (not the dropped
+``users.is_superuser`` column), so the suite runs unskipped against the new
+SOT: superuser session → 2xx, regular-user session → 403, no-auth → 401.
 """
 
+from uuid import uuid4
+
 import pytest
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.license import License
 from echoroo.models.user import User
-
-pytestmark = pytest.mark.skip(
-    reason=(
-        "Legacy /api/v1/admin/licenses contract suite — depends on "
-        "users.is_superuser (dropped in Phase 13) and User factory references "
-        "dropped columns. Re-enable after admin/licenses rewrite."
-    )
-)
+from tests.contract.conftest import bff_session_headers
 
 
 @pytest.fixture
 async def superuser(db_session: AsyncSession) -> User:
-    """Create a test superuser.
+    """Create a platform superuser (User row + active ``superusers`` entry).
 
-    Args:
-        db_session: Database session
-
-    Returns:
-        Superuser instance
+    spec/006 moved the superuser flag out of ``users.is_superuser`` and into
+    the ``superusers`` allow-list table; the auth middleware stamps
+    ``is_superuser`` when an active row is found. Seed both so the BFF admin
+    gate resolves the caller as a superuser.
     """
     user = User(
         email="superuser@example.com",
@@ -42,21 +41,26 @@ async def superuser(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
+
+    await db_session.execute(
+        sa.text(
+            """
+            INSERT INTO superusers (id, user_id, added_by_id, added_at)
+            VALUES (:id, :uid, :uid, NOW())
+            """
+        ),
+        {"id": uuid4(), "uid": user.id},
+    )
+    await db_session.commit()
     return user
 
 
 @pytest.fixture
-async def superuser_headers(superuser: User) -> dict[str, str]:
-    """Create authentication headers for superuser.
-
-    Args:
-        superuser: Superuser instance
-
-    Returns:
-        Headers with Bearer token
-    """
-    access_token = create_access_token({"sub": str(superuser.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+async def superuser_headers(
+    client: AsyncClient, db_session: AsyncSession, superuser: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the superuser."""
+    return await bff_session_headers(client, db_session, superuser)
 
 
 @pytest.fixture
@@ -82,17 +86,16 @@ async def regular_user(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def regular_user_headers(regular_user: User) -> dict[str, str]:
-    """Create authentication headers for regular user.
+async def regular_user_headers(
+    client: AsyncClient, db_session: AsyncSession, regular_user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the regular user.
 
-    Args:
-        regular_user: Regular user instance
-
-    Returns:
-        Headers with Bearer token
+    The regular user has a real session (so CSRF passes) but no superuser
+    entitlement, so the request reaches the platform permission gate and is
+    denied with 403 (rather than masked by a CSRF/auth 401/403).
     """
-    access_token = create_access_token({"sub": str(regular_user.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+    return await bff_session_headers(client, db_session, regular_user)
 
 
 @pytest.fixture
@@ -121,17 +124,21 @@ async def test_license(db_session: AsyncSession) -> License:
 class TestListLicenses:
     """Tests for listing licenses."""
 
-    async def test_list_licenses_empty(
+    async def test_list_licenses_returns_seeded_master(
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
     ) -> None:
-        """Test listing licenses when none exist."""
-        response = await client.get("/api/v1/admin/licenses", headers=superuser_headers)
+        """The spec/012 license master is seeded by migration; every item
+        exposes the full response shape."""
+        response = await client.get("/web-api/v1/admin/licenses", headers=superuser_headers)
 
         assert response.status_code == 200
         data = response.json()
-        assert data["items"] == []
+        listed_ids = {item["id"] for item in data["items"]}
+        assert {"cc0", "cc-by", "cc-by-nc", "cc-by-sa"} <= listed_ids
+        for item in data["items"]:
+            assert {"id", "name", "short_name", "url", "description"} <= set(item.keys())
 
     async def test_list_licenses_with_data(
         self,
@@ -139,17 +146,17 @@ class TestListLicenses:
         superuser_headers: dict[str, str],
         test_license: License,
     ) -> None:
-        """Test listing licenses with existing data."""
-        response = await client.get("/api/v1/admin/licenses", headers=superuser_headers)
+        """A newly created license appears in the list alongside the seeded master."""
+        response = await client.get("/web-api/v1/admin/licenses", headers=superuser_headers)
 
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 1
-        assert data["items"][0]["id"] == test_license.id
-        assert data["items"][0]["name"] == test_license.name
-        assert data["items"][0]["short_name"] == test_license.short_name
-        assert data["items"][0]["url"] == test_license.url
-        assert data["items"][0]["description"] == test_license.description
+        matches = [item for item in data["items"] if item["id"] == test_license.id]
+        assert len(matches) == 1
+        assert matches[0]["name"] == test_license.name
+        assert matches[0]["short_name"] == test_license.short_name
+        assert matches[0]["url"] == test_license.url
+        assert matches[0]["description"] == test_license.description
 
     async def test_list_licenses_multiple(
         self,
@@ -157,22 +164,22 @@ class TestListLicenses:
         superuser_headers: dict[str, str],
         db_session: AsyncSession,
     ) -> None:
-        """Test listing multiple licenses."""
-        # Create multiple licenses
+        """Test that multiple newly created licenses all appear in the list."""
+        # Use ids outside the seeded spec/012 master to avoid PK collisions.
         licenses_data = [
             {
-                "id": "BY",
-                "name": "Creative Commons Attribution 4.0",
-                "short_name": "CC BY 4.0",
-                "url": "https://creativecommons.org/licenses/by/4.0/",
-                "description": "This license allows you to distribute, remix, tweak, and build upon this work, even commercially, as long as you credit the original creator for the creation.",
+                "id": "test-multi-a",
+                "name": "Test Multi License A",
+                "short_name": "TEST-MULTI-A",
+                "url": "https://example.com/licenses/test-multi-a/",
+                "description": "First of two licenses created by the multiple-list contract test.",
             },
             {
-                "id": "BY-SA",
-                "name": "Creative Commons Attribution Share Alike 4.0",
-                "short_name": "CC BY-SA 4.0",
-                "url": "https://creativecommons.org/licenses/by-sa/4.0/",
-                "description": "This license allows remix and redistribute the material in any medium or format, so long as you credit the creator.",
+                "id": "test-multi-b",
+                "name": "Test Multi License B",
+                "short_name": "TEST-MULTI-B",
+                "url": "https://example.com/licenses/test-multi-b/",
+                "description": "Second of two licenses created by the multiple-list contract test.",
             },
         ]
 
@@ -181,10 +188,11 @@ class TestListLicenses:
             db_session.add(license)
         await db_session.commit()
 
-        response = await client.get("/api/v1/admin/licenses", headers=superuser_headers)
+        response = await client.get("/web-api/v1/admin/licenses", headers=superuser_headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data["items"]) == 2
+        listed_ids = {item["id"] for item in data["items"]}
+        assert {"test-multi-a", "test-multi-b"} <= listed_ids
 
     async def test_list_licenses_as_non_superuser_forbidden(
         self,
@@ -192,7 +200,7 @@ class TestListLicenses:
         regular_user_headers: dict[str, str],
     ) -> None:
         """Test listing licenses as non-superuser returns 403."""
-        response = await client.get("/api/v1/admin/licenses", headers=regular_user_headers)
+        response = await client.get("/web-api/v1/admin/licenses", headers=regular_user_headers)
 
         assert response.status_code == 403
 
@@ -201,7 +209,7 @@ class TestListLicenses:
         client: AsyncClient,
     ) -> None:
         """Test listing licenses without authentication returns 401."""
-        response = await client.get("/api/v1/admin/licenses")
+        response = await client.get("/web-api/v1/admin/licenses")
 
         assert response.status_code == 401
 
@@ -216,7 +224,7 @@ class TestCreateLicense:
     ) -> None:
         """Test successful license creation."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             headers=superuser_headers,
             json={
                 "id": "BY-NC",
@@ -244,7 +252,7 @@ class TestCreateLicense:
     ) -> None:
         """Test creating license with only required fields."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             headers=superuser_headers,
             json={
                 "id": "CC0",
@@ -269,7 +277,7 @@ class TestCreateLicense:
     ) -> None:
         """Test creating license with duplicate ID returns 409."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             headers=superuser_headers,
             json={
                 "id": test_license.id,
@@ -289,7 +297,7 @@ class TestCreateLicense:
     ) -> None:
         """Test creating license without required fields returns 422."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             headers=superuser_headers,
             json={"id": "incomplete"},
         )
@@ -303,7 +311,7 @@ class TestCreateLicense:
     ) -> None:
         """Test creating license as non-superuser returns 403."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             headers=regular_user_headers,
             json={
                 "id": "test",
@@ -320,7 +328,7 @@ class TestCreateLicense:
     ) -> None:
         """Test creating license without authentication returns 401."""
         response = await client.post(
-            "/api/v1/admin/licenses",
+            "/web-api/v1/admin/licenses",
             json={
                 "id": "test",
                 "name": "Test License",
@@ -342,7 +350,7 @@ class TestGetLicense:
     ) -> None:
         """Test getting a license by ID."""
         response = await client.get(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
         )
 
@@ -361,7 +369,7 @@ class TestGetLicense:
     ) -> None:
         """Test getting non-existent license returns 404."""
         response = await client.get(
-            "/api/v1/admin/licenses/NONEXISTENT",
+            "/web-api/v1/admin/licenses/NONEXISTENT",
             headers=superuser_headers,
         )
 
@@ -377,7 +385,7 @@ class TestGetLicense:
     ) -> None:
         """Test getting license as non-superuser returns 403."""
         response = await client.get(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=regular_user_headers,
         )
 
@@ -390,7 +398,7 @@ class TestGetLicense:
     ) -> None:
         """Test getting license without authentication returns 401."""
         response = await client.get(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
         )
 
         assert response.status_code == 401
@@ -407,7 +415,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test successful license update."""
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
             json={
                 "name": "Updated License Name",
@@ -433,7 +441,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test partial update of license."""
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
             json={"short_name": "Updated Short"},
         )
@@ -453,7 +461,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test updating only license name."""
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
             json={"name": "New Name"},
         )
@@ -472,7 +480,7 @@ class TestUpdateLicense:
         """Test updating only license description."""
         new_desc = "New description for the license"
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
             json={"description": new_desc},
         )
@@ -489,7 +497,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test updating non-existent license returns 404."""
         response = await client.patch(
-            "/api/v1/admin/licenses/NONEXISTENT",
+            "/web-api/v1/admin/licenses/NONEXISTENT",
             headers=superuser_headers,
             json={"name": "Test"},
         )
@@ -504,7 +512,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test updating license as non-superuser returns 403."""
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=regular_user_headers,
             json={"name": "Test"},
         )
@@ -518,7 +526,7 @@ class TestUpdateLicense:
     ) -> None:
         """Test updating license without authentication returns 401."""
         response = await client.patch(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             json={"name": "Test"},
         )
 
@@ -536,7 +544,7 @@ class TestDeleteLicense:
     ) -> None:
         """Test successful license deletion."""
         response = await client.delete(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
         )
 
@@ -544,7 +552,7 @@ class TestDeleteLicense:
 
         # Verify license is deleted
         get_response = await client.get(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=superuser_headers,
         )
         assert get_response.status_code == 404
@@ -556,7 +564,7 @@ class TestDeleteLicense:
     ) -> None:
         """Test deleting non-existent license returns 404."""
         response = await client.delete(
-            "/api/v1/admin/licenses/NONEXISTENT",
+            "/web-api/v1/admin/licenses/NONEXISTENT",
             headers=superuser_headers,
         )
 
@@ -570,7 +578,7 @@ class TestDeleteLicense:
     ) -> None:
         """Test deleting license as non-superuser returns 403."""
         response = await client.delete(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
             headers=regular_user_headers,
         )
 
@@ -583,7 +591,7 @@ class TestDeleteLicense:
     ) -> None:
         """Test deleting license without authentication returns 401."""
         response = await client.delete(
-            f"/api/v1/admin/licenses/{test_license.id}",
+            f"/web-api/v1/admin/licenses/{test_license.id}",
         )
 
         assert response.status_code == 401

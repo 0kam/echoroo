@@ -144,4 +144,21 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions POST",
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions/{session_id}/complete POST",
     "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions/{session_id} GET",
+    # W2-3 PR-11 — admin surface (users / settings / recorders / licenses): the
+    # 14 ``/api/v1/admin/*`` routes were unmounted in favour of the
+    # ``/web-api/v1/admin/*`` BFF.
+    "/web-api/v1/admin/users GET",
+    "/web-api/v1/admin/users/{user_id} PATCH",
+    "/web-api/v1/admin/settings GET",
+    "/web-api/v1/admin/settings PATCH",
+    "/web-api/v1/admin/recorders GET",
+    "/web-api/v1/admin/recorders POST",
+    "/web-api/v1/admin/recorders/{recorder_id} GET",
+    "/web-api/v1/admin/recorders/{recorder_id} PATCH",
+    "/web-api/v1/admin/recorders/{recorder_id} DELETE",
+    "/web-api/v1/admin/licenses GET",
+    "/web-api/v1/admin/licenses POST",
+    "/web-api/v1/admin/licenses/{license_id} GET",
+    "/web-api/v1/admin/licenses/{license_id} PATCH",
+    "/web-api/v1/admin/licenses/{license_id} DELETE",
 ]

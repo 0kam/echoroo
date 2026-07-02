@@ -1,66 +1,68 @@
-"""Contract tests for recorder admin endpoints.
+"""Contract tests for recorder admin endpoints (``/web-api/v1/admin/recorders``).
 
-Note (Phase 16 Batch 6b): Tests target ``/api/v1/admin/recorders`` which
-follows the legacy superuser flow (``users.is_superuser``). The User factory
-also references columns dropped in Phase 13 (``is_active`` / ``is_verified``
-/ ``is_superuser``). Skipped pending the admin/recorders re-baseline against
-the new ``superusers`` table SOT.
+W2-3 PR-11: the legacy ``/api/v1/admin/recorders`` routes were unmounted;
+their behaviour now lives on the cookie + CSRF ``/web-api/v1/admin/recorders``
+BFF (``echoroo.api.web_v1._admin_recorders``). Every authenticated request
+rides a real session issued via ``POST /web-api/v1/auth/refresh`` (a plain
+Bearer is treated as anonymous on the BFF surface, and a non-member session
+without CSRF masks the permission check). The superuser is promoted via the
+spec/006 ``superusers`` allow-list table (not the dropped
+``users.is_superuser`` column), and the User factory no longer references the
+dropped ``is_active`` / ``is_verified`` / ``is_superuser`` columns — so the
+suite runs unskipped against the new SOT: superuser session → 2xx,
+regular-user session → 403, no-auth → 401.
 """
 
+from uuid import uuid4
+
 import pytest
+import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.recorder import Recorder
 from echoroo.models.user import User
-
-pytest.skip(
-    (
-        "Legacy /api/v1/admin/recorders contract suite — depends on "
-        "users.is_superuser (dropped in Phase 13) and User factory references "
-        "dropped columns. Re-enable after admin/recorders rewrite."
-    ),
-    allow_module_level=True,
-)
+from tests.contract.conftest import bff_session_headers
 
 
 @pytest.fixture
 async def superuser(db_session: AsyncSession) -> User:
-    """Create a test superuser.
+    """Create a platform superuser (User row + active ``superusers`` entry).
 
-    Args:
-        db_session: Database session
-
-    Returns:
-        Superuser instance
+    spec/006 moved the superuser flag out of ``users.is_superuser`` and into
+    the ``superusers`` allow-list table; the auth middleware stamps
+    ``is_superuser`` when an active row is found. Seed both so the BFF admin
+    gate resolves the caller as a superuser.
     """
     user = User(
         email="superuser@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Superuser",
-        is_active=True,
-        is_verified=True,
-        is_superuser=True,
+        security_stamp="recorders-stamp-superuser",
     )
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
+
+    await db_session.execute(
+        sa.text(
+            """
+            INSERT INTO superusers (id, user_id, added_by_id, added_at)
+            VALUES (:id, :uid, :uid, NOW())
+            """
+        ),
+        {"id": uuid4(), "uid": user.id},
+    )
+    await db_session.commit()
     return user
 
 
 @pytest.fixture
-async def superuser_headers(superuser: User) -> dict[str, str]:
-    """Create authentication headers for superuser.
-
-    Args:
-        superuser: Superuser instance
-
-    Returns:
-        Headers with Bearer token
-    """
-    access_token = create_access_token({"sub": str(superuser.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+async def superuser_headers(
+    client: AsyncClient, db_session: AsyncSession, superuser: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the superuser."""
+    return await bff_session_headers(client, db_session, superuser)
 
 
 @pytest.fixture
@@ -77,9 +79,7 @@ async def regular_user(db_session: AsyncSession) -> User:
         email="regular@example.com",
         password_hash="$argon2id$v=19$m=65536,t=3,p=4$test",
         display_name="Regular User",
-        is_active=True,
-        is_verified=True,
-        is_superuser=False,
+        security_stamp="recorders-stamp-regular",
     )
     db_session.add(user)
     await db_session.commit()
@@ -88,17 +88,16 @@ async def regular_user(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def regular_user_headers(regular_user: User) -> dict[str, str]:
-    """Create authentication headers for regular user.
+async def regular_user_headers(
+    client: AsyncClient, db_session: AsyncSession, regular_user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the regular user.
 
-    Args:
-        regular_user: Regular user instance
-
-    Returns:
-        Headers with Bearer token
+    The regular user has a real session (so CSRF passes) but no superuser
+    entitlement, so the request reaches the platform permission gate and is
+    denied with 403 (rather than masked by a CSRF/auth 401/403).
     """
-    access_token = create_access_token({"sub": str(regular_user.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+    return await bff_session_headers(client, db_session, regular_user)
 
 
 @pytest.fixture
@@ -132,7 +131,7 @@ class TestListRecorders:
         superuser_headers: dict[str, str],
     ) -> None:
         """Test listing recorders when none exist."""
-        response = await client.get("/api/v1/admin/recorders", headers=superuser_headers)
+        response = await client.get("/web-api/v1/admin/recorders", headers=superuser_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -148,7 +147,7 @@ class TestListRecorders:
         test_recorder: Recorder,
     ) -> None:
         """Test listing recorders with existing data."""
-        response = await client.get("/api/v1/admin/recorders", headers=superuser_headers)
+        response = await client.get("/web-api/v1/admin/recorders", headers=superuser_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -179,7 +178,7 @@ class TestListRecorders:
 
         # Test first page
         response = await client.get(
-            "/api/v1/admin/recorders?page=1&limit=10",
+            "/web-api/v1/admin/recorders?page=1&limit=10",
             headers=superuser_headers,
         )
         assert response.status_code == 200
@@ -191,7 +190,7 @@ class TestListRecorders:
 
         # Test second page
         response = await client.get(
-            "/api/v1/admin/recorders?page=2&limit=10",
+            "/web-api/v1/admin/recorders?page=2&limit=10",
             headers=superuser_headers,
         )
         assert response.status_code == 200
@@ -206,7 +205,7 @@ class TestListRecorders:
         regular_user_headers: dict[str, str],
     ) -> None:
         """Test listing recorders as non-superuser returns 403."""
-        response = await client.get("/api/v1/admin/recorders", headers=regular_user_headers)
+        response = await client.get("/web-api/v1/admin/recorders", headers=regular_user_headers)
 
         assert response.status_code == 403
 
@@ -215,7 +214,7 @@ class TestListRecorders:
         client: AsyncClient,
     ) -> None:
         """Test listing recorders without authentication returns 401."""
-        response = await client.get("/api/v1/admin/recorders")
+        response = await client.get("/web-api/v1/admin/recorders")
 
         assert response.status_code == 401
 
@@ -230,7 +229,7 @@ class TestCreateRecorder:
     ) -> None:
         """Test successful recorder creation."""
         response = await client.post(
-            "/api/v1/admin/recorders",
+            "/web-api/v1/admin/recorders",
             headers=superuser_headers,
             json={
                 "id": "sm4",
@@ -256,7 +255,7 @@ class TestCreateRecorder:
     ) -> None:
         """Test creating recorder without version field."""
         response = await client.post(
-            "/api/v1/admin/recorders",
+            "/web-api/v1/admin/recorders",
             headers=superuser_headers,
             json={
                 "id": "generic",
@@ -278,7 +277,7 @@ class TestCreateRecorder:
     ) -> None:
         """Test creating recorder with duplicate ID returns 409."""
         response = await client.post(
-            "/api/v1/admin/recorders",
+            "/web-api/v1/admin/recorders",
             headers=superuser_headers,
             json={
                 "id": test_recorder.id,
@@ -298,7 +297,7 @@ class TestCreateRecorder:
     ) -> None:
         """Test creating recorder without required fields returns 422."""
         response = await client.post(
-            "/api/v1/admin/recorders",
+            "/web-api/v1/admin/recorders",
             headers=superuser_headers,
             json={"id": "incomplete"},
         )
@@ -312,7 +311,7 @@ class TestCreateRecorder:
     ) -> None:
         """Test creating recorder as non-superuser returns 403."""
         response = await client.post(
-            "/api/v1/admin/recorders",
+            "/web-api/v1/admin/recorders",
             headers=regular_user_headers,
             json={
                 "id": "test",
@@ -335,7 +334,7 @@ class TestGetRecorder:
     ) -> None:
         """Test getting a recorder by ID."""
         response = await client.get(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=superuser_headers,
         )
 
@@ -353,7 +352,7 @@ class TestGetRecorder:
     ) -> None:
         """Test getting non-existent recorder returns 404."""
         response = await client.get(
-            "/api/v1/admin/recorders/nonexistent",
+            "/web-api/v1/admin/recorders/nonexistent",
             headers=superuser_headers,
         )
 
@@ -369,7 +368,7 @@ class TestGetRecorder:
     ) -> None:
         """Test getting recorder as non-superuser returns 403."""
         response = await client.get(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=regular_user_headers,
         )
 
@@ -387,7 +386,7 @@ class TestUpdateRecorder:
     ) -> None:
         """Test successful recorder update."""
         response = await client.patch(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=superuser_headers,
             json={
                 "manufacturer": "Updated Manufacturer",
@@ -411,7 +410,7 @@ class TestUpdateRecorder:
     ) -> None:
         """Test partial update of recorder."""
         response = await client.patch(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=superuser_headers,
             json={"version": "1.3.0"},
         )
@@ -430,7 +429,7 @@ class TestUpdateRecorder:
     ) -> None:
         """Test updating non-existent recorder returns 404."""
         response = await client.patch(
-            "/api/v1/admin/recorders/nonexistent",
+            "/web-api/v1/admin/recorders/nonexistent",
             headers=superuser_headers,
             json={"manufacturer": "Test"},
         )
@@ -445,7 +444,7 @@ class TestUpdateRecorder:
     ) -> None:
         """Test updating recorder as non-superuser returns 403."""
         response = await client.patch(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=regular_user_headers,
             json={"manufacturer": "Test"},
         )
@@ -464,7 +463,7 @@ class TestDeleteRecorder:
     ) -> None:
         """Test successful recorder deletion."""
         response = await client.delete(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=superuser_headers,
         )
 
@@ -472,7 +471,7 @@ class TestDeleteRecorder:
 
         # Verify recorder is deleted
         get_response = await client.get(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=superuser_headers,
         )
         assert get_response.status_code == 404
@@ -484,7 +483,7 @@ class TestDeleteRecorder:
     ) -> None:
         """Test deleting non-existent recorder returns 404."""
         response = await client.delete(
-            "/api/v1/admin/recorders/nonexistent",
+            "/web-api/v1/admin/recorders/nonexistent",
             headers=superuser_headers,
         )
 
@@ -498,7 +497,7 @@ class TestDeleteRecorder:
     ) -> None:
         """Test deleting recorder as non-superuser returns 403."""
         response = await client.delete(
-            f"/api/v1/admin/recorders/{test_recorder.id}",
+            f"/web-api/v1/admin/recorders/{test_recorder.id}",
             headers=regular_user_headers,
         )
 

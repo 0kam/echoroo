@@ -3,7 +3,6 @@
 from fastapi import APIRouter
 
 from echoroo.api.v1 import (
-    admin,
     annotation_comments,
     auth,
     clips,
@@ -56,12 +55,17 @@ api_router.include_router(taxa.router)
 # survives as an importable helper (``echoroo.api.v1.recorders.list_recorders``)
 # delegated to by ``echoroo.api.web_v1._recorders``; only the v1 route
 # registration is removed here.
-api_router.include_router(admin.router)
+# W2-3 PR-11: the public ``/api/v1/admin/*`` routes (users / settings / licenses
+# / recorders) were unmounted in favour of the ``/web-api/v1/admin/*`` BFF. The
+# legacy handlers survive as importable helpers (``echoroo.api.v1.admin``)
+# delegated to by ``echoroo.api.web_v1._admin_users`` / ``_admin_settings`` /
+# ``_admin_licenses`` / ``_admin_recorders``; only the v1 route registration is
+# removed here.
 # spec/012 — public license list (FR-001/FR-002/FR-017). Bearer surface
 # mirroring ``echoroo.api.web_v1.licenses``. Any authenticated caller
-# may read; not gated to admins. Mounted AFTER ``admin.router`` so the
-# ``/admin/licenses`` paths defined inside admin.py keep priority over
-# the bare ``/licenses`` prefix declared here.
+# may read; not gated to admins. (The ``/admin/licenses`` paths that used to
+# require priority here were unmounted above, so the ordering constraint no
+# longer applies.)
 api_router.include_router(licenses.router)
 # Detection review routers (003-detection-review)
 api_router.include_router(detections.router)

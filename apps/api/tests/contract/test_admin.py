@@ -1,23 +1,25 @@
-"""Contract tests for admin endpoints.
+"""Contract tests for admin endpoints (``/web-api/v1/admin/*`` BFF).
 
 Note (Phase 16 Batch 6b R2): split-skip rewrite.
 
-The legacy ``/api/v1/admin/users`` surface is a Phase 4 stub that always
-returns ``501`` and its fixtures still reference the dropped User columns
-``is_active`` / ``is_verified`` / ``is_superuser``. Those classes are
-skipped at the class level until the admin-API rewrite reinstates the
-endpoints against the new ``superusers`` SOT.
+W2-3 PR-11: the legacy ``/api/v1/admin/*`` routes were unmounted; their
+behaviour now lives on the cookie + CSRF ``/web-api/v1/admin/*`` BFF
+(``echoroo.api.web_v1._admin_users`` / ``_admin_settings``). Every
+authenticated request therefore rides a real session issued via
+``POST /web-api/v1/auth/refresh`` (a plain Bearer is treated as anonymous
+on the BFF surface, and a non-member session without CSRF masks the
+permission check). Superuser sessions reach the 2xx path; regular-user
+sessions reach the 403 permission gate; no-auth requests stay at 401.
 
-The ``/api/v1/admin/settings`` surface, however, is fully implemented in
-:mod:`echoroo.services.admin` and persists rows to the JSONB-backed
-``system_settings`` table whose ``updated_by_id`` FK now points at
-``superusers.id``. ``TestSystemSettings`` is rebuilt against the Phase
-13 / Phase 15 schema (superuser created in the dedicated table, no
-``is_*`` flags on User) so we keep HTTP coverage on the live endpoints.
+The ``/admin/users`` surface is reinstated against the spec/006
+``superusers`` SOT (list + update, no ``is_active`` / ``is_verified`` /
+``is_superuser`` columns on User). The ``/admin/settings`` surface is
+fully implemented in :mod:`echoroo.services.admin` and persists rows to
+the JSONB-backed ``system_settings`` table whose ``updated_by_id`` FK
+points at ``superusers.id``.
 
-``TestAdminAuthRequirements`` only checks that *unauthenticated* callers
-hit 401 on the admin paths — that contract is independent of the
-backing service shape and survives unchanged.
+``TestAdminAuthRequirements`` checks that *unauthenticated* callers hit
+401 on the admin paths — independent of the backing service shape.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -26,10 +28,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.jwt import create_access_token
 from echoroo.models.superuser import Superuser
 from echoroo.models.system import SystemSetting
 from echoroo.models.user import User
+from tests.contract.conftest import bff_session_headers
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -37,7 +39,7 @@ from echoroo.models.user import User
 
 
 @pytest.fixture
-async def superuser(db_session: AsyncSession) -> User:
+async def admin_superuser(db_session: AsyncSession) -> User:
     """Create a test superuser using the Phase 13 split schema.
 
     A ``users`` row is created without the dropped ``is_*`` flags, then a
@@ -71,17 +73,11 @@ async def superuser(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def superuser_headers(superuser: User) -> dict[str, str]:
-    """Create authentication headers for superuser.
-
-    Args:
-        superuser: Superuser instance
-
-    Returns:
-        Headers with Bearer token
-    """
-    access_token = create_access_token({"sub": str(superuser.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+async def superuser_headers(
+    client: AsyncClient, db_session: AsyncSession, admin_superuser: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the superuser."""
+    return await bff_session_headers(client, db_session, admin_superuser)
 
 
 @pytest.fixture
@@ -107,23 +103,22 @@ async def regular_user(db_session: AsyncSession) -> User:
 
 
 @pytest.fixture
-async def regular_user_headers(regular_user: User) -> dict[str, str]:
-    """Create authentication headers for regular user.
+async def regular_user_headers(
+    client: AsyncClient, db_session: AsyncSession, regular_user: User
+) -> dict[str, str]:
+    """CSRF-capable ``/web-api/v1`` session headers for the regular user.
 
-    Args:
-        regular_user: Regular user instance
-
-    Returns:
-        Headers with Bearer token
+    The regular user has a real session (so CSRF passes) but no superuser
+    entitlement, so the request reaches the platform permission gate and
+    is denied with 403 (rather than masked by a CSRF/auth 401/403).
     """
-    access_token = create_access_token({"sub": str(regular_user.id)})
-    return {"Authorization": f"Bearer {access_token}"}
+    return await bff_session_headers(client, db_session, regular_user)
 
 
 @pytest.fixture
 async def system_settings(
     db_session: AsyncSession,
-    superuser: User,  # noqa: ARG001 — fixture creates superuser dependency
+    admin_superuser: User,  # noqa: ARG001 — fixture creates superuser dependency
 ) -> None:
     """Seed the three settings exercised by ``TestSystemSettings``.
 
@@ -184,11 +179,13 @@ class TestListUsers:
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
-        superuser: User,  # noqa: ARG002 - needed to create user
+        admin_superuser: User,  # noqa: ARG002 - needed to create user
         regular_user: User,  # noqa: ARG002 - needed to create user
     ) -> None:
         """Test listing users as superuser surfaces both seeded rows."""
-        response = await client.get("/api/v1/admin/users", headers=superuser_headers)
+        response = await client.get(
+            "/web-api/v1/admin/users", headers=superuser_headers
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -204,7 +201,9 @@ class TestListUsers:
         regular_user_headers: dict[str, str],
     ) -> None:
         """Test listing users as non-superuser returns 403."""
-        response = await client.get("/api/v1/admin/users", headers=regular_user_headers)
+        response = await client.get(
+            "/web-api/v1/admin/users", headers=regular_user_headers
+        )
 
         assert response.status_code == 403
         data = response.json()
@@ -218,7 +217,7 @@ class TestListUsers:
     ) -> None:
         """Test listing users with the search parameter (display_name ILIKE)."""
         response = await client.get(
-            "/api/v1/admin/users",
+            "/web-api/v1/admin/users",
             headers=superuser_headers,
             params={"search": "Regular"},
         )
@@ -231,12 +230,12 @@ class TestListUsers:
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
-        superuser: User,  # noqa: ARG002 - needed to create user
+        admin_superuser: User,  # noqa: ARG002 - needed to create user
         regular_user: User,  # noqa: ARG002 - needed to create user
     ) -> None:
         """Test user list pagination clamps to the requested limit."""
         response = await client.get(
-            "/api/v1/admin/users",
+            "/web-api/v1/admin/users",
             headers=superuser_headers,
             params={"page": 1, "limit": 1},
         )
@@ -251,7 +250,7 @@ class TestListUsers:
         self,
         client: AsyncClient,
         superuser_headers: dict[str, str],
-        superuser: User,
+        admin_superuser: User,
         regular_user: User,
     ) -> None:
         """``is_superuser`` reflects the ``superusers`` entitlement row.
@@ -265,7 +264,7 @@ class TestListUsers:
         per row.
         """
         response = await client.get(
-            "/api/v1/admin/users",
+            "/web-api/v1/admin/users",
             headers=superuser_headers,
             params={"limit": 100},
         )
@@ -274,14 +273,14 @@ class TestListUsers:
         data = response.json()
         items_by_id = {item["id"]: item for item in data["items"]}
 
-        assert str(superuser.id) in items_by_id, (
+        assert str(admin_superuser.id) in items_by_id, (
             "superuser fixture missing from admin list response"
         )
         assert str(regular_user.id) in items_by_id, (
             "regular_user fixture missing from admin list response"
         )
 
-        su_item = items_by_id[str(superuser.id)]
+        su_item = items_by_id[str(admin_superuser.id)]
         regular_item = items_by_id[str(regular_user.id)]
 
         assert "is_superuser" in su_item, (
@@ -302,7 +301,7 @@ class TestUpdateUser:
     ) -> None:
         """display_name updates are persisted and reflected in the response."""
         response = await client.patch(
-            f"/api/v1/admin/users/{regular_user.id}",
+            f"/web-api/v1/admin/users/{regular_user.id}",
             headers=superuser_headers,
             json={"display_name": "Renamed"},
         )
@@ -325,7 +324,7 @@ class TestUpdateUser:
         MUST NOT yield a 4xx (the SPA still ships pre-spec/006 payloads).
         """
         response = await client.patch(
-            f"/api/v1/admin/users/{regular_user.id}",
+            f"/web-api/v1/admin/users/{regular_user.id}",
             headers=superuser_headers,
             json={"is_active": False, "is_superuser": True, "is_verified": False},
         )
@@ -340,7 +339,7 @@ class TestUpdateUser:
     ) -> None:
         """Test updating user as non-superuser returns 403."""
         response = await client.patch(
-            f"/api/v1/admin/users/{regular_user.id}",
+            f"/web-api/v1/admin/users/{regular_user.id}",
             headers=regular_user_headers,
             json={"display_name": "Hacked"},
         )
@@ -355,7 +354,7 @@ class TestUpdateUser:
         """Test updating a nonexistent user returns 404."""
         fake_uuid = "00000000-0000-0000-0000-000000000000"
         response = await client.patch(
-            f"/api/v1/admin/users/{fake_uuid}",
+            f"/web-api/v1/admin/users/{fake_uuid}",
             headers=superuser_headers,
             json={"display_name": "Ghost"},
         )
@@ -378,7 +377,7 @@ class TestSystemSettings:
         system_settings: None,  # noqa: ARG002 - needed to create settings
     ) -> None:
         """Test getting all system settings."""
-        response = await client.get("/api/v1/admin/settings", headers=superuser_headers)
+        response = await client.get("/web-api/v1/admin/settings", headers=superuser_headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -400,7 +399,7 @@ class TestSystemSettings:
         regular_user_headers: dict[str, str],
     ) -> None:
         """Test getting system settings as non-superuser returns 403."""
-        response = await client.get("/api/v1/admin/settings", headers=regular_user_headers)
+        response = await client.get("/web-api/v1/admin/settings", headers=regular_user_headers)
 
         assert response.status_code == 403
 
@@ -412,7 +411,7 @@ class TestSystemSettings:
     ) -> None:
         """Test updating system settings."""
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=superuser_headers,
             json={
                 "registration_mode": "invitation",
@@ -427,7 +426,7 @@ class TestSystemSettings:
 
         # Verify settings were updated
         get_response = await client.get(
-            "/api/v1/admin/settings", headers=superuser_headers
+            "/web-api/v1/admin/settings", headers=superuser_headers
         )
         settings_data = get_response.json()
         assert settings_data["registration_mode"]["value"] == "invitation"
@@ -442,7 +441,7 @@ class TestSystemSettings:
     ) -> None:
         """Test updating only some system settings."""
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=superuser_headers,
             json={"session_timeout_minutes": 30},
         )
@@ -457,7 +456,7 @@ class TestSystemSettings:
         """Test validation of system settings values."""
         # Invalid session_timeout_minutes (too low)
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=superuser_headers,
             json={"session_timeout_minutes": 2},
         )
@@ -465,7 +464,7 @@ class TestSystemSettings:
 
         # Invalid session_timeout_minutes (too high)
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=superuser_headers,
             json={"session_timeout_minutes": 2000},
         )
@@ -473,7 +472,7 @@ class TestSystemSettings:
 
         # Invalid registration_mode
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=superuser_headers,
             json={"registration_mode": "invalid"},
         )
@@ -486,7 +485,7 @@ class TestSystemSettings:
     ) -> None:
         """Test updating system settings as non-superuser returns 403."""
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             headers=regular_user_headers,
             json={"allow_registration": False},
         )
@@ -508,23 +507,23 @@ class TestAdminAuthRequirements:
     ) -> None:
         """Test that admin endpoints require authentication."""
         # List users
-        response = await client.get("/api/v1/admin/users")
+        response = await client.get("/web-api/v1/admin/users")
         assert response.status_code == 401
 
         # Update user
         response = await client.patch(
-            "/api/v1/admin/users/00000000-0000-0000-0000-000000000000",
+            "/web-api/v1/admin/users/00000000-0000-0000-0000-000000000000",
             json={"is_active": False},
         )
         assert response.status_code == 401
 
         # Get settings
-        response = await client.get("/api/v1/admin/settings")
+        response = await client.get("/web-api/v1/admin/settings")
         assert response.status_code == 401
 
         # Update settings
         response = await client.patch(
-            "/api/v1/admin/settings",
+            "/web-api/v1/admin/settings",
             json={"allow_registration": False},
         )
         assert response.status_code == 401
