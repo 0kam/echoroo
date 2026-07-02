@@ -132,9 +132,10 @@ apps/api/echoroo/api/v1/taxa.py:search_taxa:missing-permission-guard  # legacy: 
 # delegated to by the project-scoped ``/web-api/v1/projects/{project_id}/
 # annotations/*`` BFF, which gate_action-guards each handler — no thin-adapter
 # allowlist entry required).
-apps/api/echoroo/api/v1/uploads.py:complete_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/uploads.py:create_upload_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/uploads.py:get_upload_session_status:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-10: the three ``api/v1/uploads.py`` routes were unmounted (now helpers
+# delegated to by the ``/web-api/v1/.../upload-sessions*`` BFF; the two mutating
+# BFF handlers gate_action-guard themselves and the read endpoint stays a thin
+# adapter — its ``_uploads.py`` entry is retained below).
 apps/api/echoroo/api/v1/users.py:change_password:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/users.py:create_api_token:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/users.py:get_current_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
@@ -160,9 +161,9 @@ apps/api/echoroo/api/web_v1/users.py:revoke_api_token:missing-permission-guard  
 # spec/009 PR 3a thin BFF adapters (Phase 3 US11 T1xx scope). The BFF delegates
 # to the legacy handler and adds no guard of its own pending TAG_LIST/GET/GBIF/
 # STATISTICS/UPLOAD_GET Action introduction. Note: the legacy ``api/v1/tags.py``
-# handlers are now plain importable helpers (their routes were unmounted in
-# W2-3 PR-9, so their own allowlist entries were dropped); the ``api/v1/uploads.py``
-# read endpoint above is still a mounted, allowlisted route.
+# (W2-3 PR-9) and ``api/v1/uploads.py`` (W2-3 PR-10) handlers are now plain
+# importable helpers — their routes were unmounted, so their own allowlist
+# entries were dropped, and only these BFF thin-adapter entries remain.
 apps/api/echoroo/api/web_v1/projects/_tags.py:gbif_suggest:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_tags.py:get_statistics:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)
 apps/api/echoroo/api/web_v1/projects/_tags.py:get_tag:missing-permission-guard  # spec/009 PR 3a: thin adapter (legacy unguarded)

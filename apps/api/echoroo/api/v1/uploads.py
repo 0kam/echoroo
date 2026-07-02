@@ -102,16 +102,12 @@ def _compute_progress_percent(
     return 0.0
 
 
-@router.post(
-    "",
-    response_model=CreateUploadSessionResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create upload session",
-    description=(
-        "Create a new upload session and receive presigned S3 PUT URLs for each file. "
-        "Requires the UPLOAD permission. Only one active session is allowed per dataset at a time."
-    ),
-)
+# W2-3 PR-10: the browser-facing ``/api/v1/projects/{project_id}/datasets/
+# {dataset_id}/upload-sessions*`` routes were unmounted in favour of the
+# ``/web-api/v1/.../upload-sessions*`` BFF (``echoroo.api.web_v1.projects._uploads``).
+# The three handlers below are left as plain importable functions (no ``@router``
+# decorators) because the BFF delegates to them via ``legacy_uploads.<fn>(...)``
+# and reuses ``UploadServiceDep``.
 async def create_upload_session(
     project_id: UUID,
     dataset_id: UUID,
@@ -184,17 +180,6 @@ async def create_upload_session(
     )
 
 
-@router.post(
-    "/{session_id}/complete",
-    response_model=CompleteUploadResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Complete upload",
-    description=(
-        "Verify that all files have been uploaded to S3 and transition the session "
-        "to UPLOADED state. Dispatches a Celery validation task when all files are confirmed. "
-        "Requires the UPLOAD permission."
-    ),
-)
 async def complete_upload_session(
     project_id: UUID,
     dataset_id: UUID,
@@ -271,15 +256,6 @@ async def complete_upload_session(
     )
 
 
-@router.get(
-    "/{session_id}",
-    response_model=UploadSessionStatusResponse,
-    summary="Get upload session status",
-    description=(
-        "Get the current status of an upload session with per-file details. "
-        "Accessible to all project members."
-    ),
-)
 async def get_upload_session_status(
     project_id: UUID,
     dataset_id: UUID,

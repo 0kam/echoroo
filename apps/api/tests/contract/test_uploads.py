@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
+from echoroo.models.user import User
+from tests.contract.conftest import bff_session_headers
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project, ProjectMember
@@ -90,11 +92,11 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions - Create upload session."""
+        """Test POST /web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions - Create upload session."""
         # Mock S3 client and presigned URL generation
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/echoroo/fake-presigned-url"
@@ -116,8 +118,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -161,7 +163,7 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
             json=request_data,
         )
 
@@ -176,7 +178,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -187,7 +189,7 @@ class TestCreateUploadSession:
         ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``) so the
         legacy "member -> 403" expectation no longer holds. The
         canonical 403 path is now Authenticated non-member
-        (``auth_headers_other``); that identity has zero project
+        (``csrf_headers_other``); that identity has zero project
         permissions. The "viewer cannot upload" path is covered by
         the dedicated viewer-permission-boundary suite.
         """
@@ -206,8 +208,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers_other,
             json=request_data,
         )
 
@@ -222,7 +224,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Test POST upload-sessions with invalid dataset_id returns 404."""
@@ -242,8 +244,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{fake_dataset_id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{fake_dataset_id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -258,7 +260,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -278,8 +280,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -294,7 +296,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -316,8 +318,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -332,7 +334,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -354,8 +356,8 @@ class TestCreateUploadSession:
         request_data = {"files": files}
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -370,7 +372,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -390,8 +392,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -406,7 +408,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -426,8 +428,8 @@ class TestCreateUploadSession:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -442,7 +444,7 @@ class TestCreateUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -482,16 +484,16 @@ class TestCreateUploadSession:
 
         # Create first session
         response1 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
         assert response1.status_code == 201
 
         # Second create supersedes the stale ISSUED session — 201.
         response2 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
 
@@ -516,7 +518,7 @@ class TestCompleteUploadSession:
         mock_get_s3_client_for_verify: MagicMock,
         mock_verify_object: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -550,8 +552,8 @@ class TestCompleteUploadSession:
 
         # Create session first
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
         assert create_response.status_code == 201
@@ -559,8 +561,8 @@ class TestCompleteUploadSession:
 
         # Complete the session
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 202
@@ -588,7 +590,7 @@ class TestCompleteUploadSession:
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}/complete",
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}/complete",
         )
 
         assert response.status_code == 401
@@ -602,7 +604,7 @@ class TestCompleteUploadSession:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -614,8 +616,8 @@ class TestCompleteUploadSession:
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}/complete",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -631,7 +633,7 @@ class TestCompleteUploadSession:
         mock_get_s3_client_for_verify: MagicMock,
         mock_verify_object: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -658,23 +660,23 @@ class TestCompleteUploadSession:
 
         # Create and complete session once
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
         session_id = create_response.json()["session_id"]
 
         # Complete once (should succeed)
         response1 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=csrf_headers,
         )
         assert response1.status_code == 202
 
         # Try to complete again (should fail - already in UPLOADED state)
         response2 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=csrf_headers,
         )
 
         assert response2.status_code == 409
@@ -693,7 +695,7 @@ class TestGetUploadSessionStatus:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -719,8 +721,8 @@ class TestGetUploadSessionStatus:
 
         # Create session
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json=request_data,
         )
         assert create_response.status_code == 201
@@ -728,8 +730,8 @@ class TestGetUploadSessionStatus:
 
         # Get status
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -775,7 +777,7 @@ class TestGetUploadSessionStatus:
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}",
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}",
         )
 
         assert response.status_code == 401
@@ -789,7 +791,7 @@ class TestGetUploadSessionStatus:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -801,8 +803,8 @@ class TestGetUploadSessionStatus:
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{fake_session_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -816,13 +818,19 @@ class TestGetUploadSessionStatus:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
-        auth_headers_member: dict[str, str],
+        db_session: AsyncSession,
+        test_user: User,
+        member_user: User,
         test_project_id: str,
         test_dataset: Dataset,
         test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
-        """Test GET upload-sessions/{session_id} allows member (non-admin) access."""
+        """Test GET upload-sessions/{session_id} allows member (non-admin) access.
+
+        W2-3 PR-10: mixes an owner session (create) and a member session (view)
+        on the CSRF-guarded BFF, so each session is built inline right before its
+        request — the shared cookie jar only holds one session at a time.
+        """
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
@@ -837,19 +845,22 @@ class TestGetUploadSessionStatus:
             ]
         }
 
-        # Admin creates session
+        # Owner creates session
+        owner_headers = await bff_session_headers(client, db_session, test_user)
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=owner_headers,
             json=request_data,
         )
         assert create_response.status_code == 201
         session_id = create_response.json()["session_id"]
 
-        # Member views status (should succeed - members have project access)
+        # Member views status (should succeed - members have project access).
+        # Rebuild the session so the member's cookie is the active one.
+        member_headers = await bff_session_headers(client, db_session, member_user)
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
+            headers=member_headers,
         )
 
         assert response.status_code == 200

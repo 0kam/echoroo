@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
+from echoroo.models.user import User
+from tests.integration.conftest import bff_session_headers
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project, ProjectMember
@@ -88,7 +90,7 @@ class TestUploadWorkflow:
         mock_get_s3_client_for_verify: MagicMock,
         mock_verify_object: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -122,8 +124,8 @@ class TestUploadWorkflow:
         ]
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files_to_upload},
         )
 
@@ -148,8 +150,8 @@ class TestUploadWorkflow:
 
         # Step 3: Complete upload session (verify files in S3)
         complete_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=csrf_headers,
         )
 
         assert complete_response.status_code == 202
@@ -162,8 +164,8 @@ class TestUploadWorkflow:
 
         # Step 4: Check session status
         status_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
+            headers=csrf_headers,
         )
 
         assert status_response.status_code == 200
@@ -190,7 +192,7 @@ class TestUploadWorkflow:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -209,8 +211,8 @@ class TestUploadWorkflow:
 
         # Create first session (succeeds)
         response1 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
         assert response1.status_code == 201
@@ -226,8 +228,8 @@ class TestUploadWorkflow:
         # reserved for sessions actively in
         # ``VALIDATING`` / ``VALIDATED`` / ``IMPORTING``.
         response2 = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
         assert response2.status_code == 201
@@ -236,8 +238,8 @@ class TestUploadWorkflow:
 
         # First session must now be FAILED (superseded), not ISSUED.
         status_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session1_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session1_id}",
+            headers=csrf_headers,
         )
         assert status_response.status_code == 200
         assert status_response.json()["status"] == "failed"
@@ -251,14 +253,20 @@ class TestUploadWorkflow:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
-        auth_headers_member: dict[str, str],
-        auth_headers_other: dict[str, str],
+        db_session: AsyncSession,
+        test_user: User,
+        member_user: User,
+        other_user: User,
         test_project_id: str,
         test_dataset: Dataset,
         test_member: "ProjectMember",  # noqa: F821  # Side-effect: ensures member row exists
     ) -> None:
-        """Test access control: Owner manages, member views, outsider denied."""
+        """Test access control: Owner manages, member views, outsider denied.
+
+        W2-3 PR-10: mixes owner / member / outsider sessions on the CSRF-guarded
+        BFF, so each session is built inline right before its request — the
+        shared cookie jar only holds one session at a time.
+        """
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
         mock_ensure_bucket.return_value = None
@@ -272,39 +280,44 @@ class TestUploadWorkflow:
         ]
 
         # Owner creates session (succeeds)
+        owner_headers = await bff_session_headers(client, db_session, test_user)
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=owner_headers,
             json={"files": files},
         )
         assert create_response.status_code == 201
         session_id = create_response.json()["session_id"]
 
-        # Member views status (succeeds - has project access)
+        # Member views status (succeeds - has project access). Rebuild the
+        # session so the member's cookie is active; reuse it for the complete.
+        member_headers = await bff_session_headers(client, db_session, member_user)
         member_status = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
+            headers=member_headers,
         )
         assert member_status.status_code == 200
 
         # Member tries to complete (fails - only admins can complete)
         member_complete = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers_member,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=member_headers,
         )
         assert member_complete.status_code == 403
 
-        # Outsider tries to view status (fails - no project access)
+        # Outsider tries to view status (fails - no project access). Rebuild the
+        # session for the outsider; reuse it for the create attempt.
+        outsider_headers = await bff_session_headers(client, db_session, other_user)
         outsider_status = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}",
+            headers=outsider_headers,
         )
         assert outsider_status.status_code == 403
 
         # Outsider tries to create session (fails - no admin role)
         outsider_create = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=outsider_headers,
             json={"files": files},
         )
         assert outsider_create.status_code == 403
@@ -320,7 +333,7 @@ class TestUploadWorkflow:
         mock_get_s3_client_for_verify: MagicMock,
         mock_verify_object: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -349,8 +362,8 @@ class TestUploadWorkflow:
         ]
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
         assert create_response.status_code == 201
@@ -374,8 +387,8 @@ class TestUploadWorkflow:
 
         # Complete session
         complete_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_id}/complete",
+            headers=csrf_headers,
         )
 
         assert complete_response.status_code == 202
@@ -397,7 +410,7 @@ class TestUploadWorkflow:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -435,8 +448,8 @@ class TestUploadWorkflow:
         ]
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
 
@@ -461,8 +474,8 @@ class TestUploadWorkflow:
 
         # Get status and verify files appear there too
         status_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_data['session_id']}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session_data['session_id']}",
+            headers=csrf_headers,
         )
 
         assert status_response.status_code == 200
@@ -482,7 +495,7 @@ class TestUploadWorkflow:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -503,8 +516,8 @@ class TestUploadWorkflow:
         ]
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
 
@@ -525,7 +538,7 @@ class TestUploadWorkflow:
         mock_presigned_url: MagicMock,
         mock_ensure_bucket: MagicMock,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
@@ -558,8 +571,8 @@ class TestUploadWorkflow:
         ]
 
         create_response = await client.post(
-            f"/api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
             json={"files": files},
         )
 
