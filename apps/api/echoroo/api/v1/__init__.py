@@ -71,7 +71,15 @@ api_router.include_router(licenses.router)
 api_router.include_router(detections.router)
 api_router.include_router(confirmed_regions.router)
 api_router.include_router(detection_runs.router)
-api_router.include_router(detection_runs.models_router)
+# W2-3 PR-14: the browser-superseded detection-run routes (list / create / retry /
+# cancel on ``detection_runs.router`` + ``available-models`` on
+# ``detection_runs.models_router``) were unmounted in favour of the
+# ``/web-api/v1/.../detection-runs*`` + ``/web-api/v1/detection-runs/available-models``
+# BFF. The legacy handlers survive as importable helpers
+# (``echoroo.api.v1.detection_runs``) delegated to by
+# ``echoroo.api.web_v1.projects._detection_runs`` / ``echoroo.api.web_v1.detection_runs``;
+# only ``detection_runs.router`` stays mounted (for the still-live get / update
+# routes) and the route-less ``models_router`` include is removed here.
 # W2-3 PR-10: the public ``/api/v1/.../datasets/{id}/upload-sessions*`` routes
 # were unmounted in favour of the ``/web-api/v1/.../upload-sessions*`` BFF. The
 # legacy handlers survive as importable helpers (``echoroo.api.v1.uploads``)

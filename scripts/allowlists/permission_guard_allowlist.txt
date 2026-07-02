@@ -36,7 +36,6 @@ apps/api/echoroo/api/v1/confirmed_regions.py:create_confirmed_region:missing-per
 apps/api/echoroo/api/v1/confirmed_regions.py:delete_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:list_confirmed_regions:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/datasets.py:export_dataset:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/detection_runs.py:list_available_models:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:change_species:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:confirm_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/detections.py:create_detection:missing-permission-guard  # legacy: Phase 3 US11 T1xx

@@ -185,4 +185,13 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} GET",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} PATCH",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id} DELETE",
+    # W2-3 PR-14 — detection-run lifecycle: the 5 browser-superseded
+    # ``/api/v1/.../detection-runs*`` routes (list / create / retry / cancel +
+    # unscoped available-models) were unmounted in favour of the BFF surface
+    # (get / update stay on v1). The GET list + available-models paths were
+    # already declared by PR D above; only the create / retry / cancel mutation
+    # paths are new here.
+    "/web-api/v1/projects/{project_id}/detection-runs POST",
+    "/web-api/v1/projects/{project_id}/detection-runs/{run_id}/retry POST",
+    "/web-api/v1/projects/{project_id}/detection-runs/{run_id}/cancel POST",
 ]

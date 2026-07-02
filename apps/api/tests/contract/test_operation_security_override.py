@@ -137,10 +137,19 @@ class TestOperationInventory:
     def test_api_v1_state_changing_ops_present(
         self, all_state_changing_ops: list[tuple[str, str, dict[str, Any]]]
     ) -> None:
-        """At least 50 /api/v1/ state-changing operations must be registered."""
+        """A non-trivial /api/v1/ state-changing surface must remain registered.
+
+        W2-3 progressively unmounts browser-superseded /api/v1 mutations in
+        favour of the /web-api/v1 BFF, so this floor tracks only the KEEP
+        routes that stay on /api/v1 by design (detections confirm/reject/
+        delete, detection-run update, annotation-set sampling, search
+        similarity, xeno-canto imports, ...). The total-surface floor above
+        (>= 50 across both prefixes) still guards against an accidentally
+        empty inventory.
+        """
         api_ops = [op for op in all_state_changing_ops if op[0].startswith("/api/v1/")]
-        assert len(api_ops) >= 50, (
-            f"Expected >= 50 /api/v1/ state-changing ops, found {len(api_ops)}"
+        assert len(api_ops) >= 5, (
+            f"Expected >= 5 /api/v1/ state-changing ops, found {len(api_ops)}"
         )
 
 
