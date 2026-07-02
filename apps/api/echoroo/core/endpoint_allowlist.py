@@ -110,16 +110,9 @@ ALLOWLIST: list[AllowlistEntry] = [
         expiry=None,
         last_reviewed_at=_TODAY_REVIEWED,
     ),
-    AllowlistEntry(
-        path_pattern="/api/v1/auth/login",
-        methods=frozenset({"POST"}),
-        category=AllowlistCategory.AUTH_CALLBACK,
-        reason="Pre-authentication endpoint; credentials issue the session",
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#auth",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-    ),
+    # W2-3 login PR (Option C): the ``/api/v1/auth/login`` entry was removed
+    # together with the legacy Phase-4 login stub route; the sole login
+    # surface is ``/web-api/v1/auth/login`` (declared below).
     AllowlistEntry(
         path_pattern="/api/v1/auth/logout",
         methods=frozenset({"POST"}),

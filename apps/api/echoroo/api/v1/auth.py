@@ -12,7 +12,6 @@ from echoroo.middleware.rate_limit import (
     register_rate_limiter,
 )
 from echoroo.schemas.auth import (
-    LoginRequest,
     LogoutResponse,
     TokenResponse,
     UserRegisterRequest,
@@ -64,64 +63,13 @@ async def register(
     return UserResponse.model_validate(user)
 
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    summary="User login",
-    description="Authenticate user and return access token (refresh token in HttpOnly cookie)",
-    responses={
-        # Phase 17 contract drift cleanup: declarations only — the legacy
-        # v1 ``AuthService.login()`` is a Phase 4 stub that always raises
-        # HTTP 501, so neither 401 (Invalid credentials) nor 423 (Account
-        # locked) is currently reachable on this surface. They are pinned
-        # here to keep contracts/auth.yaml in sync with the live OpenAPI
-        # so contract clients see the planned post-Phase-4 shape.
-        401: {"description": "Invalid credentials"},
-        423: {"description": "Account locked (too many failed attempts)"},
-    },
-)
-async def login(
-    request: LoginRequest,
-    response: Response,
-    http_request: Request,
-    db: DbSession,
-    _rate_limit: None = Depends(login_rate_limiter()),
-) -> TokenResponse:
-    """Authenticate user and generate tokens.
-
-    Args:
-        request: Login credentials
-        response: FastAPI response object (for setting cookie)
-        http_request: FastAPI request object
-        db: Database session
-
-    Returns:
-        Access token response
-
-    Raises:
-        401: Invalid credentials
-        403: Account disabled or email not verified
-        423: Account locked (too many failed attempts)
-        429: Rate limit exceeded
-    """
-    auth_service = AuthService(db)
-    client_ip = http_request.client.host if http_request.client else "unknown"
-    user_agent = http_request.headers.get("user-agent")
-
-    token_response, refresh_token = await auth_service.login(request, client_ip, user_agent)
-
-    # Set refresh token in HttpOnly cookie
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=settings.ENVIRONMENT == "production",
-        samesite="lax",
-        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
-        path="/",
-    )
-
-    return token_response
+# W2-3 login PR (Option C): the legacy ``POST /auth/login`` route and its
+# handler were deleted outright. Unlike the function-as-helper unmounts,
+# nothing imported the handler — it only reached the Phase-4
+# ``AuthService.login()`` stub, which always raised HTTP 501. The sole
+# login surface is now ``POST /web-api/v1/auth/login`` (401 invalid
+# credentials / 429 lockout+rate-limit; contracts/auth.yaml updated
+# 423 -> 429 in the same change).
 
 
 @router.post(

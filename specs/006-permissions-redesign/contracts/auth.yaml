@@ -56,8 +56,8 @@ paths:
                 $ref: '#/components/schemas/LoginResponse'
         "401":
           description: 認証失敗
-        "423":
-          description: アカウントロック（TOTP 10 連続失敗など、FR-070）
+        "429":
+          description: ログイン失敗の累積によるロック / レート制限（W2-3 Option C — 旧 423 を 429 に統合）
 
   /auth/2fa/challenge:
     post:

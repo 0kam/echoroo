@@ -946,7 +946,19 @@ async def register(
 # login identifier (see spec.md §Summary + FR-011-002).
 
 
-@router.post("/login", response_model=LoginResponse, response_model_exclude_none=True)
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    response_model_exclude_none=True,
+    responses={
+        # W2-3 login PR (Option C): with the legacy /api/v1/auth/login stub
+        # deleted, this op is the sole provider for contracts/auth.yaml
+        # ``/auth/login`` — declare the reachable error codes so the
+        # contract diff resolves them against the live OpenAPI.
+        401: {"description": "Invalid credentials"},
+        429: {"description": "Too many failed attempts (login lockout / rate limit)"},
+    },
+)
 async def login(
     payload: LoginRequest,
     request: Request,
