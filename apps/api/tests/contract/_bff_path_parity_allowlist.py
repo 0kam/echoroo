@@ -139,4 +139,9 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/tags/{tag_id} GET",
     "/web-api/v1/projects/{project_id}/tags/{tag_id} PATCH",
     "/web-api/v1/projects/{project_id}/tags/{tag_id} DELETE",
+    # W2-3 PR-10 — dataset upload sessions: the ``/api/v1/.../datasets/{id}/
+    # upload-sessions*`` routes were unmounted in favour of the BFF surface.
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions/{session_id}/complete POST",
+    "/web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions/{session_id} GET",
 ]

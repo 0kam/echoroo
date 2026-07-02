@@ -292,14 +292,21 @@ class TestViewerForbidden:
     async def test_create_upload_session_is_403(
         self,
         client: AsyncClient,
-        viewer_headers: dict[str, str],
+        db_session: AsyncSession,
+        viewer_user: User,
         viewer_member: ProjectMember,
         test_project: Project,
     ) -> None:
-        """POST /projects/{id}/datasets/{d}/upload-sessions (UPLOAD) → 403 for Viewer."""
+        """POST /projects/{id}/datasets/{d}/upload-sessions (UPLOAD) → 403 for Viewer.
+
+        W2-3 PR-10: the upload-session endpoint now lives on the ``/web-api/v1``
+        BFF (CSRF-guarded), so the request uses a seeded CSRF session — a plain
+        Bearer POST would 403 at the CSRF layer before the UPLOAD gate runs.
+        """
+        session_headers = await _bff_session_headers(client, db_session, viewer_user)
         response = await client.post(
-            f"/api/v1/projects/{test_project.id}/datasets/{_FAKE_UUID}/upload-sessions",
-            headers=viewer_headers,
+            f"/web-api/v1/projects/{test_project.id}/datasets/{_FAKE_UUID}/upload-sessions",
+            headers=session_headers,
             json={"files": [{"filename": "test.wav", "content_type": "audio/wav", "size": 1024}]},
         )
         assert response.status_code == 403, (

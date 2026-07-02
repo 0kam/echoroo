@@ -17,7 +17,6 @@ from echoroo.api.v1 import (
     projects,
     recordings,
     taxa,
-    uploads,
     users,
     xeno_canto,
 )
@@ -69,8 +68,11 @@ api_router.include_router(detections.router)
 api_router.include_router(confirmed_regions.router)
 api_router.include_router(detection_runs.router)
 api_router.include_router(detection_runs.models_router)
-# Upload session router
-api_router.include_router(uploads.router)
+# W2-3 PR-10: the public ``/api/v1/.../datasets/{id}/upload-sessions*`` routes
+# were unmounted in favour of the ``/web-api/v1/.../upload-sessions*`` BFF. The
+# legacy handlers survive as importable helpers (``echoroo.api.v1.uploads``)
+# delegated to by ``echoroo.api.web_v1.projects._uploads``; only the v1 route
+# registration is removed here.
 # Similarity search router
 api_router.include_router(search_module.router)
 # W2-3 PR-7: the generic ``/api/v1/projects/{project_id}/annotations/{id}/votes``
