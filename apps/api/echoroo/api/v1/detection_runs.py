@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Request
 
 from echoroo.core.actions import (
     DETECTION_RUN_CANCEL_ACTION,
@@ -54,12 +54,11 @@ def get_detection_run_service(db: DbSession) -> DetectionRunService:
 DetectionRunServiceDep = Annotated[DetectionRunService, Depends(get_detection_run_service)]
 
 
-@router.get(
-    "",
-    response_model=DetectionRunListResponse,
-    summary="List detection runs",
-    description="List detection runs for a project",
-)
+# W2-3 PR-14: the browser-facing ``GET /projects/{project_id}/detection-runs``
+# route was unmounted in favour of the ``/web-api/v1/.../detection-runs`` BFF
+# (``echoroo.api.web_v1.projects._detection_runs.list_detection_runs``), which
+# imports this handler directly. Only the ``@router`` decorator is removed here;
+# the handler survives as an importable helper.
 async def list_detection_runs(
     project_id: UUID,
     request: Request,
@@ -144,13 +143,10 @@ async def get_detection_run(
     return await service.get(run_id=run_id, project_id=project_id)
 
 
-@router.post(
-    "",
-    response_model=DetectionRunResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create detection run",
-    description="Create a new detection run for a project",
-)
+# W2-3 PR-14: the browser-facing ``POST /projects/{project_id}/detection-runs``
+# route was unmounted in favour of the ``/web-api/v1/.../detection-runs`` BFF
+# (``echoroo.api.web_v1.projects._detection_runs.create_detection_run``). Only the
+# ``@router`` decorator is removed here; the handler survives as an importable helper.
 async def create_detection_run(
     project_id: UUID,
     request: DetectionRunCreate,
@@ -234,12 +230,11 @@ async def update_detection_run(
     return run
 
 
-@router.post(
-    "/{run_id}/retry",
-    response_model=DetectionRunResponse,
-    summary="Retry detection run",
-    description="Retry a completed or failed detection run. Deletes existing annotations and re-queues the detection task.",
-)
+# W2-3 PR-14: the browser-facing ``POST /projects/{project_id}/detection-runs/
+# {run_id}/retry`` route was unmounted in favour of the ``/web-api/v1/.../retry``
+# BFF (``echoroo.api.web_v1.projects._detection_runs.retry_detection_run``). Only
+# the ``@router`` decorator is removed here; the handler survives as an importable
+# helper.
 async def retry_detection_run(
     project_id: UUID,
     run_id: UUID,
@@ -280,12 +275,11 @@ async def retry_detection_run(
     return run
 
 
-@router.post(
-    "/{run_id}/cancel",
-    response_model=DetectionRunResponse,
-    summary="Cancel detection run",
-    description="Cancel a pending or running detection run.",
-)
+# W2-3 PR-14: the browser-facing ``POST /projects/{project_id}/detection-runs/
+# {run_id}/cancel`` route was unmounted in favour of the ``/web-api/v1/.../cancel``
+# BFF (``echoroo.api.web_v1.projects._detection_runs.cancel_detection_run``). Only
+# the ``@router`` decorator is removed here; the handler survives as an importable
+# helper.
 async def cancel_detection_run(
     project_id: UUID,
     run_id: UUID,
@@ -326,12 +320,11 @@ async def cancel_detection_run(
     return run
 
 
-@models_router.get(
-    "/available-models",
-    response_model=AvailableModelsResponse,
-    summary="List available detection models",
-    description="Return the names of all ML models registered in the ModelRegistry.",
-)
+# W2-3 PR-14: the browser-facing ``GET /detection-runs/available-models`` route
+# was unmounted in favour of the ``/web-api/v1/detection-runs/available-models``
+# BFF (``echoroo.api.web_v1.detection_runs.get_available_models``), which imports
+# this handler directly. Only the ``@models_router`` decorator is removed here;
+# ``models_router`` is now route-less but kept as an orphan for import stability.
 async def list_available_models(
     current_user: CurrentUser,
 ) -> AvailableModelsResponse:

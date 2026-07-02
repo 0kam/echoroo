@@ -105,13 +105,17 @@ class TestDetectionRunListEndpoints:
     async def test_list_detection_runs_empty(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detection-runs - empty list."""
+        """Test GET /web-api/v1/projects/{project_id}/detection-runs - empty list.
+
+        W2-3 PR-14: the legacy ``/api/v1`` list route was unmounted; the surviving
+        provider is the ``/web-api/v1`` BFF (session-bound Bearer + CSRF header).
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detection-runs",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -127,14 +131,14 @@ class TestDetectionRunListEndpoints:
     async def test_list_detection_runs_with_data(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_detection_run: DetectionRun,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detection-runs - returns runs."""
+        """Test GET /web-api/v1/projects/{project_id}/detection-runs - returns runs."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detection-runs",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 200
@@ -153,9 +157,9 @@ class TestDetectionRunListEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/detection-runs requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/detection-runs requires authentication."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/detection-runs"
+            f"/web-api/v1/projects/{test_project_id}/detection-runs"
         )
 
         assert response.status_code == 401
@@ -168,11 +172,14 @@ class TestDetectionRunCRUDEndpoints:
     async def test_create_detection_run(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset_for_runs: Dataset,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detection-runs - create run.
+        """Test POST /web-api/v1/projects/{project_id}/detection-runs - create run.
+
+        W2-3 PR-14: the legacy ``/api/v1`` create route was unmounted; the surviving
+        provider is the ``/web-api/v1`` BFF (session-bound Bearer + CSRF header).
 
         Phase 16 Batch 6e (2026-04-29) downstream drift fix: the schema
         ``DetectionRunCreate`` now requires ``dataset_id``.
@@ -189,8 +196,8 @@ class TestDetectionRunCRUDEndpoints:
         }
 
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detection-runs",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
             json=run_data,
         )
 
@@ -271,9 +278,9 @@ class TestDetectionRunCRUDEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test POST /api/v1/projects/{project_id}/detection-runs requires authentication."""
+        """Test POST /web-api/v1/projects/{project_id}/detection-runs requires authentication."""
         response = await client.post(
-            f"/api/v1/projects/{test_project_id}/detection-runs",
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
             json={"model_name": "BirdNET", "model_version": "2.4"},
         )
 
