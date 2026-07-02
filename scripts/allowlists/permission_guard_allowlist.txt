@@ -62,14 +62,15 @@ apps/api/echoroo/api/v1/projects.py:update_project_member_role:missing-permissio
 # W2-3 PR-1: ``api/v1/recorders.py:list_recorders`` route unmounted (now a
 # helper delegated to by the ``/web-api/v1/recorders`` BFF). The surviving BFF
 # entry for ``web_v1/_recorders.py:list_recorders`` is retained below.
-apps/api/echoroo/api/v1/recordings.py:delete_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-3 PR-16: the 6 browser-superseded recording routes (list/get/update/
+# delete/playback/spectrogram) were unmounted from ``/api/v1``; their dead
+# fingerprints (get_recording/update_recording/delete_recording/
+# get_playback_audio/get_spectrogram; list_recordings had no entry) were
+# dropped. The audio / stream / download media routes stay mounted and
+# unguarded, so their entries are retained below.
 apps/api/echoroo/api/v1/recordings.py:download_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recordings.py:get_playback_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recordings.py:get_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recordings.py:get_spectrogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/recordings.py:stream_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/recordings.py:stream_audio_legacy:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recordings.py:update_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/sessions.py:delete_search_session:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/sessions.py:export_search_session_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/sessions.py:export_search_session_recordings_csv:missing-permission-guard  # legacy: Phase 3 US11 T1xx

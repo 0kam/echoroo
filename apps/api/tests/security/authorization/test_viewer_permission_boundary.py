@@ -409,17 +409,29 @@ class TestViewerAllowed:
     async def test_get_recordings_is_not_forbidden(
         self,
         client: AsyncClient,
-        viewer_headers: dict[str, str],
+        db_session: AsyncSession,
+        viewer_user: User,
         viewer_member: ProjectMember,
         test_project: Project,
     ) -> None:
-        """GET /projects/{id}/recordings (VIEW_DETECTION) → not 401/403 for Viewer."""
+        """GET /web-api/v1/projects/{id}/recordings (VIEW_DETECTION) → not 401/403 for Viewer.
+
+        W2-3 PR-16: the recording list route was reimplemented on the
+        ``/web-api/v1`` BFF (``list_public_recordings``), so the boundary check
+        uses a seeded CSRF session — a plain Bearer is treated as anonymous on
+        the BFF surface and would 404 the Restricted project before the
+        VIEW_DETECTION gate is observable.
+        """
+        session_headers = await _bff_session_headers(client, db_session, viewer_user)
         response = await client.get(
-            f"/api/v1/projects/{test_project.id}/recordings",
-            headers=viewer_headers,
+            f"/web-api/v1/projects/{test_project.id}/recordings",
+            headers=session_headers,
         )
-        assert response.status_code not in (401, 403), (
-            f"Viewer should not be blocked on GET /recordings, got {response.status_code}"
+        # Strict 200: a broken session would be treated as anonymous and 404
+        # the Restricted project, so "not 401/403" alone could pass without
+        # ever exercising the Viewer gate.
+        assert response.status_code == 200, (
+            f"Viewer should be able to list recordings, got {response.status_code}"
         )
 
     async def test_get_recording_audio_is_not_forbidden(

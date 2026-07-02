@@ -184,12 +184,18 @@ RecordingServiceDep = Annotated[RecordingService, Depends(get_recording_service)
 
 
 # T060: List and search endpoints
-@router.get(
-    "",
-    response_model=RecordingListResponse,
-    summary="List and search recordings",
-    description="List/search recordings across project datasets with pagination and filters",
-)
+#
+# W2-3 PR-16 (2026-07-02): the 6 browser-superseded recording routes
+# (list/get/update/delete/playback/spectrogram) were unmounted from ``/api/v1``
+# in favour of the project-scoped ``/web-api/v1`` BFF surface. The get /
+# playback / spectrogram GETs and the update / delete mutations are served by
+# ``web_v1/projects/_media.py`` + ``_recordings.py`` thin delegates that import
+# these handler bodies as helpers (function-as-helper). The list route has an
+# INDEPENDENT BFF reimplementation (``list_public_recordings`` in
+# ``web_v1/projects/_core.py`` with a different ``PublicRecordingListResponse``
+# shape), so ``list_recordings`` below is dead-but-importable — only its
+# ``@router`` decorator was removed. The audio / stream / download media routes
+# further down KEEP their decorators (deferred to the W2-4 media-token track).
 async def list_recordings(
     project_id: UUID,
     request: Request,
@@ -299,12 +305,6 @@ async def list_recordings(
     )
 
 
-@router.get(
-    "/{recording_id}",
-    response_model=RecordingDetailResponse,
-    summary="Get recording details",
-    description="Get recording by ID with details and relationships",
-)
 async def get_recording(
     project_id: UUID,
     recording_id: UUID,
@@ -397,12 +397,6 @@ async def get_recording(
     return response
 
 
-@router.patch(
-    "/{recording_id}",
-    response_model=RecordingDetailResponse,
-    summary="Update recording",
-    description="Update recording fields (time_expansion, note)",
-)
 async def update_recording(
     project_id: UUID,
     recording_id: UUID,
@@ -510,12 +504,6 @@ async def update_recording(
     return response
 
 
-@router.delete(
-    "/{recording_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete recording",
-    description="Delete recording and associated clips",
-)
 async def delete_recording(
     project_id: UUID,
     recording_id: UUID,
@@ -958,21 +946,6 @@ async def stream_audio_legacy(
 PLAYBACK_TARGET_SAMPLERATE = 48000
 
 
-@router.get(
-    "/{recording_id}/playback",
-    summary="Get playback audio with Range support",
-    description=(
-        "Stream audio for browser playback with HTTP Range support. "
-        "Ultrasonic recordings play back in real time by default: the audio is "
-        "resampled down to ~48 kHz (anti-aliased) so the original duration is "
-        "preserved (content above ~24 kHz is discarded). When an explicit slower "
-        "speed is requested (speed < 1.0), the legacy time-expansion behavior is "
-        "used instead, shifting the full ultrasonic spectrum into the audible "
-        "band (the bat-detector use case). "
-        "Delegates to the /audio endpoint internally. "
-        "Accepts auth via Authorization header or ?token query parameter."
-    ),
-)
 async def get_playback_audio(
     project_id: UUID,
     recording_id: UUID,
@@ -1092,14 +1065,6 @@ async def get_playback_audio(
 
 
 # T063: Spectrogram generation endpoint
-@router.get(
-    "/{recording_id}/spectrogram",
-    summary="Generate spectrogram",
-    description=(
-        "Generate spectrogram image for visualization. "
-        "Accepts auth via Authorization header or ?token query parameter."
-    ),
-)
 async def get_spectrogram(
     project_id: UUID,
     recording_id: UUID,

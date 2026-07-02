@@ -1,6 +1,28 @@
 """Contract tests for recordings API endpoints.
 
 Tests verify that endpoints conform to the data management specification.
+
+W2-3 PR-16 (2026-07-02): the 6 browser-superseded ``/api/v1/projects/{id}/
+recordings*`` routes (list/get/update/delete/playback/spectrogram) were
+unmounted in favour of the project-scoped ``/web-api/v1`` BFF. The get /
+playback / spectrogram GETs and the update / delete mutations are served by
+``web_v1/projects/_media.py`` + ``_recordings.py`` thin delegates; the list
+route has an INDEPENDENT reimplementation (``list_public_recordings`` in
+``web_v1/projects/_core.py``) with a DIFFERENT ``PublicRecordingListResponse``
+shape (``items`` / ``total`` / ``page`` / ``limit`` — no ``page_size`` /
+``pages``) and Guest-aware anti-enumeration semantics.
+
+The BFF sits behind the session + CSRF middleware, so every authenticated
+request routes through a real ``bff_session_headers`` session (``csrf_headers``
+for the owner, ``csrf_headers_other`` for the authenticated non-member 403
+path). A signed-out list request is treated as a Guest by the ``list_public_
+recordings`` handler and collapses to 404 on a Restricted project
+(anti-enumeration, FR-018), NOT 401. The get / update / delete / spectrogram
+BFF adapters require a real session, so their no-auth path stays 401 (auth
+fires before the permission gate).
+
+The audio / stream / download media routes (``TestRecordingAudioEndpoints``)
+KEEP their ``/api/v1`` Bearer semantics — they are not migrated in this PR.
 """
 
 from __future__ import annotations
@@ -222,24 +244,28 @@ class TestRecordingEndpoints:
     async def test_list_recordings_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings - List recordings."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings - List recordings.
+
+        The BFF list reimplementation returns ``PublicRecordingListResponse``
+        (``items`` / ``total`` / ``page`` / ``limit``); it does NOT carry the
+        legacy ``page_size`` / ``pages`` fields of ``RecordingListResponse``.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings",
+            headers=csrf_headers,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
 
-        # Verify response structure matches RecordingListResponse
+        # Verify response structure matches PublicRecordingListResponse
         assert "items" in data
         assert "total" in data
         assert "page" in data
-        assert "page_size" in data
-        assert "pages" in data
+        assert "limit" in data
         assert isinstance(data["items"], list)
 
     async def test_list_recordings_member_includes_metadata(
@@ -314,48 +340,60 @@ class TestRecordingEndpoints:
     async def test_list_recordings_with_filters(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset_for_recordings: Dataset,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings with filters."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings with filters.
+
+        The BFF list uses ``limit`` (not ``page_size``) for the page size, so
+        the pagination assertion is adapted to the public shape.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings",
+            headers=csrf_headers,
             params={
                 "page": 1,
-                "page_size": 20,
+                "limit": 20,
                 "dataset_id": str(test_dataset_for_recordings.id),
                 "sort_by": "datetime",
                 "sort_order": "desc",
             },
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
         assert data["page"] == 1
-        assert data["page_size"] == 20
+        assert data["limit"] == 20
 
-    async def test_list_recordings_unauthorized(
+    async def test_list_recordings_guest_restricted_not_found(
         self,
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings requires authentication."""
-        response = await client.get(f"/api/v1/projects/{test_project_id}/recordings")
+        """Test GET /web-api/v1/projects/{project_id}/recordings as a signed-out Guest.
 
-        assert response.status_code == 401
+        The BFF ``list_public_recordings`` handler treats a signed-out request
+        as a Guest (``OptionalCurrentUser``). On a RESTRICTED project (the
+        ``test_project`` default) the Guest is collapsed to 404 for
+        anti-enumeration (FR-018) rather than the legacy 401 — auth is optional
+        on this read surface, so the semantics shift from "requires auth" to
+        "invisible to outsiders".
+        """
+        response = await client.get(f"/web-api/v1/projects/{test_project_id}/recordings")
+
+        assert response.status_code == 404
 
     async def test_list_recordings_no_access(
         self,
         client: AsyncClient,
-        auth_headers_other: dict[str, str],
+        csrf_headers_other: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings without project access."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings without project access."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings",
-            headers=auth_headers_other,
+            f"/web-api/v1/projects/{test_project_id}/recordings",
+            headers=csrf_headers_other,
         )
 
         assert response.status_code == 403
@@ -363,17 +401,17 @@ class TestRecordingEndpoints:
     async def test_get_recording_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id} - Get recording."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id} - Get recording."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
+            headers=csrf_headers,
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         data = response.json()
 
         # Verify response structure matches RecordingDetailResponse
@@ -390,14 +428,14 @@ class TestRecordingEndpoints:
     async def test_get_recording_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -407,10 +445,10 @@ class TestRecordingEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}"
         )
 
         assert response.status_code == 401
@@ -418,19 +456,19 @@ class TestRecordingEndpoints:
     async def test_update_recording_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id} - Update recording."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id} - Update recording."""
         update_data = {
             "time_expansion": 10.0,
             "note": "Updated recording note",
         }
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -442,16 +480,16 @@ class TestRecordingEndpoints:
     async def test_update_recording_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         update_data = {"note": "Test note"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}",
+            headers=csrf_headers,
             json=update_data,
         )
 
@@ -463,11 +501,11 @@ class TestRecordingEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test PATCH /api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
+        """Test PATCH /web-api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
         update_data = {"note": "Test note"}
 
         response = await client.patch(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}",
             json=update_data,
         )
 
@@ -476,12 +514,12 @@ class TestRecordingEndpoints:
     async def test_delete_recording_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         db_session: AsyncSession,
         test_dataset_for_recordings: Dataset,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id} - Delete recording."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id} - Delete recording."""
         # Create a recording to delete
         recording = Recording(
             dataset_id=test_dataset_for_recordings.id,
@@ -500,30 +538,30 @@ class TestRecordingEndpoints:
 
         # Delete the recording
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{recording_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{recording_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 204
 
         # Verify recording is deleted
         get_response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{recording_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{recording_id}",
+            headers=csrf_headers,
         )
         assert get_response.status_code == 404
 
     async def test_delete_recording_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id} with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -533,10 +571,10 @@ class TestRecordingEndpoints:
         client: AsyncClient,
         test_project_id: str,
     ) -> None:
-        """Test DELETE /api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
+        """Test DELETE /web-api/v1/projects/{project_id}/recordings/{recording_id} requires authentication."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}"
         )
 
         assert response.status_code == 401
@@ -603,14 +641,14 @@ class TestRecordingAudioEndpoints:
     async def test_get_spectrogram_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram - Get spectrogram."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram - Get spectrogram."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram",
+            headers=csrf_headers,
             params={
                 "start": 0,
                 "end": 5,
@@ -627,14 +665,14 @@ class TestRecordingAudioEndpoints:
     async def test_get_spectrogram_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}/spectrogram",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}/spectrogram",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -645,35 +683,31 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram requires authentication.
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram requires authentication.
 
-        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9
-        adopted the canonical permission matrix where Guest callers
-        on a Restricted project (the ``test_project`` fixture default)
-        receive 403 (``action denied``) for the spectrogram endpoint —
-        the visibility gate has already passed (Restricted projects
-        are *visible* to Guests on metadata) but the spectrogram action
-        is denied. The legacy 401 expectation predates the matrix.
-        Asserting 403 here pins the canonical behaviour without
-        widening the auth-vs-authz semantics of any other endpoint.
+        The BFF spectrogram adapter authenticates via ``CurrentUser`` (session
+        cookie / Bearer), NOT the legacy ``FlexibleCurrentUser`` query-token
+        path. A signed-out request is therefore rejected at the auth layer with
+        401 before the permission gate runs, so the legacy 401/403 dual
+        expectation collapses to a plain 401 on the BFF surface.
         """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram"
         )
 
-        assert response.status_code in (401, 403)
+        assert response.status_code == 401
 
     async def test_get_spectrogram_with_parameters(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram with custom parameters."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/spectrogram with custom parameters."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/spectrogram",
+            headers=csrf_headers,
             params={
                 "start": 0,
                 "end": 10,
