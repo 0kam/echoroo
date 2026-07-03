@@ -15,7 +15,6 @@ import pytest
 from fastapi import HTTPException, status
 
 from echoroo.api.v1.auth import (
-    login,
     logout,
     refresh,
     register,
@@ -48,42 +47,8 @@ async def test_register_delegates_to_auth_service() -> None:
     auth_service.register.assert_called_once()
 
 
-@pytest.mark.asyncio
-async def test_login_sets_cookie_and_returns_token() -> None:
-    """login() calls auth_service.login, sets cookie, and returns token (lines 107-124)."""
-    fake_token = MagicMock()
-    fake_refresh = "refresh_token_value"
-
-    auth_service = MagicMock()
-    auth_service.login = AsyncMock(return_value=(fake_token, fake_refresh))
-
-    http_request = MagicMock()
-    http_request.client = MagicMock()
-    http_request.client.host = "127.0.0.1"
-    http_request.headers = {"user-agent": "test-agent"}
-
-    response = MagicMock()
-    response.set_cookie = MagicMock()
-    db = MagicMock()
-    request = MagicMock()
-
-    with (
-        patch("echoroo.api.v1.auth.AuthService", return_value=auth_service),
-        patch("echoroo.api.v1.auth.settings") as mock_settings,
-    ):
-        mock_settings.ENVIRONMENT = "test"
-        mock_settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS = 30
-
-        result = await login(
-            request=request,
-            response=response,
-            http_request=http_request,
-            db=db,
-            _rate_limit=None,
-        )
-
-    assert result is fake_token
-    response.set_cookie.assert_called_once()
+# W2-3 login PR (Option C): test_login_sets_cookie_and_returns_token was
+# deleted together with the legacy v1 login handler it exercised.
 
 
 @pytest.mark.asyncio

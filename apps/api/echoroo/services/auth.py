@@ -15,7 +15,6 @@ from echoroo.core.settings import get_settings
 from echoroo.models.user import User
 from echoroo.repositories.user import UserRepository
 from echoroo.schemas.auth import (
-    LoginRequest,
     TokenResponse,
     UserRegisterRequest,
 )
@@ -137,24 +136,10 @@ class AuthService:
         del request, client_ip
         _raise_phase4_stub()
 
-    async def login(
-        self, request: LoginRequest, client_ip: str, user_agent: str | None = None
-    ) -> tuple[TokenResponse, str]:
-        """Authenticate user and generate tokens.
-
-        Args:
-            request: Login credentials
-            client_ip: Client IP address
-            user_agent: User agent string
-
-        Returns:
-            Tuple of (TokenResponse, refresh_token)
-
-        Raises:
-            HTTPException: If credentials invalid, account locked, or rate limited
-        """
-        del request, client_ip, user_agent
-        _raise_phase4_stub()
+    # W2-3 login PR (Option C): the Phase-4 ``login()`` stub (always HTTP
+    # 501) was deleted together with its only caller, the legacy
+    # ``POST /api/v1/auth/login`` route. First-party login lives on
+    # ``POST /web-api/v1/auth/login`` (api/web_v1/auth.py).
 
     async def logout(self, user_id: UUID) -> None:
         """Logout user by revoking all active tokens via Redis.
