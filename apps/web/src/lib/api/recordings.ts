@@ -10,11 +10,10 @@ import type {
 } from '$lib/types/data';
 import { apiClient } from './client';
 
-const API_BASE = '/api/v1';
 const WEB_API_BASE = '/web-api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
-export type RecordingMediaScope = 'audio' | 'playback' | 'spectrogram';
+export type RecordingMediaScope = 'audio' | 'playback' | 'spectrogram' | 'download';
 
 export interface RecordingMediaTokenResponse {
   token: string;
@@ -235,8 +234,16 @@ export function getSpectrogramUrl(
 }
 
 /**
- * Get URL for downloading the original audio file.
+ * Build an authenticated same-origin BFF URL for downloading the original file.
+ *
+ * W2-4 PR-A moved the download route to the ``/web-api/v1`` BFF media-token
+ * surface. Native anchor downloads cannot send an Authorization header, so this
+ * issues a short-lived download-scoped media token and appends it to the URL.
  */
-export function getDownloadUrl(projectId: string, recordingId: string): string {
-  return `${API_BASE}/projects/${projectId}/recordings/${recordingId}/download`;
+export async function getAuthenticatedRecordingDownloadUrl(
+  projectId: string,
+  recordingId: string
+): Promise<string> {
+  const url = `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/download`;
+  return getAuthenticatedRecordingMediaUrl(projectId, recordingId, 'download', url);
 }

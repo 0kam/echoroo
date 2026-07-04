@@ -29,9 +29,11 @@
 # required). ``dispatch_sampling`` (POST ``/{set_id}/sample``) stays mounted and
 # unguarded, so its entry is retained below.
 apps/api/echoroo/api/v1/annotation_sets.py:dispatch_sampling:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:download_clip:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:get_clip_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/clips.py:get_clip_spectrogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# W2-4 PR-A: the three ``api/v1/clips.py`` media routes (audio / spectrogram /
+# download) were unmounted (now helpers). ``download_clip`` is delegated to by
+# the ``/web-api/v1`` BFF (``_media.py:download_clip``, which gate_action-guards
+# itself). ``get_clip_audio`` / ``get_clip_spectrogram`` have no BFF twin. The
+# routes are gone, so all three dead fingerprints were dropped here.
 apps/api/echoroo/api/v1/confirmed_regions.py:create_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:delete_confirmed_region:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/confirmed_regions.py:list_confirmed_regions:missing-permission-guard  # legacy: Phase 3 US11 T1xx
@@ -69,9 +71,11 @@ apps/api/echoroo/api/v1/projects.py:update_project_member_role:missing-permissio
 # delete/playback/spectrogram) were unmounted from ``/api/v1``; their dead
 # fingerprints (get_recording/update_recording/delete_recording/
 # get_playback_audio/get_spectrogram; list_recordings had no entry) were
-# dropped. The audio / stream / download media routes stay mounted and
-# unguarded, so their entries are retained below.
-apps/api/echoroo/api/v1/recordings.py:download_recording:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# dropped. The audio / stream media routes stay mounted and unguarded, so their
+# entries are retained below.
+# W2-4 PR-A: the ``download`` route was unmounted (now a helper delegated to by
+# the ``/web-api/v1`` BFF ``_media.py:download_recording``, which gate_action-
+# guards itself), so its dead ``download_recording`` fingerprint was dropped.
 apps/api/echoroo/api/v1/recordings.py:stream_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/recordings.py:stream_audio_legacy:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 # W2-3 PR-18: the 10 browser-superseded ``api/v1/search/sessions.py`` routes

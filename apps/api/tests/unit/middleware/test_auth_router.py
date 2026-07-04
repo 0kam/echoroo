@@ -66,6 +66,15 @@ def _build_app(config: AuthRouterConfig) -> TestClient:
                 "/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
                 echo,
             ),
+            Route(
+                "/web-api/v1/projects/{project_id}/recordings/{recording_id}/download",
+                echo,
+            ),
+            Route(
+                "/web-api/v1/projects/{project_id}/recordings/{recording_id}"
+                "/clips/{clip_id}/download",
+                echo,
+            ),
             Route("/health", echo),
         ]
     )
@@ -200,7 +209,8 @@ def test_web_api_media_get_accepts_scoped_media_token() -> None:
         user_id=user_id,
         security_stamp=stamp,
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope="playback",
         now=datetime.now(UTC),
     )
@@ -256,7 +266,8 @@ def test_web_api_media_get_rejects_wrong_media_scope() -> None:
         user_id=user_id,
         security_stamp=stamp,
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope="audio",
         now=datetime.now(UTC),
     )
@@ -269,6 +280,264 @@ def test_web_api_media_get_rejects_wrong_media_scope() -> None:
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_recording_download_accepts_download_scoped_token() -> None:
+    """The recording download surface accepts a download-scoped media token."""
+    user_id = uuid4()
+    stamp = "f" * 64
+    session_id = "sess-dl"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="download",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auth_kind"] == "session"
+
+
+def test_web_api_recording_download_rejects_playback_scoped_token() -> None:
+    """A playback token must not authenticate the download surface (fixed scope)."""
+    user_id = uuid4()
+    stamp = "g" * 64
+    session_id = "sess-dl-scope"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_clip_download_accepts_clip_scoped_token() -> None:
+    """The clip download surface accepts a clip-bound download token."""
+    user_id = uuid4()
+    stamp = "h" * 64
+    session_id = "sess-clip-dl"
+    project_id = uuid4()
+    recording_id = uuid4()
+    clip_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+        parent_id=recording_id,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}"
+        f"/clips/{clip_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auth_kind"] == "session"
+
+
+def test_web_api_clip_download_rejects_token_under_other_recording() -> None:
+    """A clip token is bound to its parent recording path segment."""
+    user_id = uuid4()
+    stamp = "m" * 64
+    session_id = "sess-clip-parent"
+    project_id = uuid4()
+    recording_id = uuid4()
+    other_recording_id = uuid4()
+    clip_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+        parent_id=recording_id,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{other_recording_id}"
+        f"/clips/{clip_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_clip_download_rejects_recording_scoped_token() -> None:
+    """A recording token cannot authenticate the clip download surface."""
+    user_id = uuid4()
+    stamp = "i" * 64
+    session_id = "sess-clip-rtype"
+    project_id = uuid4()
+    recording_id = uuid4()
+    clip_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    # Recording-scoped download token whose resource id happens to equal the
+    # clip id — the resource_type mismatch (recording vs clip) must still reject.
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=clip_id,
+        scope="download",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}"
+        f"/clips/{clip_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_clip_download_rejects_token_for_other_clip() -> None:
+    """A clip token for clip X must not authenticate clip Y's download."""
+    user_id = uuid4()
+    stamp = "j" * 64
+    session_id = "sess-clip-x"
+    project_id = uuid4()
+    recording_id = uuid4()
+    clip_x = uuid4()
+    clip_y = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_x,
+        scope="download",
+        parent_id=recording_id,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}"
+        f"/clips/{clip_y}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_media_get_rejects_duplicate_media_token_param() -> None:
+    """A duplicated ``media_token`` query param is rejected (ambiguous)."""
+    user_id = uuid4()
+    stamp = "k" * 64
+    session_id = "sess-dup"
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    # Two media_token params: the matcher must refuse to pick one, so it falls
+    # back to the cookie/Bearer chain, which has no access token -> 401.
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback"
+        f"?media_token={token}&media_token={token}",
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"
+
+
+def test_web_api_media_get_ignores_non_uuid_path_ids() -> None:
+    """Non-UUID path ids do not match the media matcher (falls back to auth)."""
+    user_id = uuid4()
+    stamp = "l" * 64
+    session_id = "sess-badid"
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=uuid4(),
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    # ``not-a-uuid`` as the recording id: the matcher rejects it, so the media
+    # token is ignored and the request falls back to the (missing) access token.
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/not-a-uuid/playback",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"
 
 
 def test_public_path_allowlist_skips_auth() -> None:

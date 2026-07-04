@@ -14,8 +14,17 @@ stay at 401 (auth fires before the permission gate). Clip writes gate on
 ``MANAGE_DATASET`` which MEMBER holds, so the owner session reaches 2xx (there
 is no member-403 case, unlike datasets).
 
-The audio / spectrogram / download media routes (``TestClipAudioEndpoints``)
-KEEP their ``/api/v1`` Bearer semantics — they are not migrated in this PR.
+W2-4 PR-A (2026-07-04): the three ``/api/v1`` clip media routes (audio /
+spectrogram / download) were unmounted in favour of the ``/web-api/v1`` BFF
+media-token surface. The clip download route now lives at
+``/web-api/v1/projects/{id}/recordings/{rid}/clips/{cid}/download`` and is
+authenticated either by the session (``csrf_headers``) or by a clip-scoped
+media token issued from
+``POST /web-api/v1/.../clips/{cid}/media-token`` (``scope="download"``). The
+former clip audio / spectrogram GETs had no BFF twin — clip audio/spectrogram
+ride the recording-level playback / spectrogram BFF with clip start/end bounds
+(covered by ``test_projects_recordings_media.py``) — so their v1-only contract
+tests were removed here.
 """
 
 from datetime import UTC, datetime
@@ -616,71 +625,68 @@ class TestClipGenerateEndpoint:
 
 
 @pytest.mark.asyncio
-class TestClipAudioEndpoints:
-    """Test clip audio endpoints."""
+class TestClipDownloadEndpoint:
+    """Test the clip download BFF endpoint + its clip-scoped media token.
 
-    async def test_get_clip_audio_success(
+    W2-4 PR-A migrated the clip download route from ``/api/v1`` to the
+    ``/web-api/v1`` BFF media-token surface. The former clip audio /
+    spectrogram GETs had no BFF twin (they are served by the recording-level
+    playback / spectrogram BFF with clip start/end bounds — see
+    ``test_projects_recordings_media.py``), so only the download surface is
+    covered here.
+    """
+
+    async def test_issue_clip_download_media_token_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/audio - Get clip audio."""
-        response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/audio",
-            headers=auth_headers,
+        """POST clips/{clip_id}/media-token issues a clip-scoped download token."""
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}"
+            f"/clips/{test_clip.id}/media-token",
+            headers=csrf_headers,
+            json={"scope": "download"},
         )
 
-        # Note: May return 404 or 400 if audio file doesn't exist
-        assert response.status_code in [200, 400, 404]
-        if response.status_code == 200:
-            assert response.headers["content-type"] == "audio/wav"
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["token"]
+        assert body["expires_in"] > 0
 
-    async def test_get_clip_audio_unauthorized(
+    async def test_issue_clip_download_media_token_rejects_bad_scope(
         self,
         client: AsyncClient,
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/audio requires authentication."""
-        response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/audio"
+        """The clip media-token endpoint only accepts scope="download"."""
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}"
+            f"/clips/{test_clip.id}/media-token",
+            headers=csrf_headers,
+            json={"scope": "playback"},
         )
 
-        assert response.status_code == 401
+        assert response.status_code == 422
 
-    async def test_get_clip_spectrogram_success(
-        self,
-        client: AsyncClient,
-        auth_headers: dict[str, str],
-        test_project_id: str,
-        test_recording_for_clips: Recording,
-        test_clip: Clip,
-    ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/spectrogram - Get spectrogram."""
-        response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/spectrogram",
-            headers=auth_headers,
-        )
-
-        # Note: May return 404 or 400 if audio file doesn't exist
-        assert response.status_code in [200, 400, 404]
-        if response.status_code == 200:
-            assert response.headers["content-type"] == "image/png"
-
-    async def test_get_clip_spectrogram_unauthorized(
+    async def test_issue_clip_download_media_token_unauthorized(
         self,
         client: AsyncClient,
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/spectrogram requires authentication."""
-        response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/spectrogram"
+        """The clip media-token endpoint requires a session (401 when absent)."""
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}"
+            f"/clips/{test_clip.id}/media-token",
+            json={"scope": "download"},
         )
 
         assert response.status_code == 401
@@ -688,18 +694,19 @@ class TestClipAudioEndpoints:
     async def test_download_clip_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/download - Download clip."""
+        """GET clips/{clip_id}/download streams the clip WAV (session-authed)."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/download",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}"
+            f"/clips/{test_clip.id}/download",
+            headers=csrf_headers,
         )
 
-        # Note: May return 404 or 400 if audio file doesn't exist
+        # Note: May return 404 or 400 if the audio file doesn't exist in test env.
         assert response.status_code in [200, 400, 404]
         if response.status_code == 200:
             assert response.headers["content-type"] == "audio/wav"
@@ -713,9 +720,33 @@ class TestClipAudioEndpoints:
         test_recording_for_clips: Recording,
         test_clip: Clip,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/download requires authentication."""
+        """GET clips/{clip_id}/download requires a session (401 when absent).
+
+        The BFF adapter authenticates via ``CurrentUser`` (session cookie /
+        Bearer / clip-scoped media token), so a signed-out request is rejected
+        at the auth layer before the permission gate runs.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}/clips/{test_clip.id}/download"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording_for_clips.id}"
+            f"/clips/{test_clip.id}/download"
         )
 
         assert response.status_code == 401
+
+
+def test_v1_clip_media_routes_unmounted() -> None:
+    """The legacy /api/v1 clip media routes must stay unmounted (W2-4 PR-A).
+
+    Guards against a decorator or ``include_router`` reappearing for the
+    superseded surfaces: clip audio / spectrogram / download now live behind
+    the ``/web-api/v1`` media-token BFF only.
+    """
+    from echoroo.main import create_app
+
+    paths = create_app().openapi()["paths"]
+    prefix = "/api/v1/projects/{project_id}/recordings/{recording_id}/clips"
+    assert f"{prefix}/{{clip_id}}/audio" not in paths
+    assert f"{prefix}/{{clip_id}}/spectrogram" not in paths
+    assert f"{prefix}/{{clip_id}}/download" not in paths
+    # The whole v1 clips router is helper-only now: no /api/v1 clip route at all.
+    assert not any(p.startswith(prefix) for p in paths)

@@ -2,7 +2,12 @@
   import { page } from '$app/stores';
   import { browser } from '$app/environment';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { getRecording, updateRecording, deleteRecording, getDownloadUrl } from '$lib/api/recordings';
+  import {
+    getRecording,
+    updateRecording,
+    deleteRecording,
+    getAuthenticatedRecordingDownloadUrl,
+  } from '$lib/api/recordings';
   import { goto } from '$app/navigation';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import AudioPlayer from '$lib/components/audio/AudioPlayer.svelte';
@@ -244,6 +249,22 @@
     }
   }
 
+  let isDownloading = $state(false);
+
+  async function handleDownload(event: MouseEvent) {
+    // Native anchors cannot send Authorization; issue a scoped media token
+    // and navigate to the tokenized BFF download URL instead.
+    event.preventDefault();
+    if (isDownloading) return;
+    isDownloading = true;
+    try {
+      const url = await getAuthenticatedRecordingDownloadUrl(projectId, recordingId);
+      window.location.assign(url);
+    } finally {
+      isDownloading = false;
+    }
+  }
+
   function handleClipSelect(clip: Clip) {
     selectedClip = clip;
   }
@@ -337,9 +358,11 @@
       <!-- Action buttons -->
       <div class="flex gap-2">
         <a
-          href={getDownloadUrl(projectId, recordingId)}
+          href="#download"
           download={recording.filename}
-          class="action-btn"
+          onclick={handleDownload}
+          aria-disabled={isDownloading}
+          class="action-btn aria-disabled:opacity-60 aria-disabled:pointer-events-none"
           title="Download original file"
         >
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -1164,11 +1164,13 @@ async def get_spectrogram(
 
 
 # T064: Download endpoint
-@router.get(
-    "/{recording_id}/download",
-    summary="Download recording",
-    description="Download original audio file",
-)
+#
+# W2-4 PR-A (2026-07-04): the browser-superseded recording download route was
+# unmounted from ``/api/v1`` in favour of the ``/web-api/v1`` BFF media-token
+# surface. The handler body stays as an importable helper delegated to by
+# ``echoroo.api.web_v1.projects._media.download_recording``; only the route
+# decorator is removed here. The ``/audio`` and ``/stream`` media routes stay
+# mounted (later PR).
 async def download_recording(
     project_id: UUID,
     recording_id: UUID,

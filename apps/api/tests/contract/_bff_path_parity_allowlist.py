@@ -252,4 +252,14 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/search/jobs/{job_id} GET",
     "/web-api/v1/projects/{project_id}/search/embedding-stats GET",
     "/web-api/v1/projects/{project_id}/annotations POST",
+    # W2-4 PR-A — download-type media endpoints: the browser-superseded
+    # ``/api/v1/.../recordings/{rid}/download`` and
+    # ``/api/v1/.../recordings/{rid}/clips/{cid}/download`` routes were unmounted
+    # in favour of the ``/web-api/v1`` BFF media-token surface. The recording
+    # media-token endpoint (already declared) now issues recording-scoped tokens
+    # for all four scopes; a new clip-scoped download media-token endpoint is
+    # added for native anchor downloads.
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/download GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/download GET",
+    "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/media-token POST",
 ]

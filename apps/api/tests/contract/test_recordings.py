@@ -21,8 +21,13 @@ recordings`` handler and collapses to 404 on a Restricted project
 BFF adapters require a real session, so their no-auth path stays 401 (auth
 fires before the permission gate).
 
-The audio / stream / download media routes (``TestRecordingAudioEndpoints``)
-KEEP their ``/api/v1`` Bearer semantics — they are not migrated in this PR.
+The audio / stream media routes (``TestRecordingAudioEndpoints``) KEEP their
+``/api/v1`` Bearer semantics — they are not migrated in this PR.
+
+W2-4 PR-A (2026-07-04): the recording download route was migrated to the
+``/web-api/v1`` BFF media-token surface (``_media.py:download_recording``), so
+``test_download_recording_*`` now exercise the BFF path (session-authed via
+``csrf_headers``); the no-auth case collapses to a plain 401.
 """
 
 from __future__ import annotations
@@ -729,14 +734,19 @@ class TestRecordingAudioEndpoints:
     async def test_download_recording_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/download - Download recording."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/download.
+
+        W2-4 PR-A migrated the recording download route to the ``/web-api/v1``
+        BFF media-token surface; it is authenticated by the session
+        (``csrf_headers``) or a download-scoped recording media token.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/download",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/download",
+            headers=csrf_headers,
         )
 
         # Note: May return 404 if audio file doesn't exist
@@ -751,9 +761,28 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/download requires authentication."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/download requires auth.
+
+        The BFF adapter authenticates via ``CurrentUser`` (session cookie /
+        Bearer / download-scoped media token), so a signed-out request is
+        rejected at the auth layer with 401 before the permission gate runs.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/download"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/download"
         )
 
         assert response.status_code == 401
+
+
+def test_v1_recording_download_route_unmounted() -> None:
+    """The legacy /api/v1 recording download route must stay unmounted (W2-4 PR-A).
+
+    Only the download surface moved in PR-A; the v1 audio + stream routes are
+    still mounted until their own migration PR lands.
+    """
+    from echoroo.main import create_app
+
+    paths = create_app().openapi()["paths"]
+    base = "/api/v1/projects/{project_id}/recordings/{recording_id}"
+    assert f"{base}/download" not in paths
+    assert f"{base}/audio" in paths

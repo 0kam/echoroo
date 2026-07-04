@@ -370,11 +370,17 @@ async def generate_clips(
 
 
 # T078: Audio/spectrogram/download endpoints
-@router.get(
-    "/{clip_id}/audio",
-    summary="Get clip audio",
-    description="Get clip audio resampled for browser playback",
-)
+#
+# W2-4 PR-A (2026-07-04): the three browser-superseded clip media routes
+# (audio / spectrogram / download) were unmounted from ``/api/v1`` in favour of
+# the ``/web-api/v1`` BFF media-token surface. The handler bodies stay as
+# importable helpers: ``download_clip`` is delegated to by
+# ``echoroo.api.web_v1.projects._media.download_clip``; ``get_clip_audio`` and
+# ``get_clip_spectrogram`` have no BFF twin (clip audio/spectrogram ride the
+# recording-level playback / spectrogram BFF with clip start/end bounds) and are
+# retained only for reference / any residual internal callers. This file now has
+# ZERO route decorators, so its ``include_router`` was removed from
+# ``echoroo.api.v1.__init__``.
 async def get_clip_audio(
     project_id: UUID,
     recording_id: UUID,
@@ -445,11 +451,6 @@ async def get_clip_audio(
         raise HTTPException(status_code=400, detail=f"Audio processing error: {str(e)}") from e
 
 
-@router.get(
-    "/{clip_id}/spectrogram",
-    summary="Get clip spectrogram",
-    description="Generate spectrogram image for clip",
-)
 async def get_clip_spectrogram(
     project_id: UUID,
     recording_id: UUID,
@@ -539,11 +540,6 @@ async def get_clip_spectrogram(
         ) from e
 
 
-@router.get(
-    "/{clip_id}/download",
-    summary="Download clip",
-    description="Download clip as WAV file",
-)
 async def download_clip(
     project_id: UUID,
     recording_id: UUID,

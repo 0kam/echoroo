@@ -17,10 +17,10 @@ import { apiClient } from './client';
 import { getAuthenticatedRecordingMediaUrl, getPlaybackUrl, getSpectrogramUrl } from './recordings';
 
 // spec/009 PR 3a: write surface (create / update / delete / generate)
-// migrated to ``/web-api/v1`` (cookie + CSRF). Audio / spectrogram /
-// download URL builders below still target ``/api/v1`` — they ride the
-// media-token scoped-token pattern and are tracked separately.
-const API_BASE = '/api/v1';
+// migrated to ``/web-api/v1`` (cookie + CSRF). W2-4 PR-A finished the media
+// surface: clip audio / spectrogram ride the recording-level playback /
+// spectrogram BFF, and clip download uses the ``/web-api/v1`` clip-scoped
+// media-token pattern — no builder targets ``/api/v1`` anymore.
 const WEB_API_BASE = '/web-api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
@@ -145,48 +145,6 @@ export async function generateClips(
 }
 
 /**
- * Get URL for clip audio playback with optional speed adjustment.
- */
-export function getClipAudioUrl(
-  projectId: string,
-  recordingId: string,
-  clipId: string,
-  speed?: number
-): string {
-  const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}/audio`,
-    window.location.origin
-  );
-  if (speed) url.searchParams.append('speed', speed.toString());
-  return url.toString();
-}
-
-/**
- * Get URL for clip spectrogram image.
- */
-export function getClipSpectrogramUrl(
-  projectId: string,
-  recordingId: string,
-  clipId: string,
-  params?: {
-    n_fft?: number;
-    colormap?: string;
-    width?: number;
-    height?: number;
-  }
-): string {
-  const url = new URL(
-    `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}/spectrogram`,
-    window.location.origin
-  );
-  if (params?.n_fft) url.searchParams.append('n_fft', params.n_fft.toString());
-  if (params?.colormap) url.searchParams.append('colormap', params.colormap);
-  if (params?.width) url.searchParams.append('width', params.width.toString());
-  if (params?.height) url.searchParams.append('height', params.height.toString());
-  return url.toString();
-}
-
-/**
  * Get an authenticated same-origin BFF URL for clip audio playback.
  *
  * Native <audio> cannot send Authorization headers, so this reuses the
@@ -227,8 +185,27 @@ export async function getAuthenticatedClipSpectrogramUrl(
 }
 
 /**
- * Get URL for downloading clip audio file.
+ * Build an authenticated same-origin BFF URL for downloading a clip WAV.
+ *
+ * W2-4 PR-A moved the clip download route to the ``/web-api/v1`` BFF
+ * media-token surface. Native anchor downloads cannot send an Authorization
+ * header, so this issues a short-lived clip-scoped download media token and
+ * appends it to the download URL.
  */
-export function getClipDownloadUrl(projectId: string, recordingId: string, clipId: string): string {
-  return `${API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}/download`;
+export async function getAuthenticatedClipDownloadUrl(
+  projectId: string,
+  recordingId: string,
+  clipId: string
+): Promise<string> {
+  const { token } = await apiClient.post<{ token: string; expires_in: number }>(
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}/media-token`,
+    { scope: 'download' },
+    { headers: csrfHeaders() }
+  );
+  const url = new URL(
+    `${WEB_API_BASE}/projects/${projectId}/recordings/${recordingId}/clips/${clipId}/download`,
+    window.location.origin
+  );
+  url.searchParams.set('media_token', token);
+  return url.pathname + url.search;
 }
