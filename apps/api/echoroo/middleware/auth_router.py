@@ -148,6 +148,19 @@ _MEDIA_PATH_RULES: Final[tuple[_MediaPathRule, ...]] = (
         resource_type="recording",
         fixed_scope="download",
     ),
+    # Search-session reference audio: resource id is the session id, scope is
+    # fixed to "audio" (it is audio streaming). The trailing numeric
+    # ``source_index`` binds the token to one entry of the session's
+    # ``reference_audio_keys`` list — a non-numeric segment does not match this
+    # rule (falls through to the cookie/Bearer chain).
+    _MediaPathRule(
+        pattern=re.compile(
+            r"/web-api/v1/projects/(?P<project>[^/]+)/search/sessions/(?P<resource>[^/]+)"
+            r"/reference-audio/(?P<index>\d+)"
+        ),
+        resource_type="search_session",
+        fixed_scope="audio",
+    ),
 )
 
 
@@ -645,7 +658,15 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
         media_request = self._extract_media_query_token(request)
         if media_request is not None:
-            media_token, project_id, resource_type, resource_id, scope, parent_id = media_request
+            (
+                media_token,
+                project_id,
+                resource_type,
+                resource_id,
+                scope,
+                parent_id,
+                source_index,
+            ) = media_request
             try:
                 media_claims: MediaTokenClaims = verify_media_token(
                     media_token,
@@ -655,6 +676,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                     resource_id=resource_id,
                     scope=scope,
                     parent_id=parent_id,
+                    source_index=source_index,
                 )
             except StaleTokenError:
                 return _auth_failure(
@@ -708,7 +730,10 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _extract_media_query_token(
         request: Request,
-    ) -> tuple[str, UUID, MediaResourceType, UUID, MediaTokenScope, UUID | None] | None:
+    ) -> (
+        tuple[str, UUID, MediaResourceType, UUID, MediaTokenScope, UUID | None, int | None]
+        | None
+    ):
         """Allow native media/image elements to authenticate BFF media GETs.
 
         Native ``<audio>`` / ``<img>`` / anchor download elements cannot send
@@ -752,6 +777,8 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             resource_id = UUID(match.group("resource"))
             raw_parent = match.groupdict().get("parent")
             parent_id = UUID(raw_parent) if raw_parent is not None else None
+            raw_index = match.groupdict().get("index")
+            source_index = int(raw_index) if raw_index is not None else None
         except (TypeError, ValueError):
             return None
 
@@ -763,7 +790,15 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 return None
             scope = cast(MediaTokenScope, leaf)
 
-        return token.strip(), project_id, rule.resource_type, resource_id, scope, parent_id
+        return (
+            token.strip(),
+            project_id,
+            rule.resource_type,
+            resource_id,
+            scope,
+            parent_id,
+            source_index,
+        )
 
 
 def _resolve_client_ip(

@@ -32,7 +32,7 @@
 import { onDestroy } from 'svelte';
 import * as m from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
-import { getSearchSession, getReferenceAudioUrl } from '$lib/api/search';
+import { getSearchSession, getAuthenticatedReferenceAudioUrl } from '$lib/api/search';
 import { fetchCustomModels } from '$lib/api/custom-models';
 import { generateId } from '$lib/utils/id';
 import {
@@ -131,7 +131,10 @@ export function useSessionReconstruction(
               const xcId = src['xc_id'] as string | undefined;
 
               if (s3Key && data.reference_audio_keys) {
-                // S3-persisted source (uploaded files).
+                // S3-persisted source (uploaded files). ``streamUrl`` is
+                // resolved in a second async pass below because the BFF
+                // reference-audio stream is now authenticated with a scoped
+                // media token (see getAuthenticatedReferenceAudioUrl).
                 const keyIndex = data.reference_audio_keys.indexOf(s3Key);
                 if (keyIndex >= 0) {
                   const fileKey = src['file_key'] as string | undefined;
@@ -139,7 +142,6 @@ export function useSessionReconstruction(
                     id: generateId(),
                     origin: 's3' as const,
                     label: fileKey ?? `Source ${keyIndex + 1}`,
-                    streamUrl: getReferenceAudioUrl(pid, sid, keyIndex),
                     sourceIndex: keyIndex,
                     start_time: src['start_time'] as number | undefined,
                     end_time: src['end_time'] as number | undefined,
@@ -177,6 +179,30 @@ export function useSessionReconstruction(
             sources: speciesSources,
           });
         }
+
+        // Second pass: resolve authenticated stream URLs for every S3-backed
+        // source. Each URL carries a short-lived scoped media token, so the
+        // token endpoint is hit once per source here (mirrors the clip download
+        // flow). Runs after every `await` re-checks `isStale` so a navigation
+        // mid-resolution never corrupts the newer session's state.
+        await Promise.all(
+          loaded.flatMap((sp) =>
+            sp.sources
+              .filter((s) => s.origin === 's3' && s.sourceIndex !== undefined)
+              .map(async (s) => {
+                try {
+                  s.streamUrl = await getAuthenticatedReferenceAudioUrl(
+                    pid,
+                    sid,
+                    s.sourceIndex as number,
+                  );
+                } catch {
+                  // Non-critical — leave streamUrl unset; SourceCard degrades.
+                }
+              }),
+          ),
+        );
+        if (isStale(capturedPid, capturedSid)) return;
 
         reconstructedSpecies = loaded;
       }

@@ -26,6 +26,11 @@ reads included — uses a session-bound token: the contract app treats a plain
 Bearer as anonymous on the ``/web-api/v1`` BFF surface (the PR-8+ rule), so
 owner reads use ``csrf_headers`` and cross-tenant reads use
 ``csrf_headers_other``. Unauthenticated (no-header) 401 cases are unchanged.
+
+W2-4 PR-B: the last remaining v1 search KEEP route
+(``GET /sessions/{session_id}/reference-audio/{source_index}``) was unmounted
+in favour of the ``/web-api/v1`` media-token BFF. ``test_v1_reference_audio_route_unmounted``
+below asserts the v1 path is gone and the BFF GET + media-token POST are present.
 """
 
 from __future__ import annotations
@@ -1459,3 +1464,30 @@ class TestExportCsv:
             headers=csrf_headers,
         )
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# W2-4 PR-B: v1 reference-audio unmount
+# ---------------------------------------------------------------------------
+
+
+def test_v1_reference_audio_route_unmounted() -> None:
+    """The legacy /api/v1 reference-audio route must stay unmounted (W2-4 PR-B).
+
+    Guards against a decorator or ``include_router`` reappearing for the
+    superseded surface: reference-audio streaming now lives behind the
+    ``/web-api/v1`` media-token BFF only. Mirrors
+    ``test_v1_clip_media_routes_unmounted`` in ``test_clips.py``.
+    """
+    from echoroo.main import create_app
+
+    paths = create_app().openapi()["paths"]
+    v1_prefix = "/api/v1/projects/{project_id}/search/sessions/{session_id}/reference-audio"
+    assert not any(p.startswith(v1_prefix) for p in paths)
+    # The BFF surface must declare both the streaming GET and the media-token POST.
+    bff_prefix = (
+        "/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+        "/reference-audio/{source_index}"
+    )
+    assert "get" in paths[bff_prefix]
+    assert "post" in paths[f"{bff_prefix}/media-token"]

@@ -75,6 +75,11 @@ def _build_app(config: AuthRouterConfig) -> TestClient:
                 "/clips/{clip_id}/download",
                 echo,
             ),
+            Route(
+                "/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+                "/reference-audio/{source_index}",
+                echo,
+            ),
             Route("/health", echo),
         ]
     )
@@ -535,6 +540,171 @@ def test_web_api_media_get_ignores_non_uuid_path_ids() -> None:
         f"/web-api/v1/projects/{project_id}/recordings/not-a-uuid/playback",
         params={"media_token": token},
         cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"
+
+
+def test_web_api_reference_audio_accepts_scoped_media_token() -> None:
+    """The reference-audio surface accepts a session+index-scoped audio token."""
+    user_id = uuid4()
+    stamp = "n" * 64
+    session_id_cookie = "sess-ref-audio"
+    project_id = uuid4()
+    session_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id_cookie: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=1,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+        f"/reference-audio/1",
+        params={"media_token": token},
+        cookies={"session_id": session_id_cookie},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auth_kind"] == "session"
+    assert resp.json()["user_id"] == str(user_id)
+
+
+def test_web_api_reference_audio_rejects_wrong_source_index() -> None:
+    """A reference-audio token is bound to one source index in the path."""
+    user_id = uuid4()
+    stamp = "o" * 64
+    session_id_cookie = "sess-ref-idx"
+    project_id = uuid4()
+    session_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id_cookie: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=1,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+        f"/reference-audio/2",
+        params={"media_token": token},
+        cookies={"session_id": session_id_cookie},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_reference_audio_rejects_wrong_session_id() -> None:
+    """A reference-audio token cannot authenticate a different session's path."""
+    user_id = uuid4()
+    stamp = "p" * 64
+    session_id_cookie = "sess-ref-sid"
+    project_id = uuid4()
+    session_id = uuid4()
+    other_session_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id_cookie: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=0,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/search/sessions/{other_session_id}"
+        f"/reference-audio/0",
+        params={"media_token": token},
+        cookies={"session_id": session_id_cookie},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_reference_audio_rejects_recording_token() -> None:
+    """A recording token must not authenticate the reference-audio surface."""
+    user_id = uuid4()
+    stamp = "q" * 64
+    session_id_cookie = "sess-ref-rtype"
+    project_id = uuid4()
+    session_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id_cookie: (user_id, stamp)})
+    )
+    # Recording-scoped audio token whose resource id equals the session id —
+    # the resource_type mismatch (recording vs search_session) must still reject.
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=session_id,
+        scope="audio",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+        f"/reference-audio/0",
+        params={"media_token": token},
+        cookies={"session_id": session_id_cookie},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_reference_audio_non_numeric_index_falls_through() -> None:
+    """A non-numeric source index does not match the media rule (falls through)."""
+    user_id = uuid4()
+    stamp = "r" * 64
+    session_id_cookie = "sess-ref-nan"
+    project_id = uuid4()
+    session_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id_cookie: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=0,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    # ``abc`` as the source index: the matcher rejects it, so the media token
+    # is ignored and the request falls back to the (missing) access token.
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+        f"/reference-audio/abc",
+        params={"media_token": token},
+        cookies={"session_id": session_id_cookie},
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "auth_required"

@@ -30,7 +30,14 @@ from echoroo.api.v1.search.similarity import router as _similarity_router
 
 router = APIRouter(prefix="/projects/{project_id}/search", tags=["search"])
 
-# Include all sub-routers into the main search router
+# Include all sub-routers into the main search router.
+#
+# W2-4 PR-B: the last mounted ``sessions.py`` route (reference-audio) was
+# unmounted in favour of the ``/web-api/v1`` BFF media-token surface, so
+# ``_sessions_router`` now carries ZERO routes. The empty include is left in
+# place (harmless — it contributes no paths) rather than removed, keeping the
+# aggregate router shape stable for the ``similarity.py`` KEEP routes
+# (POST /similar, POST /similar-by-audio) that remain mounted.
 router.include_router(_sessions_router)
 router.include_router(_similarity_router)
 
