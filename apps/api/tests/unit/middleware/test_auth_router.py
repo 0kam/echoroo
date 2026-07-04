@@ -360,6 +360,7 @@ def test_web_api_clip_download_accepts_clip_scoped_token() -> None:
         resource_type="clip",
         resource_id=clip_id,
         scope="download",
+        parent_id=recording_id,
         now=datetime.now(UTC),
     )
 
@@ -372,6 +373,40 @@ def test_web_api_clip_download_accepts_clip_scoped_token() -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["auth_kind"] == "session"
+
+
+def test_web_api_clip_download_rejects_token_under_other_recording() -> None:
+    """A clip token is bound to its parent recording path segment."""
+    user_id = uuid4()
+    stamp = "m" * 64
+    session_id = "sess-clip-parent"
+    project_id = uuid4()
+    recording_id = uuid4()
+    other_recording_id = uuid4()
+    clip_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)})
+    )
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+        parent_id=recording_id,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{other_recording_id}"
+        f"/clips/{clip_id}/download",
+        params={"media_token": token},
+        cookies={"session_id": session_id},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
 
 
 def test_web_api_clip_download_rejects_recording_scoped_token() -> None:
@@ -427,6 +462,7 @@ def test_web_api_clip_download_rejects_token_for_other_clip() -> None:
         resource_type="clip",
         resource_id=clip_x,
         scope="download",
+        parent_id=recording_id,
         now=datetime.now(UTC),
     )
 

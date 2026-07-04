@@ -772,3 +772,17 @@ class TestRecordingAudioEndpoints:
         )
 
         assert response.status_code == 401
+
+
+def test_v1_recording_download_route_unmounted() -> None:
+    """The legacy /api/v1 recording download route must stay unmounted (W2-4 PR-A).
+
+    Only the download surface moved in PR-A; the v1 audio + stream routes are
+    still mounted until their own migration PR lands.
+    """
+    from echoroo.main import create_app
+
+    paths = create_app().openapi()["paths"]
+    base = "/api/v1/projects/{project_id}/recordings/{recording_id}"
+    assert f"{base}/download" not in paths
+    assert f"{base}/audio" in paths

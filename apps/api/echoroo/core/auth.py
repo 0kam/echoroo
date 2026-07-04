@@ -125,6 +125,8 @@ class MediaTokenClaims:
     ``resource_type`` + ``resource_id`` identify the addressed media resource
     (a recording, or a clip within one). ``project_id`` still scopes the token
     to a single project so a token can never leak across project boundaries.
+    ``parent_id`` binds a clip token to its parent recording so the token
+    cannot be replayed under a different recording path segment.
     """
 
     user_id: UUID
@@ -135,6 +137,7 @@ class MediaTokenClaims:
     scope: MediaTokenScope
     jti: str
     expires_at: datetime
+    parent_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -765,6 +768,7 @@ def issue_media_token(
     resource_type: MediaResourceType,
     resource_id: UUID,
     scope: MediaTokenScope,
+    parent_id: UUID | None = None,
     ttl: timedelta = DEFAULT_MEDIA_TTL,
     now: datetime | None = None,
 ) -> str:
@@ -774,12 +778,16 @@ def issue_media_token(
     a single clip (``"clip"``); ``resource_id`` is the recording id or clip id
     accordingly. The compact ``rtype`` claim carries the resource type; the
     resource id continues to live under the ``recording_id`` claim key so the
-    on-wire shape stays stable for the common recording case.
+    on-wire shape stays stable for the common recording case. Clip tokens
+    MUST bind their parent recording via ``parent_id`` so the token cannot be
+    replayed under another recording's path.
     """
     if scope not in MEDIA_TOKEN_SCOPES:
         raise ValueError("invalid media token scope")
     if resource_type not in MEDIA_RESOURCE_TYPES:
         raise ValueError("invalid media token resource type")
+    if (resource_type == "clip") != (parent_id is not None):
+        raise ValueError("parent_id is required for clip tokens and forbidden otherwise")
 
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + ttl
@@ -790,6 +798,7 @@ def issue_media_token(
         "rtype": resource_type,
         "recording_id": str(resource_id),
         "scope": scope,
+        **({"parent_id": str(parent_id)} if parent_id is not None else {}),
         "jti": str(uuid.uuid4()),
         "type": MEDIA_TOKEN_TYPE,
         "typ": MEDIA_TOKEN_TYP,
@@ -807,8 +816,14 @@ def verify_media_token(
     resource_type: MediaResourceType,
     resource_id: UUID,
     scope: MediaTokenScope,
+    parent_id: UUID | None = None,
 ) -> MediaTokenClaims:
-    """Verify a scoped media token against the requested resource and scope."""
+    """Verify a scoped media token against the requested resource and scope.
+
+    ``parent_id`` is the parent recording id from the request path for clip
+    resources; the token's ``parent_id`` claim must match it exactly (and must
+    be absent for non-clip resources).
+    """
     try:
         payload: dict[str, Any] = jwt.decode(
             token,
@@ -828,6 +843,7 @@ def verify_media_token(
     token_project_id = payload.get("project_id")
     token_resource_type = payload.get("rtype")
     token_resource_id = payload.get("recording_id")
+    token_parent_id = payload.get("parent_id")
     token_scope = payload.get("scope")
     jti = payload.get("jti")
     exp_ts = payload.get("exp")
@@ -856,11 +872,14 @@ def verify_media_token(
         user_id = UUID(sub)
         claim_project_id = UUID(token_project_id)
         claim_resource_id = UUID(token_resource_id)
+        claim_parent_id = UUID(token_parent_id) if token_parent_id is not None else None
     except (TypeError, ValueError) as exc:
         raise InvalidTokenError("media token UUID claim invalid") from exc
 
     if claim_project_id != project_id or claim_resource_id != resource_id:
         raise InvalidTokenError("media token path mismatch")
+    if claim_parent_id != parent_id:
+        raise InvalidTokenError("media token parent mismatch")
 
     if not secrets.compare_digest(ss, current_security_stamp):
         raise StaleTokenError("security_stamp has been rotated")
@@ -874,6 +893,7 @@ def verify_media_token(
         scope=cast(MediaTokenScope, token_scope),
         jti=jti,
         expires_at=datetime.fromtimestamp(exp_ts, tz=UTC),
+        parent_id=claim_parent_id,
     )
 
 

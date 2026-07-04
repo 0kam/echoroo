@@ -286,9 +286,10 @@ def test_issue_and_verify_media_token_round_trip() -> None:
 
 
 def test_issue_and_verify_clip_download_media_token_round_trip() -> None:
-    """Clip-bound download tokens carry resource_type=clip + the clip id."""
+    """Clip-bound download tokens carry resource_type=clip + clip and parent ids."""
     user_id = uuid4()
     project_id = uuid4()
+    recording_id = uuid4()
     clip_id = uuid4()
     token = issue_media_token(
         user_id=user_id,
@@ -297,11 +298,13 @@ def test_issue_and_verify_clip_download_media_token_round_trip() -> None:
         resource_type="clip",
         resource_id=clip_id,
         scope="download",
+        parent_id=recording_id,
     )
 
     decoded = jwt.decode(token, options={"verify_signature": False})
     assert decoded["rtype"] == "clip"
     assert decoded["recording_id"] == str(clip_id)
+    assert decoded["parent_id"] == str(recording_id)
     assert decoded["scope"] == "download"
 
     claims = verify_media_token(
@@ -311,10 +314,70 @@ def test_issue_and_verify_clip_download_media_token_round_trip() -> None:
         resource_type="clip",
         resource_id=clip_id,
         scope="download",
+        parent_id=recording_id,
     )
     assert claims.resource_type == "clip"
     assert claims.resource_id == clip_id
+    assert claims.parent_id == recording_id
     assert claims.scope == "download"
+
+
+def test_issue_media_token_enforces_parent_id_pairing() -> None:
+    """parent_id is mandatory for clip tokens and forbidden for recording ones."""
+    with pytest.raises(ValueError, match="parent_id"):
+        issue_media_token(
+            user_id=uuid4(),
+            security_stamp="stamp",
+            project_id=uuid4(),
+            resource_type="clip",
+            resource_id=uuid4(),
+            scope="download",
+        )
+    with pytest.raises(ValueError, match="parent_id"):
+        issue_media_token(
+            user_id=uuid4(),
+            security_stamp="stamp",
+            project_id=uuid4(),
+            resource_type="recording",
+            resource_id=uuid4(),
+            scope="download",
+            parent_id=uuid4(),
+        )
+
+
+def test_verify_media_token_rejects_parent_mismatch() -> None:
+    """A clip token cannot be replayed under a different parent recording."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    clip_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+        parent_id=recording_id,
+    )
+    with pytest.raises(InvalidTokenError, match="parent mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="clip",
+            resource_id=clip_id,
+            scope="download",
+            parent_id=uuid4(),
+        )
+    with pytest.raises(InvalidTokenError, match="parent mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="clip",
+            resource_id=clip_id,
+            scope="download",
+        )
 
 
 def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:

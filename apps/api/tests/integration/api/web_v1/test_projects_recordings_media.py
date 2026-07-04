@@ -333,9 +333,11 @@ async def test_clip_media_token_bff_gates_and_issues_clip_scoped_token(
         resource_type="clip",
         resource_id=clip_id,
         scope="download",
+        parent_id=recording_id,
     )
     assert claims.user_id == user.id
     assert claims.resource_type == "clip"
+    assert claims.parent_id == recording_id
 
 
 @pytest.mark.asyncio

@@ -128,9 +128,12 @@ _MEDIA_PATH_RULES: Final[tuple[_MediaPathRule, ...]] = (
         fixed_scope=None,
     ),
     # Clip download: resource id is the clip id, scope is fixed to "download".
+    # The parent recording segment is captured and bound against the token's
+    # ``parent_id`` claim so a clip token cannot be replayed under another
+    # recording's path.
     _MediaPathRule(
         pattern=re.compile(
-            r"/web-api/v1/projects/(?P<project>[^/]+)/recordings/[^/]+"
+            r"/web-api/v1/projects/(?P<project>[^/]+)/recordings/(?P<parent>[^/]+)"
             r"/clips/(?P<resource>[^/]+)/download"
         ),
         resource_type="clip",
@@ -642,7 +645,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
         media_request = self._extract_media_query_token(request)
         if media_request is not None:
-            media_token, project_id, resource_type, resource_id, scope = media_request
+            media_token, project_id, resource_type, resource_id, scope, parent_id = media_request
             try:
                 media_claims: MediaTokenClaims = verify_media_token(
                     media_token,
@@ -651,6 +654,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                     resource_type=resource_type,
                     resource_id=resource_id,
                     scope=scope,
+                    parent_id=parent_id,
                 )
             except StaleTokenError:
                 return _auth_failure(
@@ -704,7 +708,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _extract_media_query_token(
         request: Request,
-    ) -> tuple[str, UUID, MediaResourceType, UUID, MediaTokenScope] | None:
+    ) -> tuple[str, UUID, MediaResourceType, UUID, MediaTokenScope, UUID | None] | None:
         """Allow native media/image elements to authenticate BFF media GETs.
 
         Native ``<audio>`` / ``<img>`` / anchor download elements cannot send
@@ -746,6 +750,8 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         try:
             project_id = UUID(match.group("project"))
             resource_id = UUID(match.group("resource"))
+            raw_parent = match.groupdict().get("parent")
+            parent_id = UUID(raw_parent) if raw_parent is not None else None
         except (TypeError, ValueError):
             return None
 
@@ -757,7 +763,7 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
                 return None
             scope = cast(MediaTokenScope, leaf)
 
-        return token.strip(), project_id, rule.resource_type, resource_id, scope
+        return token.strip(), project_id, rule.resource_type, resource_id, scope, parent_id
 
 
 def _resolve_client_ip(

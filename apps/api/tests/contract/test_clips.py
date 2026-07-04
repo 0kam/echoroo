@@ -732,3 +732,21 @@ class TestClipDownloadEndpoint:
         )
 
         assert response.status_code == 401
+
+
+def test_v1_clip_media_routes_unmounted() -> None:
+    """The legacy /api/v1 clip media routes must stay unmounted (W2-4 PR-A).
+
+    Guards against a decorator or ``include_router`` reappearing for the
+    superseded surfaces: clip audio / spectrogram / download now live behind
+    the ``/web-api/v1`` media-token BFF only.
+    """
+    from echoroo.main import create_app
+
+    paths = create_app().openapi()["paths"]
+    prefix = "/api/v1/projects/{project_id}/recordings/{recording_id}/clips"
+    assert f"{prefix}/{{clip_id}}/audio" not in paths
+    assert f"{prefix}/{{clip_id}}/spectrogram" not in paths
+    assert f"{prefix}/{{clip_id}}/download" not in paths
+    # The whole v1 clips router is helper-only now: no /api/v1 clip route at all.
+    assert not any(p.startswith(prefix) for p in paths)

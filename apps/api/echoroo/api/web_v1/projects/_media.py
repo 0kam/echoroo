@@ -165,6 +165,7 @@ async def issue_clip_media_token(
         resource_type="clip",
         resource_id=clip_id,
         scope="download",
+        parent_id=recording_id,
         ttl=DEFAULT_MEDIA_TTL,
     )
     return MediaTokenResponse(
