@@ -71,6 +71,7 @@ services:
     # token-free in it.
     image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
     container_name: echoroo-localstack
+    restart: unless-stopped
     environment:
       - SERVICES=s3,kms
       - PERSISTENCE=1
@@ -173,6 +174,10 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo -Q gpu --max-tasks-per-child=0
+    # Without a restart policy the celery containers stay down after a host
+    # reboot while backend/frontend (unless-stopped) come back, leaving
+    # uploads/imports queued forever with no visible error.
+    restart: unless-stopped
     deploy:
       resources:
         reservations:
@@ -249,6 +254,7 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo -Q default -n worker-cpu@%h
+    restart: unless-stopped
     # CPU / Blackwell rationale (parity with the GPU worker above): this
     # worker is CPU-only by design, so ECHOROO_WORKER_MEM_LIMIT bounds its
     # RAM too (0 = unlimited = current behaviour).
@@ -309,6 +315,7 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile.dev
     command: uv run celery -A echoroo.workers.celery_app beat -l info
+    restart: unless-stopped
     environment:
       - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
