@@ -5,7 +5,7 @@
    */
   import type { RecordingDetail as RecordingDetailType } from '$lib/types/data';
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
-  import { getDownloadUrl, updateRecording } from '$lib/api/recordings';
+  import { getAuthenticatedRecordingDownloadUrl, updateRecording } from '$lib/api/recordings';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
@@ -40,6 +40,22 @@
   function formatSamplerate(sr: number): string {
     return sr >= 1000 ? `${(sr / 1000).toFixed(1)} kHz` : `${sr} Hz`;
   }
+
+  let isDownloading = $state(false);
+
+  async function handleDownload(event: MouseEvent) {
+    // Native anchors cannot send Authorization; issue a scoped media token
+    // and navigate to the tokenized BFF download URL instead.
+    event.preventDefault();
+    if (isDownloading) return;
+    isDownloading = true;
+    try {
+      const url = await getAuthenticatedRecordingDownloadUrl(projectId, recording.id);
+      window.location.assign(url);
+    } finally {
+      isDownloading = false;
+    }
+  }
 </script>
 
 <div class="recording-detail">
@@ -52,9 +68,11 @@
       <p class="mt-1 text-sm text-stone-500 font-mono truncate">{recording.path}</p>
     </div>
     <a
-      href={getDownloadUrl(projectId, recording.id)}
+      href="#download"
       download={recording.filename}
-      class="flex items-center gap-2 px-3 py-2 bg-success text-white rounded-md text-sm font-medium hover:opacity-90 flex-shrink-0"
+      onclick={handleDownload}
+      aria-disabled={isDownloading}
+      class="flex items-center gap-2 px-3 py-2 bg-success text-white rounded-md text-sm font-medium hover:opacity-90 flex-shrink-0 aria-disabled:opacity-60 aria-disabled:pointer-events-none"
     >
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from echoroo.api.v1 import (
     annotation_comments,
     auth,
-    clips,
     confirmed_regions,
     datasets,
     detection_runs,
@@ -41,7 +40,13 @@ api_router.include_router(projects.router)
 # removed here.
 api_router.include_router(datasets.router)
 api_router.include_router(recordings.router)
-api_router.include_router(clips.router)
+# W2-4 PR-A: the three browser-superseded clip media routes (audio / spectrogram
+# / download) were unmounted from ``/api/v1`` in favour of the ``/web-api/v1``
+# BFF media-token surface. Since W2-3 PR-13 already unmounted the clip CRUD /
+# generate routes, ``clips.router`` now defines ZERO routes, so its
+# ``include_router`` + import were removed here. The handler bodies survive as
+# importable helpers (``echoroo.api.v1.clips.{download_clip,get_clip,list_clips,...}``)
+# delegated to by ``echoroo.api.web_v1.projects._media`` / ``_clips``.
 api_router.include_router(h3.router)
 # W2-3 PR-9: the public ``/api/v1/projects/{project_id}/tags/*`` routes were
 # unmounted in favour of the ``/web-api/v1/.../tags/*`` BFF. The legacy handlers

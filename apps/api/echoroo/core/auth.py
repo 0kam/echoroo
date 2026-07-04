@@ -62,8 +62,20 @@ REFRESH_TOKEN_TYPE = "refresh"
 MEDIA_TOKEN_TYPE = "media"
 MEDIA_TOKEN_TYP = "echoroo.media"
 
-MediaTokenScope = Literal["audio", "playback", "spectrogram"]
-MEDIA_TOKEN_SCOPES: frozenset[str] = frozenset({"audio", "playback", "spectrogram"})
+MediaTokenScope = Literal["audio", "playback", "spectrogram", "download"]
+MEDIA_TOKEN_SCOPES: frozenset[str] = frozenset(
+    {"audio", "playback", "spectrogram", "download"}
+)
+
+MediaResourceType = Literal["recording", "clip"]
+"""The kind of resource a media token is bound to.
+
+W2-4 generalises the scoped media token so it can address either a whole
+recording or a single clip within a recording. A ``search_session`` variant
+is anticipated for a later PR — adding it here plus one matcher-table row is
+the only change that path will require.
+"""
+MEDIA_RESOURCE_TYPES: frozenset[str] = frozenset({"recording", "clip"})
 
 DEFAULT_ACCESS_TTL = timedelta(minutes=15)
 """FR-055: access tokens are short-lived (15 minutes)."""
@@ -108,12 +120,18 @@ class RefreshTokenClaims:
 
 @dataclass(frozen=True)
 class MediaTokenClaims:
-    """Decoded scoped media-token claims."""
+    """Decoded scoped media-token claims.
+
+    ``resource_type`` + ``resource_id`` identify the addressed media resource
+    (a recording, or a clip within one). ``project_id`` still scopes the token
+    to a single project so a token can never leak across project boundaries.
+    """
 
     user_id: UUID
     security_stamp: str
     project_id: UUID
-    recording_id: UUID
+    resource_type: MediaResourceType
+    resource_id: UUID
     scope: MediaTokenScope
     jti: str
     expires_at: datetime
@@ -744,14 +762,24 @@ def issue_media_token(
     user_id: UUID,
     security_stamp: str,
     project_id: UUID,
-    recording_id: UUID,
+    resource_type: MediaResourceType,
+    resource_id: UUID,
     scope: MediaTokenScope,
     ttl: timedelta = DEFAULT_MEDIA_TTL,
     now: datetime | None = None,
 ) -> str:
-    """Sign a short-lived JWT scoped to one recording media resource."""
+    """Sign a short-lived JWT scoped to one media resource.
+
+    ``resource_type`` selects between a whole recording (``"recording"``) and
+    a single clip (``"clip"``); ``resource_id`` is the recording id or clip id
+    accordingly. The compact ``rtype`` claim carries the resource type; the
+    resource id continues to live under the ``recording_id`` claim key so the
+    on-wire shape stays stable for the common recording case.
+    """
     if scope not in MEDIA_TOKEN_SCOPES:
         raise ValueError("invalid media token scope")
+    if resource_type not in MEDIA_RESOURCE_TYPES:
+        raise ValueError("invalid media token resource type")
 
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + ttl
@@ -759,7 +787,8 @@ def issue_media_token(
         "sub": str(user_id),
         "ss": security_stamp,
         "project_id": str(project_id),
-        "recording_id": str(recording_id),
+        "rtype": resource_type,
+        "recording_id": str(resource_id),
         "scope": scope,
         "jti": str(uuid.uuid4()),
         "type": MEDIA_TOKEN_TYPE,
@@ -775,10 +804,11 @@ def verify_media_token(
     *,
     current_security_stamp: str,
     project_id: UUID,
-    recording_id: UUID,
+    resource_type: MediaResourceType,
+    resource_id: UUID,
     scope: MediaTokenScope,
 ) -> MediaTokenClaims:
-    """Verify a scoped media token against the requested path and scope."""
+    """Verify a scoped media token against the requested resource and scope."""
     try:
         payload: dict[str, Any] = jwt.decode(
             token,
@@ -796,7 +826,8 @@ def verify_media_token(
     sub = payload.get("sub")
     ss = payload.get("ss")
     token_project_id = payload.get("project_id")
-    token_recording_id = payload.get("recording_id")
+    token_resource_type = payload.get("rtype")
+    token_resource_id = payload.get("recording_id")
     token_scope = payload.get("scope")
     jti = payload.get("jti")
     exp_ts = payload.get("exp")
@@ -804,7 +835,8 @@ def verify_media_token(
         not isinstance(sub, str)
         or not isinstance(ss, str)
         or not isinstance(token_project_id, str)
-        or not isinstance(token_recording_id, str)
+        or not isinstance(token_resource_type, str)
+        or not isinstance(token_resource_id, str)
         or not isinstance(token_scope, str)
         or not isinstance(jti, str)
     ):
@@ -815,15 +847,19 @@ def verify_media_token(
         raise InvalidTokenError("media token scope invalid")
     if token_scope != scope:
         raise InvalidTokenError("media token scope mismatch")
+    if token_resource_type not in MEDIA_RESOURCE_TYPES:
+        raise InvalidTokenError("media token resource type invalid")
+    if token_resource_type != resource_type:
+        raise InvalidTokenError("media token resource type mismatch")
 
     try:
         user_id = UUID(sub)
         claim_project_id = UUID(token_project_id)
-        claim_recording_id = UUID(token_recording_id)
+        claim_resource_id = UUID(token_resource_id)
     except (TypeError, ValueError) as exc:
         raise InvalidTokenError("media token UUID claim invalid") from exc
 
-    if claim_project_id != project_id or claim_recording_id != recording_id:
+    if claim_project_id != project_id or claim_resource_id != resource_id:
         raise InvalidTokenError("media token path mismatch")
 
     if not secrets.compare_digest(ss, current_security_stamp):
@@ -833,7 +869,8 @@ def verify_media_token(
         user_id=user_id,
         security_stamp=ss,
         project_id=claim_project_id,
-        recording_id=claim_recording_id,
+        resource_type=cast(MediaResourceType, token_resource_type),
+        resource_id=claim_resource_id,
         scope=cast(MediaTokenScope, token_scope),
         jti=jti,
         expires_at=datetime.fromtimestamp(exp_ts, tz=UTC),
@@ -1054,9 +1091,11 @@ __all__ = [
     "DEFAULT_MEDIA_TTL",
     "InMemoryTokenStore",
     "InvalidTokenError",
+    "MEDIA_RESOURCE_TYPES",
     "MEDIA_TOKEN_SCOPES",
     "MEDIA_TOKEN_TYPE",
     "MEDIA_TOKEN_TYP",
+    "MediaResourceType",
     "MediaTokenClaims",
     "MediaTokenScope",
     "REFRESH_TOKEN_TYPE",

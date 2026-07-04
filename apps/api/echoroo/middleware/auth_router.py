@@ -51,6 +51,7 @@ from starlette.types import ASGIApp
 from echoroo.core.auth import (
     AccessTokenClaims,
     InvalidTokenError,
+    MediaResourceType,
     MediaTokenClaims,
     MediaTokenScope,
     StaleTokenError,
@@ -81,6 +82,70 @@ API_KEY_NAMESPACE: Final[str] = "echoroo_"
 # leave ``request.state.principal = None`` so the legacy
 # ``Depends(get_current_user)`` cookie chain owns authentication.
 _LEGACY_FALLBACK_SENTINEL: Final[object] = object()
+
+
+# ---------------------------------------------------------------------------
+# Media-token path matcher table
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _MediaPathRule:
+    """One row of the media-token matcher table.
+
+    Each rule fully-matches a concrete ``/web-api/v1`` media GET path and
+    resolves the scoped-token parameters the middleware verifies against.
+
+    Attributes:
+        pattern: Compiled regex applied with :func:`re.fullmatch`. Named
+            groups ``project`` and ``resource`` (and optionally ``leaf``)
+            capture the path ids / trailing media verb.
+        resource_type: The media resource kind the token must bind to
+            (``"recording"`` or ``"clip"``).
+        fixed_scope: When set, the matcher REQUIRES the token to carry this
+            scope — the token's own ``scope`` claim is never trusted to pick
+            the surface. When ``None`` the scope is taken from the ``leaf``
+            group (the trailing ``audio|playback|spectrogram`` verb).
+    """
+
+    pattern: re.Pattern[str]
+    resource_type: MediaResourceType
+    fixed_scope: MediaTokenScope | None
+
+
+# Order does not matter (patterns are mutually exclusive fullmatches). The
+# clip-download rule is intentionally listed before the recording-download
+# rule so the more specific ``/clips/{cid}/download`` shape is obvious to a
+# reader, even though ``re.fullmatch`` makes the ordering irrelevant.
+_MEDIA_PATH_RULES: Final[tuple[_MediaPathRule, ...]] = (
+    # Recording streaming media: scope comes from the trailing verb.
+    _MediaPathRule(
+        pattern=re.compile(
+            r"/web-api/v1/projects/(?P<project>[^/]+)/recordings/(?P<resource>[^/]+)"
+            r"/(?P<leaf>audio|playback|spectrogram)"
+        ),
+        resource_type="recording",
+        fixed_scope=None,
+    ),
+    # Clip download: resource id is the clip id, scope is fixed to "download".
+    _MediaPathRule(
+        pattern=re.compile(
+            r"/web-api/v1/projects/(?P<project>[^/]+)/recordings/[^/]+"
+            r"/clips/(?P<resource>[^/]+)/download"
+        ),
+        resource_type="clip",
+        fixed_scope="download",
+    ),
+    # Recording download: resource id is the recording id, scope "download".
+    _MediaPathRule(
+        pattern=re.compile(
+            r"/web-api/v1/projects/(?P<project>[^/]+)/recordings/(?P<resource>[^/]+)"
+            r"/download"
+        ),
+        resource_type="recording",
+        fixed_scope="download",
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -577,13 +642,14 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
         media_request = self._extract_media_query_token(request)
         if media_request is not None:
-            media_token, project_id, recording_id, scope = media_request
+            media_token, project_id, resource_type, resource_id, scope = media_request
             try:
                 media_claims: MediaTokenClaims = verify_media_token(
                     media_token,
                     current_security_stamp=live_stamp,
                     project_id=project_id,
-                    recording_id=recording_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
                     scope=scope,
                 )
             except StaleTokenError:
@@ -638,28 +704,60 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
     @staticmethod
     def _extract_media_query_token(
         request: Request,
-    ) -> tuple[str, UUID, UUID, MediaTokenScope] | None:
-        """Allow native media/image elements to authenticate BFF media GETs."""
+    ) -> tuple[str, UUID, MediaResourceType, UUID, MediaTokenScope] | None:
+        """Allow native media/image elements to authenticate BFF media GETs.
+
+        Native ``<audio>`` / ``<img>`` / anchor download elements cannot send
+        an ``Authorization`` header, so the browser passes a short-lived
+        ``?media_token=`` query param instead. This resolves the request path
+        against :data:`_MEDIA_PATH_RULES`, which fixes the resource type and
+        the expected scope — the token's own ``scope`` / ``rtype`` claims are
+        never trusted to select the surface.
+
+        Returns ``None`` (falling back to the cookie/Bearer chain) unless the
+        request is a GET whose path fully-matches a media rule AND carries
+        exactly one ``media_token`` value.
+        """
         if request.method != "GET":
             return None
-        match = re.fullmatch(
-            r"/web-api/v1/projects/([^/]+)/recordings/([^/]+)/(audio|playback|spectrogram)",
-            request.url.path,
-        )
-        if match is None:
+
+        path = request.url.path
+        rule: _MediaPathRule | None = None
+        match: re.Match[str] | None = None
+        for candidate in _MEDIA_PATH_RULES:
+            candidate_match = candidate.pattern.fullmatch(path)
+            if candidate_match is not None:
+                rule = candidate
+                match = candidate_match
+                break
+        if rule is None or match is None:
             return None
-        token = request.query_params.get("media_token")
+
+        # Reject requests that pass ``media_token`` more than once — a
+        # duplicated param is ambiguous and could be used to smuggle a second
+        # token past the matcher.
+        tokens = request.query_params.getlist("media_token")
+        if len(tokens) != 1:
+            return None
+        token = tokens[0]
         if not token:
             return None
+
         try:
-            project_id = UUID(match.group(1))
-            recording_id = UUID(match.group(2))
+            project_id = UUID(match.group("project"))
+            resource_id = UUID(match.group("resource"))
         except (TypeError, ValueError):
             return None
-        scope = cast(MediaTokenScope, match.group(3))
-        if scope not in ("audio", "playback", "spectrogram"):
-            return None
-        return token.strip(), project_id, recording_id, scope
+
+        if rule.fixed_scope is not None:
+            scope: MediaTokenScope = rule.fixed_scope
+        else:
+            leaf = match.group("leaf")
+            if leaf not in ("audio", "playback", "spectrogram"):
+                return None
+            scope = cast(MediaTokenScope, leaf)
+
+        return token.strip(), project_id, rule.resource_type, resource_id, scope
 
 
 def _resolve_client_ip(

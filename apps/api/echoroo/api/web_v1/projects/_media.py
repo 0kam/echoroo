@@ -8,7 +8,7 @@ first-party session surface.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -19,13 +19,18 @@ from echoroo.api.v1 import clips as legacy_clips
 from echoroo.api.v1 import datasets as legacy_datasets
 from echoroo.api.v1 import recordings as legacy_recordings
 from echoroo.core.actions import (
+    CLIP_DOWNLOAD_ACTION,
     CLIP_GET_ACTION,
     CLIP_LIST_ACTION,
     DATASET_EXPORT_ACTION,
     RECORDING_LIST_ACTION,
     RECORDING_MEDIA_ACTION,
 )
-from echoroo.core.auth import DEFAULT_MEDIA_TTL, MediaTokenScope, issue_media_token
+from echoroo.core.auth import (
+    DEFAULT_MEDIA_TTL,
+    MediaTokenScope,
+    issue_media_token,
+)
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
@@ -83,8 +88,83 @@ async def issue_recording_media_token(
         user_id=current_user.id,
         security_stamp=current_user.security_stamp,
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope=payload.scope,
+        ttl=DEFAULT_MEDIA_TTL,
+    )
+    return MediaTokenResponse(
+        token=token,
+        expires_in=int(DEFAULT_MEDIA_TTL.total_seconds()),
+    )
+
+
+class ClipMediaTokenRequest(BaseModel):
+    """Request body for issuing a scoped clip media token.
+
+    Clip playback / spectrogram ride recording-level tokens (they reuse the
+    recording streaming BFF with clip start/end bounds), so the only clip-bound
+    scope is ``"download"``.
+    """
+
+    scope: Literal["download"] = "download"
+
+
+@router.post(
+    "/{project_id}/recordings/{recording_id}/clips/{clip_id}/media-token",
+    response_model=MediaTokenResponse,
+    summary="Issue a scoped clip download token",
+    description="Issue a short-lived JWT scoped to one clip download resource.",
+)
+async def issue_clip_media_token(
+    project_id: UUID,
+    recording_id: UUID,
+    clip_id: UUID,
+    payload: ClipMediaTokenRequest,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_clips.ClipServiceDep,
+    db: DbSession,
+) -> MediaTokenResponse:
+    """Gate the clip download action before issuing a clip-scoped token.
+
+    The token is bound to ``resource_type="clip"`` + the clip id with scope
+    ``"download"`` — clip playback / spectrogram are served by recording-level
+    tokens, so no other scope is accepted here.
+    """
+    await gate_action(
+        action=CLIP_DOWNLOAD_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    # Validate the recording is in this project first (anti-enumeration), then
+    # the clip belongs to that recording.
+    recording = await service.recording_repo.get_by_id_in_project(
+        recording_id, project_id
+    )
+    if recording is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Clip not found",
+        )
+
+    clip = await service.get_by_id(clip_id)
+    if clip is None or clip.recording_id != recording_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Clip not found",
+        )
+
+    token = issue_media_token(
+        user_id=current_user.id,
+        security_stamp=current_user.security_stamp,
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
         ttl=DEFAULT_MEDIA_TTL,
     )
     return MediaTokenResponse(
@@ -331,6 +411,76 @@ async def get_spectrogram(
         channel=channel,
         width=width,
         height=height,
+    )
+
+
+@router.get(
+    "/{project_id}/recordings/{recording_id}/download",
+    summary="Download recording",
+    description="BFF adapter for the legacy project recording download endpoint.",
+)
+async def download_recording(
+    project_id: UUID,
+    recording_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_recordings.RecordingServiceDep,
+    db: DbSession,
+) -> Response:
+    """Delegate original-file download to the legacy handler.
+
+    Guarded by the same media gate as ``/audio`` and ``/spectrogram`` (the
+    legacy handler treats download as the most permissive media operation).
+    """
+    await gate_action(
+        action=RECORDING_MEDIA_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    return await legacy_recordings.download_recording(
+        project_id=project_id,
+        recording_id=recording_id,
+        request=request,
+        current_user=current_user,
+        service=service,
+        db=db,
+    )
+
+
+@router.get(
+    "/{project_id}/recordings/{recording_id}/clips/{clip_id}/download",
+    summary="Download clip",
+    description="BFF adapter for the legacy project recording clip download endpoint.",
+)
+async def download_clip(
+    project_id: UUID,
+    recording_id: UUID,
+    clip_id: UUID,
+    request: Request,
+    current_user: CurrentUser,
+    service: legacy_clips.ClipServiceDep,
+    audio_service: legacy_clips.AudioServiceDep,
+    db: DbSession,
+) -> Response:
+    """Delegate clip WAV download to the legacy handler."""
+    await gate_action(
+        action=CLIP_DOWNLOAD_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    return await legacy_clips.download_clip(
+        project_id=project_id,
+        recording_id=recording_id,
+        clip_id=clip_id,
+        request=request,
+        current_user=current_user,
+        service=service,
+        audio_service=audio_service,
+        db=db,
     )
 
 

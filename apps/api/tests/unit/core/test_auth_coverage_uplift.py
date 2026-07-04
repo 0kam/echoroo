@@ -249,7 +249,7 @@ def test_verify_access_token_raises_invalid_when_claims_missing() -> None:
 
 
 def test_issue_and_verify_media_token_round_trip() -> None:
-    """Media tokens bind user, security stamp, path, scope, and expiry."""
+    """Media tokens bind user, security stamp, resource, scope, and expiry."""
     user_id = uuid4()
     project_id = uuid4()
     recording_id = uuid4()
@@ -257,7 +257,8 @@ def test_issue_and_verify_media_token_round_trip() -> None:
         user_id=user_id,
         security_stamp="media-stamp",
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope="spectrogram",
     )
 
@@ -265,6 +266,7 @@ def test_issue_and_verify_media_token_round_trip() -> None:
     assert decoded["type"] == MEDIA_TOKEN_TYPE
     assert decoded["typ"] == MEDIA_TOKEN_TYP
     assert decoded["project_id"] == str(project_id)
+    assert decoded["rtype"] == "recording"
     assert decoded["recording_id"] == str(recording_id)
     assert decoded["scope"] == "spectrogram"
 
@@ -272,13 +274,47 @@ def test_issue_and_verify_media_token_round_trip() -> None:
         token,
         current_security_stamp="media-stamp",
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope="spectrogram",
     )
     assert claims.user_id == user_id
     assert claims.project_id == project_id
-    assert claims.recording_id == recording_id
+    assert claims.resource_type == "recording"
+    assert claims.resource_id == recording_id
     assert claims.scope == "spectrogram"
+
+
+def test_issue_and_verify_clip_download_media_token_round_trip() -> None:
+    """Clip-bound download tokens carry resource_type=clip + the clip id."""
+    user_id = uuid4()
+    project_id = uuid4()
+    clip_id = uuid4()
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp="clip-stamp",
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+    )
+
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["rtype"] == "clip"
+    assert decoded["recording_id"] == str(clip_id)
+    assert decoded["scope"] == "download"
+
+    claims = verify_media_token(
+        token,
+        current_security_stamp="clip-stamp",
+        project_id=project_id,
+        resource_type="clip",
+        resource_id=clip_id,
+        scope="download",
+    )
+    assert claims.resource_type == "clip"
+    assert claims.resource_id == clip_id
+    assert claims.scope == "download"
 
 
 def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
@@ -290,7 +326,8 @@ def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
         user_id=user_id,
         security_stamp="media-stamp",
         project_id=project_id,
-        recording_id=recording_id,
+        resource_type="recording",
+        resource_id=recording_id,
         scope="playback",
         ttl=DEFAULT_MEDIA_TTL,
     )
@@ -300,7 +337,8 @@ def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
             token,
             current_security_stamp="media-stamp",
             project_id=project_id,
-            recording_id=recording_id,
+            resource_type="recording",
+            resource_id=recording_id,
             scope="spectrogram",
         )
     with pytest.raises(InvalidTokenError, match="path mismatch"):
@@ -308,7 +346,8 @@ def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
             token,
             current_security_stamp="media-stamp",
             project_id=uuid4(),
-            recording_id=recording_id,
+            resource_type="recording",
+            resource_id=recording_id,
             scope="playback",
         )
     with pytest.raises(StaleTokenError):
@@ -316,8 +355,32 @@ def test_verify_media_token_rejects_path_scope_and_stamp_mismatch() -> None:
             token,
             current_security_stamp="rotated",
             project_id=project_id,
-            recording_id=recording_id,
+            resource_type="recording",
+            resource_id=recording_id,
             scope="playback",
+        )
+
+
+def test_verify_media_token_rejects_resource_type_mismatch() -> None:
+    """A recording token cannot verify as a clip token (and vice versa)."""
+    resource_id = uuid4()
+    project_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=resource_id,
+        scope="download",
+    )
+    with pytest.raises(InvalidTokenError, match="resource type mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="clip",
+            resource_id=resource_id,
+            scope="download",
         )
 
 
@@ -329,7 +392,8 @@ def test_verify_media_token_rejects_access_token_type() -> None:
             token,
             current_security_stamp="stamp",
             project_id=uuid4(),
-            recording_id=uuid4(),
+            resource_type="recording",
+            resource_id=uuid4(),
             scope="audio",
         )
 

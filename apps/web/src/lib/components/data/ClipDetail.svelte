@@ -3,7 +3,7 @@
   import {
     getAuthenticatedClipPlaybackUrl,
     getAuthenticatedClipSpectrogramUrl,
-    getClipDownloadUrl,
+    getAuthenticatedClipDownloadUrl,
     updateClip,
   } from '$lib/api/clips';
   import NoteEditor from '$lib/components/data/NoteEditor.svelte';
@@ -55,6 +55,22 @@
 
   function handleNoteSave(newNote: string) {
     $noteMutation.mutate(newNote);
+  }
+
+  let isDownloading = $state(false);
+
+  async function handleDownload(event: MouseEvent) {
+    // Native anchors cannot send Authorization; issue a clip-scoped download
+    // media token and navigate to the tokenized BFF download URL instead.
+    event.preventDefault();
+    if (isDownloading) return;
+    isDownloading = true;
+    try {
+      const url = await getAuthenticatedClipDownloadUrl(projectId, recordingId, clip.id);
+      window.location.assign(url);
+    } finally {
+      isDownloading = false;
+    }
   }
 
   $effect(() => {
@@ -136,9 +152,11 @@
       </button>
 
       <a
-        href={getClipDownloadUrl(projectId, recordingId, clip.id)}
+        href="#download"
         download
-        class="flex items-center gap-2 rounded-md border border-stone-300 bg-stone-100 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-200 no-underline"
+        onclick={handleDownload}
+        aria-disabled={isDownloading}
+        class="flex items-center gap-2 rounded-md border border-stone-300 bg-stone-100 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-200 no-underline aria-disabled:opacity-60 aria-disabled:pointer-events-none"
       >
         <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke-width="2" />
