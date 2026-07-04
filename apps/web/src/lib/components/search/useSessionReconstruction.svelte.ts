@@ -181,26 +181,32 @@ export function useSessionReconstruction(
         }
 
         // Second pass: resolve authenticated stream URLs for every S3-backed
-        // source. Each URL carries a short-lived scoped media token, so the
-        // token endpoint is hit once per source here (mirrors the clip download
-        // flow). Runs after every `await` re-checks `isStale` so a navigation
-        // mid-resolution never corrupts the newer session's state.
-        await Promise.all(
-          loaded.flatMap((sp) =>
-            sp.sources
-              .filter((s) => s.origin === 's3' && s.sourceIndex !== undefined)
-              .map(async (s) => {
-                try {
-                  s.streamUrl = await getAuthenticatedReferenceAudioUrl(
-                    pid,
-                    sid,
-                    s.sourceIndex as number,
-                  );
-                } catch {
-                  // Non-critical — leave streamUrl unset; SourceCard degrades.
-                }
+        // source. Each URL carries a short-lived scoped media token; the token
+        // endpoint is hit once per DISTINCT source index (sources sharing an
+        // index share one request). URLs are minted here for the session's
+        // lifetime — like the recording playback/spectrogram flows, an expired
+        // token means the next media fetch 401s and the user reloads.
+        const s3Sources = loaded.flatMap((sp) =>
+          sp.sources.filter((s) => s.origin === 's3' && s.sourceIndex !== undefined),
+        );
+        const urlByIndex = new Map<number, Promise<string | undefined>>();
+        for (const s of s3Sources) {
+          const idx = s.sourceIndex as number;
+          if (!urlByIndex.has(idx)) {
+            urlByIndex.set(
+              idx,
+              getAuthenticatedReferenceAudioUrl(pid, sid, idx).catch((e: unknown) => {
+                // Non-critical — leave streamUrl unset; SourceCard degrades.
+                console.warn(`reference-audio URL resolution failed (source ${idx})`, e);
+                return undefined;
               }),
-          ),
+            );
+          }
+        }
+        await Promise.all(
+          s3Sources.map(async (s) => {
+            s.streamUrl = await urlByIndex.get(s.sourceIndex as number);
+          }),
         );
         if (isStale(capturedPid, capturedSid)) return;
 
