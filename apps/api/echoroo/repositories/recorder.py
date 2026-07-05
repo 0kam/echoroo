@@ -1,22 +1,16 @@
 """Recorder repository for database operations."""
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.recorder import Recorder
+from echoroo.repositories.base import BaseRepository
 from echoroo.schemas.recorder import RecorderCreate, RecorderUpdate
 
 
-class RecorderRepository:
+class RecorderRepository(BaseRepository[Recorder]):
     """Repository for Recorder entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = Recorder
 
     async def get_by_id(self, recorder_id: str) -> Recorder | None:
         """Get recorder by ID.
@@ -110,7 +104,7 @@ class RecorderRepository:
         await self.db.refresh(recorder)
         return recorder
 
-    async def delete(self, recorder_id: str) -> bool:
+    async def delete(self, recorder_id: str) -> bool:  # type: ignore[override]
         """Delete a recorder.
 
         Args:

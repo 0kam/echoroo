@@ -7,23 +7,17 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from echoroo.models.embedding import Embedding
 from echoroo.models.sampling_round import SamplingRound, SamplingRoundItem
+from echoroo.repositories.base import BaseRepository
 
 
-class SamplingRoundRepository:
+class SamplingRoundRepository(BaseRepository[SamplingRound]):
     """Repository for SamplingRound and SamplingRoundItem entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = SamplingRound
 
     async def create_round(
         self,
