@@ -897,48 +897,6 @@ async def stream_audio(
     )
 
 
-# Legacy stream endpoint: redirect semantics preserved via alias
-@router.get(
-    "/{recording_id}/stream",
-    summary="Stream audio file (legacy alias)",
-    description="Legacy alias for /{recording_id}/audio — prefer /audio for new clients.",
-    include_in_schema=False,
-)
-async def stream_audio_legacy(
-    project_id: UUID,
-    recording_id: UUID,
-    request: Request,
-    current_user: CurrentUser,
-    service: RecordingServiceDep,
-    db: DbSession,
-    speed: float = 1.0,
-    time_expansion: float | None = None,
-    start: float | None = None,
-    end: float | None = None,
-    target_samplerate: int | None = None,
-    range: Annotated[str | None, Header()] = None,
-) -> Response:
-    """Legacy streaming endpoint — delegates to stream_audio.
-
-    Guarded transitively by :data:`RECORDING_MEDIA_ACTION` via the underlying
-    :func:`stream_audio` handler.
-    """
-    return await stream_audio(
-        project_id=project_id,
-        recording_id=recording_id,
-        request=request,
-        current_user=current_user,
-        service=service,
-        db=db,
-        speed=speed,
-        time_expansion=time_expansion,
-        start=start,
-        end=end,
-        target_samplerate=target_samplerate,
-        range=range,
-    )
-
-
 # T062: Playback endpoint with resampling and HTTP Range support
 # Browser-friendly target sample rate for real-time ultrasonic playback.
 # A standard browser cannot play raw 192/256/384 kHz PCM, so ultrasonic

@@ -77,7 +77,6 @@ apps/api/echoroo/api/v1/projects.py:update_project_member_role:missing-permissio
 # the ``/web-api/v1`` BFF ``_media.py:download_recording``, which gate_action-
 # guards itself), so its dead ``download_recording`` fingerprint was dropped.
 apps/api/echoroo/api/v1/recordings.py:stream_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/recordings.py:stream_audio_legacy:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 # W2-3 PR-18: the 10 browser-superseded ``api/v1/search/sessions.py`` routes
 # (list / get / delete / update / rerun / export-recordings / export-csv /
 # distribution / time-distribution / sample) and
