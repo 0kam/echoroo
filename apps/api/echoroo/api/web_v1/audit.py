@@ -46,7 +46,6 @@ from uuid import UUID
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.core.audit import sanitize_value
@@ -58,6 +57,11 @@ from echoroo.core.permissions import (
     register_action,
 )
 from echoroo.middleware.auth import CurrentUser
+from echoroo.schemas.web_v1.audit import (
+    AuditLogEntryResponse,
+    AuditLogListResponse,
+    ChainVerifyResponse,
+)
 from echoroo.services.audit_service import AuditLogService
 
 router = APIRouter(tags=["audit-log"])
@@ -126,47 +130,6 @@ VERIFY_AUDIT_CHAIN_ACTION: Action = register_action(
         is_platform_scope=True,
     )
 )
-
-
-# ---------------------------------------------------------------------------
-# Response schemas (mirror contracts/audit.yaml)
-# ---------------------------------------------------------------------------
-
-
-class AuditLogEntryResponse(BaseModel):
-    """One audit log row, with PII redacted via the sanitizer."""
-
-    model_config = ConfigDict(frozen=True)
-
-    id: UUID
-    created_at: datetime
-    actor_user_id_hash: str
-    project_id: UUID | None = None
-    action: str
-    detail: dict[str, Any] = Field(default_factory=dict)
-    request_id: str
-    ip_hash: str
-    user_agent_hash: str
-    before: dict[str, Any] | None = None
-    after: dict[str, Any] | None = None
-    prev_hash: str
-    row_hash: str
-
-
-class AuditLogListResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: list[AuditLogEntryResponse]
-    total: int
-    page: int
-
-
-class ChainVerifyResponse(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    is_valid: bool
-    verified_row_count: int
-    first_mismatch_row_id: UUID | None = None
 
 
 # ---------------------------------------------------------------------------

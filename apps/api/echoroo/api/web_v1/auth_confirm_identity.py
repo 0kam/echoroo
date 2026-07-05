@@ -27,18 +27,21 @@ from __future__ import annotations
 import logging
 import time
 import unicodedata
-from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
 
 from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.kms import compute_pii_hash
 from echoroo.core.text import has_control_chars
 from echoroo.repositories.user import UserRepository
+from echoroo.schemas.web_v1.confirm_identity import (
+    ConfirmIdentityRedeemRequest,
+    ConfirmIdentityRedeemResponse,
+    ConfirmIdentityRequest,
+)
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.two_factor_reset_service import (
     AUDIT_ACTION_TOKEN_REDEEMED,
@@ -112,34 +115,6 @@ def _normalize_email(raw: str) -> str | None:
     except EmailNotValidError:
         return None
     return validated.normalized.lower()
-
-
-# ---------------------------------------------------------------------------
-# Schemas
-# ---------------------------------------------------------------------------
-
-
-class ConfirmIdentityRequest(BaseModel):
-    """Body for the magic-link request endpoint."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    email: str = Field(min_length=1, max_length=320)
-
-
-class ConfirmIdentityRedeemRequest(BaseModel):
-    """Body for the magic-link redeem endpoint."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    magic_token: str = Field(min_length=1, max_length=512)
-
-
-class ConfirmIdentityRedeemResponse(BaseModel):
-    """Response payload for the redeem endpoint."""
-
-    confirmation_token: str
-    expires_at: datetime
 
 
 # ---------------------------------------------------------------------------

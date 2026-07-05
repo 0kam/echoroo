@@ -8,12 +8,11 @@ first-party session surface.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
 
 from echoroo.api.v1 import clips as legacy_clips
 from echoroo.api.v1 import datasets as legacy_datasets
@@ -30,7 +29,6 @@ from echoroo.core.auth import (
     ANON_MEDIA_TOKEN_SCOPES,
     ANON_MEDIA_TTL,
     DEFAULT_MEDIA_TTL,
-    MediaTokenScope,
     issue_media_token,
 )
 from echoroo.core.database import DbSession
@@ -40,21 +38,13 @@ from echoroo.middleware.auth import CurrentUser, OptionalCurrentUser
 from echoroo.models.enums import ProjectStatus, ProjectVisibility
 from echoroo.schemas.clip import ClipDetailResponse, ClipListResponse
 from echoroo.schemas.recording import RecordingDetailResponse
+from echoroo.schemas.web_v1.media_token import (
+    ClipMediaTokenRequest,
+    MediaTokenRequest,
+    MediaTokenResponse,
+)
 
 router = APIRouter()
-
-
-class MediaTokenRequest(BaseModel):
-    """Request body for issuing a scoped recording media token."""
-
-    scope: MediaTokenScope
-
-
-class MediaTokenResponse(BaseModel):
-    """Scoped media token response for native browser media/image elements."""
-
-    token: str
-    expires_in: int
 
 
 @router.post(
@@ -140,17 +130,6 @@ async def issue_recording_media_token(
         token=token,
         expires_in=int(DEFAULT_MEDIA_TTL.total_seconds()),
     )
-
-
-class ClipMediaTokenRequest(BaseModel):
-    """Request body for issuing a scoped clip media token.
-
-    Clip playback / spectrogram ride recording-level tokens (they reuse the
-    recording streaming BFF with clip start/end bounds), so the only clip-bound
-    scope is ``"download"``.
-    """
-
-    scope: Literal["download"] = "download"
 
 
 @router.post(
