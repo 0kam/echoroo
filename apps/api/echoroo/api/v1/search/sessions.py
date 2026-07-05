@@ -375,14 +375,11 @@ async def rerun_search_session(
     )
 
 
-@router.get(
-    "/sessions/{session_id}/reference-audio/{source_index}",
-    summary="Stream reference audio for a search session",
-    description=(
-        "Stream a persisted reference audio file for a search session by its index "
-        "in the reference_audio_keys list. Supports HTTP Range requests."
-    ),
-)
+# W2-4 PR-B: the ``GET /sessions/{session_id}/reference-audio/{source_index}``
+# route was unmounted from ``/api/v1`` in favour of the ``/web-api/v1`` BFF
+# media-token surface (``echoroo.api.web_v1.projects._search`` imports this body
+# as a helper and gate_action-guards itself). The function stays importable; the
+# ``@router.get`` decorator is intentionally removed so no v1 route is mounted.
 async def stream_reference_audio(
     project_id: UUID,
     session_id: UUID,

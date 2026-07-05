@@ -67,15 +67,17 @@ MEDIA_TOKEN_SCOPES: frozenset[str] = frozenset(
     {"audio", "playback", "spectrogram", "download"}
 )
 
-MediaResourceType = Literal["recording", "clip"]
+MediaResourceType = Literal["recording", "clip", "search_session"]
 """The kind of resource a media token is bound to.
 
-W2-4 generalises the scoped media token so it can address either a whole
-recording or a single clip within a recording. A ``search_session`` variant
-is anticipated for a later PR — adding it here plus one matcher-table row is
-the only change that path will require.
+W2-4 generalises the scoped media token so it can address a whole recording,
+a single clip within a recording, or a persisted reference-audio source of a
+search session. The ``search_session`` variant streams one entry of the
+session's ``reference_audio_keys`` list, addressed by ``source_index``.
 """
-MEDIA_RESOURCE_TYPES: frozenset[str] = frozenset({"recording", "clip"})
+MEDIA_RESOURCE_TYPES: frozenset[str] = frozenset(
+    {"recording", "clip", "search_session"}
+)
 
 DEFAULT_ACCESS_TTL = timedelta(minutes=15)
 """FR-055: access tokens are short-lived (15 minutes)."""
@@ -123,10 +125,13 @@ class MediaTokenClaims:
     """Decoded scoped media-token claims.
 
     ``resource_type`` + ``resource_id`` identify the addressed media resource
-    (a recording, or a clip within one). ``project_id`` still scopes the token
-    to a single project so a token can never leak across project boundaries.
-    ``parent_id`` binds a clip token to its parent recording so the token
-    cannot be replayed under a different recording path segment.
+    (a recording, a clip within one, or a search session). ``project_id``
+    still scopes the token to a single project so a token can never leak
+    across project boundaries. ``parent_id`` binds a clip token to its parent
+    recording so the token cannot be replayed under a different recording path
+    segment. ``source_index`` binds a ``search_session`` token to one entry of
+    the session's ``reference_audio_keys`` list so it cannot be replayed for a
+    different source index.
     """
 
     user_id: UUID
@@ -138,6 +143,7 @@ class MediaTokenClaims:
     jti: str
     expires_at: datetime
     parent_id: UUID | None = None
+    source_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -769,18 +775,23 @@ def issue_media_token(
     resource_id: UUID,
     scope: MediaTokenScope,
     parent_id: UUID | None = None,
+    source_index: int | None = None,
     ttl: timedelta = DEFAULT_MEDIA_TTL,
     now: datetime | None = None,
 ) -> str:
     """Sign a short-lived JWT scoped to one media resource.
 
-    ``resource_type`` selects between a whole recording (``"recording"``) and
-    a single clip (``"clip"``); ``resource_id`` is the recording id or clip id
-    accordingly. The compact ``rtype`` claim carries the resource type; the
-    resource id continues to live under the ``recording_id`` claim key so the
-    on-wire shape stays stable for the common recording case. Clip tokens
-    MUST bind their parent recording via ``parent_id`` so the token cannot be
-    replayed under another recording's path.
+    ``resource_type`` selects between a whole recording (``"recording"``), a
+    single clip (``"clip"``), and a search session's reference audio
+    (``"search_session"``); ``resource_id`` is the recording id, clip id, or
+    session id accordingly. The compact ``rtype`` claim carries the resource
+    type; the resource id continues to live under the ``recording_id`` claim
+    key so the on-wire shape stays stable for the common recording case. Clip
+    tokens MUST bind their parent recording via ``parent_id`` so the token
+    cannot be replayed under another recording's path. ``search_session``
+    tokens MUST bind their ``source_index`` (carried under the ``src_idx``
+    claim) so the token cannot be replayed for a different reference-audio
+    source.
     """
     if scope not in MEDIA_TOKEN_SCOPES:
         raise ValueError("invalid media token scope")
@@ -788,6 +799,10 @@ def issue_media_token(
         raise ValueError("invalid media token resource type")
     if (resource_type == "clip") != (parent_id is not None):
         raise ValueError("parent_id is required for clip tokens and forbidden otherwise")
+    if (resource_type == "search_session") != (source_index is not None):
+        raise ValueError(
+            "source_index is required for search_session tokens and forbidden otherwise"
+        )
 
     issued_at = now or datetime.now(UTC)
     expires_at = issued_at + ttl
@@ -799,6 +814,7 @@ def issue_media_token(
         "recording_id": str(resource_id),
         "scope": scope,
         **({"parent_id": str(parent_id)} if parent_id is not None else {}),
+        **({"src_idx": source_index} if source_index is not None else {}),
         "jti": str(uuid.uuid4()),
         "type": MEDIA_TOKEN_TYPE,
         "typ": MEDIA_TOKEN_TYP,
@@ -817,12 +833,16 @@ def verify_media_token(
     resource_id: UUID,
     scope: MediaTokenScope,
     parent_id: UUID | None = None,
+    source_index: int | None = None,
 ) -> MediaTokenClaims:
     """Verify a scoped media token against the requested resource and scope.
 
     ``parent_id`` is the parent recording id from the request path for clip
     resources; the token's ``parent_id`` claim must match it exactly (and must
-    be absent for non-clip resources).
+    be absent for non-clip resources). ``source_index`` is the reference-audio
+    index from the request path for ``search_session`` resources; the token's
+    ``src_idx`` claim must match it exactly (and must be absent for other
+    resources).
     """
     try:
         payload: dict[str, Any] = jwt.decode(
@@ -844,6 +864,7 @@ def verify_media_token(
     token_resource_type = payload.get("rtype")
     token_resource_id = payload.get("recording_id")
     token_parent_id = payload.get("parent_id")
+    token_source_index = payload.get("src_idx")
     token_scope = payload.get("scope")
     jti = payload.get("jti")
     exp_ts = payload.get("exp")
@@ -881,6 +902,16 @@ def verify_media_token(
     if claim_parent_id != parent_id:
         raise InvalidTokenError("media token parent mismatch")
 
+    # The ``src_idx`` claim must be an int when present (a bool is not a valid
+    # source index — ``isinstance(True, int)`` is True, so reject bools too).
+    if token_source_index is not None and (
+        isinstance(token_source_index, bool)
+        or not isinstance(token_source_index, int)
+    ):
+        raise InvalidTokenError("media token source index invalid")
+    if token_source_index != source_index:
+        raise InvalidTokenError("media token source index mismatch")
+
     if not secrets.compare_digest(ss, current_security_stamp):
         raise StaleTokenError("security_stamp has been rotated")
 
@@ -894,6 +925,7 @@ def verify_media_token(
         jti=jti,
         expires_at=datetime.fromtimestamp(exp_ts, tz=UTC),
         parent_id=claim_parent_id,
+        source_index=token_source_index,
     )
 
 

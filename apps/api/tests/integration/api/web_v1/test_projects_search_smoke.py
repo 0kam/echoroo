@@ -52,12 +52,14 @@ from echoroo.core.actions import (
     SEARCH_SESSION_EXPORT_RECORDINGS_ACTION,
     SEARCH_SESSION_GET_ACTION,
     SEARCH_SESSION_LIST_ACTION,
+    SEARCH_SESSION_REFERENCE_AUDIO_ACTION,
     SEARCH_SESSION_RERUN_ACTION,
     SEARCH_SESSION_SAMPLE_ACTION,
     SEARCH_SESSION_TIME_DISTRIBUTION_ACTION,
     SEARCH_SESSION_UPDATE_ACTION,
     XENO_CANTO_AUDIO_ACTION,
 )
+from echoroo.core.auth import verify_media_token
 from echoroo.core.database import get_db
 from echoroo.middleware.auth import get_current_user
 from echoroo.models.enums import DetectionSource, DetectionStatus
@@ -74,7 +76,6 @@ from echoroo.schemas.search import (
 )
 from echoroo.schemas.xeno_canto import XenoCantoSearchResponse
 from tests.integration.api.web_v1._helpers import assert_api_key_cross_rejected
-
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -808,6 +809,178 @@ async def test_export_session_recordings_bff_delegates_to_legacy(
 
 
 # ---------------------------------------------------------------------------
+# Reference audio (media-token surface, W2-4 PR-B)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reference_audio_media_token_bff_gates_and_issues_scoped_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reference-audio media-token endpoint issues a session+index token."""
+    project_id = uuid4()
+    session_id = uuid4()
+    user = SimpleNamespace(id=uuid4(), security_stamp="ref-audio-stamp")
+
+    class _Service:
+        async def get_session(self, sid: object, pid: object) -> object:
+            return SimpleNamespace(
+                id=sid,
+                project_id=pid,
+                reference_audio_keys=["k0", "k1", "k2"],
+            )
+
+    service = _Service()
+    gate_captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        bff_search, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+            "/reference-audio/1/media-token"
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["expires_in"] > 0
+    assert gate_captured["action"] is SEARCH_SESSION_REFERENCE_AUDIO_ACTION
+
+    claims = verify_media_token(
+        body["token"],
+        current_security_stamp=user.security_stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=1,
+    )
+    assert claims.user_id == user.id
+    assert claims.resource_type == "search_session"
+    assert claims.source_index == 1
+
+
+@pytest.mark.asyncio
+async def test_reference_audio_media_token_bff_out_of_range_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An out-of-range source index returns 404 (anti-enumeration)."""
+    project_id = uuid4()
+    session_id = uuid4()
+    user = SimpleNamespace(id=uuid4(), security_stamp="ref-audio-stamp")
+
+    class _Service:
+        async def get_session(self, sid: object, pid: object) -> object:
+            return SimpleNamespace(
+                id=sid,
+                project_id=pid,
+                reference_audio_keys=["only-one"],
+            )
+
+    service = _Service()
+    gate_captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        bff_search, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+            "/reference-audio/5/media-token"
+        )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Reference audio not found"
+
+
+@pytest.mark.asyncio
+async def test_reference_audio_media_token_bff_missing_session_404(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing session returns 404 with the same anti-enumeration detail."""
+    project_id = uuid4()
+    session_id = uuid4()
+    user = SimpleNamespace(id=uuid4(), security_stamp="ref-audio-stamp")
+
+    class _Service:
+        async def get_session(self, sid: object, pid: object) -> object:
+            return None
+
+    service = _Service()
+    gate_captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        bff_search, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+            "/reference-audio/0/media-token"
+        )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["detail"] == "Reference audio not found"
+
+
+@pytest.mark.asyncio
+async def test_stream_reference_audio_bff_delegates_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reference-audio streaming GET gates + delegates to the legacy handler."""
+    project_id = uuid4()
+    session_id = uuid4()
+    user = SimpleNamespace(id=uuid4())
+    service = object()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_stream(**kwargs: object) -> StreamingResponse:
+        captured.update(kwargs)
+        return StreamingResponse(
+            iter([b"audio-bytes"]),
+            media_type="audio/wav",
+            headers={"Accept-Ranges": "bytes"},
+        )
+
+    monkeypatch.setattr(
+        legacy_search_sessions, "stream_reference_audio", fake_stream
+    )
+    monkeypatch.setattr(
+        bff_search, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    app = _build_app(user=user, service=service)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            f"/web-api/v1/projects/{project_id}/search/sessions/{session_id}"
+            "/reference-audio/2"
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("audio/")
+    assert captured["project_id"] == project_id
+    assert captured["session_id"] == session_id
+    assert captured["source_index"] == 2
+    assert captured["session_service"] is service
+    assert gate_captured["action"] is SEARCH_SESSION_REFERENCE_AUDIO_ACTION
+
+
+# ---------------------------------------------------------------------------
 # OpenAPI surface declaration
 # ---------------------------------------------------------------------------
 
@@ -836,6 +1009,10 @@ def test_search_bff_paths_declared_in_openapi() -> None:
     assert "get" in paths[f"{session_path}/sample"]
     assert "get" in paths[f"{session_path}/export/csv"]
     assert "get" in paths[f"{session_path}/export-recordings"]
+
+    ref_audio_path = f"{session_path}/reference-audio/{{source_index}}"
+    assert "get" in paths[ref_audio_path]
+    assert "post" in paths[f"{ref_audio_path}/media-token"]
 
 
 # ---------------------------------------------------------------------------
@@ -923,4 +1100,14 @@ async def test_search_bff_paths_reject_api_key_bearer(
         client,
         "GET",
         f"{project_prefix}/search/sessions/{session_id}/export-recordings",
+    )
+    await assert_api_key_cross_rejected(
+        client,
+        "GET",
+        f"{project_prefix}/search/sessions/{session_id}/reference-audio/0",
+    )
+    await assert_api_key_cross_rejected(
+        client,
+        "POST",
+        f"{project_prefix}/search/sessions/{session_id}/reference-audio/0/media-token",
     )

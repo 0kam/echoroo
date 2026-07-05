@@ -262,4 +262,11 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/download GET",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/download GET",
     "/web-api/v1/projects/{project_id}/recordings/{recording_id}/clips/{clip_id}/media-token POST",
+    # W2-4 PR-B — search-session reference audio: the browser-superseded
+    # ``/api/v1/.../search/sessions/{sid}/reference-audio/{idx}`` streaming route
+    # was unmounted in favour of the ``/web-api/v1`` BFF media-token surface. The
+    # streaming GET authenticates native ``<audio>`` elements via a scoped
+    # ``search_session`` media token issued by the new media-token POST.
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/reference-audio/{source_index} GET",
+    "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/reference-audio/{source_index}/media-token POST",
 ]

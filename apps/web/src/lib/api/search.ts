@@ -6,10 +6,11 @@
  * boundary). Mutations attach ``X-CSRF-Token`` via the inline helper
  * below.
  *
- * Out of scope for the migration: ``getReferenceAudioUrl`` returns a
- * synchronous URL string for ``<audio src=...>`` consumption (not a
- * fetch), so it continues to point at the legacy ``/api/v1`` mount.
- * Moving it would require a media-token plumb on the BFF side.
+ * W2-4 PR-B: reference-audio streaming moved to the ``/web-api/v1`` BFF
+ * media-token surface. ``getAuthenticatedReferenceAudioUrl`` issues a
+ * short-lived session+index-scoped media token and returns the BFF GET
+ * URL with ``?media_token=`` appended for native ``<audio src=...>``
+ * consumption — no builder targets ``/api/v1`` anymore.
  */
 
 import type {
@@ -29,8 +30,6 @@ import { apiClient } from './client';
 import { ApiError } from './client';
 
 const WEB_API_BASE = '/web-api/v1';
-// Legacy mount retained for ``getReferenceAudioUrl`` only — see note above.
-const LEGACY_API_BASE = '/api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
 function getCsrfToken(): string | null {
@@ -136,28 +135,36 @@ export async function fetchXenoCantoAudio(
 }
 
 /**
- * Build the streaming URL for a persisted reference audio file.
+ * Build an authenticated same-origin BFF URL for streaming a persisted
+ * reference audio file.
  *
- * The backend streams the audio from S3, supporting HTTP Range headers for seeking.
- *
- * spec/009 PR 4 NOTE: this is a synchronous URL builder used in
- * ``<audio src=...>`` markup, NOT an XHR. The browser sends the request
- * with no Authorization header (the BFF cookie auto-attaches only via
- * fetch credentials), so migrating it to ``/web-api/v1`` requires a
- * media-token flow on the BFF side. Kept on the legacy mount until the
- * media-token plumb lands.
+ * The backend streams the audio from S3, supporting HTTP Range headers for
+ * seeking. Native ``<audio>`` elements cannot send an Authorization header, so
+ * this issues a short-lived session+index-scoped ``audio`` media token and
+ * appends it to the BFF streaming URL (mirrors ``getAuthenticatedClipDownloadUrl``
+ * in ``clips.ts``).
  *
  * @param projectId - Project UUID
  * @param sessionId - Search session UUID that owns the audio
  * @param sourceIndex - Index of the audio file within the session's reference_audio_keys list
- * @returns Absolute URL path for the streaming endpoint
+ * @returns Same-origin URL path (with ``?media_token=``) for the streaming endpoint
  */
-export function getReferenceAudioUrl(
+export async function getAuthenticatedReferenceAudioUrl(
   projectId: string,
   sessionId: string,
   sourceIndex: number
-): string {
-  return `${LEGACY_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}`;
+): Promise<string> {
+  const { token } = await apiClient.post<{ token: string; expires_in: number }>(
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}/media-token`,
+    {},
+    { headers: csrfHeaders() }
+  );
+  const url = new URL(
+    `${WEB_API_BASE}/projects/${projectId}/search/sessions/${sessionId}/reference-audio/${sourceIndex}`,
+    window.location.origin
+  );
+  url.searchParams.set('media_token', token);
+  return url.pathname + url.search;
 }
 
 /**

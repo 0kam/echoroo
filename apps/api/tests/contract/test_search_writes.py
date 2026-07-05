@@ -85,10 +85,15 @@ _EMBEDDING_DIM = 1536  # Perch v2
 def _search_base(project_id: str) -> str:
     """Return the base search URL prefix for the KEEP routes (v1).
 
-    W2-3 PR-18: only the three KEEP routes (POST /similar, POST
-    /similar-by-audio, GET /sessions/{id}/reference-audio/{idx}) stay mounted on
-    ``/api/v1``; the batch / jobs / session-write / annotation routes were
+    W2-3 PR-18: the batch / jobs / session-write / annotation routes were
     unmounted and their callers use :func:`_search_bff_base` instead.
+    W2-4 PR-B: the reference-audio route was also unmounted (now on the
+    ``/web-api/v1`` media-token BFF); only the two ``similar`` /
+    ``similar-by-audio`` POSTs stay mounted on ``/api/v1``.  This suite is
+    skip-marked (Phase 14+), so its ``reference-audio`` cases below are stale
+    and never run — the live reference-audio coverage lives in
+    ``tests/integration/api/web_v1/test_projects_search_smoke.py`` and
+    ``tests/contract/test_search_smoke.py``.
 
     Args:
         project_id: Project UUID string

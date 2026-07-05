@@ -32,7 +32,7 @@
 import { onDestroy } from 'svelte';
 import * as m from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
-import { getSearchSession, getReferenceAudioUrl } from '$lib/api/search';
+import { getSearchSession, getAuthenticatedReferenceAudioUrl } from '$lib/api/search';
 import { fetchCustomModels } from '$lib/api/custom-models';
 import { generateId } from '$lib/utils/id';
 import {
@@ -131,7 +131,10 @@ export function useSessionReconstruction(
               const xcId = src['xc_id'] as string | undefined;
 
               if (s3Key && data.reference_audio_keys) {
-                // S3-persisted source (uploaded files).
+                // S3-persisted source (uploaded files). ``streamUrl`` is
+                // resolved in a second async pass below because the BFF
+                // reference-audio stream is now authenticated with a scoped
+                // media token (see getAuthenticatedReferenceAudioUrl).
                 const keyIndex = data.reference_audio_keys.indexOf(s3Key);
                 if (keyIndex >= 0) {
                   const fileKey = src['file_key'] as string | undefined;
@@ -139,7 +142,6 @@ export function useSessionReconstruction(
                     id: generateId(),
                     origin: 's3' as const,
                     label: fileKey ?? `Source ${keyIndex + 1}`,
-                    streamUrl: getReferenceAudioUrl(pid, sid, keyIndex),
                     sourceIndex: keyIndex,
                     start_time: src['start_time'] as number | undefined,
                     end_time: src['end_time'] as number | undefined,
@@ -177,6 +179,36 @@ export function useSessionReconstruction(
             sources: speciesSources,
           });
         }
+
+        // Second pass: resolve authenticated stream URLs for every S3-backed
+        // source. Each URL carries a short-lived scoped media token; the token
+        // endpoint is hit once per DISTINCT source index (sources sharing an
+        // index share one request). URLs are minted here for the session's
+        // lifetime — like the recording playback/spectrogram flows, an expired
+        // token means the next media fetch 401s and the user reloads.
+        const s3Sources = loaded.flatMap((sp) =>
+          sp.sources.filter((s) => s.origin === 's3' && s.sourceIndex !== undefined),
+        );
+        const urlByIndex = new Map<number, Promise<string | undefined>>();
+        for (const s of s3Sources) {
+          const idx = s.sourceIndex as number;
+          if (!urlByIndex.has(idx)) {
+            urlByIndex.set(
+              idx,
+              getAuthenticatedReferenceAudioUrl(pid, sid, idx).catch((e: unknown) => {
+                // Non-critical — leave streamUrl unset; SourceCard degrades.
+                console.warn(`reference-audio URL resolution failed (source ${idx})`, e);
+                return undefined;
+              }),
+            );
+          }
+        }
+        await Promise.all(
+          s3Sources.map(async (s) => {
+            s.streamUrl = await urlByIndex.get(s.sourceIndex as number);
+          }),
+        );
+        if (isStale(capturedPid, capturedSid)) return;
 
         reconstructedSpecies = loaded;
       }

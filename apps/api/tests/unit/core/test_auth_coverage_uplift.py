@@ -447,6 +447,152 @@ def test_verify_media_token_rejects_resource_type_mismatch() -> None:
         )
 
 
+def test_issue_and_verify_search_session_media_token_round_trip() -> None:
+    """Search-session tokens carry rtype=search_session + the src_idx claim."""
+    user_id = uuid4()
+    project_id = uuid4()
+    session_id = uuid4()
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp="session-stamp",
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=2,
+    )
+
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["rtype"] == "search_session"
+    assert decoded["recording_id"] == str(session_id)
+    assert decoded["src_idx"] == 2
+    assert decoded["scope"] == "audio"
+    assert "parent_id" not in decoded
+
+    claims = verify_media_token(
+        token,
+        current_security_stamp="session-stamp",
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=2,
+    )
+    assert claims.resource_type == "search_session"
+    assert claims.resource_id == session_id
+    assert claims.source_index == 2
+    assert claims.parent_id is None
+    assert claims.scope == "audio"
+
+
+def test_issue_media_token_enforces_source_index_pairing() -> None:
+    """source_index is mandatory for search_session tokens and forbidden else."""
+    with pytest.raises(ValueError, match="source_index"):
+        issue_media_token(
+            user_id=uuid4(),
+            security_stamp="stamp",
+            project_id=uuid4(),
+            resource_type="search_session",
+            resource_id=uuid4(),
+            scope="audio",
+        )
+    with pytest.raises(ValueError, match="source_index"):
+        issue_media_token(
+            user_id=uuid4(),
+            security_stamp="stamp",
+            project_id=uuid4(),
+            resource_type="recording",
+            resource_id=uuid4(),
+            scope="audio",
+            source_index=0,
+        )
+
+
+def test_verify_media_token_rejects_source_index_mismatch() -> None:
+    """A search-session token is bound to one source index."""
+    project_id = uuid4()
+    session_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=1,
+    )
+    # Wrong index in the request path.
+    with pytest.raises(InvalidTokenError, match="source index mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="search_session",
+            resource_id=session_id,
+            scope="audio",
+            source_index=0,
+        )
+    # Absent index (None) when the token carries one.
+    with pytest.raises(InvalidTokenError, match="source index mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="search_session",
+            resource_id=session_id,
+            scope="audio",
+        )
+
+
+def test_verify_media_token_rejects_wrong_session_id() -> None:
+    """A search-session token cannot verify against a different session id."""
+    project_id = uuid4()
+    session_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=0,
+    )
+    with pytest.raises(InvalidTokenError, match="path mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="search_session",
+            resource_id=uuid4(),
+            scope="audio",
+            source_index=0,
+        )
+
+
+def test_verify_media_token_rejects_recording_token_on_session_verify() -> None:
+    """A recording token must not verify as a search_session token."""
+    project_id = uuid4()
+    resource_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=resource_id,
+        scope="audio",
+    )
+    with pytest.raises(InvalidTokenError, match="resource type mismatch"):
+        verify_media_token(
+            token,
+            current_security_stamp="stamp",
+            project_id=project_id,
+            resource_type="search_session",
+            resource_id=resource_id,
+            scope="audio",
+            source_index=0,
+        )
+
+
 def test_verify_media_token_rejects_access_token_type() -> None:
     """Full access JWTs must not verify as media tokens."""
     token = issue_access_token(user_id=uuid4(), security_stamp="stamp")

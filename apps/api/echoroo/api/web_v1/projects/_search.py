@@ -34,13 +34,18 @@ Endpoints (16, plus 2 streaming):
 * GET    ``/{pid}/search/sessions/{session_id}/export/csv``     → ``SEARCH_SESSION_EXPORT_CSV_ACTION`` (StreamingResponse)
 * GET    ``/{pid}/search/sessions/{session_id}/export-recordings`` → ``SEARCH_SESSION_EXPORT_RECORDINGS_ACTION`` (StreamingResponse)
 
+W2-4 PR-B resolves the previously-deferred reference-audio endpoint:
+
+* ``POST /{pid}/search/sessions/{session_id}/reference-audio/{idx}/media-token``
+  → ``SEARCH_SESSION_REFERENCE_AUDIO_ACTION`` — issues a scoped
+  ``search_session`` media token (scope ``"audio"``, bound to ``source_index``).
+* ``GET  /{pid}/search/sessions/{session_id}/reference-audio/{idx}``
+  → ``SEARCH_SESSION_REFERENCE_AUDIO_ACTION`` — delegates to the legacy
+  streaming handler. Native ``<audio>`` elements authenticate via the
+  ``?media_token=`` query param the auth-router matcher resolves.
+
 Out of scope for this PR:
 
-* ``GET /{pid}/search/sessions/{session_id}/reference-audio/{source_index}``
-  — sync URL builder on the frontend (``getReferenceAudioUrl``) returns
-  a string for ``<audio src=...>`` consumption, which goes through the
-  media-token path, not an XHR. The streaming endpoint stays on
-  ``/api/v1`` for now.
 * Sonogram proxy (``/xeno-canto/sonogram``) — invoked from inside the
   rewritten ``XenoCantoRecording.sonogram_url`` strings emitted by the
   legacy search response, not from a typed frontend caller.
@@ -85,7 +90,17 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Form, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import StreamingResponse
 
 from echoroo.api.v1 import xeno_canto as legacy_xeno_canto
@@ -94,6 +109,7 @@ from echoroo.api.v1.search import batch as legacy_search_batch
 from echoroo.api.v1.search import deps as legacy_search_deps
 from echoroo.api.v1.search import sessions as legacy_search_sessions
 from echoroo.api.v1.search import similarity as legacy_search_similarity
+from echoroo.api.web_v1.projects._media import MediaTokenResponse
 from echoroo.core.actions import (
     SEARCH_ANNOTATION_ACTION,
     SEARCH_BATCH_CREATE_ACTION,
@@ -105,12 +121,14 @@ from echoroo.core.actions import (
     SEARCH_SESSION_EXPORT_RECORDINGS_ACTION,
     SEARCH_SESSION_GET_ACTION,
     SEARCH_SESSION_LIST_ACTION,
+    SEARCH_SESSION_REFERENCE_AUDIO_ACTION,
     SEARCH_SESSION_RERUN_ACTION,
     SEARCH_SESSION_SAMPLE_ACTION,
     SEARCH_SESSION_TIME_DISTRIBUTION_ACTION,
     SEARCH_SESSION_UPDATE_ACTION,
     XENO_CANTO_AUDIO_ACTION,
 )
+from echoroo.core.auth import DEFAULT_MEDIA_TTL, issue_media_token
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
@@ -554,6 +572,115 @@ async def export_search_session_recordings_csv(
         db=db,
         session_service=session_service,
         locale=locale,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Search session reference audio (media-token surface, W2-4 PR-B)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{project_id}/search/sessions/{session_id}/reference-audio/{source_index}/media-token",
+    response_model=MediaTokenResponse,
+    summary="Issue a scoped search-session reference-audio media token",
+    description=(
+        "Issue a short-lived JWT scoped to one reference-audio source of a "
+        "search session, for native ``<audio>`` streaming."
+    ),
+)
+async def issue_reference_audio_media_token(
+    project_id: UUID,
+    session_id: UUID,
+    source_index: int,
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: legacy_search_deps.AuthorizedSearchSessionServiceDep,
+) -> MediaTokenResponse:
+    """Gate the reference-audio action, then issue a session+index-scoped token.
+
+    The token binds ``resource_type="search_session"`` + the session id with
+    scope ``"audio"`` and the ``source_index`` so a native ``<audio>`` element
+    can authenticate the streaming GET without an Authorization header. The
+    ``source_index`` must be in range for the session's
+    ``reference_audio_keys`` list (404 otherwise, anti-enumeration).
+    """
+    await gate_action(
+        action=SEARCH_SESSION_REFERENCE_AUDIO_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+
+    session = await session_service.get_session(session_id, project_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference audio not found",
+        )
+
+    keys = session.reference_audio_keys or []
+    if source_index < 0 or source_index >= len(keys):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference audio not found",
+        )
+
+    token = issue_media_token(
+        user_id=current_user.id,
+        security_stamp=current_user.security_stamp,
+        project_id=project_id,
+        resource_type="search_session",
+        resource_id=session_id,
+        scope="audio",
+        source_index=source_index,
+        ttl=DEFAULT_MEDIA_TTL,
+    )
+    return MediaTokenResponse(
+        token=token,
+        expires_in=int(DEFAULT_MEDIA_TTL.total_seconds()),
+    )
+
+
+@router.get(
+    "/{project_id}/search/sessions/{session_id}/reference-audio/{source_index}",
+    summary="Stream reference audio for a search session",
+    description="BFF adapter for the legacy session reference-audio stream.",
+)
+async def stream_reference_audio(
+    project_id: UUID,
+    session_id: UUID,
+    source_index: int,
+    request: Request,
+    current_user: CurrentUser,
+    db: DbSession,
+    session_service: legacy_search_deps.AuthorizedSearchSessionServiceDep,
+    range: str | None = Header(None),
+) -> StreamingResponse:
+    """Delegate reference-audio streaming to the legacy handler.
+
+    Native ``<audio>`` elements authenticate via a scoped media token (the
+    auth-router matcher resolves it) so this GET keeps HTTP Range semantics
+    unchanged from the legacy handler.
+    """
+    await gate_action(
+        action=SEARCH_SESSION_REFERENCE_AUDIO_ACTION,
+        project_id=project_id,
+        current_user=current_user,
+        request=request,
+        db=db,
+    )
+    return await legacy_search_sessions.stream_reference_audio(
+        project_id=project_id,
+        session_id=session_id,
+        source_index=source_index,
+        request=request,
+        current_user=current_user,
+        db=db,
+        session_service=session_service,
+        range=range,
     )
 
 

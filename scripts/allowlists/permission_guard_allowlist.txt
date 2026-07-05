@@ -85,10 +85,11 @@ apps/api/echoroo/api/v1/recordings.py:stream_audio_legacy:missing-permission-gua
 # ``/api/v1`` in favour of the project-scoped ``/web-api/v1/.../search*`` BFF
 # (``_search.py`` delegates import these bodies as helpers). Their dead
 # fingerprints were dropped; the ``batch.py`` handlers never had entries
-# (they gate_action-guard themselves). ``stream_reference_audio`` (media
-# ``<audio src>``) and the two ``similar`` / ``similar-by-audio`` POSTs stay
-# mounted, so their entries are retained below.
-apps/api/echoroo/api/v1/search/sessions.py:stream_reference_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+# (they gate_action-guard themselves). The two ``similar`` / ``similar-by-audio``
+# POSTs stay mounted, so their entries are retained below.
+# W2-4 PR-B: ``stream_reference_audio`` was unmounted (now a helper delegated to
+# by the ``/web-api/v1`` BFF ``_search.py:stream_reference_audio``, which
+# gate_action-guards itself), so its dead fingerprint was dropped.
 apps/api/echoroo/api/v1/search/similarity.py:search_similar:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/search/similarity.py:search_similar_by_audio:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 # W2-3 PR-3: ``api/v1/segments.py`` routes unmounted (now helpers delegated to by
