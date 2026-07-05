@@ -437,15 +437,12 @@ async def proxy_audio(
     )
 
 
-@router.get(
-    "/sonogram",
-    summary="Proxy a Xeno-canto sonogram image",
-    description=(
-        "Fetches a Xeno-canto sonogram image and returns it from the same origin, "
-        "avoiding Chrome ORB (Opaque Response Blocking) for cross-origin images. "
-        "Only URLs under https://xeno-canto.org/ are accepted."
-    ),
-)
+# W2-4 PR-D: the ``@router.get("/sonogram", ...)`` decorator was removed so
+# the legacy ``/api/v1`` sonogram route is unmounted. ``proxy_sonogram``
+# survives as a plain helper that the ``/web-api/v1`` search adapter
+# (``echoroo.api.web_v1.projects._search``) imports and delegates to. The
+# SSRF guard (``_validate_sonogram_url``) and its unit-test suite invoke
+# this coroutine directly and continue to work unchanged.
 async def proxy_sonogram(
     project_id: UUID,
     url: str = Query(..., description="Full xeno-canto.org sonogram URL to proxy"),
@@ -724,11 +721,15 @@ async def search_xeno_canto(
     # Apply per_page slicing client-side (XC paginates by its own page size)
     recordings = recordings[:per_page]
 
-    # Rewrite sonogram URLs to go through our proxy (avoids ORB blocking in Chrome)
+    # Rewrite sonogram URLs to go through our BFF proxy (avoids ORB blocking
+    # in Chrome). W2-4 PR-D moved the sonogram proxy to the ``/web-api/v1``
+    # BFF surface; this function is invoked from the ``/web-api/v1`` search
+    # adapter, so the emitted URL must target the BFF twin (the legacy
+    # ``/api/v1`` sonogram route is unmounted).
     for rec in recordings:
         if rec.sonogram_url:
             proxied = (
-                f"/api/v1/projects/{project_id}/xeno-canto/sonogram"
+                f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram"
                 f"?url={urllib.parse.quote(rec.sonogram_url, safe='')}"
             )
             rec.sonogram_url = proxied

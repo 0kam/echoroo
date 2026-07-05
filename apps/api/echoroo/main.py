@@ -244,6 +244,25 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
             frozenset({"POST"}),
         ),
     )
+    # W2-4 PR-D — Xeno-canto sonogram proxy
+    # (``GET /web-api/v1/projects/{id}/xeno-canto/sonogram``). The
+    # server-emitted ``XenoCantoRecording.sonogram_url`` is rendered by a
+    # native ``<img>`` element that CANNOT attach a Bearer/access token but
+    # DOES send the session cookie automatically. The nested allowlist above
+    # falls back to session auth whenever a session cookie is present (and then
+    # 401s for lack of an access token), so the sonogram proxy uses the
+    # UNCONDITIONALLY-public regex allowlist instead, mirroring the public
+    # posture of the legacy ``/api/v1`` sonogram route it replaces. Sonograms
+    # are open data from xeno-canto.org; the route's own SSRF allowlist
+    # (``_validate_sonogram_url``) is the security boundary. Other
+    # ``/xeno-canto/*`` paths (search, audio) are NOT listed here and keep
+    # falling through to the cookie/Bearer authenticator.
+    auth_router_public_regexes: tuple[tuple[str, frozenset[str]], ...] = (
+        (
+            r"/web-api/v1/projects/[^/]+/xeno-canto/sonogram",
+            frozenset({"GET"}),
+        ),
+    )
     # Phase 15 T155b: programmatic prefix flipped back to ``/api/v1``.
     # ``DbApiKeyVerifier`` (wired below) resolves Bearer credentials
     # against the ``api_keys`` table. The ``allow_legacy_session_fallback``
@@ -274,6 +293,7 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
             public_path_allowlist=auth_router_allowlist,
             public_path_prefix_allowlist=auth_router_public_prefixes,
             public_path_nested_allowlist=auth_router_public_nested,
+            public_path_regex_allowlist=auth_router_public_regexes,
             allow_legacy_session_fallback=True,
         ),
     )

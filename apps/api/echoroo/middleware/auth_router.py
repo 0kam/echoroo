@@ -409,6 +409,20 @@ class AuthRouterConfig:
     public_path_nested_allowlist: tuple[tuple[str, str, frozenset[str]], ...] = field(
         default_factory=tuple
     )
+    # W2-4 PR-D: UNCONDITIONALLY-public path regexes. Each tuple is
+    # ``(regex, methods)`` where ``regex`` fully matches a concrete
+    # ``/web-api/v1`` path. Unlike ``public_path_prefix_allowlist`` and
+    # ``public_path_nested_allowlist`` — which fall back to session auth when a
+    # session cookie is present (so a signed-in user gets a richer Principal) —
+    # entries here ALWAYS pass through as Guest, even when the caller carries a
+    # session cookie. Used for genuinely credential-irrelevant surfaces served
+    # to native elements that cannot attach a Bearer/access token but DO send
+    # the session cookie automatically (e.g. the Xeno-canto sonogram ``<img>``
+    # proxy). Each entry's own handler-level control (SSRF allowlist) remains
+    # the security boundary.
+    public_path_regex_allowlist: tuple[tuple[str, frozenset[str]], ...] = field(
+        default_factory=tuple
+    )
     # Phase 15 T155b: when ``True`` and the request hits the
     # ``programmatic_prefix`` WITHOUT an ``Authorization: Bearer`` header,
     # the middleware leaves ``request.state.principal = None`` and lets
@@ -470,6 +484,17 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if path in self.config.public_path_allowlist:
             request.state.principal = None
             return await call_next(request)
+
+        # W2-4 PR-D: unconditionally-public regex paths. Unlike the prefix /
+        # nested allowlists below, these pass through as Guest even when a
+        # session cookie is present (the caller is a native element such as a
+        # sonogram ``<img>`` that sends the cookie automatically but cannot
+        # attach a Bearer/access token). The handler's own control (SSRF
+        # allowlist) is the security boundary.
+        for regex, methods in self.config.public_path_regex_allowlist:
+            if request.method in methods and re.fullmatch(regex, path) is not None:
+                request.state.principal = None
+                return await call_next(request)
 
         # Phase 5 / FR-016: prefix + method match for Guest-readable paths.
         # A best-effort soft auth attempt happens INSIDE the gate via the

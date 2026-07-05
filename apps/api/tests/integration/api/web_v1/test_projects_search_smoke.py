@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from httpx import ASGITransport, AsyncClient
 
 from echoroo.api.v1 import xeno_canto as legacy_xeno_canto
@@ -266,6 +266,50 @@ async def test_xeno_canto_audio_bff_delegates_to_legacy(
     assert captured["xc_id"] == "1234"
     assert captured["project_id"] == project_id
     assert gate_captured["action"] is XENO_CANTO_AUDIO_ACTION
+
+
+@pytest.mark.asyncio
+async def test_xeno_canto_sonogram_bff_delegates_to_legacy_ungated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sonogram twin delegates verbatim and is intentionally un-gated.
+
+    Native ``<img src=...>`` elements render the server-emitted
+    ``sonogram_url`` and cannot attach a Bearer header, so the twin carries
+    NO ``CurrentUser`` dependency and fires NO ``gate_action`` (the SSRF
+    allowlist inside ``proxy_sonogram`` is the control). This test asserts
+    both the delegation kwargs and that gating is NOT invoked.
+    """
+    project_id = uuid4()
+    captured: dict[str, object] = {}
+    gate_captured: dict[str, object] = {}
+
+    async def fake_sonogram(**kwargs: object) -> Response:
+        captured.update(kwargs)
+        return Response(content=b"\x89PNG", media_type="image/png")
+
+    monkeypatch.setattr(legacy_xeno_canto, "proxy_sonogram", fake_sonogram)
+    monkeypatch.setattr(
+        bff_search, "gate_action", _make_capturing_gate_action(gate_captured)
+    )
+
+    # No user override needed — the twin has no CurrentUser dependency.
+    app = _build_app(user=SimpleNamespace(id=uuid4()), service=object())
+    sono_url = "https://xeno-canto.org/sounds/spectrogram/1234-small.png"
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.get(
+            f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
+            params={"url": sono_url},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("image/")
+    assert captured["project_id"] == project_id
+    assert captured["url"] == sono_url
+    # Un-gated: no gate_action should have fired.
+    assert gate_captured == {}
 
 
 @pytest.mark.asyncio
@@ -994,6 +1038,7 @@ def test_search_bff_paths_declared_in_openapi() -> None:
     assert "get" in paths[f"{project_prefix}/search/embedding-stats"]
     assert "get" in paths[f"{project_prefix}/xeno-canto/search"]
     assert "get" in paths[f"{project_prefix}/xeno-canto/audio/{{xc_id}}"]
+    assert "get" in paths[f"{project_prefix}/xeno-canto/sonogram"]
     assert "post" in paths[f"{project_prefix}/search/batch"]
     assert "get" in paths[f"{project_prefix}/search/jobs/{{job_id}}"]
     assert "post" in paths[f"{project_prefix}/annotations"]
