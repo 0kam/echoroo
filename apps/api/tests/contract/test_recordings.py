@@ -21,13 +21,18 @@ recordings`` handler and collapses to 404 on a Restricted project
 BFF adapters require a real session, so their no-auth path stays 401 (auth
 fires before the permission gate).
 
-The audio / stream media routes (``TestRecordingAudioEndpoints``) KEEP their
-``/api/v1`` Bearer semantics — they are not migrated in this PR.
+The audio media route (``TestRecordingAudioEndpoints``) KEEPS its ``/api/v1``
+Bearer semantics — it is not migrated in this PR.
 
 W2-4 PR-A (2026-07-04): the recording download route was migrated to the
 ``/web-api/v1`` BFF media-token surface (``_media.py:download_recording``), so
 ``test_download_recording_*`` now exercise the BFF path (session-authed via
 ``csrf_headers``); the no-auth case collapses to a plain 401.
+
+W2-4 PR-E (2026-07-05): the legacy ``/{recording_id}/stream`` alias (a pure
+delegate to the ``/audio`` handler, ``include_in_schema=False``, zero callers)
+was unmounted. The former ``test_stream_audio_*`` contract tests now exercise
+the surviving ``/audio`` route directly.
 """
 
 from __future__ import annotations
@@ -596,9 +601,9 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/stream - Stream audio."""
+        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio - Stream audio."""
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/stream",
+            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio",
             headers=auth_headers,
         )
 
@@ -621,10 +626,10 @@ class TestRecordingAudioEndpoints:
         auth_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/stream with non-existent ID."""
+        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}/stream",
+            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}/audio",
             headers=auth_headers,
         )
 
@@ -636,12 +641,17 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/stream requires authentication."""
+        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio denies anonymous access.
+
+        Unlike the removed ``/stream`` alias (strict ``CurrentUser`` -> 401), the
+        surviving ``/audio`` route accepts a ``FlexibleCurrentUser`` (media-token
+        aware) and the media gate rejects an anonymous guest with 403.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/stream"
+            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio"
         )
 
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     async def test_get_spectrogram_success(
         self,
@@ -777,12 +787,13 @@ class TestRecordingAudioEndpoints:
 def test_v1_recording_download_route_unmounted() -> None:
     """The legacy /api/v1 recording download route must stay unmounted (W2-4 PR-A).
 
-    Only the download surface moved in PR-A; the v1 audio + stream routes are
-    still mounted until their own migration PR lands.
+    Only the download surface moved in PR-A; the v1 audio route stays mounted.
+    The legacy ``/stream`` alias was unmounted in W2-4 PR-E.
     """
     from echoroo.main import create_app
 
     paths = create_app().openapi()["paths"]
     base = "/api/v1/projects/{project_id}/recordings/{recording_id}"
     assert f"{base}/download" not in paths
+    assert f"{base}/stream" not in paths
     assert f"{base}/audio" in paths
