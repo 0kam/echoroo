@@ -18,13 +18,13 @@ from echoroo.models.system import SystemSetting
 class SystemSettingRepository:
     """Repository for SystemSetting data access operations."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         """Initialize repository with database session.
 
         Args:
-            session: Async database session
+            db: Async database session
         """
-        self.session = session
+        self.db = db
 
     async def get_setting(self, key: str) -> SystemSetting | None:
         """Get a system setting by key.
@@ -35,7 +35,7 @@ class SystemSettingRepository:
         Returns:
             SystemSetting if found, None otherwise
         """
-        result = await self.session.execute(
+        result = await self.db.execute(
             select(SystemSetting).where(SystemSetting.key == key)
         )
         return result.scalar_one_or_none()
@@ -90,9 +90,9 @@ class SystemSettingRepository:
                 value=value,
                 updated_by_id=updated_by_id,
             )
-            self.session.add(setting)
+            self.db.add(setting)
 
-        await self.session.flush()
+        await self.db.flush()
         return setting
 
     async def is_setup_completed(self) -> bool:

@@ -3,21 +3,15 @@ import uuid
 
 from sqlalchemy import delete, select
 from sqlalchemy.engine import CursorResult
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.embedding import Embedding
+from echoroo.repositories.base import BaseRepository
 
 
-class EmbeddingRepository:
+class EmbeddingRepository(BaseRepository[Embedding]):
     """Repository for Embedding entity operations."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            session: SQLAlchemy async session
-        """
-        self.session = session
+    model = Embedding
 
     async def create_batch(self, embeddings: list[Embedding]) -> list[Embedding]:
         """Bulk-insert embedding records.
@@ -28,8 +22,8 @@ class EmbeddingRepository:
         Returns:
             List of created Embedding instances
         """
-        self.session.add_all(embeddings)
-        await self.session.flush()
+        self.db.add_all(embeddings)
+        await self.db.flush()
         return embeddings
 
     async def delete_by_run(self, detection_run_id: uuid.UUID) -> int:
@@ -41,7 +35,7 @@ class EmbeddingRepository:
         Returns:
             Number of rows deleted
         """
-        result: CursorResult[tuple[()]] = await self.session.execute(  # type: ignore[assignment]
+        result: CursorResult[tuple[()]] = await self.db.execute(  # type: ignore[assignment]
             delete(Embedding).where(Embedding.detection_run_id == detection_run_id)
         )
         return int(result.rowcount)
@@ -55,7 +49,7 @@ class EmbeddingRepository:
         Returns:
             List of Embedding instances ordered by start_time
         """
-        result = await self.session.execute(
+        result = await self.db.execute(
             select(Embedding)
             .where(Embedding.recording_id == recording_id)
             .order_by(Embedding.start_time)

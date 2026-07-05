@@ -1,24 +1,18 @@
 """License repository for database operations."""
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
 from echoroo.models.license import License
 from echoroo.models.project import Project
+from echoroo.repositories.base import BaseRepository
 from echoroo.schemas.license import LicenseCreate, LicenseUpdate
 
 
-class LicenseRepository:
+class LicenseRepository(BaseRepository[License]):
     """Repository for License entity operations."""
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialize repository with database session.
-
-        Args:
-            db: SQLAlchemy async session
-        """
-        self.db = db
+    model = License
 
     async def get_by_id(self, license_id: str) -> License | None:
         """Get license by ID.
@@ -139,7 +133,7 @@ class LicenseRepository:
         await self.db.refresh(license_obj)
         return license_obj
 
-    async def delete(self, license_id: str) -> bool:
+    async def delete(self, license_id: str) -> bool:  # type: ignore[override]
         """Delete a license.
 
         Args:

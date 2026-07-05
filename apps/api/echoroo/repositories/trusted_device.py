@@ -6,20 +6,19 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.trusted_device import TrustedDevice
+from echoroo.repositories.base import BaseRepository
 
 
-class TrustedDeviceRepository:
+class TrustedDeviceRepository(BaseRepository[TrustedDevice]):
     """Small query wrapper around ``trusted_devices``."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    model = TrustedDevice
 
     async def add(self, device: TrustedDevice) -> TrustedDevice:
-        self.session.add(device)
-        await self.session.flush()
+        self.db.add(device)
+        await self.db.flush()
         return device
 
     async def get_by_secret_hash(
@@ -27,7 +26,7 @@ class TrustedDeviceRepository:
         *,
         device_secret_hash: str,
     ) -> TrustedDevice | None:
-        row = await self.session.scalars(
+        row = await self.db.scalars(
             select(TrustedDevice)
             .where(TrustedDevice.device_secret_hash == device_secret_hash)
             .order_by(
@@ -46,7 +45,7 @@ class TrustedDeviceRepository:
         now: datetime | None = None,
     ) -> list[TrustedDevice]:
         effective_now = now or datetime.now(UTC)
-        rows = await self.session.scalars(
+        rows = await self.db.scalars(
             select(TrustedDevice)
             .where(
                 TrustedDevice.user_id == user_id,
@@ -65,7 +64,7 @@ class TrustedDeviceRepository:
         now: datetime | None = None,
     ) -> bool:
         effective_now = now or datetime.now(UTC)
-        result = await self.session.execute(
+        result = await self.db.execute(
             update(TrustedDevice)
             .where(
                 TrustedDevice.id == device_id,
@@ -83,7 +82,7 @@ class TrustedDeviceRepository:
         now: datetime | None = None,
     ) -> int:
         effective_now = now or datetime.now(UTC)
-        result = await self.session.execute(
+        result = await self.db.execute(
             update(TrustedDevice)
             .where(
                 TrustedDevice.user_id == user_id,
