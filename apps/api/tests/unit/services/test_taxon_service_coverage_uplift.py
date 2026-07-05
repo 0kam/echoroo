@@ -387,7 +387,8 @@ async def test_resolve_gbif_batch_returns_zero_when_no_unresolved() -> None:
     service = TaxonService(taxon_repo=repo)
     result = await service.resolve_gbif_batch()
 
-    assert result == 0
+    assert result.resolved == 0
+    assert result.errored == 0
 
 
 @pytest.mark.asyncio
@@ -407,9 +408,9 @@ async def test_resolve_gbif_batch_resolves_taxon_with_gbif_data() -> None:
     gbif_service.resolve_taxon = AsyncMock(return_value=gbif_result)
 
     service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
-    count = await service.resolve_gbif_batch(limit=10)
+    result = await service.resolve_gbif_batch(limit=10)
 
-    assert count == 1
+    assert result.resolved == 1
     repo.update.assert_awaited_once()
 
 
@@ -425,10 +426,11 @@ async def test_resolve_gbif_batch_handles_no_gbif_match() -> None:
     gbif_service.resolve_taxon = AsyncMock(return_value=None)
 
     service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
-    count = await service.resolve_gbif_batch(limit=10)
+    result = await service.resolve_gbif_batch(limit=10)
 
     # None result means gbif data not found — not counted as resolved
-    assert count == 0
+    assert result.resolved == 0
+    assert result.errored == 0
     repo.update.assert_awaited_once()
 
 
@@ -461,11 +463,71 @@ async def test_resolve_gbif_batch_continues_after_one_taxon_error() -> None:
     gbif_service.resolve_taxon = AsyncMock(side_effect=resolve)
 
     service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
-    count = await service.resolve_gbif_batch(limit=10)
+    result = await service.resolve_gbif_batch(limit=10)
 
     # The two healthy taxa are resolved; the failing one is skipped, not fatal.
-    assert count == 2
+    # A generic RuntimeError is NOT an ExternalServiceError, so it is not
+    # counted as an upstream-errored taxon.
+    assert result.resolved == 2
+    assert result.errored == 0
     assert repo.update.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_resolve_gbif_batch_counts_upstream_errors_separately() -> None:
+    """An ``ExternalServiceError`` is counted in ``errored`` (not swallowed).
+
+    A few isolated GBIF outages below the outage threshold must NOT abort the
+    batch: healthy taxa still resolve and the failures surface via ``errored``
+    so a downstream operator can tell a real outage from a legitimate miss.
+    """
+    from echoroo.core.exceptions import GBIFUnavailableError
+
+    repo = _make_taxon_repo()
+    good = _make_taxon("Parus major")
+    bad = _make_taxon("Boom errorus")
+    good2 = _make_taxon("Turdus merula")
+    repo.get_unresolved = AsyncMock(return_value=[good, bad, good2])
+    repo.update = AsyncMock()
+
+    gbif_result = MagicMock()
+    gbif_result.taxon_key = 11111
+    gbif_result.rank = "SPECIES"
+    gbif_result.metadata = {}
+
+    async def resolve(scientific_name: str) -> object:
+        if scientific_name == "Boom errorus":
+            raise GBIFUnavailableError("GBIF is down")
+        return gbif_result
+
+    gbif_service = _make_gbif_service()
+    gbif_service.resolve_taxon = AsyncMock(side_effect=resolve)
+
+    service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
+    result = await service.resolve_gbif_batch(limit=10)
+
+    assert result.resolved == 2
+    assert result.errored == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_gbif_batch_reraises_on_hard_outage() -> None:
+    """Enough consecutive upstream failures abort the batch (task -> FAILURE)."""
+    from echoroo.core.exceptions import GBIFUnavailableError
+
+    repo = _make_taxon_repo()
+    taxa = [_make_taxon(f"Down speciesus {i}") for i in range(6)]
+    repo.get_unresolved = AsyncMock(return_value=taxa)
+    repo.update = AsyncMock()
+
+    gbif_service = _make_gbif_service()
+    gbif_service.resolve_taxon = AsyncMock(
+        side_effect=GBIFUnavailableError("GBIF is down")
+    )
+
+    service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
+    with pytest.raises(GBIFUnavailableError):
+        await service.resolve_gbif_batch(limit=10)
 
 
 @pytest.mark.asyncio
@@ -503,10 +565,10 @@ async def test_resolve_gbif_batch_no_session_error_on_real_session(
     gbif_service.resolve_taxon = AsyncMock(side_effect=_gbif_result)
 
     service = TaxonService(taxon_repo=repo, gbif_service=gbif_service)
-    count = await service.resolve_gbif_batch(limit=100)
+    result = await service.resolve_gbif_batch(limit=100)
 
     # No session error raised, and every taxon was resolved + flushed.
-    assert count == len(taxa)
+    assert result.resolved == len(taxa)
     for taxon in taxa:
         await db_session.refresh(taxon)
         assert taxon.gbif_resolved_at is not None

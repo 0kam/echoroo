@@ -60,6 +60,37 @@ class RateLimitError(AppException):
         super().__init__(message, status_code=status.HTTP_429_TOO_MANY_REQUESTS)
 
 
+class ExternalServiceError(AppException):
+    """A required upstream/external service failed.
+
+    Raised by batch/resolution paths (e.g. GBIF taxon resolution) so an
+    upstream outage surfaces as a hard failure instead of masquerading as a
+    legitimate "no result found". Maps to 502 Bad Gateway at the API boundary
+    so callers can distinguish a dependency outage from an empty result.
+    """
+
+    def __init__(
+        self,
+        message: str = "External service unavailable",
+        *,
+        service: str | None = None,
+    ):
+        self.service = service
+        super().__init__(message, status_code=status.HTTP_502_BAD_GATEWAY)
+
+
+class GBIFUnavailableError(ExternalServiceError):
+    """The GBIF (or its iNaturalist fallback) upstream is unavailable.
+
+    Distinct from a legitimate empty match: this is raised only when the HTTP
+    request itself fails (transport error, timeout, or a 5xx/4xx status), never
+    when GBIF responds successfully with zero matches.
+    """
+
+    def __init__(self, message: str = "GBIF service unavailable"):
+        super().__init__(message, service="gbif")
+
+
 # Exception handlers
 
 

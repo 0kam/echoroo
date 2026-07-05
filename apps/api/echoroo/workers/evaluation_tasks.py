@@ -124,7 +124,14 @@ async def _run_annotation_evaluation(evaluation_run_id: UUID) -> dict[str, Any]:
                 await db.rollback()
                 await run_repo.mark_failed(evaluation_run_id, err)
                 await db.commit()
-                return {"status": "failed", "error": err}
+                # Re-raise so the Celery task state becomes FAILURE (aligning
+                # with detection/embedding/inference/training tasks). Returning
+                # a ``{"status": "failed"}`` dict here previously left the task
+                # in SUCCESS despite the run being marked FAILED — a silent
+                # failure for anything inspecting task state. The result dict is
+                # fire-and-forget (dispatched via ``.delay()``), so no caller
+                # depends on the old failure-dict return.
+                raise
 
         return {"status": "completed", "results_inserted": inserted}
     finally:

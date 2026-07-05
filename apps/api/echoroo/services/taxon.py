@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
+from echoroo.core.exceptions import ExternalServiceError
 from echoroo.core.pagination import paginate
 from echoroo.models.taxon import Taxon
 from echoroo.repositories.taxon import TaxonRepository, normalize_locale
@@ -23,6 +25,25 @@ from echoroo.services.gbif import GBIFService
 from echoroo.services.vernacular import resolve_vernacular_names
 
 logger = logging.getLogger(__name__)
+
+# Number of consecutive upstream failures that mark GBIF as "down hard". Once
+# this many resolutions raise back-to-back, the batch aborts (re-raises) so the
+# Celery task ends in FAILURE instead of silently reporting a completed run
+# where every taxon was actually errored.
+_GBIF_OUTAGE_THRESHOLD = 5
+
+
+@dataclass
+class GBIFBatchResolveResult:
+    """Outcome of a GBIF batch resolution pass.
+
+    ``resolved`` counts taxa that gained GBIF classification data. ``errored``
+    counts taxa skipped because the GBIF upstream failed (transport/timeout/5xx)
+    — distinct from taxa that resolved to a legitimate "no match".
+    """
+
+    resolved: int
+    errored: int = 0
 
 
 def _en_common_name_for_seed(
@@ -323,8 +344,11 @@ class TaxonService:
         except Exception:  # noqa: BLE001 — backfill is best-effort
             logger.debug("Failed to enqueue ja vernacular fetch", exc_info=True)
 
-    async def resolve_gbif_batch(self, limit: int = 100) -> int:
-        """Resolve GBIF data for unresolved taxa. Returns count of resolved.
+    async def resolve_gbif_batch(self, limit: int = 100) -> GBIFBatchResolveResult:
+        """Resolve GBIF data for unresolved taxa.
+
+        Returns a :class:`GBIFBatchResolveResult` carrying both the number of
+        taxa resolved and the number skipped because the GBIF upstream failed.
 
         Taxa are processed SEQUENTIALLY. ``resolve_one`` ends with a
         ``self.db.flush()`` (via ``taxon_repo.update``); running these
@@ -337,11 +361,14 @@ class TaxonService:
         Each taxon is resolved inside its own try/except so a single failing
         taxon (network/GBIF error, or a flush error from one row) does not abort
         the whole batch. A failed taxon is left unresolved and retried on the
-        next batch run.
+        next batch run. However, an ``ExternalServiceError`` is treated as an
+        upstream outage rather than a per-taxon miss: it is counted in
+        ``errored`` and, once ``_GBIF_OUTAGE_THRESHOLD`` such failures occur
+        back-to-back, the batch re-raises so the Celery task ends in FAILURE.
         """
         unresolved = await self.taxon_repo.get_unresolved(limit=limit)
         if not unresolved:
-            return 0
+            return GBIFBatchResolveResult(resolved=0)
 
         async def resolve_one(taxon: Taxon) -> bool:
             """Resolve a single taxon; return True if GBIF data was found."""
@@ -359,14 +386,37 @@ class TaxonService:
             return True
 
         resolved_count = 0
+        errored_count = 0
+        consecutive_errors = 0
         for taxon in unresolved:
             try:
                 if await resolve_one(taxon):
                     resolved_count += 1
+                consecutive_errors = 0
+            except ExternalServiceError:
+                # GBIF upstream failed for this taxon: do NOT mark it resolved
+                # (leave it for a retry) and treat it as an outage signal.
+                errored_count += 1
+                consecutive_errors += 1
+                logger.warning(
+                    "GBIF upstream unavailable resolving taxon %s (id=%s); "
+                    "consecutive_errors=%d",
+                    taxon.scientific_name,
+                    taxon.id,
+                    consecutive_errors,
+                )
+                if consecutive_errors >= _GBIF_OUTAGE_THRESHOLD:
+                    logger.error(
+                        "Aborting GBIF batch after %d consecutive upstream "
+                        "failures; treating as hard outage",
+                        consecutive_errors,
+                    )
+                    raise
             except Exception:  # noqa: BLE001 — isolate one bad taxon from the batch
                 logger.exception(
                     "Failed to resolve GBIF data for taxon %s (id=%s)",
                     taxon.scientific_name,
                     taxon.id,
                 )
-        return resolved_count
+                consecutive_errors = 0
+        return GBIFBatchResolveResult(resolved=resolved_count, errored=errored_count)
