@@ -12,6 +12,10 @@
    * Modeled on the sibling members page (manual `Promise.all` + `$state`
    * runes, no TanStack Query). Gating goes through the canonical
    * `manage_members` permission.
+   *
+   * This shell owns all data + handlers; the invite forms, bulk result
+   * table and confirmation dialogs are extracted into
+   * `$lib/components/collaborators/`.
    */
 
   import { page } from '$app/stores';
@@ -29,11 +33,13 @@
   import { authStore } from '$lib/stores/auth.svelte';
   import { buildProjectContext, can } from '$lib/utils/permissions';
   import InvitationUrlDialog from '$lib/components/InvitationUrlDialog.svelte';
+  import SingleInviteForm from '$lib/components/collaborators/SingleInviteForm.svelte';
+  import BulkInvitePanel from '$lib/components/collaborators/BulkInvitePanel.svelte';
+  import RevokeInvitationDialog from '$lib/components/collaborators/RevokeInvitationDialog.svelte';
+  import ReissueInvitationDialog from '$lib/components/collaborators/ReissueInvitationDialog.svelte';
   import {
     getInvitationStatusLabel,
     getInvitationStatusBadgeClass,
-    getBulkInvitationStatusLabel,
-    getBulkInvitationStatusBadgeClass,
   } from '$lib/utils/statusFormatters';
   import * as m from '$lib/paraglide/messages';
 
@@ -65,7 +71,6 @@
   let bulkError = $state<string | null>(null);
   // One-shot URLs (T281): transient result table, never persisted.
   let bulkResults = $state<BulkInvitationResultItem[] | null>(null);
-  let csvCopied = $state(false);
 
   // --- Revoke confirmation (T222) ---
   let invitationToRevoke = $state<ProjectInvitationListItem | null>(null);
@@ -105,6 +110,16 @@
     if (!match) return null;
     return roleLabel(match.role);
   }
+
+  // Localized already-member warning shown by the single-invite form, or
+  // null when the typed email is not an active member.
+  const alreadyMemberWarning = $derived.by(() => {
+    if (!inviteEmailIsMember) return null;
+    const roleText = matchingMemberRoleLabel(inviteEmail);
+    return roleText
+      ? m.collaborators_already_member_with_role({ role: roleText })
+      : m.collaborators_already_member();
+  });
 
   // Permission gating goes through the canonical `manage_members`
   // permission. This page does NOT use TanStack Query for its loads, so
@@ -263,42 +278,6 @@
   }
 
   /**
-   * RFC-4180-lite CSV field escaping: wrap in quotes and double internal
-   * quotes when the field contains a comma, quote, or newline.
-   */
-  function csvEscape(v: string): string {
-    return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-  }
-
-  /**
-   * Copy the bulk results as CSV (`email,status,invitation_url`). The URL
-   * column is empty for non-issued rows. One-shot URLs are copied to the
-   * clipboard only — never persisted by this app.
-   */
-  function copyBulkCsv() {
-    if (!bulkResults) return;
-
-    const header = 'email,status,invitation_url';
-    const rows = bulkResults.map(
-      (r) =>
-        `${csvEscape(r.email)},${r.status},${csvEscape(
-          r.invitation_url ? buildInviteUrl(r.invitation_url) : ''
-        )}`
-    );
-    const csv = [header, ...rows].join('\n');
-
-    navigator.clipboard
-      .writeText(csv)
-      .then(() => {
-        csvCopied = true;
-        setTimeout(() => {
-          csvCopied = false;
-        }, 2000);
-      })
-      .catch((err) => console.error('Failed to copy CSV:', err));
-  }
-
-  /**
    * Show the revoke confirmation modal for a pending invitation (T222).
    */
   function showRevokeConfirmation(invitation: ProjectInvitationListItem) {
@@ -442,26 +421,6 @@
         return '—';
     }
   }
-
-  /**
-   * Localized label for a bulk result status.
-   */
-  function bulkStatusLabel(status: BulkInvitationResultItem['status']): string {
-    return getBulkInvitationStatusLabel(status, {
-      issued: m.collaborators_bulk_status_issued,
-      duplicate_pending: m.collaborators_bulk_status_duplicate_pending,
-      already_member: m.collaborators_bulk_status_already_member,
-      rate_limited: m.collaborators_bulk_status_rate_limited,
-      internal_error: m.collaborators_bulk_status_internal_error,
-    });
-  }
-
-  /**
-   * Badge classes for a bulk result status.
-   */
-  function bulkStatusBadgeClass(status: BulkInvitationResultItem['status']): string {
-    return getBulkInvitationStatusBadgeClass(status);
-  }
 </script>
 
 <svelte:head>
@@ -580,208 +539,24 @@
         </div>
 
         {#if !bulkMode}
-          <!-- Single invite form (T221) -->
-          <h2 class="mb-4 text-lg font-semibold text-stone-900">
-            {m.collaborators_invite_heading()}
-          </h2>
-          <form onsubmit={handleIssue} class="space-y-4">
-            <div class="flex items-end space-x-4">
-              <div class="flex-1">
-                <label for="invite-email" class="block text-sm font-medium text-stone-700">
-                  {m.collaborators_email_label()}
-                </label>
-                <input
-                  id="invite-email"
-                  type="email"
-                  required
-                  bind:value={inviteEmail}
-                  disabled={isIssuing}
-                  class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                  placeholder={m.collaborators_email_placeholder()}
-                />
-              </div>
-
-              <div class="w-48">
-                <label for="invite-role" class="block text-sm font-medium text-stone-700">
-                  {m.collaborators_role_label()}
-                </label>
-                <select
-                  id="invite-role"
-                  bind:value={inviteRole}
-                  disabled={isIssuing}
-                  class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                >
-                  <option value="viewer">{m.role_viewer()}</option>
-                  <option value="member">{m.role_member()}</option>
-                  <option value="admin">{m.role_admin()}</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isIssuing || inviteEmailIsMember}
-                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-              >
-                {isIssuing ? m.collaborators_issuing() : m.collaborators_issue_button()}
-              </button>
-            </div>
-
-            {#if inviteEmailIsMember}
-              <p class="text-sm text-warning" data-testid="invite-already-member-warning">
-                {#if matchingMemberRoleLabel(inviteEmail)}
-                  {m.collaborators_already_member_with_role({
-                    role: matchingMemberRoleLabel(inviteEmail) ?? '',
-                  })}
-                {:else}
-                  {m.collaborators_already_member()}
-                {/if}
-              </p>
-            {/if}
-
-            {#if issueError}
-              <p class="text-sm text-danger">{issueError}</p>
-            {/if}
-          </form>
+          <SingleInviteForm
+            bind:email={inviteEmail}
+            bind:role={inviteRole}
+            {isIssuing}
+            {issueError}
+            emailIsMember={inviteEmailIsMember}
+            {alreadyMemberWarning}
+            onSubmit={handleIssue}
+          />
         {:else}
-          <!-- Bulk invite form (T280) -->
-          <h2 class="mb-4 text-lg font-semibold text-stone-900">
-            {m.collaborators_bulk_heading()}
-          </h2>
-          <form onsubmit={handleBulkSubmit} class="space-y-4">
-            <div>
-              <label for="bulk-emails" class="block text-sm font-medium text-stone-700">
-                {m.collaborators_bulk_emails_label()}
-              </label>
-              <textarea
-                id="bulk-emails"
-                rows="6"
-                bind:value={bulkEmailsText}
-                disabled={isBulkSubmitting}
-                class="mt-1 block w-full resize-y rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                placeholder={m.collaborators_bulk_emails_placeholder()}
-              ></textarea>
-              <p class="mt-1 text-xs text-stone-500">{m.collaborators_bulk_emails_help()}</p>
-            </div>
-
-            <div class="flex items-end space-x-4">
-              <div class="w-48">
-                <label for="bulk-role" class="block text-sm font-medium text-stone-700">
-                  {m.collaborators_role_label()}
-                </label>
-                <select
-                  id="bulk-role"
-                  bind:value={bulkRole}
-                  disabled={isBulkSubmitting}
-                  class="mt-1 block w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:bg-stone-100"
-                >
-                  <option value="viewer">{m.role_viewer()}</option>
-                  <option value="member">{m.role_member()}</option>
-                  <option value="admin">{m.role_admin()}</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isBulkSubmitting}
-                class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-              >
-                {isBulkSubmitting
-                  ? m.collaborators_bulk_submitting()
-                  : m.collaborators_bulk_submit_button()}
-              </button>
-            </div>
-
-            {#if bulkError}
-              <p class="text-sm text-danger">{bulkError}</p>
-            {/if}
-          </form>
-
-          {#if bulkResults}
-            <!-- Bulk results (T280) with one-shot URLs (T281) -->
-            <div class="mt-6">
-              <div class="mb-3 flex items-center justify-between">
-                <h3 class="text-base font-semibold text-stone-900">
-                  {m.collaborators_bulk_results_heading()}
-                </h3>
-                <button
-                  type="button"
-                  onclick={copyBulkCsv}
-                  class="rounded-md border border-stone-300 bg-surface-card px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-                >
-                  {csvCopied ? m.collaborators_bulk_copied_csv() : m.collaborators_bulk_copy_csv()}
-                </button>
-              </div>
-
-              <!-- Non-recoverability warning -->
-              <div class="mb-4 rounded-md bg-warning-light p-4">
-                <div class="flex">
-                  <svg
-                    class="h-5 w-5 flex-shrink-0 text-warning"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                  <div class="ml-3">
-                    <p class="text-sm font-medium text-warning">
-                      {m.collaborators_bulk_results_warning()}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div class="overflow-x-auto">
-                <table class="w-full text-left">
-                  <thead>
-                    <tr class="border-b border-stone-200 bg-stone-50">
-                      <th class="px-4 py-2 text-sm font-medium text-stone-700"
-                        >{m.collaborators_bulk_col_email()}</th
-                      >
-                      <th class="px-4 py-2 text-sm font-medium text-stone-700"
-                        >{m.collaborators_bulk_col_status()}</th
-                      >
-                      <th class="px-4 py-2 text-sm font-medium text-stone-700"
-                        >{m.collaborators_bulk_col_url()}</th
-                      >
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {#each bulkResults as result, i (i)}
-                      <tr class="border-b border-stone-200">
-                        <td class="px-4 py-2 text-sm text-stone-700">{result.email}</td>
-                        <td class="px-4 py-2 text-sm">
-                          <span
-                            class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium {bulkStatusBadgeClass(
-                              result.status
-                            )}"
-                          >
-                            {bulkStatusLabel(result.status)}
-                          </span>
-                        </td>
-                        <td class="px-4 py-2 text-sm text-stone-700">
-                          {#if result.invitation_url}
-                            <input
-                              type="text"
-                              value={buildInviteUrl(result.invitation_url)}
-                              readonly
-                              class="w-full rounded-md border border-stone-300 bg-stone-50 px-3 py-2 font-mono text-sm"
-                            />
-                          {:else}
-                            <span class="text-stone-500">{result.error_message ?? '—'}</span>
-                          {/if}
-                        </td>
-                      </tr>
-                    {/each}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          {/if}
+          <BulkInvitePanel
+            bind:emailsText={bulkEmailsText}
+            bind:role={bulkRole}
+            isSubmitting={isBulkSubmitting}
+            submitError={bulkError}
+            results={bulkResults}
+            onSubmit={handleBulkSubmit}
+          />
         {/if}
       </div>
     </div>
@@ -879,161 +654,21 @@
 
 <!-- Revoke Confirmation Dialog (T222) -->
 {#if invitationToRevoke}
-  <div class="fixed inset-0 z-50 overflow-y-auto" role="dialog">
-    <div
-      class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0"
-    >
-      <!-- Background overlay -->
-      <div
-        role="button"
-        tabindex="0"
-        aria-label="Close dialog"
-        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
-        onclick={cancelRevoke}
-        onkeydown={(e) => e.key === 'Escape' && cancelRevoke()}
-      ></div>
-
-      <!-- Modal panel -->
-      <div
-        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
-      >
-        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
-          <div class="sm:flex sm:items-start">
-            <div
-              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-danger-light sm:mx-0 sm:h-10 sm:w-10"
-            >
-              <svg
-                class="h-6 w-6 text-danger"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                />
-              </svg>
-            </div>
-            <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-stone-900">
-                {m.collaborators_revoke_confirm_title()}
-              </h3>
-              <div class="mt-2">
-                <p class="text-sm text-stone-500">
-                  {m.collaborators_revoke_confirm_message({
-                    email: invitationToRevoke.bound_email,
-                  })}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
-          <button
-            type="button"
-            onclick={confirmRevoke}
-            disabled={isRevoking}
-            class="inline-flex w-full justify-center rounded-md bg-danger px-4 py-2 text-base font-medium text-white shadow-sm hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-danger/50 focus:ring-offset-2 disabled:opacity-50 sm:ml-3 sm:w-auto sm:text-sm"
-          >
-            {isRevoking ? m.collaborators_revoking() : m.collaborators_revoke_confirm_button()}
-          </button>
-          <button
-            type="button"
-            onclick={cancelRevoke}
-            disabled={isRevoking}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
-          >
-            {m.collaborators_revoke_cancel()}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
+  <RevokeInvitationDialog
+    invitation={invitationToRevoke}
+    {isRevoking}
+    onConfirm={confirmRevoke}
+    onCancel={cancelRevoke}
+  />
 {/if}
 
 <!-- Revoke & re-issue Confirmation Dialog (#6) -->
 {#if invitationToReissue}
-  <div class="fixed inset-0 z-50 overflow-y-auto" role="dialog">
-    <div
-      class="flex min-h-screen items-end justify-center px-4 pb-20 pt-4 text-center sm:block sm:p-0"
-    >
-      <!-- Background overlay -->
-      <div
-        role="button"
-        tabindex="0"
-        aria-label="Close dialog"
-        class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
-        onclick={cancelReissue}
-        onkeydown={(e) => e.key === 'Escape' && cancelReissue()}
-      ></div>
-
-      <!-- Modal panel -->
-      <div
-        class="inline-block transform overflow-hidden rounded-lg bg-surface-card text-left align-bottom shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-lg sm:align-middle"
-      >
-        <div class="bg-surface-card px-4 pb-4 pt-5 sm:p-6 sm:pb-4">
-          <div class="sm:flex sm:items-start">
-            <div
-              class="mx-auto flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-warning-light sm:mx-0 sm:h-10 sm:w-10"
-            >
-              <svg
-                class="h-6 w-6 text-warning"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                />
-              </svg>
-            </div>
-            <div class="mt-3 text-center sm:ml-4 sm:mt-0 sm:text-left">
-              <h3 class="text-lg font-medium leading-6 text-stone-900">
-                {m.collaborators_reissue_confirm_title()}
-              </h3>
-              <div class="mt-2 space-y-2">
-                <p class="text-sm text-stone-500">
-                  {m.collaborators_reissue_confirm_message({
-                    email: invitationToReissue.bound_email,
-                  })}
-                </p>
-                <p class="text-sm font-medium text-warning">
-                  {m.collaborators_reissue_confirm_warning()}
-                </p>
-                {#if reissueError}
-                  <p class="text-sm text-danger" data-testid="reissue-error">{reissueError}</p>
-                {/if}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="bg-stone-50 px-4 py-3 sm:flex sm:flex-row-reverse sm:px-6">
-          <button
-            type="button"
-            onclick={confirmReissue}
-            disabled={isReissuing}
-            class="inline-flex w-full justify-center rounded-md bg-primary-600 px-4 py-2 text-base font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400 sm:ml-3 sm:w-auto sm:text-sm"
-            data-testid="reissue-confirm-button"
-          >
-            {isReissuing
-              ? m.collaborators_reissuing()
-              : m.collaborators_reissue_confirm_button()}
-          </button>
-          <button
-            type="button"
-            onclick={cancelReissue}
-            disabled={isReissuing}
-            class="mt-3 inline-flex w-full justify-center rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-base font-medium text-stone-700 shadow-sm hover:bg-stone-50 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 sm:ml-3 sm:mt-0 sm:w-auto sm:text-sm"
-          >
-            {m.collaborators_revoke_cancel()}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
+  <ReissueInvitationDialog
+    invitation={invitationToReissue}
+    {isReissuing}
+    {reissueError}
+    onConfirm={confirmReissue}
+    onCancel={cancelReissue}
+  />
 {/if}
