@@ -5,7 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -21,6 +21,7 @@ from echoroo.core.exceptions import (
     http_exception_handler,
     validation_exception_handler,
 )
+from echoroo.core.health import check_readiness
 from echoroo.core.redis import close_redis_connection, get_redis_connection
 from echoroo.core.settings import get_settings
 from echoroo.middleware.api_key_ip_enforcement import DbIpEnforcer
@@ -451,12 +452,37 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
-        """Health check endpoint.
+        """Liveness probe.
+
+        Deliberately static and dependency-free so orchestrators
+        (k8s / ECS) can hammer it cheaply. A 200 here only asserts the
+        process is up and serving — use ``/health/ready`` to gate traffic
+        on dependency health.
 
         Returns:
             Health status
         """
         return {"status": "healthy"}
+
+    @app.get("/health/ready")
+    async def readiness_check(response: Response) -> dict[str, Any]:
+        """Readiness probe with dependency checks.
+
+        Verifies PostgreSQL, Redis, and S3 with short bounded timeouts and
+        returns per-dependency status. Returns 200 when all dependencies
+        respond and 503 when any is unreachable, naming the failing
+        component. The body carries component names and ``ok`` / ``fail``
+        only — no endpoint URLs, credentials, or config detail.
+
+        Returns:
+            ``{"status": ..., "checks": {component: "ok" | "fail"}}``
+        """
+        ready, checks = await check_readiness(
+            session_factory=middleware_session_factory
+        )
+        if not ready:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "ready" if ready else "not_ready", "checks": checks}
 
     return app
 
