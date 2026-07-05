@@ -232,6 +232,11 @@ def _build_app() -> object:
         Route("/web-api/v1/auth/refresh", _ok, methods=["POST"]),
         Route("/web-api/v1/projects", _ok, methods=["POST"]),
         Route("/web-api/v1/projects/123/members", _ok, methods=["POST"]),
+        Route(
+            "/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+            _ok,
+            methods=["POST"],
+        ),
     ]
     app = Starlette(routes=routes)
     config = CsrfConfig(session_secret="test-secret-32-bytes-of-entropy-padding")
@@ -308,6 +313,37 @@ def test_post_login_session_path_enforces_csrf() -> None:
         )
     assert resp.status_code == 200
     assert resp.text == "ok"
+
+
+def test_media_token_issue_is_csrf_exempt_for_cookieless_guest() -> None:
+    """W2-4 PR-C: a guest (no session cookie) may POST the media-token endpoint
+    without a CSRF token."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        resp = client.post(
+            "/web-api/v1/projects/pid/recordings/rid/media-token",
+            json={"scope": "audio"},
+        )
+    assert resp.status_code == 200
+    assert resp.text == "ok"
+
+
+def test_media_token_issue_still_enforces_csrf_when_cookie_present() -> None:
+    """An authenticated caller (session cookie present) still needs a valid
+    CSRF token on the media-token endpoint — the exemption is cookie-less only."""
+    from starlette.testclient import TestClient
+
+    app = _build_app()
+    with TestClient(app) as client:
+        client.cookies.set("session_id", "session-abc")
+        resp = client.post(
+            "/web-api/v1/projects/pid/recordings/rid/media-token",
+            json={"scope": "audio"},
+        )
+    assert resp.status_code == 403
+    assert resp.json()["error_code"] == "csrf_failed"
 
 
 def test_csrf_exempt_paths_match_auth_router_allowlist() -> None:

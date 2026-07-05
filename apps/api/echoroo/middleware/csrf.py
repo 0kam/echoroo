@@ -50,6 +50,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hmac
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -60,9 +61,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-import re
-
-from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS, is_public_auth_path
+from echoroo.core.auth_paths import (
+    ANON_MEDIA_TOKEN_ISSUE_PATTERN,
+    PUBLIC_AUTH_PATHS,
+    is_public_auth_path,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -290,6 +293,19 @@ class CsrfMiddleware(BaseHTTPMiddleware):
         for pattern in _PATTERN_EXEMPT_PATHS:
             if pattern.fullmatch(request.url.path):
                 return await call_next(request)
+
+        # W2-4 PR-C: a signed-out visitor may POST to the recording media-token
+        # endpoint to mint an anonymous playback token. A guest has no session
+        # cookie and therefore cannot present a CSRF token by construction —
+        # and CSRF only defends against an attacker riding a victim's ambient
+        # session cookie, which a cookie-less request has none of. The
+        # exemption is scoped to the cookie-less case ONLY: an authenticated
+        # caller (session cookie present) still requires a valid CSRF token.
+        if (
+            ANON_MEDIA_TOKEN_ISSUE_PATTERN.fullmatch(request.url.path) is not None
+            and not request.cookies.get(self.config.cookie_name)
+        ):
+            return await call_next(request)
 
         session_id = request.cookies.get(self.config.cookie_name)
         token = request.headers.get(self.config.header_name)
