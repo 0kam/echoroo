@@ -1143,10 +1143,10 @@ class TestExportRecordings:
         invoked, making the helper chain immune to post-rollback
         expiration.
         """
-        from echoroo.api.v1.search import sessions as search_sessions
+        from echoroo.api.v1.search.sessions import exports as search_sessions_exports
 
         monkeypatch.setattr(
-            search_sessions,
+            search_sessions_exports,
             "_resolve_locale_common_names",
             _make_expiring_resolver(),
         )
