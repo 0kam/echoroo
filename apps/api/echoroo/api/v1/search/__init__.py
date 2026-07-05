@@ -4,7 +4,8 @@ Re-exports the FastAPI routers from sub-modules for backward compatibility.
 The implementation is split into focused sub-modules:
 
 - deps.py        : shared dependencies (service factories, type aliases)
-- sessions.py    : search session CRUD endpoints
+- sessions/      : search session CRUD, export, distribution & media helpers
+                   (package with a compat façade; W3-1 split of sessions.py)
 - similarity.py  : single-query similarity search endpoints
 - batch.py       : batch species search and job status endpoints
 - annotations.py : search annotation creation endpoint

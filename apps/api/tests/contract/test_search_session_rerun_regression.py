@@ -582,7 +582,7 @@ class TestRerunEndpointRegression:
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
     @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.search.sessions.delete_object")
+    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
     async def test_rerun_endpoint_succeeds_and_clears_stale_session_state(
         self,
         mock_delete_object: MagicMock,
