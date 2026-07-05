@@ -78,12 +78,24 @@ class Project(UUIDMixin, TimestampMixin, Base):
     restricted_config: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         default=dict,
+        # W3-2 (pytest-xdist CI speedup): mirrors the server_default already
+        # set by Alembic migration 0001. Without this, tests/conftest.py's
+        # Base.metadata.create_all() (used to bootstrap a from-scratch test
+        # database) creates this column with NO database-level default,
+        # diverging from every real (Alembic-migrated) database — any raw
+        # SQL INSERT that omits this column then fails NOT NULL on a
+        # genuinely fresh database, whereas it silently worked against the
+        # single long-lived test database that had already accumulated this
+        # default from being originally built via Alembic. Purely additive
+        # metadata: does not change already-migrated production/CI schemas.
+        server_default=text("'{}'::jsonb"),
         nullable=False,
         doc="Restricted visibility capability toggles",
     )
     restricted_config_version: Mapped[int] = mapped_column(
         Integer,
         default=1,
+        server_default=text("1"),
         nullable=False,
         doc="Version for restricted_config shape",
     )

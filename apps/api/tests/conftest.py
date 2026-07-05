@@ -58,6 +58,43 @@ from echoroo.services.audio import AudioService
 # Test database URL — override via TEST_DATABASE_URL env var to allow running
 # from inside Docker containers where the DB is accessible via a service hostname
 # rather than localhost (e.g. TEST_DATABASE_URL=postgresql+asyncpg://echoroo:echoroo@db:5432/echoroo_test).
+#
+# W3-2 (pytest-xdist CI speedup) — per-worker database isolation.
+# ``db_session``/``client`` (below) call ``cleanup_test_data()`` at the START
+# of every single test, which unconditionally ``DELETE FROM``s every table in
+# the connected database. That is safe for a single sequential test process
+# (today's CI) but would be a correctness bug under xdist: worker A wiping
+# every table while worker B's concurrently-running test still has rows
+# in-flight would produce nondeterministic FK violations / assertion
+# failures. xdist sets ``PYTEST_XDIST_WORKER`` (e.g. ``"gw0"``) in this
+# worker process's environment *before* any conftest.py is imported (see
+# ``xdist/remote.py``), so we can key a per-worker database suffix off it at
+# module import time — this is the earliest possible hook and runs before
+# the ``TEST_DATABASE_URL`` constant below is bound.
+#
+# Every downstream module in this test suite that talks to the database
+# reads ``TEST_DATABASE_URL`` fresh via ``os.environ.get(...)`` at ITS OWN
+# import time (not by importing this module's constant), and pytest always
+# imports this root ``tests/conftest.py`` before any test module beneath
+# ``tests/``, so mutating ``os.environ`` here is sufficient to redirect the
+# entire suite to the per-worker database with no changes needed in those
+# other files.
+#
+# Single-process runs (no ``-n``, or explicit ``-n0``) see ``None``/``None``
+# for ``PYTEST_XDIST_WORKER`` (the "master" alias xdist itself uses is only
+# set inside the controller process, which never reaches this branch) and
+# fall through unchanged — this preserves every existing environment
+# (local ``uv run pytest``, ``docker exec ... pytest``, CI's other
+# non-xdist jobs) byte-for-byte.
+_XDIST_WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER")
+_XDIST_BASE_TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://echoroo:echoroo@localhost:5432/echoroo_test",
+)
+if _XDIST_WORKER_ID and _XDIST_WORKER_ID != "master":
+    _url_head, _, _db_name = _XDIST_BASE_TEST_DATABASE_URL.rpartition("/")
+    os.environ["TEST_DATABASE_URL"] = f"{_url_head}/{_db_name}_{_XDIST_WORKER_ID}"
+
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+asyncpg://echoroo:echoroo@localhost:5432/echoroo_test",
@@ -93,6 +130,135 @@ CANONICAL_TEST_LICENSES = (
         "description": "Attribution required; derivatives share alike.",
     },
 )
+
+
+def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001
+    """Provision the per-xdist-worker Postgres database (W3-2).
+
+    Runs exactly once per worker *process*, before that worker collects or
+    executes any test — this is the earliest hook pytest offers, and is
+    intentionally used instead of an autouse fixture so the database exists
+    before the very first ``db_session``/``client`` fixture tries to connect
+    to it.
+
+    No-op for single-process runs (no ``-n``): ``TEST_DATABASE_URL`` is left
+    untouched by the module-level block above, so this function has nothing
+    to provision.
+
+    Design note — TEMPLATE clone, not ``create_all()`` from scratch
+    (revised after investigation): an earlier version of this function
+    created a plain empty database and let ``setup_test_database()``
+    bootstrap it purely from ``Base.metadata.create_all()`` + raw DDL, the
+    same "from-scratch" code path documented as its "Phase 1" branch. That
+    path turned out to have never been genuinely exercised in years of
+    real usage — CI's ``echoroo_ci`` is always built via real Alembic
+    migrations first, and every developer's ``echoroo_test`` was created
+    once, long ago, and has been incrementally patched/reused ever since.
+    Auditing a genuinely fresh ``create_all()``-built database against the
+    long-lived reused one surfaced **63 column-default mismatches** across
+    ~20 tables (every ``id``/``created_at``/``updated_at`` plus several
+    enum/numeric columns) — the ORM models rely on Python-side ``default=``
+    (applied only through the ORM insert path) while the real, hand-authored
+    Alembic migrations additionally set a matching ``server_default``; the
+    two were never required to stay in sync because nothing ever rebuilt a
+    database purely from ``create_all()`` before. Raw-SQL test fixtures that
+    omit these columns (relying on the database to fill them in) then fail
+    NOT NULL / default-less inserts — a real, reproducible bug, not a
+    flaked test. Bringing every model in line with its migration's
+    ``server_default`` would be a wide-reaching, independently-risky change
+    to shared production model files, out of scope for a CI-speedup PR.
+    Instead, each worker's database is created as a Postgres-level
+    ``CREATE DATABASE ... TEMPLATE`` clone of the already-correct,
+    already-migrated base database (``echoroo_ci`` in CI / ``echoroo_test``
+    in dev) — inheriting the exact schema Alembic produces (including the
+    ``vector`` extension) with no drift risk at all.  ``setup_test_database()``
+    then runs unchanged on the clone and is a near no-op (its idempotent
+    heals all guard on "is this already up to date?").
+
+    Concurrency: ``CREATE DATABASE ... TEMPLATE`` requires that NO backend
+    be connected to the template database at the moment of the clone. Every
+    connection this function opens targets the neutral ``postgres``
+    maintenance database — never the template itself — so N workers cloning
+    concurrently never race with their OWN admin connections. A small retry
+    loop absorbs any transient "source database is being accessed by other
+    users" from an unrelated stray connection (e.g. a health-check probe).
+    """
+    if not _XDIST_WORKER_ID or _XDIST_WORKER_ID == "master":
+        return
+
+    worker_url = os.environ["TEST_DATABASE_URL"]
+    worker_db_name = worker_url.rpartition("/")[2]
+    base_db_name = _XDIST_BASE_TEST_DATABASE_URL.rpartition("/")[2]
+    _admin_url_head = _XDIST_BASE_TEST_DATABASE_URL.rpartition("/")[0]
+    maintenance_url = f"{_admin_url_head}/postgres"
+
+    async def _run() -> None:
+        import asyncio
+
+        admin_engine = create_async_engine(
+            maintenance_url,
+            echo=False,
+            poolclass=NullPool,
+            isolation_level="AUTOCOMMIT",
+        )
+        try:
+            async with admin_engine.connect() as conn:
+                exists = (
+                    await conn.execute(
+                        sa.text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                        {"name": worker_db_name},
+                    )
+                ).scalar()
+                if exists:
+                    return
+
+                # CREATE DATABASE cannot be parameterised or run inside a
+                # transaction block; both identifiers come from this
+                # trusted process's own env var (base name + xdist worker
+                # id) and the pre-existing base database name, never from
+                # external input.
+                last_error: Exception | None = None
+                for attempt in range(5):
+                    try:
+                        await conn.execute(
+                            sa.text(
+                                f'CREATE DATABASE "{worker_db_name}" '
+                                f'TEMPLATE "{base_db_name}"'
+                            )
+                        )
+                        last_error = None
+                        break
+                    except Exception as exc:  # noqa: BLE001 — retry, then re-raise
+                        last_error = exc
+                        await asyncio.sleep(0.5 * (attempt + 1))
+                if last_error is not None:
+                    raise last_error
+        finally:
+            await admin_engine.dispose()
+
+        # Defensive no-op: the TEMPLATE clone already carries the ``vector``
+        # extension from the base database, but re-assert it idempotently
+        # in case a future base database is ever provisioned without it.
+        worker_engine = create_async_engine(
+            worker_url, echo=False, poolclass=NullPool
+        )
+        try:
+            async with worker_engine.begin() as conn:
+                await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        finally:
+            await worker_engine.dispose()
+
+    # Dedicated event loop (mirrors ``ensure_test_database_schema_sync``
+    # below) so this synchronous pytest hook can drive async SQLAlchemy
+    # without disturbing whatever event loop pytest-asyncio sets up later
+    # for the actual test session.
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_run())
+    finally:
+        loop.close()
 
 
 def _make_create_enum_sql(type_name: str, values: list[str]) -> str:
@@ -732,7 +898,35 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # ``annotations`` table is gone and the FK already targets
     # ``recording_annotations``). Mirrors the project_audit_log_fk heal idiom
     # below: it runs unconditionally before any early return.
-    if annotations_table_exists or not sampling_fk_targets_recording_annotations:
+    #
+    # W3-2 (pytest-xdist CI speedup) fix: this block previously assumed
+    # ``sampling_round_items`` already existed, which was always true for the
+    # single long-lived ``echoroo_ci``/``echoroo_test`` database (reused
+    # across every local/CI run) but is FALSE for a genuinely fresh
+    # per-xdist-worker database created via ``CREATE DATABASE`` — there
+    # ``sampling_fk_targets_recording_annotations`` is also False (the table
+    # doesn't exist yet, so neither does its FK constraint), which used to
+    # trip the condition below and then crash on ``DELETE FROM
+    # sampling_round_items`` (``UndefinedTableError``). The
+    # ``sampling_round_items_table_exists`` guard makes this heal a genuine
+    # no-op on a virgin database — the ``Base.metadata.create_all()`` call
+    # further below creates the table with the correct (already-repointed)
+    # ``recording_annotations`` FK directly from the current ORM model, so no
+    # heal is needed there.
+    async with engine.connect() as _conn:
+        sampling_round_items_table_exists = bool(
+            (
+                await _conn.execute(
+                    sa.text(
+                        "SELECT to_regclass('public.sampling_round_items')"
+                        " IS NOT NULL"
+                    )
+                )
+            ).scalar()
+        )
+    if sampling_round_items_table_exists and (
+        annotations_table_exists or not sampling_fk_targets_recording_annotations
+    ):
         async with engine.begin() as conn:
             # Disjoint id-spaces: any pre-0030 sampling_round_items rows reference
             # minimal-annotations ids with no recording_annotations counterpart.
@@ -838,6 +1032,36 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         project_audit_log_fk_exists = False
 
+    # W3-2 (pytest-xdist CI speedup): CI's "Re-grant on tables/sequences
+    # after migration" step only ever targets the single long-lived
+    # ``echoroo_ci`` database. A per-xdist-worker database created fresh by
+    # ``pytest_configure`` above never receives that grant, and several
+    # security-suite tests (e.g. ``test_superuser_last_protection.py``) issue
+    # ``SET ROLE echoroo_app`` and then UPDATE/DELETE rows directly to
+    # exercise a Postgres trigger, which requires table-level ACLs in
+    # *this* database. Mirror the CI grant here, idempotently and
+    # unconditionally on every call (cheap; no-op if the role does not
+    # exist, e.g. local dev without the security-suite role provisioned).
+    async with engine.begin() as conn:
+        echoroo_app_role_exists = (
+            await conn.execute(
+                sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app'")
+            )
+        ).scalar()
+        if echoroo_app_role_exists:
+            await conn.execute(
+                sa.text(
+                    "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"
+                    " TO echoroo_app"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public"
+                    " TO echoroo_app"
+                )
+            )
+
     non_license_schema_current = (
         core_exists
         and search_exists
@@ -890,7 +1114,37 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # the add is safe on existing rows. Partial indexes mirror the
     # production migration so any "rotation in progress" filter in
     # tests benefits from the same query plan as live PostgreSQL.
-    if not invitation_v2_col_exists or not audit_v2_col_exists:
+    #
+    # W3-2 (pytest-xdist CI speedup) fix: guard on the target tables
+    # actually existing. This block previously assumed
+    # ``project_invitations``/``platform_audit_log``/``project_audit_log``
+    # already existed — true for the single long-lived reused database, but
+    # FALSE for a genuinely fresh per-xdist-worker database, where it used
+    # to crash with ``UndefinedTableError``. On a virgin database
+    # ``project_invitations`` already gets ``email_hash_v2`` /
+    # ``pii_hash_version`` for free from the current ORM model via
+    # ``Base.metadata.create_all()`` below, and the raw
+    # ``platform_audit_log``/``project_audit_log`` ``CREATE TABLE`` blocks
+    # further down declare the v2 columns directly — so skipping this heal
+    # entirely on a virgin database is correct, not merely safe.
+    async with engine.connect() as _conn:
+        _invitations_and_audit_tables_exist = bool(
+            (
+                await _conn.execute(
+                    sa.text(
+                        "SELECT to_regclass('public.project_invitations')"
+                        " IS NOT NULL"
+                        " AND to_regclass('public.platform_audit_log')"
+                        " IS NOT NULL"
+                        " AND to_regclass('public.project_audit_log')"
+                        " IS NOT NULL"
+                    )
+                )
+            ).scalar()
+        )
+    if _invitations_and_audit_tables_exist and (
+        not invitation_v2_col_exists or not audit_v2_col_exists
+    ):
         async with engine.begin() as conn:
             await conn.execute(
                 sa.text(
@@ -929,7 +1183,20 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # WS-A PR1 (Alembic 0027): idempotent column add for legacy test DBs that
     # pre-date the GBIF-backbone reconciliation migration. All six columns are
     # nullable so the add is safe on existing rows.
-    if not taxa_reconciliation_col_exists:
+    #
+    # W3-2 (pytest-xdist CI speedup) fix: guard on ``taxa`` already existing.
+    # A virgin per-xdist-worker database gets these columns for free from the
+    # current ``Taxon`` ORM model via ``Base.metadata.create_all()`` below,
+    # so this legacy heal must not run before that table exists.
+    async with engine.connect() as _conn:
+        _taxa_table_exists = bool(
+            (
+                await _conn.execute(
+                    sa.text("SELECT to_regclass('public.taxa') IS NOT NULL")
+                )
+            ).scalar()
+        )
+    if _taxa_table_exists and not taxa_reconciliation_col_exists:
         async with engine.begin() as conn:
             await conn.execute(
                 sa.text(
@@ -1226,6 +1493,16 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     after JSONB NULL,
                     prev_hash VARCHAR(64) NOT NULL,
                     row_hash VARCHAR(64) NOT NULL,
+                    -- Phase 17 backlog A-2 (FR-091b) v2 hash-rotation columns.
+                    -- Declared inline here (rather than relying solely on
+                    -- the idempotent ALTER heal above) so a brand-new
+                    -- per-xdist-worker database (W3-2) gets them from the
+                    -- very first CREATE TABLE, matching the reused-DB heal
+                    -- path exactly.
+                    actor_user_id_hash_v2 VARCHAR(64) NULL,
+                    ip_hash_v2 VARCHAR(64) NULL,
+                    user_agent_hash_v2 VARCHAR(64) NULL,
+                    pii_hash_version INTEGER NULL,
                     CONSTRAINT ck_project_audit_log_project_id_required
                         CHECK (action = 'genesis' OR project_id IS NOT NULL)
                 )
@@ -1265,7 +1542,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     before JSONB NULL,
                     after JSONB NULL,
                     prev_hash VARCHAR(64) NOT NULL,
-                    row_hash VARCHAR(64) NOT NULL
+                    row_hash VARCHAR(64) NOT NULL,
+                    -- Phase 17 backlog A-2 (FR-091b) v2 hash-rotation columns —
+                    -- see the matching comment on project_audit_log above.
+                    actor_user_id_hash_v2 VARCHAR(64) NULL,
+                    ip_hash_v2 VARCHAR(64) NULL,
+                    user_agent_hash_v2 VARCHAR(64) NULL,
+                    pii_hash_version INTEGER NULL
                 )
                 """
             )
