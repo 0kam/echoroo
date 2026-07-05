@@ -37,12 +37,15 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
 
 from echoroo.core.actions import PROJECT_TRANSFER_OWNERSHIP_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import OptionalCurrentUser
+from echoroo.schemas.web_v1.ownership import (
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
+)
 from echoroo.services import ownership_service
 from echoroo.services.ownership_service import (
     InvalidTransferTargetError,
@@ -75,47 +78,6 @@ def _user_agent(request: Request) -> str:
 
 def _request_id(request: Request) -> str:
     return request.headers.get("x-request-id") or ""
-
-
-# ---------------------------------------------------------------------------
-# Schemas — kept local because the contract body is a single field
-# ---------------------------------------------------------------------------
-
-
-class TransferOwnershipRequest(BaseModel):
-    """Body for ``POST /{project_id}/transfer-ownership`` (FR-057).
-
-    The contract declares ``additionalProperties: false`` so we mirror
-    that with Pydantic ``extra='forbid'``; unknown keys surface as 422.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    new_owner_user_id: UUID = Field(
-        ...,
-        description=(
-            "User receiving ownership. Must be a current active Admin of "
-            "the project (FR-057)."
-        ),
-    )
-
-
-class TransferOwnershipResponse(BaseModel):
-    """Outcome envelope returned to the Owner UI."""
-
-    model_config = ConfigDict(frozen=True)
-
-    project_id: UUID
-    previous_owner_id: UUID
-    new_owner_id: UUID
-    replayed: bool = Field(
-        ...,
-        description=(
-            "True iff the call hit the FR-058 idempotency replay branch "
-            "(no DB mutation performed; the original transfer's outcome "
-            "is echoed)."
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------

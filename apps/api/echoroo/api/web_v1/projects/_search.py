@@ -115,7 +115,6 @@ from echoroo.api.v1.search import batch as legacy_search_batch
 from echoroo.api.v1.search import deps as legacy_search_deps
 from echoroo.api.v1.search import sessions as legacy_search_sessions
 from echoroo.api.v1.search import similarity as legacy_search_similarity
-from echoroo.api.web_v1.projects._media import MediaTokenResponse
 from echoroo.core.actions import (
     SEARCH_ANNOTATION_ACTION,
     SEARCH_BATCH_CREATE_ACTION,
@@ -150,6 +149,7 @@ from echoroo.schemas.search import (
     SessionSampleResponse,
     SessionTimeDistributionResponse,
 )
+from echoroo.schemas.web_v1.media_token import MediaTokenResponse
 from echoroo.schemas.xeno_canto import XenoCantoSearchResponse
 
 router = APIRouter()

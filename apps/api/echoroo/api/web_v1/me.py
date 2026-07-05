@@ -30,67 +30,21 @@ production middleware chain.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
-from uuid import UUID
-
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel
 
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
+from echoroo.schemas.web_v1.me import (
+    ActivityItemOut,
+    ActivityPageOut,
+    BannerItemOut,
+    BannerListOut,
+    DismissIn,
+)
 from echoroo.services import banner_presenter, user_banner
 from echoroo.services.user_banner import BannerNotFoundError
 
 router = APIRouter(prefix="/me", tags=["me"])
-
-
-# ---------------------------------------------------------------------------
-# Response / request models (mirror contracts/me-banners-activity.yaml)
-# ---------------------------------------------------------------------------
-
-
-class BannerItemOut(BaseModel):
-    """One undismissed banner (OpenAPI ``BannerItem``)."""
-
-    audit_table: str
-    audit_log_id: UUID
-    action: str
-    occurred_at: datetime
-    summary: str
-    link: str | None = None
-
-
-class BannerListOut(BaseModel):
-    """Envelope for ``GET /me/banners``."""
-
-    items: list[BannerItemOut]
-
-
-class DismissIn(BaseModel):
-    """Request body for ``POST /me/banners/dismiss``."""
-
-    audit_table: str
-    audit_log_id: UUID
-
-
-class ActivityItemOut(BaseModel):
-    """One audit-history row (OpenAPI ``ActivityItem``)."""
-
-    audit_table: str
-    audit_log_id: UUID
-    action: str
-    occurred_at: datetime
-    project_id: UUID | None = None
-    actor_user_id: UUID | None = None
-    details: dict[str, Any]
-
-
-class ActivityPageOut(BaseModel):
-    """Envelope for ``GET /me/activity`` (keyset pagination)."""
-
-    items: list[ActivityItemOut]
-    next_cursor: str | None = None
 
 
 # ---------------------------------------------------------------------------
