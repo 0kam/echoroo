@@ -171,16 +171,6 @@ class Settings(BaseSettings):
     TRUSTED_DEVICE_COOKIE_NAME: str = "echoroo_trusted_device"
     TRUSTED_DEVICE_COOKIE_TTL_SECONDS: int = 30 * 24 * 3600
 
-    # CAPTCHA (Cloudflare Turnstile)
-    TURNSTILE_SECRET_KEY: str = Field(
-        default="",
-        description="Cloudflare Turnstile secret key",
-    )
-    TURNSTILE_SITE_KEY: str = Field(
-        default="",
-        description="Cloudflare Turnstile site key (public)",
-    )
-
     # Session
     SESSION_TIMEOUT_MINUTES: int = 120  # 2 hours
     web_session_cookie_name: str = "echoroo_session"

@@ -125,13 +125,13 @@ class AuthService:
 
         Args:
             request: User registration data
-            client_ip: Client IP address for CAPTCHA verification
+            client_ip: Client IP address
 
         Returns:
             Created user instance
 
         Raises:
-            HTTPException: If email already exists, CAPTCHA invalid, or validation fails
+            HTTPException: If email already exists or validation fails
         """
         del request, client_ip
         _raise_phase4_stub()
