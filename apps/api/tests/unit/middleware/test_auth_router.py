@@ -805,6 +805,77 @@ def test_web_api_media_token_post_passes_through_for_guest() -> None:
     assert resp.json() == {"auth_kind": None, "user_id": None}
 
 
+def test_web_api_media_get_accepts_anonymous_token_with_stale_session_cookie() -> None:
+    """A lingering / expired session cookie must not block anonymous playback —
+    an unknown session id resolves to Guest and the anon token still streams."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    # The stub verifier knows no sessions, so any cookie value is "stale".
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+    token = issue_media_token(
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        anonymous=True,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+        cookies={"session_id": "stale-session-value"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_web_api_media_token_post_falls_back_to_guest_with_stale_session() -> None:
+    """A stale session cookie on the media-token POST still reaches the handler
+    as a Guest so anonymous issuance can proceed."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+
+    client = _build_app(config)
+    resp = client.post(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+        json={"scope": "audio"},
+        cookies={"session_id": "stale-session-value"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_web_api_media_get_rejects_user_bound_token_with_stale_session() -> None:
+    """A user-bound token on a stale session cannot be validated (no live
+    stamp) and is rejected rather than silently downgraded."""
+    user_id = uuid4()
+    stamp = "f" * 64
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+        cookies={"session_id": "stale-session-value"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
 def test_web_api_media_token_post_still_401_without_cookie_on_other_paths() -> None:
     """The guest passthrough is scoped to the media-token path only."""
     project_id = uuid4()

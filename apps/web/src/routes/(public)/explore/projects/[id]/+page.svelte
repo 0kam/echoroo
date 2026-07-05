@@ -168,7 +168,14 @@
   let audioResolving = $state<boolean>(false);
   let audioError = $state<boolean>(false);
   let mediaRequestSeq = 0;
-  let audioRetried = false;
+
+  // Retry budget for media-token expiry mid-playback. Anonymous tokens live
+  // only 5 minutes, so a long listen or a seek past the TTL can trigger a
+  // 401/403 on the stream. We re-mint on failure up to MAX_AUDIO_RETRIES
+  // consecutive times, then surface an error. Any successful playback progress
+  // (`onplaying`) resets the counter so a fresh token earns a fresh budget.
+  const MAX_AUDIO_RETRIES = 3;
+  let audioFailures = 0;
 
   async function resolveAudioSrc(rec: PublicRecordingItem): Promise<void> {
     const seq = ++mediaRequestSeq;
@@ -196,20 +203,28 @@
 
   function playRecording(id: string): void {
     activeRecordingId = id;
-    audioRetried = false;
+    audioFailures = 0;
     const rec = recordings.find((r) => r.id === id);
     if (rec) void resolveAudioSrc(rec);
   }
 
   // On a media GET failure (e.g. an expired token → 401/403) re-mint the token
-  // once. A single retry is enough: tokens are minted fresh per play and their
-  // TTL comfortably exceeds a normal listen, so a persistent failure is a real
-  // permission change rather than expiry.
+  // and retry, up to a small consecutive-failure budget. Once exhausted the
+  // failure is treated as a real permission change (not expiry) and surfaced.
   function handleAudioError(): void {
-    if (audioRetried) return;
-    audioRetried = true;
+    audioFailures += 1;
+    if (audioFailures > MAX_AUDIO_RETRIES) {
+      audioError = true;
+      return;
+    }
     const rec = activeRecording;
     if (rec) void resolveAudioSrc(rec);
+  }
+
+  // Successful playback progress means the current token works — reset the
+  // retry budget so a later expiry gets a fresh set of attempts.
+  function handleAudioPlaying(): void {
+    audioFailures = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -459,6 +474,7 @@
                 preload="metadata"
                 src={audioSrc}
                 onerror={handleAudioError}
+                onplaying={handleAudioPlaying}
                 class="w-full"
                 aria-label={m.public_project_detail_audio_label({ name: activeRecording.name })}
               >

@@ -651,6 +651,71 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
     # -- Session (first-party) --------------------------------------------
 
+    def _try_anonymous_media_passthrough(
+        self,
+        request: Request,
+        media_request: tuple[
+            str, UUID, MediaResourceType, UUID, MediaTokenScope, UUID | None, int | None
+        ]
+        | None,
+    ) -> Response | object | None:
+        """W2-4 PR-C: admit a Guest (cookie-less OR stale-session) caller onto
+        the anonymous media surfaces only.
+
+        Two shapes qualify, both leaving ``principal=None`` so the downstream
+        gate re-evaluates the request as a Guest on every call:
+
+          1. A media GET carrying a valid ANONYMOUS media token.
+          2. A POST to the recording media-token issuance endpoint.
+
+        Returns:
+            * :data:`_ANON_MEDIA_SENTINEL` when the request is admitted.
+            * a 401 :class:`Response` when a media GET presents an invalid /
+              non-anonymous token (kept distinct so the caller does not mask it
+              as a generic "session required" failure).
+            * ``None`` when the shape does not qualify — the caller then applies
+              its own default failure.
+
+        A Bearer credential opts the caller out entirely (they intend to
+        authenticate). This helper never touches the user-bound token
+        verification semantics.
+        """
+        if self._extract_bearer(request) is not None:
+            return None
+        if media_request is not None:
+            (
+                media_token,
+                project_id,
+                resource_type,
+                resource_id,
+                scope,
+                parent_id,
+                source_index,
+            ) = media_request
+            try:
+                verify_media_token(
+                    media_token,
+                    current_security_stamp=None,
+                    project_id=project_id,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    scope=scope,
+                    parent_id=parent_id,
+                    source_index=source_index,
+                    allow_anonymous=True,
+                )
+            except (StaleTokenError, InvalidTokenError):
+                return _auth_failure(401, "auth_invalid", "Media token invalid")
+            request.state.skip_bearer_fallback = True
+            return _ANON_MEDIA_SENTINEL
+        if (
+            request.method == "POST"
+            and ANON_MEDIA_TOKEN_ISSUE_PATTERN.fullmatch(request.url.path) is not None
+        ):
+            request.state.skip_bearer_fallback = True
+            return _ANON_MEDIA_SENTINEL
+        return None
+
     async def _authenticate_session(
         self, request: Request
     ) -> Principal | Response | object:
@@ -662,52 +727,21 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         media_request = self._extract_media_query_token(request)
 
         if not session_id:
-            # W2-4 PR-C: signed-out (cookie-less) callers. Only two shapes are
-            # admitted, both leaving ``principal=None`` so the downstream gate
-            # re-evaluates the request as a Guest:
-            #   1. A media GET carrying a valid ANONYMOUS media token.
-            #   2. A POST to the recording media-token issuance endpoint.
-            # A Bearer credential means the caller intends to authenticate, so
-            # we do NOT downgrade those to Guest — they fall through to the
-            # usual 401 below (unchanged behaviour).
-            if self._extract_bearer(request) is None:
-                if media_request is not None:
-                    (
-                        media_token,
-                        project_id,
-                        resource_type,
-                        resource_id,
-                        scope,
-                        parent_id,
-                        source_index,
-                    ) = media_request
-                    try:
-                        verify_media_token(
-                            media_token,
-                            current_security_stamp=None,
-                            project_id=project_id,
-                            resource_type=resource_type,
-                            resource_id=resource_id,
-                            scope=scope,
-                            parent_id=parent_id,
-                            source_index=source_index,
-                            allow_anonymous=True,
-                        )
-                    except (StaleTokenError, InvalidTokenError):
-                        return _auth_failure(401, "auth_invalid", "Media token invalid")
-                    request.state.skip_bearer_fallback = True
-                    return _ANON_MEDIA_SENTINEL
-                if (
-                    request.method == "POST"
-                    and ANON_MEDIA_TOKEN_ISSUE_PATTERN.fullmatch(request.url.path)
-                    is not None
-                ):
-                    request.state.skip_bearer_fallback = True
-                    return _ANON_MEDIA_SENTINEL
+            passthrough = self._try_anonymous_media_passthrough(request, media_request)
+            if passthrough is not None:
+                return passthrough
             return _auth_failure(401, "auth_required", "Session cookie required")
 
         live = await verifier.verify(session_id)
         if live is None:
+            # W2-4 PR-C: a stale / unknown session cookie makes the caller an
+            # effective Guest. Rather than hard-401, admit the same anonymous
+            # media surfaces so a signed-out visitor whose old session cookie
+            # lingers can still stream Public recordings. The user-bound token
+            # path below (valid sessions) is untouched.
+            passthrough = self._try_anonymous_media_passthrough(request, media_request)
+            if passthrough is not None:
+                return passthrough
             return _auth_failure(401, "auth_invalid", "Session unknown or expired")
         live_user_id, live_stamp = live
 
