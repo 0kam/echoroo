@@ -24,9 +24,6 @@ test.describe('Authentication', () => {
       await page.fill('#password', testUser.password);
       await page.fill('#confirmPassword', testUser.password);
 
-      // Note: In real tests, you would need to handle the CAPTCHA
-      // For now, we assume CAPTCHA is bypassed in test environment
-
       // Submit form
       await page.click('button[type="submit"]');
 
@@ -101,21 +98,6 @@ test.describe('Authentication', () => {
       // Should show error message
       await expect(page.locator('[role="alert"]')).toBeVisible();
       await expect(page).toHaveURL('/login');
-    });
-
-    test('should show CAPTCHA after 3 failed login attempts', async ({ page }) => {
-      await page.goto('/login');
-
-      // Attempt to login 3 times with wrong credentials
-      for (let i = 0; i < 3; i++) {
-        await page.fill('#email', 'test@example.com');
-        await page.fill('#password', 'wrongpassword');
-        await page.click('button[type="submit"]');
-        await page.waitForTimeout(500);
-      }
-
-      // CAPTCHA should now be visible
-      await expect(page.locator('.captcha-container')).toBeVisible();
     });
 
     test('should redirect to return URL after login', async ({ page }) => {

@@ -86,8 +86,6 @@
   "error_required_email_password": "Please enter your email and password",
   "error_invalid_email": "Please enter a valid email address",
   "error_password_too_short": "Password must be at least 16 characters",
-  "error_captcha_required": "Please complete the CAPTCHA verification",
-  "error_captcha_failed": "CAPTCHA verification failed. Please try again.",
   "error_unexpected": "An unexpected error occurred. Please try again.",
   "error_email_required": "Email is required",
   "error_password_required": "Password is required",
@@ -1097,8 +1095,6 @@
   "clip_list_loading": "Loading clips...",
   "clip_list_no_clips": "No clips found",
   "clip_list_no_clips_hint": "Create clips manually or use auto-generation",
-
-  "captcha_loading": "Loading CAPTCHA...",
 
   "detection_filter_search_species_label": "Search species",
   "detection_filter_search_species_placeholder": "Species name...",

@@ -23,7 +23,6 @@
   import { ApiError, apiClient } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import Captcha from '$lib/components/Captcha.svelte';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
   import { onMount } from 'svelte';
@@ -36,9 +35,6 @@
   // Step 1 state
   let email = $state('');
   let password = $state('');
-  let captchaToken = $state<string | null>(null);
-  let showCaptcha = $state(false);
-  let failedAttempts = $state(0);
 
   // Step 2 state
   let interimToken = $state<string | null>(null);
@@ -50,10 +46,6 @@
   let isSubmitting = $state(false);
   let error = $state<string | null>(null);
   let successNotice = $state<string | null>(null);
-
-  // Captcha reference
-  let captchaComponent: { reset: () => void } | undefined = $state(undefined);
-  let turnstileSiteKey = $state('');
 
   async function completeLogin(accessToken: string) {
     apiClient.setAccessToken(accessToken);
@@ -94,8 +86,6 @@
   }
 
   onMount(() => {
-    turnstileSiteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
-
     const redirect = $page.url.searchParams.get('redirect');
     if (redirect) {
       error = m.auth_login_redirect_message();
@@ -123,10 +113,6 @@
     }
     if (password.length < 8) {
       error = m.error_password_too_short();
-      return false;
-    }
-    if (showCaptcha && !captchaToken) {
-      error = m.error_captcha_required();
       return false;
     }
     return true;
@@ -166,19 +152,8 @@
       trustDevice = false;
       step = 'two_factor';
       error = null;
-      failedAttempts = 0;
-      showCaptcha = false;
     } catch (err) {
       handleError(err);
-
-      failedAttempts++;
-      if (failedAttempts >= 3) {
-        showCaptcha = true;
-      }
-      if (showCaptcha && captchaComponent) {
-        captchaComponent.reset();
-        captchaToken = null;
-      }
     } finally {
       isSubmitting = false;
     }
@@ -258,19 +233,6 @@
       error = m.error_unexpected();
     }
   }
-
-  function handleCaptchaVerify(token: string) {
-    captchaToken = token;
-  }
-
-  function handleCaptchaError() {
-    captchaToken = null;
-    error = m.error_captcha_failed();
-  }
-
-  function handleCaptchaExpire() {
-    captchaToken = null;
-  }
 </script>
 
 <svelte:head>
@@ -340,18 +302,6 @@
             />
           </div>
         </div>
-
-        {#if showCaptcha}
-          <div class="mt-4">
-            <Captcha
-              bind:this={captchaComponent}
-              siteKey={turnstileSiteKey}
-              onVerify={handleCaptchaVerify}
-              onError={handleCaptchaError}
-              onExpire={handleCaptchaExpire}
-            />
-          </div>
-        {/if}
 
         {#if error}
           <div class="rounded-md bg-danger-light p-4" role="alert">
