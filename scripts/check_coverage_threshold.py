@@ -234,6 +234,14 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         # Step 7c coverage uplift PR will lift this back. Current gap:
         # 12.4pp.
         "echoroo/api/web_v1/projects/_members.py",
+        # 2026-07-05 (W3-1): the invitation route surface (issue / bulk /
+        # revoke / list / accept / decline) was extracted from _members.py
+        # into _invitations.py. The exemption follows the code — the same
+        # route-handler branches that kept _members.py below 85% now live
+        # in _invitations.py (which takes the bulk of the moved LOC), so it
+        # inherits the same warn-only exemption pending the Step 7c coverage
+        # uplift.
+        "echoroo/api/web_v1/projects/_invitations.py",
         "echoroo/api/web_v1/trusted.py",
         # Permission-critical modules — gap tracked for Phase 17 targeted coverage push.
         # NOTE: echoroo/core/audit.py removed from PHASE17_PENDING (target: 95%, gap was

@@ -128,7 +128,7 @@ def _fake_redis_for_invitation_service(
     The invitation service's rate-limit + idempotency paths require a
     live async Redis client. The integration test stack does not boot a
     real Redis container, so we substitute fakeredis at the import
-    surfaces called by the issuer (``_members.py``) and the trusted
+    surfaces called by the issuer (``_invitations.py``) and the trusted
     endpoint (``trusted.py``). The fake is per-test so concurrent runs
     do not cross-contaminate.
     """
@@ -137,7 +137,7 @@ def _fake_redis_for_invitation_service(
     async def _get_fake() -> fakeredis.aioredis.FakeRedis:
         return fake
 
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     monkeypatch.setattr(members_module, "get_redis_connection", _get_fake)
     # Also patch the shared singleton so any other consumer in the
