@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, NotRequired, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, NotRequired, Protocol, TypedDict, cast
 from uuid import UUID
 
 from cryptography.hazmat.primitives import serialization
@@ -37,6 +37,9 @@ from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.settings import get_settings
 from echoroo.services.audit_service import AuditLogService
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +93,21 @@ class _RedisChallengeStore(Protocol):
 class WebAuthnService:
     """Stateless py_webauthn wrapper. Caller owns credential persistence."""
 
-    def __init__(self, redis: Redis | _RedisChallengeStore | None = None) -> None:
+    def __init__(
+        self,
+        redis: Redis | _RedisChallengeStore | None = None,
+        *,
+        audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
+    ) -> None:
         self.redis = redis
         self.settings = get_settings()
+        # Dependency-injection seam for tests. When ``None`` the module-level
+        # ``AuditLogService`` is resolved at call time (see
+        # ``_record_audit_event``) so existing monkeypatch-based tests keep
+        # working. An injected factory MUST build an ``AuditLogService`` on
+        # the FRESH session passed to it — the SERIALIZABLE upgrade has to be
+        # the first statement on the audit connection.
+        self._audit_log_factory = audit_log_factory
 
     async def begin_registration(
         self,
@@ -318,7 +333,8 @@ class WebAuthnService:
     ) -> None:
         async with AsyncSessionLocal() as audit_session:
             try:
-                audit = AuditLogService(audit_session)
+                factory = self._audit_log_factory or AuditLogService
+                audit = factory(audit_session)
                 await audit.write_platform_event(
                     actor_user_id=actor_id,
                     action=action,

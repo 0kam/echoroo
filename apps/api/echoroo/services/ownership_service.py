@@ -55,6 +55,7 @@ import contextlib
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -752,6 +753,8 @@ def _upgrade_member_to_active_admin(
 
 async def trigger_post_commit_side_effects(
     outcome: OwnershipTransferOutcome,
+    *,
+    audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
 ) -> None:
     """Write the FR-059 audit row in a fresh session.
 
@@ -764,11 +767,20 @@ async def trigger_post_commit_side_effects(
     Replayed outcomes still write a (deduped) audit row with
     ``replayed=True`` in the detail payload so an operator inspecting
     the chain can distinguish a fresh transfer from a replay.
+
+    Args:
+        outcome: The ownership-transfer outcome to audit.
+        audit_log_factory: Dependency-injection seam for tests. When ``None``
+            the module-level :class:`AuditLogService` is resolved at call time
+            (so existing monkeypatch-based tests keep working). An injected
+            factory MUST build an :class:`AuditLogService` on the fresh session
+            passed to it; never a pre-bound instance, because the SERIALIZABLE
+            upgrade must be the first statement on the audit connection.
     """
     try:
         async with AsyncSessionLocal() as audit_session:
             try:
-                service = AuditLogService(audit_session)
+                service = (audit_log_factory or AuditLogService)(audit_session)
                 await service.write_project_event(
                     actor_user_id=outcome.actor_user_id,
                     project_id=outcome.project_id,

@@ -66,6 +66,7 @@ Following the pattern established by
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -463,6 +464,8 @@ async def reject_taxon_override(
 
 async def trigger_apply_post_commit_audit(
     outcome: TaxonOverrideApplyOutcome,
+    *,
+    audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
 ) -> None:
     """Write the ``project_audit_log`` row for an apply outcome.
 
@@ -474,11 +477,20 @@ async def trigger_apply_post_commit_audit(
     ``apps/api/echoroo/services/audit_service.py:201``). Failures are
     warning-logged so a flaky audit chain never rolls back a persisted
     override decision (FR-088 soft-alert posture).
+
+    Args:
+        outcome: The taxon-override apply outcome to audit.
+        audit_log_factory: Dependency-injection seam for tests. When ``None``
+            the module-level :class:`AuditLogService` is resolved at call time
+            (so existing monkeypatch-based tests keep working). An injected
+            factory MUST build an :class:`AuditLogService` on the fresh session
+            passed to it; never a pre-bound instance, because the SERIALIZABLE
+            upgrade must be the first statement on the audit connection.
     """
     try:
         async with AsyncSessionLocal() as audit_session:
             try:
-                service = AuditLogService(audit_session)
+                service = (audit_log_factory or AuditLogService)(audit_session)
                 await service.write_project_event(
                     actor_user_id=outcome.actor_user_id,
                     project_id=outcome.project_id,

@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -1110,6 +1111,8 @@ async def _apply_one(
     row: TwoFactorResetRequest,
     current: datetime,
     lease: datetime,
+    two_factor_service_factory: Callable[[AsyncSession], TwoFactorService]
+    | None = None,
 ) -> bool:
     """Re-load the target user and either reset or cancel.
 
@@ -1234,7 +1237,14 @@ async def _apply_one(
     # session whose autoflush would persist the user dirty mutation —
     # producing the silent "user reset, request marked failed, no
     # reset_completed audit" inconsistency Codex Round-5 flagged.
-    service = TwoFactorService(session)
+    # ``two_factor_service_factory`` is a dependency-injection seam for
+    # tests. When ``None`` the module-level ``TwoFactorService`` is resolved
+    # at call time (so existing monkeypatch-based tests keep working). An
+    # injected factory MUST build a ``TwoFactorService`` bound to the SAME
+    # ``session`` so the destructive user mutation runs under the same open
+    # transaction (``commit=False``); the default preserves the prior
+    # same-session / same-TX semantics exactly.
+    service = (two_factor_service_factory or TwoFactorService)(session)
     reset_audit_envelope = await service.reset_user_two_factor(
         user,
         actor_id=row.requested_by_superuser_id,

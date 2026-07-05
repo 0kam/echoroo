@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -391,7 +391,11 @@ async def trigger_post_commit_side_effects(
 # ---------------------------------------------------------------------------
 
 
-async def _write_trusted_user_audit(outcome: TrustedUpdateOutcome) -> None:
+async def _write_trusted_user_audit(
+    outcome: TrustedUpdateOutcome,
+    *,
+    audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
+) -> None:
     """Record the trusted-user change in ``project_audit_log``.
 
     Uses a fresh :class:`AsyncSessionLocal` because the audit writer
@@ -399,6 +403,15 @@ async def _write_trusted_user_audit(outcome: TrustedUpdateOutcome) -> None:
     PostgreSQL rejects on a session that has already issued statements
     (mirrors the pattern in
     :mod:`echoroo.services.restricted_config_service`).
+
+    Args:
+        outcome: The trusted-user change to audit.
+        audit_log_factory: Dependency-injection seam for tests. When ``None``
+            the module-level :class:`AuditLogService` is resolved at call time
+            (so existing monkeypatch-based tests keep working). An injected
+            factory MUST build an :class:`AuditLogService` on the fresh session
+            passed to it; never a pre-bound instance, because the SERIALIZABLE
+            upgrade must be the first statement on the audit connection.
     """
     action = (
         "project.trusted_user.revoke"
@@ -408,7 +421,7 @@ async def _write_trusted_user_audit(outcome: TrustedUpdateOutcome) -> None:
     try:
         async with AsyncSessionLocal() as audit_session:
             try:
-                service = AuditLogService(audit_session)
+                service = (audit_log_factory or AuditLogService)(audit_session)
                 await service.write_project_event(
                     actor_user_id=outcome.actor_user_id,
                     project_id=outcome.trusted_user.project_id,

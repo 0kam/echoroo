@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -180,6 +181,8 @@ async def soft_delete_user(
     request_id: str = "",
     ip: str = "",
     user_agent: str = "",
+    trusted_device_service_factory: Callable[[AsyncSession], TrustedDeviceService]
+    | None = None,
 ) -> UserSoftDeleteOutcome:
     """Anonymise the ``users`` row for ``user_id`` (FR-105).
 
@@ -191,6 +194,13 @@ async def soft_delete_user(
         user_id: PK of the user to soft-delete.
         request_id / ip / user_agent: Audit envelope captured for the
             ``platform_audit_log`` row.
+        trusted_device_service_factory: Dependency-injection seam for
+            tests. When ``None`` the module-level
+            :class:`TrustedDeviceService` is resolved at call time (so
+            existing monkeypatch-based tests keep working). An injected
+            factory MUST build a :class:`TrustedDeviceService` on the SAME
+            caller-owned ``session`` so the device revocation participates
+            in the same transaction (default preserves prior behaviour).
 
     Returns:
         :class:`UserSoftDeleteOutcome` capturing the deletion timestamp
@@ -233,7 +243,9 @@ async def soft_delete_user(
     user.security_stamp = secrets.token_hex(32)
     user.deleted_at = now
     user.updated_at = now
-    revoked_trusted_devices = await TrustedDeviceService(session).revoke_all_for_user(
+    revoked_trusted_devices = await (
+        trusted_device_service_factory or TrustedDeviceService
+    )(session).revoke_all_for_user(
         user=user,
         reason="user_deleted",
     )
@@ -254,7 +266,11 @@ async def soft_delete_user(
     )
 
 
-async def trigger_post_commit_audit(outcome: UserSoftDeleteOutcome) -> None:
+async def trigger_post_commit_audit(
+    outcome: UserSoftDeleteOutcome,
+    *,
+    audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
+) -> None:
     """Write the ``platform_audit_log`` row for a self-delete outcome.
 
     Mirrors :func:`echoroo.services.superuser_approval_service.trigger_apply_post_commit_audit`:
@@ -264,6 +280,15 @@ async def trigger_post_commit_audit(outcome: UserSoftDeleteOutcome) -> None:
     statement on its connection. Failures are WARNING-logged so a
     flaky audit chain never rolls back the persisted deletion (FR-088
     soft-alert posture).
+
+    Args:
+        outcome: The soft-delete outcome to audit.
+        audit_log_factory: Dependency-injection seam for tests. When ``None``
+            the module-level :class:`AuditLogService` is resolved at call time
+            (so existing monkeypatch-based tests keep working). An injected
+            factory MUST build an :class:`AuditLogService` on the fresh session
+            passed to it; never a pre-bound instance, because the SERIALIZABLE
+            upgrade must be the first statement on the audit connection.
     """
     try:
         async with AsyncSessionLocal() as audit_session:
@@ -274,7 +299,9 @@ async def trigger_post_commit_audit(outcome: UserSoftDeleteOutcome) -> None:
                 # platform_audit_log row keyed on ``users.id``. The
                 # row itself carries no raw PII (email / display name
                 # are not in the detail), satisfying FR-091a.
-                await AuditLogService(audit_session).write_platform_event(
+                await (audit_log_factory or AuditLogService)(
+                    audit_session
+                ).write_platform_event(
                     actor_user_id=outcome.user_id,
                     action=AUDIT_ACTION_USER_SELF_DELETE,
                     request_id=outcome.request_id,

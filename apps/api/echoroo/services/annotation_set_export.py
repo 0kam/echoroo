@@ -98,11 +98,24 @@ class AnnotationSetExportService:
     is consistent with the detection export.
     """
 
-    def __init__(self, db: AsyncSession) -> None:
-        """Initialise with an async database session."""
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        detection_service: DetectionExportService | None = None,
+    ) -> None:
+        """Initialise with an async database session.
+
+        Args:
+            db: Async database session.
+            detection_service: Optional pre-built :class:`DetectionExportService`
+                (dependency-injection seam for tests). Defaults to a new
+                instance bound to the SAME ``db`` session, preserving the
+                previous behaviour.
+        """
         self.db = db
         # Reuse the detection export helpers (license, H3 map, generalization).
-        self._detection = DetectionExportService(db)
+        self._detection = detection_service or DetectionExportService(db)
 
     async def _require_set(self, set_id: UUID) -> AnnotationSet:
         """Load the set (no relationships) — caller validates project scope."""
