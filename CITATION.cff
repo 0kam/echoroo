@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+title: "Echoroo"
+abstract: >-
+  Echoroo is an open-source, web-based ecoacoustic platform. Integrated with
+  state-of-the-art AI, it enables fast and efficient analysis, search, and
+  development of new models for acoustic data, letting NPOs, local governments,
+  and researchers manage environmental sound data and run wildlife surveys with
+  the help of machine learning — no bioacoustics or ML expertise required.
+type: software
+authors:
+  - given-names: "Ryotaro"
+    family-names: "Okamoto"
+    affiliation: "National Institute for Environmental Studies, Japan"
+    email: "okamoto.ryotaro@nies.go.jp"
+repository-code: "https://github.com/0kam/echoroo"
+url: "https://github.com/0kam/echoroo"
+license: "GPL-3.0-or-later"
+version: "2.0.0"
+date-released: "2026-07-06"
+keywords:
+  - bioacoustics
+  - ecoacoustics
+  - passive-acoustic-monitoring
+  - machine-learning
+  - birdnet
+  - perch
+  - biodiversity
+  - wildlife-survey

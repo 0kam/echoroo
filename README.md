@@ -115,6 +115,18 @@ On a host whose GPU is **present** but enumerated-yet-unusable by TensorFlow (e.
 
 On a host with **no NVIDIA GPU at all**, `ECHOROO_ML_USE_GPU=false` is necessary but not sufficient: the `worker` service still reserves an NVIDIA device, so you must also remove or comment out the `worker.deploy.resources.reservations.devices` block in `compose.dev.yaml`, otherwise the worker container will not start. See [DOCKER.md](DOCKER.md#gpu-support).
 
+## Licensing
+
+Echoroo's source code is licensed under the **GNU General Public License v3**
+(see [LICENSE](LICENSE)).
+
+Machine-learning **model weights are licensed separately** and are not covered
+by Echoroo's code license — see [MODEL_LICENSES.md](MODEL_LICENSES.md) for
+details. In particular, the **BirdNET** model weights are distributed under
+**CC BY-NC-SA 4.0 (non-commercial)**, so deployments that use them are subject
+to those non-commercial terms. Third-party software dependencies retain their
+own licenses ([THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)).
+
 ## Acknowledgements
 
 This project is built upon the [Whombat](https://github.com/mbsantiago/whombat) project, originally developed with the generous support of the Mexican Council of the Humanities, Science and Technology (**CONAHCyT**; Award Number 2020-000017-02EXTF-00334) and University College London (**UCL**).
