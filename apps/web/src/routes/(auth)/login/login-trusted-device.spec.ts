@@ -37,10 +37,6 @@ vi.mock('$lib/api/web-auth', async (importOriginal) => {
   };
 });
 
-vi.mock('$lib/components/Captcha.svelte', () => ({
-  default: () => undefined,
-}));
-
 vi.mock('$lib/components/ui/LanguageSwitcher.svelte', () => ({
   default: () => undefined,
 }));

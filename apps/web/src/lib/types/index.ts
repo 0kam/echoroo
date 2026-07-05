@@ -197,7 +197,6 @@ export interface UserRegisterRequest {
   email: string;
   password: string;
   display_name?: string;
-  captcha_token?: string;
   invitation_token?: string;
 }
 
@@ -207,7 +206,6 @@ export interface UserRegisterRequest {
 export interface LoginRequest {
   email: string;
   password: string;
-  captcha_token?: string;
 }
 
 /**
@@ -217,21 +215,6 @@ export interface TokenResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
-}
-
-/**
- * CAPTCHA verification request
- */
-export interface CaptchaVerifyRequest {
-  token: string;
-}
-
-/**
- * CAPTCHA verification response
- */
-export interface CaptchaVerifyResponse {
-  verified: boolean;
-  challenge_ts?: string;
 }
 
 /**
