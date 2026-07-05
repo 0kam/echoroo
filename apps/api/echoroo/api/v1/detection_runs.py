@@ -29,10 +29,10 @@ from echoroo.schemas.detection_run import (
 )
 from echoroo.services.detection_run import DetectionRunService
 
-router = APIRouter(prefix="/projects/{project_id}/detection-runs", tags=["detection-runs"])
+router = APIRouter(prefix="/projects/{project_id}/detection-runs", tags=["Programmatic API — Detection Runs"])
 
 # Router for model discovery (no project_id prefix needed)
-models_router = APIRouter(prefix="/detection-runs", tags=["detection-runs"])
+models_router = APIRouter(prefix="/detection-runs", tags=["Programmatic API — Detection Runs"])
 
 
 

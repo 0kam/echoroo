@@ -20,7 +20,7 @@ from echoroo.models.user import User
 from echoroo.schemas.license import LicensePublicListResponse
 from echoroo.services.license import LicenseService
 
-router = APIRouter(prefix="/licenses", tags=["licenses"])
+router = APIRouter(prefix="/licenses", tags=["Programmatic API — Licenses"])
 
 
 def _require_authenticated(current_user: User | None) -> User:

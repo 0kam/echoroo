@@ -16,7 +16,7 @@ from echoroo.services.h3_utils import (
     validate_h3_index,
 )
 
-router = APIRouter(prefix="/h3", tags=["h3"])
+router = APIRouter(prefix="/h3", tags=["Programmatic API — H3"])
 
 
 @router.post(

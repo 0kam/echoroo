@@ -57,6 +57,134 @@ settings = get_settings()
 init_sentry()
 
 
+# ---------------------------------------------------------------------------
+# OpenAPI metadata
+# ---------------------------------------------------------------------------
+# Echoroo exposes two parallel HTTP surfaces that share the same domain but are
+# authenticated and shaped differently:
+#
+# * ``/api/v1/*``     — the Programmatic API (researchers / scripts /
+#                        integrations). Auth is ``Authorization: Bearer
+#                        <API key or JWT>``; there is no CSRF because there is
+#                        no ambient credential. Its routers carry
+#                        ``Programmatic API — <Resource>`` OpenAPI tags so the
+#                        Swagger UI groups them apart from the browser surface.
+# * ``/web-api/v1/*`` — the Browser BFF used by the SvelteKit frontend. Auth is
+#                        the first-party session cookie + CSRF token. Its
+#                        routers keep the plain resource tags (``projects``,
+#                        ``auth``, …).
+#
+# The tag metadata below documents that split in the rendered docs. Only the
+# ``Programmatic API — *`` tag names are enumerated for description text; the
+# Browser BFF resource tags render with their FastAPI-default (empty) grouping
+# and are described collectively by the ``Browser BFF`` marker entry. See
+# ``docs/api/v1-programmatic-api.md`` for the full programmatic-surface guide.
+_API_DESCRIPTION = (
+    "Bird sound recognition and analysis platform API.\n\n"
+    "This API is served over two surfaces:\n\n"
+    "* **`/api/v1/*` — Programmatic API** for researchers, scripts, and "
+    "integrations. Authenticate with `Authorization: Bearer <API key or "
+    "JWT>`. Endpoints are grouped under `Programmatic API — <Resource>` tags.\n"
+    "* **`/web-api/v1/*` — Browser BFF** for the Echoroo web frontend. "
+    "Authenticate with the first-party session cookie + CSRF token. Endpoints "
+    "keep the plain resource tags.\n\n"
+    "See `docs/api/v1-programmatic-api.md` for the programmatic-surface guide "
+    "(auth, endpoint catalogue, and `curl` examples)."
+)
+
+_OPENAPI_TAGS: list[dict[str, str]] = [
+    {
+        "name": "Programmatic API — Auth",
+        "description": (
+            "`/api/v1/auth/*` — bootstrap auth for scripts/integrations "
+            "(register, refresh, logout, change password). Bearer surface."
+        ),
+    },
+    {
+        "name": "Programmatic API — Users",
+        "description": (
+            "`/api/v1/users/me*` — current-user profile and **API key** "
+            "management (create/list/revoke `ecr_`-prefixed keys). Bearer "
+            "surface."
+        ),
+    },
+    {
+        "name": "Programmatic API — Projects",
+        "description": "`/api/v1/projects*` — project CRUD, members, license, "
+        "overview, and Restricted-mode config. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Datasets",
+        "description": "`/api/v1/projects/{id}/datasets/{id}/export` — dataset "
+        "export. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Recordings",
+        "description": "`/api/v1/projects/{id}/recordings/{id}/audio` — "
+        "Range-capable recording audio streaming. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Detections",
+        "description": "`/api/v1/projects/{id}/detections/*` — get / delete / "
+        "confirm / reject detections. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Detection Runs",
+        "description": "`/api/v1/projects/{id}/detection-runs/*` — get / update "
+        "detection runs. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Confirmed Regions",
+        "description": "`/api/v1/projects/{id}/confirmed-regions*` — list / "
+        "create / delete confirmed regions. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Annotation Sets",
+        "description": "`/api/v1/annotation-sets/{id}/sample` — dispatch a "
+        "sampling job. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Annotation Comments",
+        "description": "`/api/v1/projects/{id}/annotations/{id}/comments` — list "
+        "/ create annotation comments. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Search",
+        "description": "`/api/v1/projects/{id}/search/similar*` — similarity "
+        "search by embedding ID or uploaded audio. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Taxa",
+        "description": "`/api/v1/taxa*` — local + GBIF taxonomy lookups and "
+        "local-taxon creation. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Licenses",
+        "description": "`/api/v1/licenses` — read the active license master. "
+        "Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — H3",
+        "description": "`/api/v1/h3/*` — resolve / validate H3 geospatial "
+        "indexes. Bearer surface.",
+    },
+    {
+        "name": "Programmatic API — Xeno-canto",
+        "description": "`/api/v1/projects/{id}/xeno-canto/*` — Xeno-canto "
+        "search + media proxy (sonogram is public). Bearer surface.",
+    },
+    {
+        "name": "Browser BFF",
+        "description": (
+            "The `/web-api/v1/*` surface consumed by the Echoroo web frontend. "
+            "Endpoints are authenticated with the first-party session cookie + "
+            "CSRF token and are grouped below under their plain resource tags "
+            "(`projects`, `auth`, `admin`, `me`, `account`, `recorders`, …)."
+        ),
+    },
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
     """Application lifespan events.
@@ -115,7 +243,8 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        description="Bird sound recognition and analysis platform API",
+        description=_API_DESCRIPTION,
+        openapi_tags=_OPENAPI_TAGS,
         lifespan=lifespan,
         debug=settings.DEBUG,
     )

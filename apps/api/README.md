@@ -220,6 +220,12 @@ Once the server is running, access the interactive API documentation at:
 - ReDoc: http://localhost:8000/redoc
 - OpenAPI JSON: http://localhost:8000/openapi.json
 
+The API is split into a **Programmatic API** (`/api/v1/*`, Bearer auth for
+researchers/scripts) and a **Browser BFF** (`/web-api/v1/*`, session + CSRF for
+the web frontend). For the programmatic-surface guide (auth, endpoint
+catalogue, and `curl` examples) see
+[docs/api/v1-programmatic-api.md](../../docs/api/v1-programmatic-api.md).
+
 ## Architecture
 
 This API follows a layered architecture:

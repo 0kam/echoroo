@@ -172,7 +172,7 @@ def _validate_sonogram_url(url: str) -> tuple[str, str]:
     pinned = ipv4 if ipv4 is not None else public_ips[0]
     return host, str(pinned)
 
-router = APIRouter(prefix="/projects/{project_id}/xeno-canto", tags=["xeno-canto"])
+router = APIRouter(prefix="/projects/{project_id}/xeno-canto", tags=["Programmatic API — Xeno-canto"])
 
 
 def _get_api_key() -> str | None:

@@ -72,7 +72,7 @@ from echoroo.services.restricted_config_service import (
     update_restricted_config,
 )
 
-router = APIRouter(prefix="/projects", tags=["projects"])
+router = APIRouter(prefix="/projects", tags=["Programmatic API — Projects"])
 
 
 def get_project_service(db: DbSession) -> ProjectService:

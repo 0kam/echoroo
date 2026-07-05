@@ -53,7 +53,7 @@ from echoroo.services.audio import AudioService
 from echoroo.services.dataset import DatasetService
 from echoroo.services.export import ExportService
 
-router = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])
+router = APIRouter(prefix="/projects/{project_id}/datasets", tags=["Programmatic API — Datasets"])
 
 settings = get_settings()
 

@@ -18,7 +18,7 @@ from echoroo.schemas.taxon import (
 from echoroo.services.gbif import GBIFService
 from echoroo.services.taxon import TaxonService
 
-router = APIRouter(prefix="/taxa", tags=["taxa"])
+router = APIRouter(prefix="/taxa", tags=["Programmatic API — Taxa"])
 
 
 def get_taxon_service(db: DbSession) -> TaxonService:

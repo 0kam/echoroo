@@ -66,7 +66,7 @@ from echoroo.services.taxon_sensitivity_service import (
     is_iucn_fail_safe_active,
 )
 
-router = APIRouter(prefix="/projects/{project_id}/detections", tags=["detections"])
+router = APIRouter(prefix="/projects/{project_id}/detections", tags=["Programmatic API — Detections"])
 
 # W2-3 PR-17 (2026-07-02): the 10 browser-superseded detection routes were
 # unmounted from ``/api/v1`` in favour of the project-scoped ``/web-api/v1`` BFF

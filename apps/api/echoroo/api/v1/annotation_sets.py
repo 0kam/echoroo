@@ -31,7 +31,7 @@ from echoroo.schemas.annotation_set import (
 )
 from echoroo.services.annotation_set import AnnotationSetService
 
-router = APIRouter(prefix="/annotation-sets", tags=["annotation-sets"])
+router = APIRouter(prefix="/annotation-sets", tags=["Programmatic API — Annotation Sets"])
 
 
 # ---------------------------------------------------------------------------

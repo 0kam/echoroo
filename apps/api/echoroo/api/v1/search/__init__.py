@@ -28,7 +28,7 @@ from fastapi import APIRouter
 from echoroo.api.v1.search.sessions import router as _sessions_router
 from echoroo.api.v1.search.similarity import router as _similarity_router
 
-router = APIRouter(prefix="/projects/{project_id}/search", tags=["search"])
+router = APIRouter(prefix="/projects/{project_id}/search", tags=["Programmatic API — Search"])
 
 # Include all sub-routers into the main search router.
 #

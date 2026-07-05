@@ -58,7 +58,7 @@ from echoroo.services.auth import AuthService
 from echoroo.services.recording import RecordingService
 from echoroo.services.token import TokenService
 
-router = APIRouter(prefix="/projects/{project_id}/recordings", tags=["recordings"])
+router = APIRouter(prefix="/projects/{project_id}/recordings", tags=["Programmatic API — Recordings"])
 
 settings = get_settings()
 
