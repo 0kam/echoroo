@@ -1,4 +1,4 @@
-"""Coverage uplift unit tests for ``echoroo.api.web_v1.projects._members``.
+"""Coverage uplift unit tests for ``echoroo.api.web_v1.projects._invitations``.
 
 Phase 17 §C Batch 9a (35-50pp gap range): covers the accept and decline
 invitation handlers so the module clears the 85% threshold.
@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from echoroo.api.web_v1.projects._members import (
+from echoroo.api.web_v1.projects._invitations import (
     accept_project_invitation,
     decline_project_invitation,
 )
@@ -81,13 +81,13 @@ async def test_accept_project_invitation_raises_404_on_token_not_found() -> None
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationTokenInvalidError("token not found")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -113,13 +113,13 @@ async def test_accept_project_invitation_raises_410_on_expired_token() -> None:
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationTokenInvalidError("expired signature")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -145,13 +145,13 @@ async def test_accept_project_invitation_raises_403_on_email_mismatch() -> None:
     current_user.email = "other@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationEmailMismatchError("email mismatch")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -177,13 +177,13 @@ async def test_accept_project_invitation_raises_410_on_state_error() -> None:
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationStateError("already accepted")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -209,13 +209,13 @@ async def test_accept_project_invitation_raises_409_on_conflict() -> None:
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationConflictError("conflict")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -241,13 +241,13 @@ async def test_accept_project_invitation_raises_503_on_infra_unavailable() -> No
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(side_effect=InvitationInfraUnavailableError("redis down")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -290,17 +290,17 @@ async def test_accept_project_invitation_happy_path_member() -> None:
     outcome.trusted_user = None
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.get_redis_connection",
+            "echoroo.api.web_v1.projects._invitations.get_redis_connection",
             new=AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.accept_invitation",
+            "echoroo.api.web_v1.projects._invitations.accept_invitation",
             new=AsyncMock(return_value=outcome),
         ),
         patch(
-            "echoroo.api.web_v1.projects._members.invitation_service.trigger_post_commit_side_effects",
+            "echoroo.api.web_v1.projects._invitations.invitation_service.trigger_post_commit_side_effects",
             new=AsyncMock(),
         ),
     ):
@@ -345,9 +345,9 @@ async def test_decline_project_invitation_raises_404_on_token_invalid() -> None:
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.decline_invitation_by_recipient",
+            "echoroo.api.web_v1.projects._invitations.decline_invitation_by_recipient",
             new=AsyncMock(side_effect=InvitationTokenInvalidError("not found")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -372,9 +372,9 @@ async def test_decline_project_invitation_raises_404_on_email_mismatch() -> None
     current_user.email = "other@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.decline_invitation_by_recipient",
+            "echoroo.api.web_v1.projects._invitations.decline_invitation_by_recipient",
             new=AsyncMock(side_effect=InvitationEmailMismatchError("mismatch")),
         ),
         pytest.raises(HTTPException) as exc_info,
@@ -399,9 +399,9 @@ async def test_decline_project_invitation_raises_410_on_state_error() -> None:
     current_user.email = "user@example.com"
 
     with (
-        patch("echoroo.api.web_v1.projects._members.get_settings") as mock_settings,
+        patch("echoroo.api.web_v1.projects._invitations.get_settings") as mock_settings,
         patch(
-            "echoroo.api.web_v1.projects._members.decline_invitation_by_recipient",
+            "echoroo.api.web_v1.projects._invitations.decline_invitation_by_recipient",
             new=AsyncMock(side_effect=InvitationStateError("already accepted")),
         ),
         pytest.raises(HTTPException) as exc_info,

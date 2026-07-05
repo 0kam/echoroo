@@ -176,7 +176,7 @@ def test_member_invite_schema_rejects_crlf_email(bad_email: str) -> None:
     # The member invite request is defined inline in the projects/_members.py
     # endpoint — we import it indirectly via the module.
     try:
-        from echoroo.api.web_v1.projects._members import (
+        from echoroo.api.web_v1.projects._invitations import (
             _MemberInviteBody,  # type: ignore[attr-defined]
         )
 

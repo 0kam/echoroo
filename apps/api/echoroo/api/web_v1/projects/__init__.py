@@ -10,10 +10,14 @@ concern stays small enough to review in isolation:
 * :mod:`._core` — project CRUD
   (``GET /``, ``POST /``, ``GET /{id}``, ``PUT /{id}``, ``DELETE /{id}``;
   T126).
-* :mod:`._members` — membership + invitation handling
+* :mod:`._members` — membership handling
   (``GET/PATCH/DELETE /{id}/members`` — direct add removed 2026-06-03,
-  invitation-only per preview feedback #7,
-  ``POST /{id}/invitations`` issue,
+  invitation-only per preview feedback #7).
+* :mod:`._invitations` — invitation handling
+  (``POST /{id}/invitations`` issue,
+  ``POST /{id}/invitations/bulk``,
+  ``POST /{id}/invitations/{invitation_id}/revoke``,
+  ``GET /{id}/invitations``,
   ``POST /{id}/invitations/{token}/accept``,
   ``DELETE /{id}/invitations/{token}``).
 * :mod:`._restricted_config` — restricted-mode flag toggles
@@ -46,6 +50,7 @@ from . import (
     _detection_export,
     _detection_runs,
     _detections,
+    _invitations,
     _license,
     _media,
     _members,
@@ -71,9 +76,12 @@ router.include_router(_restricted_config.router)
 # License metadata — ``PUT /{project_id}/license`` and history.
 router.include_router(_license.router)
 
-# Members + invitations — ``/{project_id}/members`` and
-# ``/{project_id}/invitations/{token}/...`` paths.
+# Members — ``/{project_id}/members`` list / role-change / remove.
 router.include_router(_members.router)
+
+# Invitations — ``/{project_id}/invitations`` issue / bulk / revoke / list
+# and ``/{project_id}/invitations/{token}/...`` accept / decline paths.
+router.include_router(_invitations.router)
 
 # Overview aggregation — ``GET /{project_id}/overview``.
 router.include_router(_overview.router)

@@ -69,7 +69,7 @@ def _fake_redis_for_invitation_service(
     """Patch ``get_redis_connection`` to a process-local FakeRedis.
 
     The bulk endpoint hits Redis via two surfaces — the per-issuer
-    rate-limit helper in ``_members.py`` and the FR-056 actor / project
+    rate-limit helper in ``_invitations.py`` and the FR-056 actor / project
     counters inside ``create_invitation``. Both must see the same
     FakeRedis so the rate-limit semantics tests can manipulate one
     bucket and observe the effect on the other.
@@ -79,7 +79,7 @@ def _fake_redis_for_invitation_service(
     async def _get_fake() -> fakeredis.aioredis.FakeRedis:
         return fake
 
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     monkeypatch.setattr(members_module, "get_redis_connection", _get_fake)
     from echoroo.core import redis as redis_module
@@ -442,7 +442,7 @@ async def test_bulk_invitation_per_row_rate_limited_mid_batch(
     the rest of the batch — no further INCRs run, so the cap meaning
     is preserved).
     """
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     monkeypatch.setattr(members_module, "_BULK_INVITE_HOUR_LIMIT", 2)
 
@@ -504,7 +504,7 @@ async def test_bulk_invitation_per_row_internal_error_isolates(
     middle row of a 3-row batch. The middle row surfaces as
     ``internal_error`` while the surrounding rows persist normally.
     """
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     leading = f"t291-ie-leading-{uuid4().hex[:8]}@example.com"
     sabotaged = f"t291-ie-sabotaged-{uuid4().hex[:8]}@example.com"
@@ -1115,7 +1115,7 @@ async def test_bulk_invitation_internal_error_does_not_leak_exception_detail(
     ``error_message`` MUST be the constant generic string — neither the
     exception type name nor the raw message may appear in the body.
     """
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     leading = f"t291-r1-leak-leading-{uuid4().hex[:8]}@example.com"
     sabotaged = f"t291-r1-leak-sabotaged-{uuid4().hex[:8]}@example.com"
@@ -1183,7 +1183,7 @@ async def test_bulk_invitation_rate_limit_error_does_not_leak_internal_identifie
     UUID nor any "actor … exceeded" / "project … exceeded" substring may
     appear in the response body.
     """
-    from echoroo.api.web_v1.projects import _members as members_module
+    from echoroo.api.web_v1.projects import _invitations as members_module
 
     monkeypatch.setattr(members_module, "_BULK_INVITE_HOUR_LIMIT", 1)
 
