@@ -362,7 +362,17 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/workers/api_key_age_check.py",
         "echoroo/workers/annotation_sampling_tasks.py",
         "echoroo/workers/audit_log_export.py",
+        # 2026-07-05 (W3-1): classifier_tasks.py split into the
+        # workers/classifier/ package. classifier_tasks.py is now a thin
+        # re-export façade; the low-coverage implementation moved to the new
+        # sub-modules below, which inherit the same warn-only exemption (the
+        # code was never above 85% — see the ml/ precedent above).
         "echoroo/workers/classifier_tasks.py",
+        "echoroo/workers/classifier/utils.py",
+        "echoroo/workers/classifier/training.py",
+        "echoroo/workers/classifier/inference.py",
+        "echoroo/workers/classifier/seed_sampling.py",
+        "echoroo/workers/classifier/active_learning.py",
         "echoroo/workers/evaluation_tasks.py",
         "echoroo/workers/invitation_email_null.py",
         "echoroo/workers/iucn_sync.py",
