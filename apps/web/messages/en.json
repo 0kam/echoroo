@@ -443,6 +443,7 @@
   "common_previous": "Previous",
   "common_next": "Next",
   "common_close": "Close",
+  "common_close_dialog": "Close dialog",
   "common_error_unexpected": "An unexpected error occurred",
 
   "language_english": "English",

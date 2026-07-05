@@ -1,17 +1,19 @@
-# NOTE: this .gitignore is INTENTIONALLY tracked (do not `git rm --cached` it,
-# despite what inlang ^2.5 auto-generates as a header — if inlang ever
-# regenerates this file, restore these rules).
+# IF GIT SHOWED THAT THIS FILE CHANGED
 #
-# Everything is ignored except settings.json, this .gitignore, and
-# cache/plugins/.gitkeep. The .gitkeep keeps the plugin-cache directory
-# present on fresh clones (the dir is bind-mounted into the dev container
-# and paraglide/inlang writes its plugin cache there); real cache contents
-# stay ignored.
+# 1. RUN THE FOLLOWING COMMAND
+#
+# ---
+# git rm --cached '**/*.inlang/.gitignore'
+# ---
+#
+# 2. COMMIT THE CHANGE
+#
+# ---
+# git commit -m "fix: remove tracked .gitignore from inlang project"
+# ---
+#
+# Inlang handles the gitignore itself starting with version ^2.5.
+#
+# everything is ignored except settings.json
 *
 !settings.json
-!.gitignore
-!cache/
-cache/*
-!cache/plugins/
-cache/plugins/*
-!cache/plugins/.gitkeep

@@ -443,6 +443,7 @@
   "common_previous": "前へ",
   "common_next": "次へ",
   "common_close": "閉じる",
+  "common_close_dialog": "ダイアログを閉じる",
   "common_error_unexpected": "予期しないエラーが発生しました",
 
   "language_english": "English",
