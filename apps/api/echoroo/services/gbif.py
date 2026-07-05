@@ -10,7 +10,15 @@ from typing import Any
 
 import httpx
 
+from echoroo.core.exceptions import GBIFUnavailableError
+
 logger = logging.getLogger(__name__)
+
+# httpx failure modes that indicate the upstream is unreachable / erroring —
+# as opposed to a successful response that merely contains no matches. Batch/
+# resolution paths translate these into ``GBIFUnavailableError`` so an outage
+# is never mistaken for a legitimate empty result.
+_HTTP_FAILURE = (httpx.HTTPStatusError, httpx.RequestError)
 
 # Rate limiter: 10 calls per second
 GBIF_RATE_LIMIT_CALLS = 10
@@ -164,7 +172,9 @@ class GBIFService:
                 resp.raise_for_status()
                 data = resp.json()
         except Exception:
-            logger.warning("GBIF search_species_full failed for query=%s", query, exc_info=True)
+            # Interactive autocomplete path: degrade to an empty result set so
+            # the UI stays responsive, but log at ERROR so an outage is visible.
+            logger.error("GBIF search_species_full failed for query=%s", query, exc_info=True)
             return []
 
         raw_results: list[dict[str, Any]] = data.get("results", [])
@@ -216,7 +226,8 @@ class GBIFService:
                 resp.raise_for_status()
                 inat_data = resp.json()
         except Exception:
-            logger.warning(
+            # Interactive autocomplete fallback path: degrade to empty results.
+            logger.error(
                 "iNaturalist taxa search failed for query=%s", query, exc_info=True
             )
             return []
@@ -247,7 +258,7 @@ class GBIFService:
                     match_resp.raise_for_status()
                     gbif_match = match_resp.json()
                 except Exception:
-                    logger.warning(
+                    logger.error(
                         "GBIF species/match failed for name=%s", sci_name, exc_info=True
                     )
                     continue
@@ -406,7 +417,8 @@ class GBIFService:
                 resp.raise_for_status()
                 return resp.json()  # type: ignore[no-any-return]
         except Exception:
-            logger.warning("GBIF search failed for query=%s", query, exc_info=True)
+            # Interactive suggest path (tag autocomplete): degrade to empty.
+            logger.error("GBIF search failed for query=%s", query, exc_info=True)
             return []
 
     async def resolve_taxon(self, scientific_name: str) -> GBIFResolveResult | None:
@@ -420,9 +432,15 @@ class GBIFService:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-        except Exception:
-            logger.warning("GBIF resolve failed for %s", scientific_name, exc_info=True)
-            return None
+        except _HTTP_FAILURE as exc:
+            # Batch/resolution path: surface the outage instead of returning
+            # ``None`` (which the caller would treat as "no GBIF match found").
+            logger.error(
+                "GBIF resolve failed for %s: %s", scientific_name, exc, exc_info=True
+            )
+            raise GBIFUnavailableError(
+                f"GBIF species/match request failed for {scientific_name!r}"
+            ) from exc
 
         if data.get("matchType") == "NONE" or "usageKey" not in data:
             return None
@@ -457,9 +475,18 @@ class GBIFService:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-        except Exception:
-            logger.warning("GBIF vernacular names failed for key=%s", taxon_key, exc_info=True)
-            return []
+        except _HTTP_FAILURE as exc:
+            # Batch/resolution path: surface the outage instead of returning an
+            # empty list (which the caller would treat as "no names found").
+            logger.error(
+                "GBIF vernacular names failed for key=%s: %s",
+                taxon_key,
+                exc,
+                exc_info=True,
+            )
+            raise GBIFUnavailableError(
+                f"GBIF vernacularNames request failed for key={taxon_key}"
+            ) from exc
 
         results: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()

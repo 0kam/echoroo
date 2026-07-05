@@ -74,6 +74,9 @@
 
   const createMut = createMutation({
     mutationFn: () => createDetectionRun(projectId, datasetId, selectedModel, true),
+    // Surfaces its own inline error via `mutationError`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: queryKey });
@@ -85,6 +88,7 @@
 
   const retryMut = createMutation({
     mutationFn: (runId: string) => retryDetectionRun(projectId, runId),
+    meta: { suppressErrorToast: true },
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: queryKey });
@@ -96,6 +100,7 @@
 
   const cancelMut = createMutation({
     mutationFn: (runId: string) => cancelDetectionRun(projectId, runId),
+    meta: { suppressErrorToast: true },
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: queryKey });

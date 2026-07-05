@@ -11,7 +11,6 @@
   import { ApiError } from '$lib/api/client';
   import { localizeHref } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
-  import Captcha from '$lib/components/Captcha.svelte';
   import LanguageSwitcher from '$lib/components/ui/LanguageSwitcher.svelte';
   import DarkModeToggle from '$lib/components/ui/DarkModeToggle.svelte';
   import { onMount } from 'svelte';
@@ -22,22 +21,13 @@
   let confirmPassword = $state('');
   let displayName = $state('');
   let timezone = $state('UTC');
-  let captchaToken = $state<string | null>(null);
 
   // UI state
   let isSubmitting = $state(false);
   let error = $state<string | null>(null);
   let fieldErrors = $state<Record<string, string>>({});
 
-  // Captcha reference
-  let captchaComponent: { reset: () => void } | undefined = $state(undefined);
-
-  // Environment variables
-  let turnstileSiteKey = $state('');
-
   onMount(() => {
-    turnstileSiteKey = import.meta.env.PUBLIC_TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
-
     // Auto-detect timezone from the browser. Fall back to UTC if unavailable.
     try {
       const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -80,11 +70,6 @@
       fieldErrors.displayName = m.error_display_name_too_long();
     }
 
-    if (!captchaToken) {
-      error = m.error_captcha_required();
-      return false;
-    }
-
     return Object.keys(fieldErrors).length === 0;
   }
 
@@ -119,11 +104,6 @@
         } else {
           error = err.detail || err.message;
         }
-
-        if (captchaComponent) {
-          captchaComponent.reset();
-          captchaToken = null;
-        }
       } else if (err instanceof ApiError) {
         error = err.detail || err.message;
       } else {
@@ -132,19 +112,6 @@
     } finally {
       isSubmitting = false;
     }
-  }
-
-  function handleCaptchaVerify(token: string) {
-    captchaToken = token;
-  }
-
-  function handleCaptchaError() {
-    captchaToken = null;
-    error = m.error_captcha_failed();
-  }
-
-  function handleCaptchaExpire() {
-    captchaToken = null;
   }
 </script>
 
@@ -266,16 +233,6 @@
             <p class="mt-1 text-sm text-danger">{fieldErrors.confirmPassword}</p>
           {/if}
         </div>
-      </div>
-
-      <div class="mt-4">
-        <Captcha
-          bind:this={captchaComponent}
-          siteKey={turnstileSiteKey}
-          onVerify={handleCaptchaVerify}
-          onError={handleCaptchaError}
-          onExpire={handleCaptchaExpire}
-        />
       </div>
 
       {#if error}

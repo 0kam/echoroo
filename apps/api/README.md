@@ -240,7 +240,6 @@ This API follows a layered architecture:
 
 - **Authentication**: JWT-based authentication with refresh tokens
 - **Rate Limiting**: Redis-backed rate limiting for API endpoints
-- **CAPTCHA Verification**: Server-side CAPTCHA validation
 - **Async Support**: Fully async/await for high performance
 - **Type Safety**: Strict type checking with mypy and Pydantic
 - **Test Coverage**: >80% test coverage requirement

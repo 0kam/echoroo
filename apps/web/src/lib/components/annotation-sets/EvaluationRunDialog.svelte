@@ -67,6 +67,9 @@
   const mutation = createMutation({
     mutationFn: (refs: EvaluationModelRef[]) =>
       evaluateAnnotationSet(projectId, setId, { model_refs: refs }),
+    // Surfaces its own inline error via `submitError`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (run) => {
       queryClient.invalidateQueries({
         queryKey: ['evaluation-runs', setId],

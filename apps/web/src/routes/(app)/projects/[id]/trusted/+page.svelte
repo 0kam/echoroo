@@ -30,6 +30,10 @@
    * mutation we invalidate the list query so the UI reflects the new
    * server state without a manual reload.
    *
+   * This shell owns all data + mutations; the invite form, list and the
+   * three confirmation modals are extracted into
+   * `$lib/components/trusted/`.
+   *
    * Theme: Rosé Pine (Light=Dawn, Dark=Main). Colour tokens come from
    * the existing `tailwind.config` palette (`primary`, `surface-card`,
    * `danger`, `success`, `warning`).
@@ -44,20 +48,27 @@
   import { ApiError } from '$lib/api/client';
   import { projectsApi } from '$lib/api/projects';
   import * as m from '$lib/paraglide/messages';
-  import { localizeHref, getLocale } from '$lib/paraglide/runtime';
-  import {
-    getProjectTrustedStatusLabel,
-    getProjectTrustedStatusClass,
-  } from '$lib/utils/statusFormatters';
+  import { localizeHref } from '$lib/paraglide/runtime';
   import type {
     Project,
     ProjectTrustedStatus,
-    TrustedGrantedPermission,
     TrustedUser,
     TrustedUserInviteRequest,
     TrustedUserListResponse,
     TrustedUserUpdateRequest,
   } from '$lib/types';
+  import TrustedInviteForm from '$lib/components/trusted/TrustedInviteForm.svelte';
+  import TrustedUserList from '$lib/components/trusted/TrustedUserList.svelte';
+  import RevokeTrustedDialog from '$lib/components/trusted/RevokeTrustedDialog.svelte';
+  import ExtendTrustedDialog from '$lib/components/trusted/ExtendTrustedDialog.svelte';
+  import EditTrustedPermsDialog from '$lib/components/trusted/EditTrustedPermsDialog.svelte';
+  import {
+    defaultInvitePermissionRecord,
+    permissionRecordFrom,
+    selectedPermissions,
+    type TrustedFlash,
+    type TrustedPermissionRecord,
+  } from '$lib/components/trusted/trustedPermissions';
 
   /** Page server-load output. */
   let { data } = $props();
@@ -149,64 +160,16 @@
   // Invite form state
   // ---------------------------------------------------------------------------
 
-  /**
-   * Allowlisted permissions (mirrors `TRUSTED_ALLOWED_PERMISSIONS` /
-   * FR-012). Order is stable so the form layout doesn't shuffle between
-   * renders.
-   */
-  const ALL_TRUSTED_PERMISSIONS: ReadonlyArray<TrustedGrantedPermission> = [
-    'view_media',
-    'view_detection',
-    'view_precise_location',
-    'download',
-    'export',
-    'search_within_project',
-    'vote',
-    'comment',
-  ];
-
-  function permissionLabel(p: TrustedGrantedPermission): string {
-    switch (p) {
-      case 'view_media':
-        return m.trusted_permission_view_media();
-      case 'view_detection':
-        return m.trusted_permission_view_detection();
-      case 'view_precise_location':
-        return m.trusted_permission_view_precise_location();
-      case 'download':
-        return m.trusted_permission_download();
-      case 'export':
-        return m.trusted_permission_export();
-      case 'search_within_project':
-        return m.trusted_permission_search_within_project();
-      case 'vote':
-        return m.trusted_permission_vote();
-      case 'comment':
-        return m.trusted_permission_comment();
-    }
-  }
-
   let inviteEmail = $state('');
-  let invitePermissions = $state<Record<TrustedGrantedPermission, boolean>>({
-    view_media: true,
-    view_detection: true,
-    view_precise_location: false,
-    download: false,
-    export: false,
-    search_within_project: false,
-    vote: false,
-    comment: false,
-  });
+  let invitePermissions = $state<TrustedPermissionRecord>(
+    defaultInvitePermissionRecord(),
+  );
   /** Default 90 days, hard-capped at 365 (FR-043). */
   let inviteDurationSeconds = $state<number>(90 * 24 * 3600);
-  let inviteFlash = $state<
-    | { kind: 'idle' }
-    | { kind: 'success'; message: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' });
+  let inviteFlash = $state<TrustedFlash>({ kind: 'idle' });
 
   const inviteSelectedPermissions = $derived(
-    ALL_TRUSTED_PERMISSIONS.filter((p) => invitePermissions[p]),
+    selectedPermissions(invitePermissions),
   );
   const inviteFormValid = $derived(
     inviteEmail.trim().length > 0 && inviteSelectedPermissions.length > 0,
@@ -264,11 +227,7 @@
   // Per-row mutations: revoke / extend / edit-permissions
   // ---------------------------------------------------------------------------
 
-  let rowFlash = $state<
-    | { kind: 'idle' }
-    | { kind: 'success'; message: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' });
+  let rowFlash = $state<TrustedFlash>({ kind: 'idle' });
 
   // --- Revoke modal --------------------------------------------------------
   let revokeTarget = $state<TrustedUser | null>(null);
@@ -316,16 +275,9 @@
 
   // --- Edit-permissions modal ---------------------------------------------
   let editPermsTarget = $state<TrustedUser | null>(null);
-  let editPermsSelection = $state<Record<TrustedGrantedPermission, boolean>>({
-    view_media: false,
-    view_detection: false,
-    view_precise_location: false,
-    download: false,
-    export: false,
-    search_within_project: false,
-    vote: false,
-    comment: false,
-  });
+  let editPermsSelection = $state<TrustedPermissionRecord>(
+    permissionRecordFrom([]),
+  );
 
   const editPermsMutation = createMutation<
     TrustedUser,
@@ -386,22 +338,12 @@
 
   function openEditPermsModal(row: TrustedUser): void {
     editPermsTarget = row;
-    const granted = new Set(row.granted_permissions);
-    editPermsSelection = {
-      view_media: granted.has('view_media'),
-      view_detection: granted.has('view_detection'),
-      view_precise_location: granted.has('view_precise_location'),
-      download: granted.has('download'),
-      export: granted.has('export'),
-      search_within_project: granted.has('search_within_project'),
-      vote: granted.has('vote'),
-      comment: granted.has('comment'),
-    };
+    editPermsSelection = permissionRecordFrom(row.granted_permissions);
     rowFlash = { kind: 'idle' };
   }
 
   const editPermsSelectedList = $derived(
-    ALL_TRUSTED_PERMISSIONS.filter((p) => editPermsSelection[p]),
+    selectedPermissions(editPermsSelection),
   );
 
   function submitEditPerms(): void {
@@ -441,27 +383,6 @@
       `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
       `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
     );
-  }
-
-  function formatDateTime(iso: string): string {
-    if (!iso) return '';
-    try {
-      return new Date(iso).toLocaleString(getLocale());
-    } catch {
-      return iso;
-    }
-  }
-
-  function statusLabel(s: ProjectTrustedStatus): string {
-    return getProjectTrustedStatusLabel(s, {
-      active: m.trusted_users_list_status_active,
-      expired: m.trusted_users_list_status_expired,
-      revoked: m.trusted_users_list_status_revoked,
-    });
-  }
-
-  function statusBadgeClass(s: ProjectTrustedStatus): string {
-    return getProjectTrustedStatusClass(s);
   }
 </script>
 
@@ -522,463 +443,62 @@
 
     <!-- Invite form: Owner-only ------------------------------------- -->
     {#if isOwner}
-      <section
-        class="mb-8 rounded-lg bg-surface-card p-6 shadow"
-        aria-labelledby="trusted-invite-form-title"
-        data-testid="trusted-invite-form"
-      >
-        <h2
-          id="trusted-invite-form-title"
-          class="mb-4 text-lg font-semibold text-stone-900"
-        >
-          {m.trusted_invite_form_title()}
-        </h2>
-
-        <div class="space-y-5">
-          <div>
-            <label
-              for="trusted-invite-email"
-              class="block text-sm font-medium text-stone-700"
-            >
-              {m.trusted_invite_email_label()}
-            </label>
-            <input
-              id="trusted-invite-email"
-              data-testid="trusted-invite-email-input"
-              type="email"
-              bind:value={inviteEmail}
-              placeholder={m.trusted_invite_email_placeholder()}
-              autocomplete="email"
-              class="mt-1 block w-full max-w-md rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:opacity-60"
-              disabled={$inviteMutation.isPending}
-            />
-          </div>
-
-          <fieldset>
-            <legend class="block text-sm font-medium text-stone-700">
-              {m.trusted_invite_granted_permissions_label()}
-            </legend>
-            <p class="mt-0.5 text-xs text-stone-500">
-              {m.trusted_invite_granted_permissions_help()}
-            </p>
-            <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {#each ALL_TRUSTED_PERMISSIONS as perm (perm)}
-                <label class="flex items-start gap-2 text-sm text-stone-700">
-                  <input
-                    data-testid={`trusted-invite-perm-${perm}`}
-                    type="checkbox"
-                    bind:checked={invitePermissions[perm]}
-                    disabled={$inviteMutation.isPending}
-                    class="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-60"
-                  />
-                  <span>{permissionLabel(perm)}</span>
-                </label>
-              {/each}
-            </div>
-          </fieldset>
-
-          <div>
-            <label
-              for="trusted-invite-duration"
-              class="block text-sm font-medium text-stone-700"
-            >
-              {m.trusted_invite_duration_label()}
-            </label>
-            <p
-              id="trusted-invite-duration-help"
-              class="mt-0.5 text-xs text-stone-500"
-            >
-              {m.trusted_invite_duration_help()}
-            </p>
-            <select
-              id="trusted-invite-duration"
-              data-testid="trusted-invite-duration-select"
-              bind:value={inviteDurationSeconds}
-              disabled={$inviteMutation.isPending}
-              aria-describedby="trusted-invite-duration-help"
-              class="mt-1 block w-full max-w-xs rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500 disabled:cursor-not-allowed disabled:bg-stone-100 disabled:opacity-60"
-            >
-              <option value={30 * 24 * 3600}>
-                {m.trusted_invite_duration_30_days()}
-              </option>
-              <option value={90 * 24 * 3600}>
-                {m.trusted_invite_duration_90_days()}
-              </option>
-              <option value={180 * 24 * 3600}>
-                {m.trusted_invite_duration_180_days()}
-              </option>
-              <option value={365 * 24 * 3600}>
-                {m.trusted_invite_duration_365_days()}
-              </option>
-            </select>
-          </div>
-
-          {#if inviteFlash.kind === 'success'}
-            <p
-              data-testid="trusted-invite-success"
-              role="status"
-              class="rounded-md bg-success-light px-4 py-3 text-sm text-success"
-            >
-              {inviteFlash.message}
-            </p>
-          {:else if inviteFlash.kind === 'error'}
-            <p
-              data-testid="trusted-invite-error"
-              role="alert"
-              class="rounded-md bg-danger-light px-4 py-3 text-sm text-danger"
-            >
-              {inviteFlash.message}
-            </p>
-          {/if}
-
-          <div class="flex justify-end">
-            <button
-              type="button"
-              data-testid="trusted-invite-submit"
-              onclick={submitInvite}
-              disabled={!inviteFormValid || $inviteMutation.isPending}
-              class="inline-flex items-center rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {#if $inviteMutation.isPending}
-                {m.trusted_invite_submitting_button()}
-              {:else}
-                {m.trusted_invite_submit_button()}
-              {/if}
-            </button>
-          </div>
-        </div>
-      </section>
+      <TrustedInviteForm
+        bind:email={inviteEmail}
+        bind:permissions={invitePermissions}
+        bind:durationSeconds={inviteDurationSeconds}
+        flash={inviteFlash}
+        isPending={$inviteMutation.isPending}
+        canSubmit={inviteFormValid}
+        onSubmit={submitInvite}
+      />
     {/if}
 
     <!-- Trusted Users list ------------------------------------------- -->
-    <section
-      class="rounded-lg bg-surface-card p-6 shadow"
-      aria-labelledby="trusted-list-title"
-      data-testid="trusted-users-list"
-    >
-      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 id="trusted-list-title" class="text-lg font-semibold text-stone-900">
-          {m.trusted_users_list_title()}
-        </h2>
-
-        <label class="flex items-center gap-2 text-sm text-stone-700">
-          <span>{m.trusted_users_list_filter_label()}</span>
-          <select
-            data-testid="trusted-list-filter"
-            bind:value={statusFilter}
-            class="rounded-md border border-stone-300 bg-surface-card px-2 py-1 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500"
-          >
-            <option value="active">{m.trusted_users_list_filter_active()}</option>
-            <option value="expired">{m.trusted_users_list_filter_expired()}</option>
-            <option value="revoked">{m.trusted_users_list_filter_revoked()}</option>
-            <option value="all">{m.trusted_users_list_filter_all()}</option>
-          </select>
-        </label>
-      </div>
-
-      {#if rowFlash.kind === 'success'}
-        <p
-          data-testid="trusted-row-flash-success"
-          role="status"
-          class="mb-4 rounded-md bg-success-light px-4 py-3 text-sm text-success"
-        >
-          {rowFlash.message}
-        </p>
-      {:else if rowFlash.kind === 'error'}
-        <p
-          data-testid="trusted-row-flash-error"
-          role="alert"
-          class="mb-4 rounded-md bg-danger-light px-4 py-3 text-sm text-danger"
-        >
-          {rowFlash.message}
-        </p>
-      {/if}
-
-      {#if $trustedListQuery.isLoading}
-        <p class="text-sm text-stone-500">{m.trusted_users_list_loading()}</p>
-      {:else if $trustedListQuery.isError}
-        <p class="text-sm text-danger" role="alert">
-          {m.trusted_error_load()}
-        </p>
-      {:else if trustedItems.length === 0}
-        <p
-          data-testid="trusted-list-empty"
-          class="text-sm italic text-stone-500"
-        >
-          {m.trusted_users_list_empty()}
-        </p>
-      {:else}
-        <div class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-stone-200 text-sm">
-            <thead>
-              <tr class="text-left text-xs font-medium uppercase tracking-wider text-stone-500">
-                <th scope="col" class="py-2 pr-3">
-                  {m.trusted_users_list_column_user()}
-                </th>
-                <th scope="col" class="py-2 pr-3">
-                  {m.trusted_users_list_column_permissions()}
-                </th>
-                <th scope="col" class="py-2 pr-3">
-                  {m.trusted_users_list_column_expires_at()}
-                </th>
-                <th scope="col" class="py-2 pr-3">
-                  {m.trusted_users_list_column_status()}
-                </th>
-                {#if isAdmin}
-                  <th scope="col" class="py-2 text-right">
-                    {m.trusted_users_list_column_actions()}
-                  </th>
-                {/if}
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-stone-100">
-              {#each trustedItems as row (row.id)}
-                <tr data-testid={`trusted-row-${row.id}`}>
-                  <td class="py-3 pr-3 align-top">
-                    <code class="text-xs text-stone-700">{row.user_id}</code>
-                  </td>
-                  <td class="py-3 pr-3 align-top">
-                    <ul class="space-y-0.5 text-xs text-stone-700">
-                      {#each row.granted_permissions as perm (perm)}
-                        <li>{permissionLabel(perm)}</li>
-                      {/each}
-                    </ul>
-                  </td>
-                  <td class="py-3 pr-3 align-top text-xs text-stone-700">
-                    {formatDateTime(row.expires_at)}
-                  </td>
-                  <td class="py-3 pr-3 align-top">
-                    <span
-                      class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium {statusBadgeClass(
-                        row.status,
-                      )}"
-                    >
-                      {statusLabel(row.status)}
-                    </span>
-                  </td>
-                  {#if isAdmin}
-                    <!--
-                      Round 2 polish (Minor 1): Admins still see the action
-                      buttons but the controls render disabled with an
-                      Owner-only tooltip rather than disappearing entirely.
-                      This makes the missing capability discoverable instead
-                      of silent.
-                    -->
-                    <td class="py-3 text-right align-top">
-                      <div class="flex flex-wrap justify-end gap-2">
-                        {#if row.status === 'active'}
-                          <button
-                            type="button"
-                            data-testid={`trusted-extend-${row.id}`}
-                            onclick={() => openExtendModal(row)}
-                            disabled={!isOwner}
-                            title={isOwner ? undefined : m.trusted_user_owner_only_tooltip()}
-                            aria-disabled={!isOwner}
-                            class="rounded-md border border-stone-300 bg-surface-card px-3 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
-                          >
-                            {m.trusted_user_extend_button()}
-                          </button>
-                          <button
-                            type="button"
-                            data-testid={`trusted-edit-perms-${row.id}`}
-                            onclick={() => openEditPermsModal(row)}
-                            disabled={!isOwner}
-                            title={isOwner ? undefined : m.trusted_user_owner_only_tooltip()}
-                            aria-disabled={!isOwner}
-                            class="rounded-md border border-stone-300 bg-surface-card px-3 py-1 text-xs font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
-                          >
-                            {m.trusted_user_edit_permissions_button()}
-                          </button>
-                          <button
-                            type="button"
-                            data-testid={`trusted-revoke-${row.id}`}
-                            onclick={() => openRevokeModal(row)}
-                            disabled={!isOwner}
-                            title={isOwner ? undefined : m.trusted_user_owner_only_tooltip()}
-                            aria-disabled={!isOwner}
-                            class="rounded-md border border-danger/30 bg-surface-card px-3 py-1 text-xs font-medium text-danger hover:bg-danger-light disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
-                          >
-                            {m.trusted_user_revoke_button()}
-                          </button>
-                        {/if}
-                      </div>
-                    </td>
-                  {/if}
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
+    <TrustedUserList
+      bind:statusFilter
+      {rowFlash}
+      isLoading={$trustedListQuery.isLoading}
+      isError={$trustedListQuery.isError}
+      items={trustedItems}
+      {isAdmin}
+      {isOwner}
+      onExtend={openExtendModal}
+      onEditPerms={openEditPermsModal}
+      onRevoke={openRevokeModal}
+    />
   {/if}
 </div>
 
 <!-- Revoke confirmation modal -->
 {#if revokeTarget}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="trusted-revoke-modal-title"
-    data-testid="trusted-revoke-modal"
-  >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
-      <div class="border-b border-stone-200 px-6 py-4">
-        <h2
-          id="trusted-revoke-modal-title"
-          class="m-0 text-lg font-semibold text-stone-900"
-        >
-          {m.trusted_user_revoke_confirm_title()}
-        </h2>
-      </div>
-      <div class="p-6">
-        <p class="m-0 text-sm leading-relaxed text-stone-700">
-          {m.trusted_user_revoke_confirm_message()}
-        </p>
-      </div>
-      <div class="flex justify-end gap-3 border-t border-stone-200 px-6 py-4">
-        <button
-          type="button"
-          onclick={() => (revokeTarget = null)}
-          disabled={$revokeMutation.isPending}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.common_cancel()}
-        </button>
-        <button
-          type="button"
-          data-testid="trusted-revoke-confirm"
-          onclick={confirmRevoke}
-          disabled={$revokeMutation.isPending}
-          class="rounded-md bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.trusted_user_revoke_confirm_button()}
-        </button>
-      </div>
-    </div>
-  </div>
+  <RevokeTrustedDialog
+    isPending={$revokeMutation.isPending}
+    onConfirm={confirmRevoke}
+    onCancel={() => (revokeTarget = null)}
+  />
 {/if}
 
 <!-- Extend modal -->
 {#if extendTarget}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="trusted-extend-modal-title"
-    data-testid="trusted-extend-modal"
-  >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
-      <div class="border-b border-stone-200 px-6 py-4">
-        <h2
-          id="trusted-extend-modal-title"
-          class="m-0 text-lg font-semibold text-stone-900"
-        >
-          {m.trusted_user_extend_modal_title()}
-        </h2>
-      </div>
-      <div class="space-y-4 p-6">
-        <p class="m-0 text-sm leading-relaxed text-stone-700">
-          {m.trusted_user_extend_modal_help()}
-        </p>
-        <div>
-          <label
-            for="trusted-extend-expiry"
-            class="block text-sm font-medium text-stone-700"
-          >
-            {m.trusted_user_extend_new_expiry_label()}
-          </label>
-          <input
-            id="trusted-extend-expiry"
-            data-testid="trusted-extend-expiry-input"
-            type="datetime-local"
-            bind:value={extendNewExpiry}
-            class="mt-1 block w-full rounded-md border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-primary-500"
-          />
-        </div>
-      </div>
-      <div class="flex justify-end gap-3 border-t border-stone-200 px-6 py-4">
-        <button
-          type="button"
-          onclick={() => {
-            extendTarget = null;
-            extendNewExpiry = '';
-          }}
-          disabled={$extendMutation.isPending}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.common_cancel()}
-        </button>
-        <button
-          type="button"
-          data-testid="trusted-extend-submit"
-          onclick={submitExtend}
-          disabled={!extendNewExpiry || $extendMutation.isPending}
-          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.trusted_user_extend_submit_button()}
-        </button>
-      </div>
-    </div>
-  </div>
+  <ExtendTrustedDialog
+    bind:newExpiry={extendNewExpiry}
+    isPending={$extendMutation.isPending}
+    onSubmit={submitExtend}
+    onCancel={() => {
+      extendTarget = null;
+      extendNewExpiry = '';
+    }}
+  />
 {/if}
 
 <!-- Edit-permissions modal -->
 {#if editPermsTarget}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="trusted-edit-perms-modal-title"
-    data-testid="trusted-edit-perms-modal"
-  >
-    <div class="w-full max-w-md overflow-y-auto rounded-lg bg-surface-card shadow-xl">
-      <div class="border-b border-stone-200 px-6 py-4">
-        <h2
-          id="trusted-edit-perms-modal-title"
-          class="m-0 text-lg font-semibold text-stone-900"
-        >
-          {m.trusted_user_edit_permissions_modal_title()}
-        </h2>
-      </div>
-      <div class="space-y-4 p-6">
-        <p class="m-0 text-sm leading-relaxed text-stone-700">
-          {m.trusted_user_edit_permissions_modal_help()}
-        </p>
-        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {#each ALL_TRUSTED_PERMISSIONS as perm (perm)}
-            <label class="flex items-start gap-2 text-sm text-stone-700">
-              <input
-                data-testid={`trusted-edit-perms-${perm}`}
-                type="checkbox"
-                bind:checked={editPermsSelection[perm]}
-                class="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
-              />
-              <span>{permissionLabel(perm)}</span>
-            </label>
-          {/each}
-        </div>
-      </div>
-      <div class="flex justify-end gap-3 border-t border-stone-200 px-6 py-4">
-        <button
-          type="button"
-          onclick={() => (editPermsTarget = null)}
-          disabled={$editPermsMutation.isPending}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.common_cancel()}
-        </button>
-        <button
-          type="button"
-          data-testid="trusted-edit-perms-submit"
-          onclick={submitEditPerms}
-          disabled={editPermsSelectedList.length === 0 || $editPermsMutation.isPending}
-          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {m.trusted_user_edit_permissions_submit_button()}
-        </button>
-      </div>
-    </div>
-  </div>
+  <EditTrustedPermsDialog
+    bind:selection={editPermsSelection}
+    isPending={$editPermsMutation.isPending}
+    canSubmit={editPermsSelectedList.length > 0}
+    onSubmit={submitEditPerms}
+    onCancel={() => (editPermsTarget = null)}
+  />
 {/if}

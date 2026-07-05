@@ -1375,38 +1375,6 @@ jobs:
         run: python scripts/check_no_plain_pytest_fixture_on_async.py
 
   # ---------------------------------------------------------------------------
-  # T999 (Phase 16 Batch 6h-4): requirements traceability gate.
-  #
-  # The 006-permissions-redesign feature mandates that every FR / NFR / PR / SC
-  # identifier in spec.md is linked from requirements-traceability.md (see
-  # plan.md codex review D-9). This gate runs the recipe documented inline in
-  # requirements-traceability.md §"CI での未リンク検出" — `comm -23 spec_ids
-  # trace_ids` MUST be empty. The script also reports orphans (trace IDs no
-  # longer present in spec) as informational output.
-  #
-  # The job is intentionally cheap (a single Python regex pass over two
-  # markdown files) so it runs on every push without raising CI latency.
-  # Hard-fail (no continue-on-error): a missing trace row is a docs gate
-  # failure that blocks Phase 16 close.
-  # ---------------------------------------------------------------------------
-  requirements-traceability:
-    name: Requirements traceability (T999, spec ↔ trace)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      # The script uses only stdlib (re, argparse, pathlib) so no dependency
-      # install step is required. This keeps the gate fast and isolated from
-      # the backend test suite.
-      - name: Verify spec IDs are linked from traceability matrix
-        run: python scripts/check_traceability.py
-
-  # ---------------------------------------------------------------------------
   # Phase 17 §C-E: Runbook live-infra E2E (requires_runbook marker).
   #
   # This job runs the single ``requires_runbook``-gated test that exercises

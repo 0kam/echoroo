@@ -45,6 +45,9 @@
         audit_table: b.audit_table,
         audit_log_id: b.audit_log_id,
       }),
+    // Deliberately silent on failure (404 anti-enumeration — see onError);
+    // opt out of the global generic error toast so dismissal stays quiet.
+    meta: { suppressErrorToast: true },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['me-banners'] });
     },

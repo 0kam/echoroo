@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import zipfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -17,6 +18,8 @@ from echoroo.services.audio import AudioService
 from echoroo.services.camtrap import deployment_id, media_id
 from echoroo.services.detection_export import DetectionExportService
 from echoroo.services.h3_utils import h3_to_center
+
+logger = logging.getLogger(__name__)
 
 
 class ExportService:
@@ -411,6 +414,8 @@ class ExportService:
             zf.writestr("media.csv", media)
 
             # Add audio files if requested
+            included_count = 0
+            skipped: list[dict[str, object]] = []
             if include_audio and self.audio_service:
                 page = 1
                 while True:
@@ -426,12 +431,41 @@ class ExportService:
                                 self.audio_service.ensure_file_local, recording.path
                             )
                             zf.write(file_path, f"data/{recording.path}")
-                        except Exception:
-                            pass  # Skip files that can't be read
+                            included_count += 1
+                        except Exception as exc:  # noqa: BLE001 - record, don't abort
+                            # A missing/unreadable file must not silently drop
+                            # from the archive: log it and record it in the
+                            # export manifest so the consumer can tell exactly
+                            # which recordings are absent and why.
+                            logger.error(
+                                "Dataset export: could not include recording "
+                                "%s (path=%s); skipping",
+                                recording.id,
+                                recording.path,
+                                exc_info=True,
+                            )
+                            skipped.append(
+                                {
+                                    "recording_id": str(recording.id),
+                                    "path": recording.path,
+                                    "reason": f"{type(exc).__name__}: {exc}",
+                                }
+                            )
 
                     page += 1
                     if page * 50 > total:
                         break
+
+            # Always write the manifest so a consumer can distinguish "no audio
+            # requested" (empty skipped list) from silently-dropped files.
+            manifest = {
+                "included_count": included_count,
+                "skipped": skipped,
+            }
+            zf.writestr(
+                "export_manifest.json",
+                json.dumps(manifest, indent=2, ensure_ascii=False),
+            )
 
         # Yield ZIP content
         zip_buffer.seek(0)

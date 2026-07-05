@@ -21,6 +21,7 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { createReviewNavigation } from '$lib/utils/reviewNavigation.svelte';
   import DetectionCard from './DetectionCard.svelte';
+  import ErrorState from '$lib/components/ui/ErrorState.svelte';
 
   let {
     projectId,
@@ -404,22 +405,11 @@
     </div>
   {:else if $detectionsQuery.isError}
     <!-- Error state with retry button -->
-    <div class="rounded-lg border border-danger/30 bg-danger-light px-4 py-6 text-center">
-      <svg class="mx-auto mb-2 h-8 w-8 text-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-      </svg>
-      <p class="text-sm font-medium text-danger">{m.detection_load_detections_error()}</p>
-      <p class="mt-1 text-xs text-danger/80">
-        {$detectionsQuery.error?.message ?? m.common_error_unexpected()}
-      </p>
-      <button
-        type="button"
-        onclick={() => $detectionsQuery.refetch()}
-        class="mt-3 rounded-md bg-danger-light px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/20 border border-danger/30"
-      >
-        {m.detection_retry()}
-      </button>
-    </div>
+    <ErrorState
+      message={m.detection_load_detections_error()}
+      error={$detectionsQuery.error}
+      onRetry={() => $detectionsQuery.refetch()}
+    />
   {:else if detections.length === 0}
     <div class="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-stone-200 py-16 text-center">
       {#if statusFilter}

@@ -13,6 +13,7 @@
   import SpeciesListItem from './SpeciesListItem.svelte';
   import DetectionFiltersComponent from './DetectionFilters.svelte';
   import DetectionExportDialog from './DetectionExportDialog.svelte';
+  import ErrorState from '$lib/components/ui/ErrorState.svelte';
 
   let {
     projectId,
@@ -143,19 +144,11 @@
       {/each}
     </div>
   {:else if $speciesSummaryQuery.isError}
-    <div class="rounded-lg border border-danger/30 bg-danger-light px-4 py-6 text-center">
-      <p class="text-sm font-medium text-danger">{m.detection_load_error()}</p>
-      <p class="mt-1 text-xs text-danger/70">
-        {$speciesSummaryQuery.error?.message ?? m.common_error_unexpected()}
-      </p>
-      <button
-        type="button"
-        onclick={() => $speciesSummaryQuery.refetch()}
-        class="mt-3 rounded-md bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/20"
-      >
-        {m.detection_retry()}
-      </button>
-    </div>
+    <ErrorState
+      message={m.detection_load_error()}
+      error={$speciesSummaryQuery.error}
+      onRetry={() => $speciesSummaryQuery.refetch()}
+    />
   {:else if filteredItems.length === 0}
     <div class="rounded-lg border border-card bg-surface-card px-4 py-12 text-center">
       {#if $speciesSummaryQuery.data?.total_species === 0}
