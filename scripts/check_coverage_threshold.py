@@ -300,26 +300,35 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/repositories/clip.py",
         "echoroo/repositories/custom_model.py",
         "echoroo/repositories/dataset.py",
-        "echoroo/repositories/detection.py",
-        "echoroo/repositories/h3_partition.py",
+        # NOTE 2026-07-06 (W5-7 stale-entry prune): removed
+        # echoroo/repositories/detection.py and echoroo/repositories/h3_partition.py
+        # and echoroo/repositories/segment.py — these files no longer exist
+        # (detection coverage moved to echoroo/services/detection.py and
+        # echoroo/workers/ml/detection.py; the segment/h3_partition repository
+        # modules were dropped during the annotation-consolidation refactor,
+        # 2026-06-11..24). Caught by the new stale-entry ratchet check below.
         "echoroo/repositories/recorder.py",
         "echoroo/repositories/recording.py",
-        "echoroo/repositories/segment.py",
         "echoroo/repositories/superuser_credentials.py",
         "echoroo/repositories/taxon.py",
         # Service layer — require database/external-service fixtures.
         "echoroo/services/auth.py",
         "echoroo/services/auth_service.py",
-        "echoroo/services/audio.py",
+        # NOTE 2026-07-06 (W5-7 stale-entry prune): removed
+        # echoroo/services/audio.py (split into the echoroo/services/audio/
+        # package — see echoroo/services/audio/service.py, _spectrogram.py,
+        # _window.py, which already carry their own entries below) and
+        # echoroo/services/dsr.py (DSR request handling now lives in
+        # echoroo/api/web_v1/account/dsr.py, which is not itself in this
+        # list) and echoroo/services/invitation.py (superseded by
+        # echoroo/services/invitation_service.py, already listed below).
         "echoroo/services/clip.py",
         "echoroo/services/custom_model.py",
         "echoroo/services/dataset.py",
         "echoroo/services/detection.py",
         "echoroo/services/detection_run.py",
-        "echoroo/services/dsr.py",
         "echoroo/services/evaluation.py",
         "echoroo/services/gbif.py",
-        "echoroo/services/invitation.py",
         # spec/011 Step 7 PR #100: accept_invitation_via_public_token +
         # resolve_invitation_for_public_token + InvitationAlreadyMemberError
         # add ~250 LOC of service code. Happy paths covered by
@@ -433,6 +442,67 @@ PHASE17_PENDING: frozenset[str] = frozenset(
 )
 
 
+# ---------------------------------------------------------------------------
+# W5-7 (2026-07-06): coverage-debt ratchet.
+#
+# PHASE17_PENDING is a *debt list*, not a feature. Left unchecked it only
+# ever grows (it is easy to silently exempt a module when a PR is red and
+# hard to remember to come back and remove the entry later). This baseline
+# turns the list into a one-way ratchet:
+#
+#   1. It may never GROW past PHASE17_PENDING_BASELINE_COUNT. Adding an
+#      entry requires a deliberate PR that also bumps the constant below
+#      with a comment justifying the new exemption (reviewer sign-off
+#      expected — this is a structural gate, not a coverage number).
+#   2. Every entry must reference a file that still exists. When a module
+#      is deleted, renamed, or split (as happened for six entries pruned in
+#      this same change — see the NOTE comments above), the stale entry
+#      must be pruned from PHASE17_PENDING in the same PR.
+#
+# Baseline set at prune time (2026-07-06, W5-7): 114 entries. See
+# docs/coverage-debt-roadmap.md for a shrink-roadmap tracking which entries
+# are the cheapest to burn down next.
+# ---------------------------------------------------------------------------
+PHASE17_PENDING_BASELINE_COUNT = 114
+
+
+def _check_phase17_pending_invariants() -> list[str]:
+    """Ratchet check (W5-7): PHASE17_PENDING must never grow, and every
+    entry must reference a file that still exists in the repository.
+
+    Returns a list of human-readable violation messages (empty == OK).
+
+    File-existence checks are relative to the current working directory,
+    matching how the rest of this script resolves ``coverage.json``
+    "filename" keys (invoked as ``cd apps/api && python
+    ../../scripts/check_coverage_threshold.py``). This check runs
+    independently of coverage.json and does not require it to exist.
+    """
+    errors: list[str] = []
+
+    count = len(PHASE17_PENDING)
+    if count > PHASE17_PENDING_BASELINE_COUNT:
+        errors.append(
+            f"PHASE17_PENDING grew to {count} entries, exceeding the "
+            f"baseline cap of {PHASE17_PENDING_BASELINE_COUNT}. This list is "
+            "a one-way debt ratchet: it may shrink (as modules reach "
+            "threshold) but must not silently grow. If a new exemption is "
+            "genuinely required, get reviewer sign-off and bump "
+            "PHASE17_PENDING_BASELINE_COUNT in the same PR with a comment "
+            "explaining why."
+        )
+
+    stale = sorted(p for p in PHASE17_PENDING if not Path(p).exists())
+    if stale:
+        joined = ", ".join(stale)
+        errors.append(
+            "PHASE17_PENDING references file(s) that no longer exist "
+            f"(stale entries must be pruned): {joined}"
+        )
+
+    return errors
+
+
 def _load_coverage(path: Path) -> dict[str, object]:
     with path.open() as f:
         result: dict[str, object] = json.load(f)
@@ -500,6 +570,21 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Coverage threshold %% for other modules (default: {OTHER_THRESHOLD})",
     )
     args = parser.parse_args(argv)
+
+    # W5-7: PHASE17_PENDING ratchet — enforced unconditionally (even under
+    # --warn-only, which only relaxes per-run coverage-debt failures, not
+    # this structural invariant on the exemption list itself). Runs before
+    # coverage.json is required so it self-checks even without a coverage
+    # run available.
+    invariant_errors = _check_phase17_pending_invariants()
+    if invariant_errors:
+        print(
+            "[check_coverage_threshold] PHASE17_PENDING invariant violation(s):",
+            file=sys.stderr,
+        )
+        for err in invariant_errors:
+            print(f"  - {err}", file=sys.stderr)
+        return 1
 
     cov_path = Path(args.coverage_json)
     if not cov_path.exists():
