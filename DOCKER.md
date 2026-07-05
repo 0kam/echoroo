@@ -208,6 +208,33 @@ POSTGRES_PORT=5433
 
 Use `clean-all` only when you want to delete Docker volumes as well.
 
+## Production deployment
+
+The `compose.dev.yaml` in this repository is for **development and
+evaluation only**. We deliberately do **not** ship a production compose
+file in this iteration, because production hardening is
+deployment-specific and cannot be captured by a single opinionated file.
+
+A production deployment is expected to provide, at minimum:
+
+- **TLS termination** at a reverse proxy in front of the API and frontend
+  (the dev stack serves plain HTTP).
+- **Real object storage and KMS** — managed S3 + AWS KMS instead of
+  LocalStack. The KMS CMKs are the root of the app's envelope encryption;
+  see [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md).
+- **Managed PostgreSQL** with backups, PITR, and connection limits sized
+  for your load, rather than the single-container `pgvector` image.
+- **Secrets management** — inject `POSTGRES_PASSWORD`, `JWT_SECRET_KEY`,
+  `INVITATION_TOKEN_HMAC_KEY`, and the KMS/AWS credentials from a secrets
+  manager, not from a committed `.env`.
+- **Resource limits, restart policy, and health-based orchestration** —
+  wire orchestrators to the cheap `/health` liveness probe and the
+  `/health/ready` readiness probe (DB/Redis/S3 checks) to gate traffic.
+
+See [CONFIGURATION.md](CONFIGURATION.md) for the full environment variable
+reference and [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md)
+for backup, restore, and the KMS key-material caveat.
+
 ## Environment Variables
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the environment variable reference.

@@ -513,10 +513,14 @@ ALLOWLIST: list[AllowlistEntry] = [
         last_reviewed_at=_TODAY_REVIEWED,
     ),
     AllowlistEntry(
-        path_pattern="/ready",
+        path_pattern="/health/ready",
         methods=frozenset({"GET"}),
         category=AllowlistCategory.INFRA_HEALTH,
-        reason="Readiness probe consumed by container orchestrator (k8s/ECS)",
+        reason=(
+            "Readiness probe (DB/Redis/S3 dependency checks) consumed by "
+            "container orchestrator (k8s/ECS); returns 503 when a dependency "
+            "is unreachable"
+        ),
         owner=_DEFAULT_OWNER,
         spec_ref=None,
         expiry=None,
