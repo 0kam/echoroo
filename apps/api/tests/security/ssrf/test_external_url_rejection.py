@@ -73,8 +73,6 @@ _APPROVED_EXTERNAL_URLS: frozenset[str] = frozenset(
         "https://apiv3.iucnredlist.org/api/v3",
         # Password breach check (k-anonymity — no full hash sent)
         "https://api.pwnedpasswords.com/range/",
-        # Cloudflare Turnstile CAPTCHA verification
-        "https://challenges.cloudflare.com/turnstile/v0/siteverify",
         # Xeno-canto bird recordings
         "https://xeno-canto.org",
         "https://xeno-canto.org/",

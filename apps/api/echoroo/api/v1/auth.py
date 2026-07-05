@@ -32,7 +32,7 @@ settings = get_settings()
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register new user",
-    description="Create a new user account. Requires CAPTCHA after 3 failed attempts.",
+    description="Create a new user account.",
 )
 async def register(
     request: UserRegisterRequest,

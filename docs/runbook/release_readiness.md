@@ -118,14 +118,7 @@ These flags default off and should be enabled in order:
 Operational references:
 [docs/runbook/trusted_devices.md](trusted_devices.md).
 
-### 6. Turnstile (Cloudflare CAPTCHA)
-
-- Turnstile site + secret keys for the production hostname.
-- `TURNSTILE_SITE_KEY` / `TURNSTILE_SECRET_KEY`. Dev uses the
-  Cloudflare always-pass test keys (`1x...AA`); production needs
-  real keys.
-
-### 7. JWT secret + web session secret
+### 6. JWT secret + web session secret
 
 - 32+ char strong random values per environment.
 - `JWT_SECRET_KEY` (refresh token signing) and `web_session_secret`
@@ -133,7 +126,7 @@ Operational references:
   `core/settings.py::validate_production_secrets` rejects defaults /
   short values when `ENVIRONMENT=production`.
 
-### 8. DNS + TLS
+### 7. DNS + TLS
 
 - Public hostname for the API (`api.echoroo.app` or equivalent).
 - ACM cert (or Let's Encrypt via the reverse proxy) terminating TLS
@@ -142,7 +135,7 @@ Operational references:
   Options, etc.). The application is hardened to assume TLS upstream
   of the worker pods.
 
-### 9. Monitoring / alerting
+### 8. Monitoring / alerting
 
 - CloudWatch (or Grafana) board for:
   - request latency p95 (`tests/performance/test_auth_permission_p95.py`
@@ -163,7 +156,7 @@ Operational references:
        alongside the deleted email subsystem (FR-011-001..010). -->
 
 
-### 10. Bootstrap
+### 9. Bootstrap
 
 - Run `apps/api/echoroo/scripts/init_superuser.py` against the
   production DB to seed the first superuser. The script is

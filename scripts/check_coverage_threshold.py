@@ -424,7 +424,6 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/services/audio/_spectrogram.py",
         "echoroo/services/audio/_window.py",
         "echoroo/services/audio/service.py",
-        "echoroo/services/captcha.py",
         "echoroo/services/detection_export.py",
         "echoroo/services/export.py",
         "echoroo/services/h3_utils.py",
