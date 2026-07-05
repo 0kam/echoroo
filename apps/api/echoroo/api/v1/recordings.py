@@ -131,10 +131,15 @@ async def get_current_user_flexible(
         else:
             auth_service = AuthService(db)
             user = await auth_service.get_current_user(raw_token)
-    except HTTPException:
-        # Bad token on a Public route -> Guest fall-through. The permission
-        # gate will still 403 / 404 the response when the project is not
-        # Public-readable.
+    except HTTPException as exc:
+        # W4-2 SFR-2: a 503 from a fail-closed token-revocation check is an
+        # infrastructure outage, NOT a bad credential — it must propagate
+        # rather than silently downgrading the caller to Guest.
+        if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+            raise
+        # Bad token (401 / 403) on a Public route -> Guest fall-through. The
+        # permission gate will still 403 / 404 the response when the project
+        # is not Public-readable.
         return None
 
     await _stamp_superuser_status(db, user)

@@ -22,6 +22,13 @@ from echoroo.schemas.auth import (
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+#: W4-2 SFR-2 — HTTP 503 detail surfaced when the legacy Redis-backed
+#: token-revocation check cannot reach Redis and the fail-closed policy
+#: is active. Kept generic so it does not leak infrastructure topology.
+_REVOCATION_UNAVAILABLE_DETAIL: Final[str] = (
+    "Token revocation service is temporarily unavailable; please retry."
+)
+
 #: spec/011 §NFR-011-005 / T020 — canonical platform-scope audit-action
 #: string for a successful login from a previously-unseen device (the
 #: new-device banner trigger). Declaring the constant here (the service
@@ -71,8 +78,55 @@ class AuthService:
         try:
             return await get_redis_connection()
         except Exception:
-            logger.warning("Redis connection unavailable; token revocation checks skipped")
+            logger.warning("Redis connection unavailable for token revocation", exc_info=True)
             return None
+
+    def _revocation_unavailable(
+        self,
+        *,
+        operation: str,
+        user_id: UUID,
+        exc: Exception | None = None,
+    ) -> None:
+        """Handle a Redis outage during a revocation read/write.
+
+        W4-2 SFR-2. When the ``ECHOROO_AUTH_REVOCATION_FAIL_CLOSED`` policy
+        is active (the default) this raises HTTP 503 so the legacy
+        Bearer/JWT path cannot silently accept a revoked token (read) nor
+        report a successful logout that never revoked anything (write).
+
+        When the operator has explicitly disabled fail-closed (dev-only
+        escape hatch, refused in production by the settings guard) it logs
+        a warning and returns, restoring the historical fail-open / silent
+        no-op behaviour.
+
+        Args:
+            operation: Human-readable label ("check" or "write") for logs.
+            user_id: User whose revocation state could not be resolved.
+            exc: Underlying exception, when triggered by a read/write error.
+
+        Raises:
+            HTTPException: 503 when fail-closed is active.
+        """
+        if settings.ECHOROO_AUTH_REVOCATION_FAIL_CLOSED:
+            logger.error(
+                "Token revocation %s unavailable for user %s (Redis down); "
+                "failing closed with HTTP 503",
+                operation,
+                user_id,
+                exc_info=exc is not None,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_REVOCATION_UNAVAILABLE_DETAIL,
+            ) from exc
+        logger.warning(
+            "Token revocation %s unavailable for user %s (Redis down); "
+            "failing OPEN (ECHOROO_AUTH_REVOCATION_FAIL_CLOSED=false)",
+            operation,
+            user_id,
+            exc_info=exc is not None,
+        )
 
     async def revoke_user_tokens(self, user_id: UUID) -> None:
         """Revoke all tokens for a user by storing a revocation marker in Redis.
@@ -85,7 +139,9 @@ class AuthService:
         """
         redis = await self._get_redis()
         if redis is None:
-            logger.warning("Could not revoke tokens for user %s: Redis unavailable", user_id)
+            # W4-2 SFR-2: a logout that could not persist the revocation
+            # marker must NOT report success — raise 503 when fail-closed.
+            self._revocation_unavailable(operation="write", user_id=user_id)
             return
 
         key = f"{self._REVOCATION_KEY_PREFIX}{user_id}"
@@ -93,8 +149,8 @@ class AuthService:
         try:
             await redis.set(key, "1", ex=ttl_seconds)
             logger.info("Revoked all tokens for user %s (TTL=%ds)", user_id, ttl_seconds)
-        except Exception:
-            logger.warning("Failed to write revocation key for user %s", user_id, exc_info=True)
+        except Exception as exc:
+            self._revocation_unavailable(operation="write", user_id=user_id, exc=exc)
 
     async def is_token_revoked(self, user_id: UUID) -> bool:
         """Check whether a user's tokens have been revoked.
@@ -103,21 +159,27 @@ class AuthService:
             user_id: User's UUID to check
 
         Returns:
-            True if the user's tokens are revoked, False otherwise (including on Redis failure)
+            True if the user's tokens are revoked, False otherwise.
+
+        Raises:
+            HTTPException: 503 when Redis is unavailable and the
+                ``ECHOROO_AUTH_REVOCATION_FAIL_CLOSED`` policy is active
+                (the default). Only the dev-only fail-open escape hatch
+                returns ``False`` on a Redis outage.
         """
         redis = await self._get_redis()
         if redis is None:
-            # Fail open: do not block auth when Redis is unavailable
+            # W4-2 SFR-2: fail closed (503) by default; only the dev escape
+            # hatch reaches the ``return False`` below.
+            self._revocation_unavailable(operation="check", user_id=user_id)
             return False
 
         key = f"{self._REVOCATION_KEY_PREFIX}{user_id}"
         try:
             value = await redis.get(key)
             return value is not None
-        except Exception:
-            logger.warning(
-                "Failed to check revocation for user %s; allowing request", user_id, exc_info=True
-            )
+        except Exception as exc:
+            self._revocation_unavailable(operation="check", user_id=user_id, exc=exc)
             return False
 
     async def register(self, request: UserRegisterRequest, client_ip: str) -> User:

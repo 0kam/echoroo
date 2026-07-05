@@ -289,6 +289,42 @@ class Settings(BaseSettings):
         ),
     )
 
+    # W4-2 SFR-2 — legacy Bearer/JWT token-revocation fail-closed switch.
+    #
+    # When true (default) the legacy Redis-backed token-revocation check
+    # (:meth:`echoroo.services.auth.AuthService.is_token_revoked` and the
+    # revocation *writes*) raise HTTP 503 when Redis is unavailable instead
+    # of silently allowing / no-op'ing the request. Set to false ONLY as a
+    # dev escape hatch to restore the historical fail-open behaviour; a
+    # production ``ENVIRONMENT`` refuses ``false`` (see model_validator).
+    ECHOROO_AUTH_REVOCATION_FAIL_CLOSED: bool = Field(
+        default=True,
+        validation_alias="ECHOROO_AUTH_REVOCATION_FAIL_CLOSED",
+        description=(
+            "When true (default), the legacy Bearer/JWT token-revocation "
+            "check fails CLOSED (HTTP 503) when Redis is unavailable. "
+            "Set false only as a dev escape hatch; refused in production."
+        ),
+    )
+
+    # W4-2 SFR-6 — HIBP (HaveIBeenPwned) breach-check fail-open switch.
+    #
+    # When false (default) an HIBP outage during password enforcement
+    # raises HTTP 503 ("verification service unavailable") instead of
+    # silently treating the password as un-breached. Set to true (or run
+    # with ``TEST_MODE`` enabled) to restore the historical fail-open
+    # return-0 behaviour for dev / offline use; a production ``ENVIRONMENT``
+    # refuses ``true`` (see model_validator).
+    ECHOROO_HIBP_FAIL_OPEN: bool = Field(
+        default=False,
+        validation_alias="ECHOROO_HIBP_FAIL_OPEN",
+        description=(
+            "When false (default), an HIBP outage during password policy "
+            "enforcement fails CLOSED (HTTP 503). Set true (or enable "
+            "TEST_MODE) to restore fail-open; refused in production."
+        ),
+    )
+
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/0"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
@@ -976,6 +1012,23 @@ class Settings(BaseSettings):
             )
         if self.TEST_MODE and not self.TEST_TOTP_SECRET_BASE32:
             raise ValueError("TEST_MODE=True requires TEST_TOTP_SECRET_BASE32 to be set.")
+        # W4-2 SFR-2 — the token-revocation fail-open escape hatch is a
+        # dev-only convenience; refuse it in production so a Redis outage
+        # can never silently re-open the legacy Bearer/JWT revocation gate.
+        if not self.ECHOROO_AUTH_REVOCATION_FAIL_CLOSED and self.ENVIRONMENT == "production":
+            raise ValueError(
+                "ECHOROO_AUTH_REVOCATION_FAIL_CLOSED must not be False in "
+                "production (a Redis outage would silently accept revoked "
+                "tokens)."
+            )
+        # W4-2 SFR-6 — likewise refuse the HIBP fail-open escape hatch in
+        # production so a breach-check outage cannot silently accept
+        # previously-breached passwords.
+        if self.ECHOROO_HIBP_FAIL_OPEN and self.ENVIRONMENT == "production":
+            raise ValueError(
+                "ECHOROO_HIBP_FAIL_OPEN must not be True in production "
+                "(an HIBP outage would silently accept breached passwords)."
+            )
         return self
 
 

@@ -152,6 +152,15 @@ KMS is intentionally **not** probed at boot (production IAM may deny `kms:Descri
 |----------|-------------|---------|
 | `ECHOROO_SKIP_BOOT_CHECKS` | Skip all boot probes (Redis ping, S3 head_bucket). Intended for offline tooling / tests. | `0` |
 
+### Security Fail-Closed Switches (W4-2)
+
+Two legacy code paths historically **failed open** on an infrastructure outage. They now fail **closed** by default; the switches below exist only as dev / offline escape hatches and are **refused when `ENVIRONMENT=production`**.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ECHOROO_AUTH_REVOCATION_FAIL_CLOSED` | Legacy Bearer/JWT token-revocation check (`services/auth.py`). When `true` a Redis outage returns HTTP **503** instead of silently accepting a revoked token (and a logout that cannot persist its revocation marker fails rather than reporting success). Set `false` only in dev to restore fail-open. Refused in production. | `true` |
+| `ECHOROO_HIBP_FAIL_OPEN` | HaveIBeenPwned breach check during password enforcement (register / change-password / invitation accept). When `false` an HIBP outage returns HTTP **503** ("verification service unavailable") instead of silently accepting a possibly-breached password. Set `true` (or enable `TEST_MODE`) only in dev to restore fail-open. Refused in production. | `false` |
+
 ## Deployment Scenarios
 
 ### 1. Local Development with Docker
