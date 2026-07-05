@@ -46,6 +46,18 @@ on:
     # First day of Jan / Apr / Jul / Oct at 06:00 UTC.
     - cron: "0 6 1 1,4,7,10 *"
 
+# W3-2 (CI speedup): auto-cancel a superseded run of the SAME PR when new
+# commits are pushed, so the runner queue isn't backed up re-running stale
+# diffs. Scoped to `pull_request` only via the ternary below — `push` (to
+# main/006-permissions-redesign), `workflow_dispatch`, and `schedule` runs
+# are never cancelled by a same-ref sibling, which matters because:
+#   (a) branch protection's required-check history for main should not have
+#       runs vanish mid-flight, and
+#   (b) the quarterly `schedule` cron and manual `workflow_dispatch` runs
+#       have no natural "supersede" relationship with each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -1233,12 +1245,21 @@ jobs:
       # ``runbook-smoke-tests`` job already runs these correctly with
       # ``-m "not requires_runbook"``; pyproject.toml documents the
       # contract.
+      # W3-2 (CI speedup): -n auto fans the suite out across pytest-xdist
+      # worker processes (one per runner vCPU). tests/conftest.py provisions
+      # an isolated Postgres database per worker (keyed off the
+      # PYTEST_XDIST_WORKER env var xdist sets) so the DELETE-based
+      # cleanup_test_data() fixture used by db_session/client cannot race
+      # across workers. pytest-cov auto-detects xdist and combines each
+      # worker's coverage data before writing coverage.json/xml — the
+      # coverage gate below is unaffected by the -n flag.
       - name: Run pytest with coverage (-m "not performance and not slow and not requires_runbook")
         working-directory: apps/api
         # The marker description in pyproject.toml documents this default
         # skip; do not change one without the other.
         run: |
           uv run pytest \
+            -n auto \
             -m "not performance and not slow and not requires_runbook" \
             --maxfail=20 -q -rA \
             --junitxml=junit-backend.xml \

@@ -52,6 +52,11 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    # W3-2 (CI speedup): parallel test execution across worker processes.
+    # tests/conftest.py provisions a per-worker Postgres database keyed off
+    # PYTEST_XDIST_WORKER so the DELETE-based cleanup_test_data() fixture
+    # cannot race across concurrently-running workers.
+    "pytest-xdist>=3.6.0",
     "httpx>=0.28.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
