@@ -29,7 +29,7 @@
     <div
       role="button"
       tabindex="0"
-      aria-label="Close dialog"
+      aria-label={m.common_close_dialog()}
       class="fixed inset-0 bg-stone-500 bg-opacity-75 transition-opacity"
       onclick={onCancel}
       onkeydown={(e) => e.key === 'Escape' && onCancel()}
