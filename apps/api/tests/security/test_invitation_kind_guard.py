@@ -294,8 +294,7 @@ async def test_create_invitation_allows_member_with_transfer(
             self.flush_calls += 1
 
     monkeypatch.setattr(
-        invitation_service,
-        "hash_email_dual",
+        "echoroo.services.invitation.create.hash_email_dual",
         lambda _email: {"v1": "0" * 64},
     )
     session = _StubSession()
