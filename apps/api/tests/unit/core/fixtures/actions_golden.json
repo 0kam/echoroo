@@ -1,0 +1,884 @@
+{
+  "admin.license.create": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.license.delete": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.license.get": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.license.list": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.license.update": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.recorder.create": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.recorder.delete": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.recorder.get": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.recorder.list": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.recorder.update": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.settings.get": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.settings.update": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.user.reset_password": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.users.list": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "admin.users.update": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "annotation_comment.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "comment"
+  },
+  "annotation_comment.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "annotation_segment.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "annotation_segment.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "annotation_segment.note.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "comment"
+  },
+  "annotation_segment.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "annotation_set.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "annotation_set.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "annotation_set.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "annotation_set.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "annotation_set.palette.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "annotation_set.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "annotation_vote.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "vote"
+  },
+  "annotation_vote.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "clip.audio": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "clip.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "clip.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "clip.download": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "download"
+  },
+  "clip.generate": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "clip.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "clip.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "clip.spectrogram": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "clip.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "confirmed_region.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "confirmed_region.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "confirmed_region.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "custom_model.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "custom_model.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "custom_model.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "custom_model.train": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "train_model"
+  },
+  "dataset.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "dataset.datetime_config.apply": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "dataset.datetime_config.auto_detect": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "dataset.datetime_config.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.datetime_config.test": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "dataset.export": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "export"
+  },
+  "dataset.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.import": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "dataset.import_status": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.statistics": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_dataset_list"
+  },
+  "dataset.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "detection.change_species": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "detection.confirm": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "detection.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "detection.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "detection.export_csv": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "export"
+  },
+  "detection.export_ml_dataset": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "export"
+  },
+  "detection.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "detection.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "detection.reject": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "detection_run.cancel": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "detection_run.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "run_inference"
+  },
+  "detection_run.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "detection_run.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "detection_run.retry": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "run_inference"
+  },
+  "detection_run.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "evaluation.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "run_inference"
+  },
+  "evaluation.run.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset_admin"
+  },
+  "evaluation.run.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "evaluation.run.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "evaluation.runs_by_set": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "platform.iucn.force_resync": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "platform.taxon.seed_birdnet": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "platform.taxon.sync_vernacular": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "project.archive": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": true,
+    "required_permission": "edit_project"
+  },
+  "project.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "delete_project"
+  },
+  "project.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_project_metadata"
+  },
+  "project.license.history": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_project_metadata"
+  },
+  "project.license.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_license"
+  },
+  "project.member.invitation.issue": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.member.invitation.revoke": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.member.invite": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.member.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.member.remove": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.member.update_role": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.restore": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": true,
+    "required_permission": "edit_project"
+  },
+  "project.restricted_config.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "project.taxon_override.approve_looser": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "project.taxon_override.reject_looser": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "project.transfer_ownership": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "transfer_ownership"
+  },
+  "project.trusted.invite": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_trusted"
+  },
+  "project.trusted.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_members"
+  },
+  "project.trusted.revoke": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_trusted"
+  },
+  "project.trusted.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_trusted"
+  },
+  "project.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "recording.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "recording.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "recording.media": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "recording.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_dataset"
+  },
+  "search.annotation": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "search.batch.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.batch.job.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.embedding_stats": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.distribution": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.export_csv": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "export"
+  },
+  "search.session.export_recordings": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "export"
+  },
+  "search.session.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.reference_audio": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "search.session.rerun": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.sample": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.time_distribution": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.session.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.similarity": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "search.similarity_by_audio": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "search_within_project"
+  },
+  "site.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_site"
+  },
+  "site.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_site"
+  },
+  "site.get": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "site.list": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_detection"
+  },
+  "site.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "manage_site"
+  },
+  "superuser.add": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.approval.approve": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.approval.list": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.approval.reject": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.break_glass.enter": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.break_glass.status": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.ip_allowlist.update": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.list": {
+    "is_mutating": false,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "superuser.revoke": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
+  "tag.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "create_tag"
+  },
+  "tag.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "tag.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "edit_project"
+  },
+  "time_range_annotation.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "time_range_annotation.delete": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "time_range_annotation.note.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "comment"
+  },
+  "time_range_annotation.update": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "annotate"
+  },
+  "upload.create": {
+    "is_mutating": true,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "upload"
+  },
+  "xeno_canto.audio": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  },
+  "xeno_canto.sonogram": {
+    "is_mutating": false,
+    "is_platform_scope": false,
+    "is_superuser_only": false,
+    "required_permission": "view_media"
+  }
+}
