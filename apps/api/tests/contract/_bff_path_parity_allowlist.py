@@ -269,4 +269,10 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # ``search_session`` media token issued by the new media-token POST.
     "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/reference-audio/{source_index} GET",
     "/web-api/v1/projects/{project_id}/search/sessions/{session_id}/reference-audio/{source_index}/media-token POST",
+    # W2-4 PR-D — Xeno-canto sonogram proxy: the browser-superseded
+    # ``/api/v1/.../xeno-canto/sonogram`` route was unmounted in favour of the
+    # ``/web-api/v1`` BFF twin. Un-gated same-origin image proxy (SSRF
+    # allowlist is the control); server-emitted ``sonogram_url`` now targets
+    # this path so native ``<img>`` elements avoid Chrome ORB.
+    "/web-api/v1/projects/{project_id}/xeno-canto/sonogram GET",
 ]

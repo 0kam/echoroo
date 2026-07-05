@@ -777,7 +777,9 @@ class TestContractSecuritySchemePresence:
             {
                 # Publicly available Xeno-canto sonogram proxy (no credentials
                 # needed — sonograms are open data from xeno-canto.org).
-                "/api/v1/projects/{project_id}/xeno-canto/sonogram",
+                # W2-4 PR-D moved this to the /web-api/v1 BFF surface; the
+                # legacy /api/v1 route is unmounted.
+                "/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
             }
         )
         paths: dict[str, Any] = live_schema.get("paths") or {}

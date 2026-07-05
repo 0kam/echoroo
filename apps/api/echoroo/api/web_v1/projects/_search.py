@@ -44,11 +44,17 @@ W2-4 PR-B resolves the previously-deferred reference-audio endpoint:
   streaming handler. Native ``<audio>`` elements authenticate via the
   ``?media_token=`` query param the auth-router matcher resolves.
 
+W2-4 PR-D adds the sonogram proxy twin:
+
+* ``GET /{pid}/xeno-canto/sonogram`` — un-gated same-origin image proxy
+  (no ``CurrentUser`` / ``gate_action``) invoked from inside the rewritten
+  ``XenoCantoRecording.sonogram_url`` strings emitted by the legacy search
+  response, rendered by a native ``<img>`` element that cannot send a
+  Bearer header. The SSRF allowlist (``_validate_sonogram_url``) remains the
+  primary control; the missing permission guard is fingerprint-allowlisted.
+
 Out of scope for this PR:
 
-* Sonogram proxy (``/xeno-canto/sonogram``) — invoked from inside the
-  rewritten ``XenoCantoRecording.sonogram_url`` strings emitted by the
-  legacy search response, not from a typed frontend caller.
 * ``POST /{pid}/search/similar`` + ``/similar-by-audio`` — legacy
   similarity endpoints are not consumed by the spec-009 PR 4 frontend
   surface (the UX flow goes through ``/batch`` instead).
@@ -261,6 +267,36 @@ async def proxy_xeno_canto_audio(
         current_user=current_user,
         db=db,
     )
+
+
+@router.get(
+    "/{project_id}/xeno-canto/sonogram",
+    summary="Proxy a Xeno-canto sonogram image",
+    description=(
+        "BFF adapter for the legacy Xeno-canto sonogram proxy. Fetches a "
+        "sonogram image and returns it from the same origin, avoiding Chrome "
+        "ORB (Opaque Response Blocking) for cross-origin images. Only URLs "
+        "under https://xeno-canto.org/ are accepted (SSRF allowlist)."
+    ),
+)
+async def proxy_xeno_canto_sonogram(
+    project_id: UUID,
+    url: str = Query(..., description="Full xeno-canto.org sonogram URL to proxy"),
+) -> Response:
+    """Delegate Xeno-canto sonogram proxying to the legacy handler.
+
+    Intentionally UN-GATED (no ``CurrentUser`` / ``gate_action``): the
+    server-emitted ``XenoCantoRecording.sonogram_url`` is rendered directly by
+    a native ``<img src=...>`` element, which cannot attach an
+    ``Authorization: Bearer`` header (and CSRF middleware exempts GET). This
+    mirrors the un-gated posture of the legacy ``/api/v1`` sonogram route it
+    replaces; sonograms are open data from xeno-canto.org and the SSRF
+    allowlist (``_validate_sonogram_url``) remains the primary control. The
+    ``project_id`` path segment is routing-only and is not validated. The
+    missing permission guard is tracked by a fingerprint entry in
+    ``scripts/allowlists/permission_guard_allowlist.txt``.
+    """
+    return await legacy_xeno_canto.proxy_sonogram(project_id=project_id, url=url)
 
 
 # ---------------------------------------------------------------------------

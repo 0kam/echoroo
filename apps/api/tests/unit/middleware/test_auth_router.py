@@ -889,3 +889,192 @@ def test_web_api_media_token_post_still_401_without_cookie_on_other_paths() -> N
     )
     assert resp.status_code == 401
     assert resp.json()["error_code"] == "auth_required"
+
+
+# ---------------------------------------------------------------------------
+# W2-4 PR-D: unconditionally-public regex allowlist (sonogram <img> proxy)
+# ---------------------------------------------------------------------------
+#
+# The sonogram proxy is served to a native ``<img>`` element that sends the
+# session cookie automatically but cannot attach a Bearer / access token. The
+# prefix / nested allowlists fall back to session auth whenever a session
+# cookie is present (and then 401 for lack of an access token), so the sonogram
+# path uses ``public_path_regex_allowlist`` — which passes through as Guest
+# UNCONDITIONALLY. These tests exercise that branch directly so a regex typo,
+# a branch-ordering change, or a sibling-path over-exposure regresses loudly.
+
+# Mirror of the production wiring in ``echoroo.main.create_app``. Kept in sync
+# by the ``/xeno-canto/sonogram`` route entry in
+# ``tests/contract/_bff_path_parity_allowlist.py``.
+_SONOGRAM_PUBLIC_REGEXES: tuple[tuple[str, frozenset[str]], ...] = (
+    (r"/web-api/v1/projects/[^/]+/xeno-canto/sonogram", frozenset({"GET"})),
+)
+
+
+def _build_xeno_app(config: AuthRouterConfig) -> TestClient:
+    """Starlette app exposing the xeno-canto BFF routes for regex-branch tests."""
+
+    async def echo(request: Request) -> JSONResponse:
+        principal: Principal | None = getattr(request.state, "principal", None)
+        return JSONResponse(
+            {
+                "auth_kind": principal.auth_kind if principal else None,
+                "user_id": str(principal.user_id) if principal else None,
+            }
+        )
+
+    app = Starlette(
+        routes=[
+            Route("/web-api/v1/ping", echo),
+            Route(
+                "/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
+                echo,
+                methods=["GET", "POST"],
+            ),
+            Route(
+                "/web-api/v1/projects/{project_id}/xeno-canto/sonogram/extra",
+                echo,
+            ),
+            Route(
+                "/web-api/v1/projects/{project_id}/xeno-canto/search",
+                echo,
+            ),
+            Route(
+                "/web-api/v1/projects/{project_id}/xeno-canto/audio/{xc_id}",
+                echo,
+            ),
+        ]
+    )
+    app.add_middleware(AuthRouterMiddleware, config=config)
+    return TestClient(app)
+
+
+def test_public_regex_allowlist_admits_sonogram_get_with_session_cookie() -> None:
+    """GET sonogram passes through as Guest even WITH a session cookie present.
+
+    The native ``<img>`` sends the session cookie but no access token; the
+    regex allowlist must short-circuit BEFORE the cookie-triggered session
+    authenticator (which would 401 for the missing access token).
+    """
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
+        params={"url": "https://xeno-canto.org/sounds/spectrogram/1234-small.png"},
+        cookies={"session_id": "sess-present-but-no-access-token"},
+    )
+    assert resp.status_code == 200
+    # Guest passthrough: no Principal is attached.
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_public_regex_allowlist_admits_sonogram_get_without_cookie() -> None:
+    """GET sonogram is also public for a signed-out Guest (no cookie at all)."""
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
+        params={"url": "https://xeno-canto.org/sounds/spectrogram/1234-small.png"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_public_regex_allowlist_does_not_admit_xeno_search() -> None:
+    """The sibling ``/xeno-canto/search`` path must still require auth."""
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/search",
+        params={"query": "Larus"},
+    )
+    assert resp.status_code == 401
+
+
+def test_public_regex_allowlist_does_not_admit_xeno_audio() -> None:
+    """The sibling ``/xeno-canto/audio/{xc_id}`` path must still require auth."""
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/audio/1234",
+    )
+    assert resp.status_code == 401
+
+
+def test_public_regex_allowlist_uses_fullmatch_not_prefix() -> None:
+    """A deeper path under the sonogram segment must NOT inherit public access.
+
+    ``re.fullmatch`` guards against a ``startswith``-style over-exposure where
+    ``/xeno-canto/sonogram/extra`` (or any suffix) would leak through.
+    """
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram/extra",
+        cookies={"session_id": "sess-present"},
+    )
+    assert resp.status_code == 401
+
+
+def test_public_regex_allowlist_is_method_scoped_to_get() -> None:
+    """POST to the sonogram path must NOT be public (allowlist is GET-only)."""
+    project_id = uuid4()
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    client = _build_xeno_app(config)
+    resp = client.post(
+        f"/web-api/v1/projects/{project_id}/xeno-canto/sonogram",
+        cookies={"session_id": "sess-present"},
+    )
+    assert resp.status_code == 401
+
+
+def test_public_regex_allowlist_does_not_alter_session_auth() -> None:
+    """Configuring the regex allowlist must not change other branches' behaviour.
+
+    A valid session cookie + access token on a NON-public path still resolves a
+    session Principal, proving the new regex branch only intercepts its own
+    paths and leaves the cookie / Bearer / media-token flows intact.
+    """
+    user_id = uuid4()
+    stamp = "e" * 64
+    session_id = "sess-regex-coexist"
+    config = AuthRouterConfig(
+        session_verifier=_StubSessionVerifier({session_id: (user_id, stamp)}),
+        public_path_regex_allowlist=_SONOGRAM_PUBLIC_REGEXES,
+    )
+    token = issue_access_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        now=datetime.now(UTC),
+    )
+    client = _build_xeno_app(config)
+    resp = client.get(
+        "/web-api/v1/ping",
+        cookies={"session_id": session_id, "access_token": token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["auth_kind"] == "session"
+    assert resp.json()["user_id"] == str(user_id)

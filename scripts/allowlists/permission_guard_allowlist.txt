@@ -122,7 +122,7 @@ apps/api/echoroo/api/v1/users.py:get_current_user:missing-permission-guard  # le
 apps/api/echoroo/api/v1/users.py:list_api_tokens:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/users.py:revoke_api_token:missing-permission-guard  # legacy: Phase 3 US11 T1xx
 apps/api/echoroo/api/v1/users.py:update_current_user:missing-permission-guard  # legacy: Phase 3 US11 T1xx
-apps/api/echoroo/api/v1/xeno_canto.py:proxy_sonogram:missing-permission-guard  # legacy: Phase 3 US11 T1xx
+apps/api/echoroo/api/web_v1/projects/_search.py:proxy_xeno_canto_sonogram:missing-permission-guard  # W2-4 PR-D: un-gated same-origin sonogram <img> proxy; SSRF allowlist is the control (public xeno-canto.org open data, native <img> cannot send Bearer)
 apps/api/echoroo/api/web_v1/auth.py:verify_email:missing-permission-guard  # public pre-session auth route; project/user permission guard not applicable
 
 # W2-2 B+C self-scoped BFF mirrors of /api/v1/users/me* — each delegates verbatim
