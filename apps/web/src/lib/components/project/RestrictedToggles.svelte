@@ -186,6 +186,9 @@
     RestrictedConfigUpdateRequest
   >({
     mutationFn: (config) => projectsApi.updateRestrictedConfig(project.id, config),
+    // Surfaces its own inline error via `saveState`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (updatedProject) => {
       // 1) Invalidate downstream queries so other parts of the app
       //    pick up the new toggle state. Project detail uses a

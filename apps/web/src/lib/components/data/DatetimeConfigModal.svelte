@@ -251,6 +251,9 @@
       if (!activePattern || !activeFormat) throw new Error('No pattern set');
       return testDatetimePattern(projectId, datasetId, activePattern, activeFormat, timezone || undefined);
     },
+    // Surfaces its own inline error via `previewError`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (results) => {
       previewResults = results;
       previewError = null;
@@ -266,6 +269,9 @@
       if (!activePattern || !activeFormat) throw new Error('No pattern set');
       return applyDatetimePattern(projectId, datasetId, activePattern, activeFormat, timezone || undefined);
     },
+    // Surfaces its own inline error via `applyError`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (result) => {
       applySuccess = m.datetime_config_apply_success({ count: result.total_recordings });
       applyError = null;

@@ -158,6 +158,9 @@
   let renameValue = $state('');
 
   const renameMutationState = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the global
+    // generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (name: string) => updateAnnotationSet(projectId, setId, { name }),
     onSuccess: (updated) => {
       queryClient.setQueryData(['annotation-set', setId, getLocale()], updated);
@@ -194,6 +197,9 @@
   let evaluationDialogOpen = $state(false);
 
   const deleteMutationState = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the global
+    // generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: () => deleteAnnotationSet(projectId, setId),
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ['annotation-set', setId] });
@@ -209,6 +215,9 @@
   // ============================================================
 
   const addPaletteMutationState = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the global
+    // generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (speciesId: string) => addPalette(projectId, setId, { species_id: speciesId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });
@@ -292,6 +301,9 @@
   }
 
   const removePaletteMutationState = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the global
+    // generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (speciesId: string) => removePalette(projectId, setId, speciesId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['annotation-set', setId] });

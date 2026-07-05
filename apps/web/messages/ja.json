@@ -444,6 +444,10 @@
   "common_close_dialog": "ダイアログを閉じる",
   "common_error_unexpected": "予期しないエラーが発生しました",
 
+  "error_load_generic": "データの読み込みに失敗しました。",
+  "error_retry": "再試行",
+  "error_action_generic": "操作に失敗しました。もう一度お試しください。",
+
   "language_english": "English",
   "language_japanese": "日本語",
   "language_switcher_label": "言語",
