@@ -29,6 +29,7 @@
 
   import { createQuery } from '@tanstack/svelte-query';
   import { ApiError, apiClient } from '$lib/api/client';
+  import { getAuthenticatedRecordingMediaUrl } from '$lib/api/recordings';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
   import { getProjectStatusLabel } from '$lib/utils/statusFormatters';
@@ -145,16 +146,6 @@
   const recordingsLoading = $derived($recordingsQuery.isLoading);
   const recordingsError = $derived($recordingsQuery.error);
 
-  /**
-   * Build the audio stream URL for a recording. The endpoint
-   * (/api/v1/projects/{pid}/recordings/{rid}/audio) gates on VIEW_MEDIA which
-   * is granted to Guests on Public + Active projects via the canonical
-   * matrix (FR-016). Authentication is therefore optional.
-   */
-  function buildAudioUrl(rec: PublicRecordingItem): string {
-    return `/api/v1/projects/${rec.project_id}/recordings/${rec.id}/audio`;
-  }
-
   // Track which recording is currently selected for playback so we can
   // mount a single `<audio>` element rather than N concurrent ones.
   let activeRecordingId = $state<string | null>(null);
@@ -162,8 +153,78 @@
     recordings.find((r) => r.id === activeRecordingId) ?? null
   );
 
-  function playRecording(id: string) {
+  // -------------------------------------------------------------------------
+  // W2-4 PR-C: audio playback via a scoped media token.
+  //
+  // The raw `/api/v1/.../audio` element `src` is replaced by a same-origin
+  // BFF URL carrying a short-lived `?media_token=`. For a signed-out visitor
+  // the backend issues an ANONYMOUS token (Public + Active recordings only);
+  // authenticated visitors get a user-bound token. A monotonic sequence guard
+  // (mirrors the stale-response guard in useSessionReconstruction.svelte.ts,
+  // PR #210) prevents a slow token response for a previously-selected
+  // recording from overwriting the URL after the user switched clips.
+  // -------------------------------------------------------------------------
+  let audioSrc = $state<string | null>(null);
+  let audioResolving = $state<boolean>(false);
+  let audioError = $state<boolean>(false);
+  let mediaRequestSeq = 0;
+
+  // Retry budget for media-token expiry mid-playback. Anonymous tokens live
+  // only 5 minutes, so a long listen or a seek past the TTL can trigger a
+  // 401/403 on the stream. We re-mint on failure up to MAX_AUDIO_RETRIES
+  // consecutive times, then surface an error. Any successful playback progress
+  // (`onplaying`) resets the counter so a fresh token earns a fresh budget.
+  const MAX_AUDIO_RETRIES = 3;
+  let audioFailures = 0;
+
+  async function resolveAudioSrc(rec: PublicRecordingItem): Promise<void> {
+    const seq = ++mediaRequestSeq;
+    audioResolving = true;
+    audioError = false;
+    audioSrc = null;
+    try {
+      const base = `/web-api/v1/projects/${rec.project_id}/recordings/${rec.id}/audio`;
+      const url = await getAuthenticatedRecordingMediaUrl(
+        rec.project_id,
+        rec.id,
+        'audio',
+        base
+      );
+      // Stale guard: a newer selection has superseded this request.
+      if (seq !== mediaRequestSeq) return;
+      audioSrc = url;
+    } catch {
+      if (seq !== mediaRequestSeq) return;
+      audioError = true;
+    } finally {
+      if (seq === mediaRequestSeq) audioResolving = false;
+    }
+  }
+
+  function playRecording(id: string): void {
     activeRecordingId = id;
+    audioFailures = 0;
+    const rec = recordings.find((r) => r.id === id);
+    if (rec) void resolveAudioSrc(rec);
+  }
+
+  // On a media GET failure (e.g. an expired token → 401/403) re-mint the token
+  // and retry, up to a small consecutive-failure budget. Once exhausted the
+  // failure is treated as a real permission change (not expiry) and surfaced.
+  function handleAudioError(): void {
+    audioFailures += 1;
+    if (audioFailures > MAX_AUDIO_RETRIES) {
+      audioError = true;
+      return;
+    }
+    const rec = activeRecording;
+    if (rec) void resolveAudioSrc(rec);
+  }
+
+  // Successful playback progress means the current token works — reset the
+  // retry budget so a later expiry gets a fresh set of attempts.
+  function handleAudioPlaying(): void {
+    audioFailures = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -399,17 +460,31 @@
             <p class="mb-2 text-xs text-stone-600">
               {m.public_project_detail_now_playing({ name: activeRecording.name })}
             </p>
-            <!-- The endpoint streams via Range with the canonical matrix
-                 granting VIEW_MEDIA to Guests on Public + Active projects. -->
-            <audio
-              controls
-              preload="metadata"
-              src={buildAudioUrl(activeRecording)}
-              class="w-full"
-              aria-label={m.public_project_detail_audio_label({ name: activeRecording.name })}
-            >
-              <track kind="captions" />
-            </audio>
+            <!-- The endpoint streams via Range and is authenticated with a
+                 short-lived scoped media token (?media_token=). Guests receive
+                 an anonymous token for Public + Active recordings; the token is
+                 resolved asynchronously before the element mounts. -->
+            {#if audioError}
+              <p class="text-sm italic text-stone-500" role="alert">
+                {m.public_project_detail_recordings_unavailable()}
+              </p>
+            {:else if audioSrc}
+              <audio
+                controls
+                preload="metadata"
+                src={audioSrc}
+                onerror={handleAudioError}
+                onplaying={handleAudioPlaying}
+                class="w-full"
+                aria-label={m.public_project_detail_audio_label({ name: activeRecording.name })}
+              >
+                <track kind="captions" />
+              </audio>
+            {:else if audioResolving}
+              <p class="text-sm italic text-stone-500" aria-live="polite">
+                {m.public_project_detail_loading()}
+              </p>
+            {/if}
           </div>
         {/if}
       {/if}

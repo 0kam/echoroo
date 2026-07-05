@@ -19,8 +19,8 @@ from echoroo.core.actions import CLIP_DOWNLOAD_ACTION, RECORDING_MEDIA_ACTION
 from echoroo.core.auth import verify_media_token
 from echoroo.core.database import get_db
 from echoroo.core.settings import get_settings
-from echoroo.middleware.auth import get_current_user
-from echoroo.models.enums import ProjectVisibility
+from echoroo.middleware.auth import get_current_user, get_current_user_optional
+from echoroo.models.enums import ProjectStatus, ProjectVisibility
 from tests.integration.api.web_v1._helpers import assert_api_key_cross_rejected
 from tests.integration.api.web_v1.test_projects_read_smoke import (
     _create_project,
@@ -43,6 +43,11 @@ def _build_app(
     app = FastAPI()
     app.include_router(_media.router, prefix="/web-api/v1/projects")
     app.dependency_overrides[get_current_user] = lambda: user
+    # W2-4 PR-C: the streaming GET handlers and the media-token issuance
+    # endpoint now resolve via ``OptionalCurrentUser`` so a Guest (``None``)
+    # can stream Public playback. Override both so the existing authenticated
+    # assertions keep seeing ``user``.
+    app.dependency_overrides[get_current_user_optional] = lambda: user
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[legacy_recordings.get_recording_service] = lambda: service
     if clip_service is not None:
@@ -184,6 +189,122 @@ async def test_recording_media_token_bff_gates_and_issues_scoped_token(
         scope="spectrogram",
     )
     assert claims.user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_recording_media_token_bff_issues_anonymous_token_for_public_guest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """W2-4 PR-C: a Guest (no user) can mint an anonymous audio token on a
+    Public + Active project."""
+    project_id = uuid4()
+    recording_id = uuid4()
+
+    class _Service:
+        async def get_by_id_in_project(self, rid: object, pid: object) -> object:
+            return SimpleNamespace(id=rid, project_id=pid)
+
+    project = SimpleNamespace(
+        visibility=ProjectVisibility.PUBLIC, status=ProjectStatus.ACTIVE
+    )
+
+    async def fake_gate_action(**kwargs: object) -> object:
+        return project
+
+    monkeypatch.setattr(_media, "gate_action", fake_gate_action)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app(None, _Service())),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+            json={"scope": "audio"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["expires_in"] > 0
+
+    claims = verify_media_token(
+        body["token"],
+        current_security_stamp=None,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+        allow_anonymous=True,
+    )
+    assert claims.anonymous is True
+    assert claims.user_id is None
+
+
+@pytest.mark.asyncio
+async def test_recording_media_token_bff_rejects_guest_download_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Guest may not mint a download-scoped token even on a Public project."""
+    project_id = uuid4()
+    recording_id = uuid4()
+
+    class _Service:
+        async def get_by_id_in_project(self, rid: object, pid: object) -> object:
+            return SimpleNamespace(id=rid, project_id=pid)
+
+    project = SimpleNamespace(
+        visibility=ProjectVisibility.PUBLIC, status=ProjectStatus.ACTIVE
+    )
+
+    async def fake_gate_action(**kwargs: object) -> object:
+        return project
+
+    monkeypatch.setattr(_media, "gate_action", fake_gate_action)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app(None, _Service())),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+            json={"scope": "download"},
+        )
+
+    assert response.status_code == 401, response.text
+
+
+@pytest.mark.asyncio
+async def test_recording_media_token_bff_rejects_guest_on_non_active_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defence in depth: even if the gate let a Guest through, an archived /
+    non-public project blocks anonymous issuance."""
+    project_id = uuid4()
+    recording_id = uuid4()
+
+    class _Service:
+        async def get_by_id_in_project(self, rid: object, pid: object) -> object:
+            return SimpleNamespace(id=rid, project_id=pid)
+
+    project = SimpleNamespace(
+        visibility=ProjectVisibility.PUBLIC, status=ProjectStatus.ARCHIVED
+    )
+
+    async def fake_gate_action(**kwargs: object) -> object:
+        return project
+
+    monkeypatch.setattr(_media, "gate_action", fake_gate_action)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_build_app(None, _Service())),
+        base_url="http://testserver",
+    ) as client:
+        response = await client.post(
+            f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+            json={"scope": "audio"},
+        )
+
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.asyncio

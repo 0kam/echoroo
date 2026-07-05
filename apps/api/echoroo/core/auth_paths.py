@@ -69,6 +69,7 @@ new path MUST be reviewed and added to this list explicitly.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 #: Tuple of fully-qualified ``request.url.path`` values that bypass
@@ -95,12 +96,28 @@ PUBLIC_AUTH_PATHS: Final[tuple[str, ...]] = (
 )
 
 
+#: W2-4 PR-C: the recording media-token issuance endpoint. A signed-out
+#: visitor may POST here to mint an anonymous playback token for a Public +
+#: Active recording. The path carries two variable segments (project id +
+#: recording id) so the structural ``public_path_nested_allowlist`` matcher —
+#: which admits only a single ``{id}`` segment — cannot express it; both the
+#: auth router (guest passthrough) and the CSRF middleware (cookie-less
+#: exemption) match against this pattern instead. It deliberately uses
+#: ``[^/]+`` for the recording segment so the deeper clip media-token path
+#: (``/recordings/{rid}/clips/{cid}/media-token``) never matches — clip tokens
+#: are never anonymous.
+ANON_MEDIA_TOKEN_ISSUE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"/web-api/v1/projects/[^/]+/recordings/[^/]+/media-token/?"
+)
+
+
 def is_public_auth_path(path: str) -> bool:
     """Return True if ``path`` matches a public auth endpoint exactly."""
     return path in PUBLIC_AUTH_PATHS
 
 
 __all__ = [
+    "ANON_MEDIA_TOKEN_ISSUE_PATTERN",
     "PUBLIC_AUTH_PATHS",
     "is_public_auth_path",
 ]

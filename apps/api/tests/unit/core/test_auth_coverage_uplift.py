@@ -19,6 +19,7 @@ import pytest
 from echoroo.core import auth as mod
 from echoroo.core.auth import (
     ACCESS_TOKEN_TYPE,
+    ANON_MEDIA_TTL,
     DEFAULT_MEDIA_TTL,
     MEDIA_TOKEN_TYP,
     MEDIA_TOKEN_TYPE,
@@ -283,6 +284,184 @@ def test_issue_and_verify_media_token_round_trip() -> None:
     assert claims.resource_type == "recording"
     assert claims.resource_id == recording_id
     assert claims.scope == "spectrogram"
+
+
+def test_issue_and_verify_anonymous_media_token_round_trip() -> None:
+    """W2-4 PR-C: anonymous playback tokens carry ``anon`` and no sub/ss."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    token = issue_media_token(
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+        anonymous=True,
+    )
+
+    decoded = jwt.decode(token, options={"verify_signature": False})
+    assert decoded["anon"] is True
+    assert "sub" not in decoded
+    assert "ss" not in decoded
+    # 5-minute TTL by default for anonymous tokens.
+    assert decoded["exp"] - decoded["iat"] == int(ANON_MEDIA_TTL.total_seconds())
+
+    claims = verify_media_token(
+        token,
+        current_security_stamp=None,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+        allow_anonymous=True,
+    )
+    assert claims.anonymous is True
+    assert claims.user_id is None
+    assert claims.security_stamp is None
+    assert claims.scope == "audio"
+
+
+def test_issue_anonymous_media_token_rejects_download_scope() -> None:
+    """Anonymous tokens may never carry the download scope."""
+    with pytest.raises(ValueError, match="audio/playback/spectrogram"):
+        issue_media_token(
+            project_id=uuid4(),
+            resource_type="recording",
+            resource_id=uuid4(),
+            scope="download",
+            anonymous=True,
+        )
+
+
+def test_issue_anonymous_media_token_rejects_non_recording_resource() -> None:
+    """Anonymous tokens are only valid for whole recordings."""
+    with pytest.raises(ValueError, match="only valid for recordings"):
+        issue_media_token(
+            project_id=uuid4(),
+            resource_type="clip",
+            resource_id=uuid4(),
+            scope="audio",
+            anonymous=True,
+            parent_id=uuid4(),
+        )
+
+
+def test_issue_anonymous_media_token_rejects_subject_claims() -> None:
+    """Anonymous issuance forbids user_id / security_stamp inputs."""
+    with pytest.raises(ValueError, match="must not carry"):
+        issue_media_token(
+            project_id=uuid4(),
+            resource_type="recording",
+            resource_id=uuid4(),
+            scope="audio",
+            anonymous=True,
+            user_id=uuid4(),
+            security_stamp="stamp",
+        )
+
+
+def test_verify_anonymous_media_token_rejected_when_not_allowed() -> None:
+    """An anonymous token is refused unless allow_anonymous is set."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    token = issue_media_token(
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+        anonymous=True,
+    )
+    with pytest.raises(InvalidTokenError, match="not accepted here"):
+        verify_media_token(
+            token,
+            current_security_stamp="ignored",
+            project_id=project_id,
+            resource_type="recording",
+            resource_id=recording_id,
+            scope="audio",
+        )
+
+
+def test_verify_user_bound_media_token_rejected_without_live_stamp() -> None:
+    """A user-bound token cannot be validated on the cookie-less guest path."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    token = issue_media_token(
+        user_id=uuid4(),
+        security_stamp="stamp",
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+    )
+    with pytest.raises(InvalidTokenError, match="requires a live stamp"):
+        verify_media_token(
+            token,
+            current_security_stamp=None,
+            project_id=project_id,
+            resource_type="recording",
+            resource_id=recording_id,
+            scope="audio",
+            allow_anonymous=True,
+        )
+
+
+def test_verify_media_token_rejects_mixed_anon_and_subject_claims() -> None:
+    """A forged token that carries both ``anon`` and ``sub`` is rejected."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    now = datetime.now(UTC)
+    claims = {
+        "anon": True,
+        "sub": str(uuid4()),
+        "ss": "stamp",
+        "project_id": str(project_id),
+        "rtype": "recording",
+        "recording_id": str(recording_id),
+        "scope": "audio",
+        "jti": str(uuid4()),
+        "type": MEDIA_TOKEN_TYPE,
+        "typ": MEDIA_TOKEN_TYP,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=5)).timestamp()),
+    }
+    forged = jwt.encode(
+        claims, mod.settings.JWT_SECRET_KEY, algorithm=mod.settings.JWT_ALGORITHM
+    )
+    with pytest.raises(InvalidTokenError, match="mixes anonymous"):
+        verify_media_token(
+            forged,
+            current_security_stamp=None,
+            project_id=project_id,
+            resource_type="recording",
+            resource_id=recording_id,
+            scope="audio",
+            allow_anonymous=True,
+        )
+
+
+def test_verify_anonymous_media_token_rejects_expired() -> None:
+    """An expired anonymous token fails verification."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    past = datetime.now(UTC) - timedelta(minutes=10)
+    token = issue_media_token(
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="audio",
+        anonymous=True,
+        now=past,
+    )
+    with pytest.raises(InvalidTokenError, match="expired"):
+        verify_media_token(
+            token,
+            current_security_stamp=None,
+            project_id=project_id,
+            resource_type="recording",
+            resource_id=recording_id,
+            scope="audio",
+            allow_anonymous=True,
+        )
 
 
 def test_issue_and_verify_clip_download_media_token_round_trip() -> None:

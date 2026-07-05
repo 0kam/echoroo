@@ -85,6 +85,23 @@ DEFAULT_ACCESS_TTL = timedelta(minutes=15)
 DEFAULT_MEDIA_TTL = DEFAULT_ACCESS_TTL
 """Scoped media URL tokens match access-token TTL while limiting path scope."""
 
+ANON_MEDIA_TTL = timedelta(minutes=5)
+"""W2-4 PR-C: anonymous (guest) media tokens are even shorter-lived (5 min).
+
+Guest playback tokens carry NO subject / security-stamp binding, so they
+cannot be revoked mid-life the way a user-bound token can (bumping a stamp).
+The shorter TTL bounds the replay window; live authorisation is re-evaluated
+on every media GET by the per-request ``gate_action`` so a Public→Restricted
+flip still takes effect within one token lifetime at worst.
+"""
+
+ANON_MEDIA_TOKEN_SCOPES: frozenset[str] = frozenset(
+    {"audio", "playback", "spectrogram"}
+)
+"""Scopes an anonymous media token may carry. ``download`` is intentionally
+excluded — guest playback streams the audio but never hands out the raw file.
+"""
+
 
 # =============================================================================
 # Data containers
@@ -134,8 +151,8 @@ class MediaTokenClaims:
     different source index.
     """
 
-    user_id: UUID
-    security_stamp: str
+    user_id: UUID | None
+    security_stamp: str | None
     project_id: UUID
     resource_type: MediaResourceType
     resource_id: UUID
@@ -144,6 +161,11 @@ class MediaTokenClaims:
     expires_at: datetime
     parent_id: UUID | None = None
     source_index: int | None = None
+    # W2-4 PR-C: ``True`` for a guest playback token (no ``sub`` / ``ss``
+    # claims). ``user_id`` / ``security_stamp`` are ``None`` in that case and
+    # the middleware leaves ``request.state.principal = None`` so the handler
+    # gate re-evaluates the request as a Guest on every media GET.
+    anonymous: bool = False
 
 
 @dataclass(frozen=True)
@@ -768,15 +790,16 @@ def verify_access_token(
 
 def issue_media_token(
     *,
-    user_id: UUID,
-    security_stamp: str,
     project_id: UUID,
     resource_type: MediaResourceType,
     resource_id: UUID,
     scope: MediaTokenScope,
+    user_id: UUID | None = None,
+    security_stamp: str | None = None,
+    anonymous: bool = False,
     parent_id: UUID | None = None,
     source_index: int | None = None,
-    ttl: timedelta = DEFAULT_MEDIA_TTL,
+    ttl: timedelta | None = None,
     now: datetime | None = None,
 ) -> str:
     """Sign a short-lived JWT scoped to one media resource.
@@ -792,6 +815,14 @@ def issue_media_token(
     tokens MUST bind their ``source_index`` (carried under the ``src_idx``
     claim) so the token cannot be replayed for a different reference-audio
     source.
+
+    W2-4 PR-C: when ``anonymous=True`` the token carries NO ``sub`` / ``ss``
+    claim (instead it sets ``anon: true``) so a signed-out visitor can stream
+    a Public + Active recording. Anonymous tokens are restricted to whole
+    recordings and to the streaming scopes (``audio`` / ``playback`` /
+    ``spectrogram``); ``download`` and clip / search-session resources are
+    never anonymous. ``user_id`` and ``security_stamp`` are then forbidden,
+    and the default TTL drops to :data:`ANON_MEDIA_TTL`.
     """
     if scope not in MEDIA_TOKEN_SCOPES:
         raise ValueError("invalid media token scope")
@@ -804,11 +835,29 @@ def issue_media_token(
             "source_index is required for search_session tokens and forbidden otherwise"
         )
 
+    if anonymous:
+        if user_id is not None or security_stamp is not None:
+            raise ValueError(
+                "anonymous media tokens must not carry user_id / security_stamp"
+            )
+        if scope not in ANON_MEDIA_TOKEN_SCOPES:
+            raise ValueError(
+                "anonymous media tokens support only audio/playback/spectrogram scopes"
+            )
+        if resource_type != "recording":
+            raise ValueError("anonymous media tokens are only valid for recordings")
+    else:
+        if user_id is None or security_stamp is None:
+            raise ValueError(
+                "user-bound media tokens require user_id and security_stamp"
+            )
+
+    effective_ttl = ttl if ttl is not None else (
+        ANON_MEDIA_TTL if anonymous else DEFAULT_MEDIA_TTL
+    )
     issued_at = now or datetime.now(UTC)
-    expires_at = issued_at + ttl
+    expires_at = issued_at + effective_ttl
     claims: dict[str, Any] = {
-        "sub": str(user_id),
-        "ss": security_stamp,
         "project_id": str(project_id),
         "rtype": resource_type,
         "recording_id": str(resource_id),
@@ -821,19 +870,25 @@ def issue_media_token(
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
+    if anonymous:
+        claims["anon"] = True
+    else:
+        claims["sub"] = str(user_id)
+        claims["ss"] = security_stamp
     return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
 def verify_media_token(
     token: str,
     *,
-    current_security_stamp: str,
+    current_security_stamp: str | None,
     project_id: UUID,
     resource_type: MediaResourceType,
     resource_id: UUID,
     scope: MediaTokenScope,
     parent_id: UUID | None = None,
     source_index: int | None = None,
+    allow_anonymous: bool = False,
 ) -> MediaTokenClaims:
     """Verify a scoped media token against the requested resource and scope.
 
@@ -843,6 +898,14 @@ def verify_media_token(
     index from the request path for ``search_session`` resources; the token's
     ``src_idx`` claim must match it exactly (and must be absent for other
     resources).
+
+    W2-4 PR-C: ``allow_anonymous`` must be ``True`` to accept a guest playback
+    token (``anon: true``, no ``sub`` / ``ss``). Anonymous tokens are only
+    valid for whole recordings and the streaming scopes; a token that mixes an
+    ``anon`` flag with ``sub`` / ``ss`` is rejected outright. When the token is
+    user-bound, ``current_security_stamp`` MUST be the caller's live stamp —
+    ``None`` is only valid together with an anonymous token (a user-bound token
+    cannot be validated without a live stamp and is rejected).
     """
     try:
         payload: dict[str, Any] = jwt.decode(
@@ -860,6 +923,7 @@ def verify_media_token(
 
     sub = payload.get("sub")
     ss = payload.get("ss")
+    anon_claim = payload.get("anon")
     token_project_id = payload.get("project_id")
     token_resource_type = payload.get("rtype")
     token_resource_id = payload.get("recording_id")
@@ -868,15 +932,29 @@ def verify_media_token(
     token_scope = payload.get("scope")
     jti = payload.get("jti")
     exp_ts = payload.get("exp")
+
+    # W2-4 PR-C: an anonymous (guest) token carries ``anon: true`` and MUST
+    # NOT carry any subject / stamp claim. Anything other than a bare boolean
+    # ``True`` is rejected so a smuggled ``anon`` value cannot flip the branch.
+    if anon_claim is not None and anon_claim is not True:
+        raise InvalidTokenError("media token anon claim invalid")
+    is_anonymous = anon_claim is True
+    if is_anonymous:
+        if not allow_anonymous:
+            raise InvalidTokenError("anonymous media token not accepted here")
+        # Reject a token that mixes an anonymous flag with subject binding.
+        if sub is not None or ss is not None:
+            raise InvalidTokenError("media token mixes anonymous and subject claims")
+
     if (
-        not isinstance(sub, str)
-        or not isinstance(ss, str)
-        or not isinstance(token_project_id, str)
+        not isinstance(token_project_id, str)
         or not isinstance(token_resource_type, str)
         or not isinstance(token_resource_id, str)
         or not isinstance(token_scope, str)
         or not isinstance(jti, str)
     ):
+        raise InvalidTokenError("media token missing required claims")
+    if not is_anonymous and (not isinstance(sub, str) or not isinstance(ss, str)):
         raise InvalidTokenError("media token missing required claims")
     if not isinstance(exp_ts, int):
         raise InvalidTokenError("media token missing exp")
@@ -889,8 +967,15 @@ def verify_media_token(
     if token_resource_type != resource_type:
         raise InvalidTokenError("media token resource type mismatch")
 
+    # Anonymous tokens are constrained to whole recordings + streaming scopes.
+    if is_anonymous and (
+        token_scope not in ANON_MEDIA_TOKEN_SCOPES
+        or token_resource_type != "recording"
+    ):
+        raise InvalidTokenError("anonymous media token scope/resource not permitted")
+
     try:
-        user_id = UUID(sub)
+        user_id = None if is_anonymous else UUID(cast(str, sub))
         claim_project_id = UUID(token_project_id)
         claim_resource_id = UUID(token_resource_id)
         claim_parent_id = UUID(token_parent_id) if token_parent_id is not None else None
@@ -912,12 +997,21 @@ def verify_media_token(
     if token_source_index != source_index:
         raise InvalidTokenError("media token source index mismatch")
 
-    if not secrets.compare_digest(ss, current_security_stamp):
-        raise StaleTokenError("security_stamp has been rotated")
+    if is_anonymous:
+        result_security_stamp: str | None = None
+    else:
+        # A user-bound token cannot be validated without a live stamp to
+        # compare against — treat a missing stamp as an invalid presentation
+        # (e.g. a user token replayed on the guest / cookie-less path).
+        if current_security_stamp is None:
+            raise InvalidTokenError("user-bound media token requires a live stamp")
+        if not secrets.compare_digest(cast(str, ss), current_security_stamp):
+            raise StaleTokenError("security_stamp has been rotated")
+        result_security_stamp = cast(str, ss)
 
     return MediaTokenClaims(
         user_id=user_id,
-        security_stamp=ss,
+        security_stamp=result_security_stamp,
         project_id=claim_project_id,
         resource_type=cast(MediaResourceType, token_resource_type),
         resource_id=claim_resource_id,
@@ -926,6 +1020,7 @@ def verify_media_token(
         expires_at=datetime.fromtimestamp(exp_ts, tz=UTC),
         parent_id=claim_parent_id,
         source_index=token_source_index,
+        anonymous=is_anonymous,
     )
 
 
@@ -1137,6 +1232,8 @@ async def revoke_family(
 
 __all__ = [
     "ACCESS_TOKEN_TYPE",
+    "ANON_MEDIA_TOKEN_SCOPES",
+    "ANON_MEDIA_TTL",
     "AccessTokenClaims",
     "AuthTokenError",
     "DEFAULT_ACCESS_TTL",
