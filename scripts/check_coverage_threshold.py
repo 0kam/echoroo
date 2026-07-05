@@ -198,7 +198,18 @@ PHASE17_PENDING: frozenset[str] = frozenset(
         "echoroo/api/v1/detections.py",
         "echoroo/api/v1/recordings.py",
         "echoroo/api/v1/search/batch.py",
-        "echoroo/api/v1/search/sessions.py",
+        # 2026-07-05 (W3-1): sessions.py split into the api/v1/search/sessions/
+        # package. sessions/__init__.py is now a thin re-export façade; the
+        # implementation moved to the sub-modules below, which inherit the same
+        # warn-only exemption (the code was never above 85% — API route handlers
+        # need integration tests with real DB / auth flow; see the ml/ and
+        # classifier/ precedents).
+        "echoroo/api/v1/search/sessions/__init__.py",
+        "echoroo/api/v1/search/sessions/crud.py",
+        "echoroo/api/v1/search/sessions/media.py",
+        "echoroo/api/v1/search/sessions/exports.py",
+        "echoroo/api/v1/search/sessions/distribution.py",
+        "echoroo/api/v1/search/sessions/_shared.py",
         "echoroo/api/v1/search/utils.py",
         "echoroo/api/v1/settings.py",
         "echoroo/api/v1/uploads.py",
