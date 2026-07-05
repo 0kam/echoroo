@@ -564,6 +564,17 @@ async def _run_detection(
                 run.status = DetectionRunStatus.COMPLETED
                 run.completed_at = datetime.now(UTC)
                 run.annotation_count = total_annotations
+                # Surface partial failures on the run row: a COMPLETED run with
+                # skipped recordings previously left no trace outside the logs.
+                # Record the count in ``error_message`` so it is visible via the
+                # API/DB (there is no dedicated stats column; adding one would
+                # require a migration, which is out of scope here).
+                if recordings_failed > 0:
+                    run.error_message = (
+                        f"{recordings_failed} of "
+                        f"{recordings_processed + recordings_failed} "
+                        "recordings failed to process"
+                    )
                 await run_repo.update(run)
                 await db.commit()
 

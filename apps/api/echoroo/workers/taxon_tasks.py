@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 # Delay between GBIF requests to avoid rate limiting (seconds)
 _GBIF_REQUEST_DELAY = 0.15
 
+# Number of consecutive GBIF upstream failures that mark the service as "down
+# hard". Once this many vernacular fetches raise back-to-back, the batch task
+# re-raises so the Celery task state becomes FAILURE instead of reporting a
+# completed run where every taxon was actually errored.
+_GBIF_OUTAGE_THRESHOLD = 5
+
 
 # ---------------------------------------------------------------------------
 # Async implementations
@@ -48,9 +54,13 @@ async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
         async with session_factory() as db:
             repo = TaxonRepository(db)
             service = TaxonService(taxon_repo=repo)
-            resolved = await service.resolve_gbif_batch(limit=batch_size)
+            batch_result = await service.resolve_gbif_batch(limit=batch_size)
             await db.commit()
-        return {"status": "completed", "resolved": resolved}
+        return {
+            "status": "completed",
+            "resolved": batch_result.resolved,
+            "taxa_errored": batch_result.errored,
+        }
     finally:
         await engine.dispose()
 
@@ -70,6 +80,7 @@ async def _run_fetch_vernacular_names_batch(
     """
     from sqlalchemy import select
 
+    from echoroo.core.exceptions import ExternalServiceError
     from echoroo.models.taxon import Taxon
     from echoroo.models.taxon_vernacular_name import TaxonVernacularName
     from echoroo.repositories.taxon import TaxonRepository
@@ -91,6 +102,8 @@ async def _run_fetch_vernacular_names_batch(
         total = len(taxa)
         fetched_count = 0
         skipped_count = 0
+        errored_count = 0
+        consecutive_errors = 0
         gbif_service = GBIFService()
 
         for idx, taxon in enumerate(taxa, start=1):
@@ -120,10 +133,33 @@ async def _run_fetch_vernacular_names_batch(
             if idx % 50 == 0 or idx == total:
                 logger.info("Processed %d/%d taxa", idx, total)
 
-            vernacular_names = await gbif_service.get_vernacular_names(
-                taxon_key=taxon.gbif_taxon_key,
-                locales=locales,
-            )
+            try:
+                vernacular_names = await gbif_service.get_vernacular_names(
+                    taxon_key=taxon.gbif_taxon_key,
+                    locales=locales,
+                )
+                consecutive_errors = 0
+            except ExternalServiceError:
+                # GBIF upstream failed — count as errored (not "no name found")
+                # and bail out entirely if it looks like a hard outage.
+                errored_count += 1
+                consecutive_errors += 1
+                logger.warning(
+                    "GBIF upstream unavailable fetching vernacular names for "
+                    "taxon %s (key=%s); consecutive_errors=%d",
+                    taxon.scientific_name,
+                    taxon.gbif_taxon_key,
+                    consecutive_errors,
+                )
+                if consecutive_errors >= _GBIF_OUTAGE_THRESHOLD:
+                    logger.error(
+                        "Aborting vernacular names fetch after %d consecutive "
+                        "GBIF failures; treating as hard outage",
+                        consecutive_errors,
+                    )
+                    raise
+                await asyncio.sleep(_GBIF_REQUEST_DELAY)
+                continue
 
             # Throttle between GBIF API calls
             await asyncio.sleep(_GBIF_REQUEST_DELAY)
@@ -158,15 +194,18 @@ async def _run_fetch_vernacular_names_batch(
             )
 
         logger.info(
-            "Vernacular names fetch complete: %d taxa updated, %d skipped (total=%d)",
+            "Vernacular names fetch complete: %d taxa updated, %d skipped, "
+            "%d errored (total=%d)",
             fetched_count,
             skipped_count,
+            errored_count,
             total,
         )
         return {
             "status": "completed",
             "taxa_updated": fetched_count,
             "taxa_skipped": skipped_count,
+            "taxa_errored": errored_count,
             "taxa_total": total,
         }
     finally:
@@ -189,6 +228,7 @@ async def _run_fetch_japanese_vernacular_names(  # pyright: ignore[reportUnusedF
     """
     from sqlalchemy import func, select
 
+    from echoroo.core.exceptions import ExternalServiceError
     from echoroo.models.taxon import Taxon
     from echoroo.models.taxon_vernacular_name import TaxonVernacularName
     from echoroo.repositories.taxon import TaxonRepository
@@ -215,6 +255,8 @@ async def _run_fetch_japanese_vernacular_names(  # pyright: ignore[reportUnusedF
         processed = 0
         fetched_count = 0
         skipped_count = 0
+        errored_count = 0
+        consecutive_errors = 0
         offset = 0
 
         while True:
@@ -255,10 +297,33 @@ async def _run_fetch_japanese_vernacular_names(  # pyright: ignore[reportUnusedF
                         )
                         continue
 
-                vernacular_names = await gbif_service.get_vernacular_names(
-                    taxon_key=taxon.gbif_taxon_key,
-                    locales=["ja"],
-                )
+                try:
+                    vernacular_names = await gbif_service.get_vernacular_names(
+                        taxon_key=taxon.gbif_taxon_key,
+                        locales=["ja"],
+                    )
+                    consecutive_errors = 0
+                except ExternalServiceError:
+                    # GBIF upstream failed — count as errored (not "no name
+                    # found") and abort on a sustained outage.
+                    errored_count += 1
+                    consecutive_errors += 1
+                    logger.warning(
+                        "GBIF upstream unavailable fetching ja name for "
+                        "%s (key=%s); consecutive_errors=%d",
+                        taxon.scientific_name,
+                        taxon.gbif_taxon_key,
+                        consecutive_errors,
+                    )
+                    if consecutive_errors >= _GBIF_OUTAGE_THRESHOLD:
+                        logger.error(
+                            "Aborting Japanese vernacular fetch after %d "
+                            "consecutive GBIF failures; treating as hard outage",
+                            consecutive_errors,
+                        )
+                        raise
+                    await asyncio.sleep(_GBIF_REQUEST_DELAY)
+                    continue
 
                 # Throttle between GBIF API calls
                 await asyncio.sleep(_GBIF_REQUEST_DELAY)
@@ -303,15 +368,17 @@ async def _run_fetch_japanese_vernacular_names(  # pyright: ignore[reportUnusedF
 
         logger.info(
             "Japanese vernacular name fetch complete: "
-            "%d updated, %d skipped, %d total processed",
+            "%d updated, %d skipped, %d errored, %d total processed",
             fetched_count,
             skipped_count,
+            errored_count,
             processed,
         )
         return {
             "status": "completed",
             "taxa_updated": fetched_count,
             "taxa_skipped": skipped_count,
+            "taxa_errored": errored_count,
             "taxa_total": processed,
         }
     finally:
