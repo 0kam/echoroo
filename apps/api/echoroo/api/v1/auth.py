@@ -23,7 +23,7 @@ from echoroo.schemas.web_v1.change_password import (
 )
 from echoroo.services.auth import AuthService
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(prefix="/auth", tags=["Programmatic API — Auth"])
 settings = get_settings()
 
 

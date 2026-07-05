@@ -23,7 +23,7 @@ from echoroo.schemas.confirmed_region import (
 )
 from echoroo.services.confirmed_region import ConfirmedRegionService
 
-router = APIRouter(prefix="/projects/{project_id}/confirmed-regions", tags=["confirmed-regions"])
+router = APIRouter(prefix="/projects/{project_id}/confirmed-regions", tags=["Programmatic API — Confirmed Regions"])
 
 
 def get_confirmed_region_service(db: DbSession) -> ConfirmedRegionService:

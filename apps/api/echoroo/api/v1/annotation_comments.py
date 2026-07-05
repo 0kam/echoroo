@@ -45,7 +45,7 @@ from echoroo.schemas.annotation_comment import (
 
 router = APIRouter(
     prefix="/projects/{project_id}/annotations",
-    tags=["annotation-comments"],
+    tags=["Programmatic API — Annotation Comments"],
 )
 
 

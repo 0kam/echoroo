@@ -20,7 +20,7 @@ from echoroo.schemas.user import (
 from echoroo.services.token import TokenService
 from echoroo.services.user import UserService
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users", tags=["Programmatic API — Users"])
 
 
 @router.get(
