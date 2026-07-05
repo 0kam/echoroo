@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import selectinload
 
+from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.models.enums import DatetimeParseStatus
 from echoroo.models.recording import Recording
 from echoroo.repositories.base import BaseRepository
@@ -152,8 +153,10 @@ class RecordingRepository(BaseRepository[Recording]):
         else:
             query = query.order_by(sort_column.desc())
 
-        # Apply pagination
-        offset = (page - 1) * page_size
+        # Apply pagination. Clamp the client-controlled page_size to
+        # MAX_PAGE_SIZE so a caller cannot force an unbounded SQL query.
+        page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
+        offset = (max(page, 1) - 1) * page_size
         query = query.offset(offset).limit(page_size)
 
         result = await self.db.execute(query)
@@ -212,8 +215,10 @@ class RecordingRepository(BaseRepository[Recording]):
         count_result = await self.db.execute(count_query)
         total: int = count_result.scalar_one()
 
-        # Apply pagination
-        offset = (page - 1) * page_size
+        # Apply pagination. Clamp the client-controlled page_size to
+        # MAX_PAGE_SIZE so a caller cannot force an unbounded SQL query.
+        page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
+        offset = (max(page, 1) - 1) * page_size
         query = query.order_by(Recording.datetime.desc()).offset(offset).limit(page_size)
 
         result = await self.db.execute(query)

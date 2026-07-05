@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -34,6 +34,7 @@ from echoroo.core.auth import (
     issue_media_token,
 )
 from echoroo.core.database import DbSession
+from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser, OptionalCurrentUser
 from echoroo.models.enums import ProjectStatus, ProjectVisibility
@@ -261,8 +262,8 @@ async def list_clips(
     current_user: CurrentUser,
     service: legacy_clips.ClipServiceDep,
     db: DbSession,
-    page: int = 1,
-    page_size: int = 50,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
     sort_by: str = "start_time",
     sort_order: str = "asc",
 ) -> ClipListResponse:
