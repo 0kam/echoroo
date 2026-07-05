@@ -615,7 +615,10 @@ async def test_write_invitation_audit_swallows_open_failure(
 ) -> None:
     failing_factory = _FailingSessionFactory(RuntimeError("audit DB unreachable"))
 
-    with patch.object(svc, "AsyncSessionLocal", failing_factory), caplog.at_level("WARNING"):
+    with patch(
+        "echoroo.services.invitation.side_effects.AsyncSessionLocal",
+        failing_factory,
+    ), caplog.at_level("WARNING"):
         await _write_invitation_audit(
             action="project.invitation.create",
             actor_user_id=uuid4(),
@@ -671,8 +674,8 @@ async def test_write_invitation_audit_swallows_inner_failure_via_rollback() -> N
             raise RuntimeError("hash chain broken")
 
     with (
-        patch.object(svc, "AsyncSessionLocal", _factory),
-        patch.object(svc, "AuditLogService", _BoomService),
+        patch("echoroo.services.invitation.side_effects.AsyncSessionLocal", _factory),
+        patch("echoroo.services.invitation.side_effects.AuditLogService", _BoomService),
     ):
         await _write_invitation_audit(
             action="project.invitation.create",
@@ -716,7 +719,10 @@ async def test_trigger_post_commit_dispatches_to_decline_branch(
     ) -> None:
         captured.append(action)
 
-    monkeypatch.setattr(svc, "_write_invitation_audit", _fake_audit)
+    monkeypatch.setattr(
+        "echoroo.services.invitation.side_effects._write_invitation_audit",
+        _fake_audit,
+    )
 
     class _StubInvitation:
         id = uuid4()
@@ -744,7 +750,10 @@ async def test_trigger_post_commit_dispatches_to_accept_branch_with_member(
     async def _fake_audit(*, action: str, **kwargs: Any) -> None:
         captured.append({"action": action, **kwargs})
 
-    monkeypatch.setattr(svc, "_write_invitation_audit", _fake_audit)
+    monkeypatch.setattr(
+        "echoroo.services.invitation.side_effects._write_invitation_audit",
+        _fake_audit,
+    )
 
     class _StubInvitation:
         id = uuid4()
@@ -787,7 +796,10 @@ async def test_trigger_post_commit_dispatches_to_create_branch_audit_only(
     async def _fake_audit(*, action: str, **_kwargs: Any) -> None:
         captured.append(action)
 
-    monkeypatch.setattr(svc, "_write_invitation_audit", _fake_audit)
+    monkeypatch.setattr(
+        "echoroo.services.invitation.side_effects._write_invitation_audit",
+        _fake_audit,
+    )
 
     inv_id_local = uuid4()
     proj_id_local = uuid4()

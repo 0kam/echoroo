@@ -1787,7 +1787,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         "echoroo.services.trusted_service",
         "echoroo.services.superuser_service",
         "echoroo.services.superuser_approval_service",
-        "echoroo.services.invitation_service",
+        "echoroo.services.invitation.side_effects",
         "echoroo.services.restricted_config_service",
         "echoroo.services.ownership_service",
         "echoroo.middleware.two_factor_enforcement",

@@ -206,8 +206,7 @@ async def test_create_invitation_outcome_does_not_expose_plain_token_at_top_leve
     # test purely unit-scoped (no moto roundtrip, no AWS env wiring) and
     # mirrors the explicit-stub culture of the rest of ``tests/unit/``.
     monkeypatch.setattr(
-        invitation_service,
-        "hash_email_dual",
+        "echoroo.services.invitation.create.hash_email_dual",
         lambda _email: {"v1": "0" * 64},
     )
     session = _FakeSession()

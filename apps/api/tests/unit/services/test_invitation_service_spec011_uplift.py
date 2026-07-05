@@ -454,7 +454,10 @@ async def test_emit_public_invitation_accept_audit_no_ownership_transfer() -> No
     async def _fake_write(**kwargs: Any) -> None:
         write_calls.append(kwargs)
 
-    with patch.object(svc, "_write_invitation_audit", side_effect=_fake_write):
+    with patch(
+        "echoroo.services.invitation.side_effects._write_invitation_audit",
+        side_effect=_fake_write,
+    ):
         await emit_public_invitation_accept_audit(outcome)
 
     assert len(write_calls) == 1
@@ -493,7 +496,10 @@ async def test_emit_public_invitation_accept_audit_with_ownership_transfer() -> 
     async def _fake_write(**kwargs: Any) -> None:
         write_calls.append(kwargs)
 
-    with patch.object(svc, "_write_invitation_audit", side_effect=_fake_write):
+    with patch(
+        "echoroo.services.invitation.side_effects._write_invitation_audit",
+        side_effect=_fake_write,
+    ):
         await emit_public_invitation_accept_audit(outcome)
 
     assert len(write_calls) == 2
