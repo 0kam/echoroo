@@ -27,13 +27,16 @@ from echoroo.core.actions import (
     RECORDING_MEDIA_ACTION,
 )
 from echoroo.core.auth import (
+    ANON_MEDIA_TOKEN_SCOPES,
+    ANON_MEDIA_TTL,
     DEFAULT_MEDIA_TTL,
     MediaTokenScope,
     issue_media_token,
 )
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
-from echoroo.middleware.auth import CurrentUser
+from echoroo.middleware.auth import CurrentUser, OptionalCurrentUser
+from echoroo.models.enums import ProjectStatus, ProjectVisibility
 from echoroo.schemas.clip import ClipDetailResponse, ClipListResponse
 from echoroo.schemas.recording import RecordingDetailResponse
 
@@ -64,12 +67,23 @@ async def issue_recording_media_token(
     recording_id: UUID,
     payload: MediaTokenRequest,
     request: Request,
-    current_user: CurrentUser,
+    response: Response,
+    current_user: OptionalCurrentUser,
     service: legacy_recordings.RecordingServiceDep,
     db: DbSession,
 ) -> MediaTokenResponse:
-    """Gate VIEW_MEDIA before issuing a scoped token for media GET URLs."""
-    await gate_action(
+    """Gate VIEW_MEDIA before issuing a scoped token for media GET URLs.
+
+    W2-4 PR-C: signed-out (Guest) callers may mint an ANONYMOUS playback token
+    for a Public + Active recording. The ``gate_action`` already fails closed
+    for Guests on non-public / non-active projects (and for media-denied
+    Restricted projects), so reaching the ``current_user is None`` branch means
+    VIEW_MEDIA was granted to the Guest. We additionally assert Public + Active
+    and restrict the scope to the streaming set as defence-in-depth — a Guest
+    can never mint a ``download`` token. The response is marked ``no-store`` so
+    the short-lived token never lands in a shared cache.
+    """
+    project = await gate_action(
         action=RECORDING_MEDIA_ACTION,
         project_id=project_id,
         current_user=current_user,
@@ -82,6 +96,34 @@ async def issue_recording_media_token(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Recording not found",
+        )
+
+    response.headers["Cache-Control"] = "no-store"
+
+    if current_user is None:
+        # Anonymous issuance: only Public + Active projects and only the
+        # streaming scopes. Anything else collapses to 401 with the same shape
+        # as a plain unauthenticated failure (no existence probing signal).
+        if (
+            project.visibility != ProjectVisibility.PUBLIC
+            or project.status != ProjectStatus.ACTIVE
+            or payload.scope not in ANON_MEDIA_TOKEN_SCOPES
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+            )
+        token = issue_media_token(
+            project_id=project_id,
+            resource_type="recording",
+            resource_id=recording_id,
+            scope=payload.scope,
+            anonymous=True,
+            ttl=ANON_MEDIA_TTL,
+        )
+        return MediaTokenResponse(
+            token=token,
+            expires_in=int(ANON_MEDIA_TTL.total_seconds()),
         )
 
     token = issue_media_token(
@@ -289,7 +331,7 @@ async def stream_audio(
     project_id: UUID,
     recording_id: UUID,
     request: Request,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
     service: legacy_recordings.RecordingServiceDep,
     db: DbSession,
     speed: float = 1.0,
@@ -332,7 +374,7 @@ async def get_playback_audio(
     project_id: UUID,
     recording_id: UUID,
     request: Request,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
     service: legacy_recordings.RecordingServiceDep,
     db: DbSession,
     speed: float = 1.0,
@@ -371,7 +413,7 @@ async def get_spectrogram(
     project_id: UUID,
     recording_id: UUID,
     request: Request,
-    current_user: CurrentUser,
+    current_user: OptionalCurrentUser,
     service: legacy_recordings.RecordingServiceDep,
     db: DbSession,
     start: float = 0,

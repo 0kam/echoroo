@@ -71,6 +71,11 @@ def _build_app(config: AuthRouterConfig) -> TestClient:
                 echo,
             ),
             Route(
+                "/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+                echo,
+                methods=["POST"],
+            ),
+            Route(
                 "/web-api/v1/projects/{project_id}/recordings/{recording_id}"
                 "/clips/{clip_id}/download",
                 echo,
@@ -727,3 +732,89 @@ def test_public_path_allowlist_skips_auth() -> None:
     client = TestClient(app)
     resp = client.post("/web-api/v1/auth/login", json={"email": "x", "password": "y"})
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# W2-4 PR-C: anonymous (guest) media token passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_web_api_media_get_accepts_anonymous_token_without_cookie() -> None:
+    """A Guest (no session cookie) may stream with a valid anonymous token."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+    token = issue_media_token(
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        anonymous=True,
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+    )
+    assert resp.status_code == 200
+    # Guest passthrough leaves principal unset so the handler gate re-decides.
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_web_api_media_get_rejects_user_bound_token_without_cookie() -> None:
+    """A user-bound token cannot be replayed on the cookie-less guest path."""
+    user_id = uuid4()
+    stamp = "e" * 64
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+    token = issue_media_token(
+        user_id=user_id,
+        security_stamp=stamp,
+        project_id=project_id,
+        resource_type="recording",
+        resource_id=recording_id,
+        scope="playback",
+        now=datetime.now(UTC),
+    )
+
+    client = _build_app(config)
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/playback",
+        params={"media_token": token},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_invalid"
+
+
+def test_web_api_media_token_post_passes_through_for_guest() -> None:
+    """A cookie-less POST to the media-token issue endpoint reaches the handler
+    as a Guest so the handler can enforce Public+Active + anon scope."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+
+    client = _build_app(config)
+    resp = client.post(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/media-token",
+        json={"scope": "audio"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"auth_kind": None, "user_id": None}
+
+
+def test_web_api_media_token_post_still_401_without_cookie_on_other_paths() -> None:
+    """The guest passthrough is scoped to the media-token path only."""
+    project_id = uuid4()
+    recording_id = uuid4()
+    config = AuthRouterConfig(session_verifier=_StubSessionVerifier({}))
+
+    client = _build_app(config)
+    # /download (a GET without a media token) must still require a session.
+    resp = client.get(
+        f"/web-api/v1/projects/{project_id}/recordings/{recording_id}/download",
+    )
+    assert resp.status_code == 401
+    assert resp.json()["error_code"] == "auth_required"

@@ -58,7 +58,7 @@ from echoroo.core.auth import (
     verify_access_token,
     verify_media_token,
 )
-from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
+from echoroo.core.auth_paths import ANON_MEDIA_TOKEN_ISSUE_PATTERN, PUBLIC_AUTH_PATHS
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -82,6 +82,13 @@ API_KEY_NAMESPACE: Final[str] = "echoroo_"
 # leave ``request.state.principal = None`` so the legacy
 # ``Depends(get_current_user)`` cookie chain owns authentication.
 _LEGACY_FALLBACK_SENTINEL: Final[object] = object()
+
+# W2-4 PR-C sentinel. Returned by ``_authenticate_session`` for a signed-out
+# (cookie-less) caller that presents a valid ANONYMOUS media token on a media
+# GET, or POSTs to the recording media-token issuance endpoint. Signals the
+# dispatcher to leave ``request.state.principal = None`` so the handler's
+# ``OptionalCurrentUser`` + ``gate_action`` re-evaluate the request as a Guest.
+_ANON_MEDIA_SENTINEL: Final[object] = object()
 
 
 # ---------------------------------------------------------------------------
@@ -553,10 +560,12 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
         if isinstance(result, Response):
             return result
 
-        if result is _LEGACY_FALLBACK_SENTINEL:
+        if result is _LEGACY_FALLBACK_SENTINEL or result is _ANON_MEDIA_SENTINEL:
             # Phase 15 T155b: cookie-only ``/api/v1/*`` request — leave
-            # ``principal`` empty so the downstream ``Depends`` chain
-            # owns authentication.
+            # ``principal`` empty so the downstream ``Depends`` chain owns
+            # authentication. W2-4 PR-C: a verified anonymous media token (GET)
+            # or a guest media-token issuance (POST) likewise passes through as
+            # Guest so the handler gate re-evaluates live permission.
             request.state.principal = None
             return await call_next(request)
 
@@ -642,13 +651,59 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
 
     # -- Session (first-party) --------------------------------------------
 
-    async def _authenticate_session(self, request: Request) -> Principal | Response:
+    async def _authenticate_session(
+        self, request: Request
+    ) -> Principal | Response | object:
         verifier = self.config.session_verifier
         if verifier is None:
             return _auth_failure(401, "auth_unavailable", "Session verifier not configured")
 
         session_id = request.cookies.get(self.config.session_cookie_name)
+        media_request = self._extract_media_query_token(request)
+
         if not session_id:
+            # W2-4 PR-C: signed-out (cookie-less) callers. Only two shapes are
+            # admitted, both leaving ``principal=None`` so the downstream gate
+            # re-evaluates the request as a Guest:
+            #   1. A media GET carrying a valid ANONYMOUS media token.
+            #   2. A POST to the recording media-token issuance endpoint.
+            # A Bearer credential means the caller intends to authenticate, so
+            # we do NOT downgrade those to Guest — they fall through to the
+            # usual 401 below (unchanged behaviour).
+            if self._extract_bearer(request) is None:
+                if media_request is not None:
+                    (
+                        media_token,
+                        project_id,
+                        resource_type,
+                        resource_id,
+                        scope,
+                        parent_id,
+                        source_index,
+                    ) = media_request
+                    try:
+                        verify_media_token(
+                            media_token,
+                            current_security_stamp=None,
+                            project_id=project_id,
+                            resource_type=resource_type,
+                            resource_id=resource_id,
+                            scope=scope,
+                            parent_id=parent_id,
+                            source_index=source_index,
+                            allow_anonymous=True,
+                        )
+                    except (StaleTokenError, InvalidTokenError):
+                        return _auth_failure(401, "auth_invalid", "Media token invalid")
+                    request.state.skip_bearer_fallback = True
+                    return _ANON_MEDIA_SENTINEL
+                if (
+                    request.method == "POST"
+                    and ANON_MEDIA_TOKEN_ISSUE_PATTERN.fullmatch(request.url.path)
+                    is not None
+                ):
+                    request.state.skip_bearer_fallback = True
+                    return _ANON_MEDIA_SENTINEL
             return _auth_failure(401, "auth_required", "Session cookie required")
 
         live = await verifier.verify(session_id)
@@ -656,7 +711,6 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             return _auth_failure(401, "auth_invalid", "Session unknown or expired")
         live_user_id, live_stamp = live
 
-        media_request = self._extract_media_query_token(request)
         if media_request is not None:
             (
                 media_token,
@@ -687,6 +741,12 @@ class AuthRouterMiddleware(BaseHTTPMiddleware):
             except InvalidTokenError:
                 return _auth_failure(401, "auth_invalid", "Media token invalid")
 
+            # ``allow_anonymous`` is not set on this cookie-bound path, so an
+            # anonymous token would already have been rejected by
+            # ``verify_media_token``. The guard both closes the type narrowing
+            # and defends against any future regression that lets one through.
+            if media_claims.user_id is None or media_claims.security_stamp is None:
+                return _auth_failure(401, "auth_invalid", "Media token invalid")
             if media_claims.user_id != live_user_id:
                 return _auth_failure(401, "auth_mismatch", "Session and token user mismatch")
 
