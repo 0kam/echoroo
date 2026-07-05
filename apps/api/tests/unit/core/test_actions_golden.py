@@ -39,43 +39,59 @@ from echoroo.core.permissions import ACTIONS
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "actions_golden.json"
 
 
-def _serialize_registry() -> dict[str, dict[str, Any]]:
-    """Serialize ACTIONS with the exact shape used to build the golden fixture."""
+def _serialize_action(action: Any) -> dict[str, Any]:
+    """Serialize one Action with the exact shape used to build the golden fixture."""
     return {
-        name: {
-            "required_permission": (
-                action.required_permission.value
-                if action.required_permission
-                else None
-            ),
-            "is_mutating": action.is_mutating,
-            "is_superuser_only": action.is_superuser_only,
-            "is_platform_scope": action.is_platform_scope,
-        }
-        for name, action in sorted(ACTIONS.items())
+        "required_permission": (
+            action.required_permission.value if action.required_permission else None
+        ),
+        "is_mutating": action.is_mutating,
+        "is_superuser_only": action.is_superuser_only,
+        "is_platform_scope": action.is_platform_scope,
+    }
+
+
+def _serialize_owned_actions() -> dict[str, dict[str, Any]]:
+    """Serialize ONLY the Actions that ``core/actions.py``'s table registers.
+
+    Scope note (W3-5): the global :data:`ACTIONS` registry is shared. Under the
+    full test suite other modules import and register their own Actions — notably
+    ``echoroo/api/web_v1/audit.py`` registers ``project.audit_log.read``,
+    ``platform.audit_log.read`` and ``platform.audit_log.chain_verify`` (see the
+    "Out-of-scope" note in ``core/actions.py``'s module docstring), and the
+    superuser-approval surface contributes ``superuser.approve``. Those actions
+    are NOT owned by ``core/actions.py`` and are intentionally absent from the
+    golden fixture. We therefore build ``actual`` from this module's own
+    declarative table (``_ACTION_ROWS``) rather than the global registry, so the
+    snapshot proves the semantics of the refactored table alone.
+    """
+    return {
+        row.name: _serialize_action(ACTIONS[row.name])
+        for row in actions_module._ACTION_ROWS
     }
 
 
 def test_actions_registry_matches_golden_snapshot() -> None:
-    """The live ACTIONS registry must deep-equal the reviewed golden fixture.
+    """The Actions owned by ``core/actions.py`` must deep-equal the golden fixture.
 
     Any diff means an Action's authorization contract changed (a semantic change
     to the Stage-1 permission gate). See the module docstring before touching the
     fixture.
     """
     golden = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
-    actual = _serialize_registry()
+    actual = _serialize_owned_actions()
 
+    # Guard: the golden fixture and the module's own table must cover the same
+    # set of action names. If this diverges, a row was added/removed from
+    # _ACTION_ROWS without regenerating the fixture (or vice versa).
     missing = sorted(set(golden) - set(actual))
     added = sorted(set(actual) - set(golden))
     changed = sorted(
-        name
-        for name in set(golden) & set(actual)
-        if golden[name] != actual[name]
+        name for name in set(golden) & set(actual) if golden[name] != actual[name]
     )
 
     assert actual == golden, (
-        "ACTIONS registry drifted from the golden fixture "
+        "core/actions.py's Action table drifted from the golden fixture "
         f"({_FIXTURE_PATH.name}). This is a SEMANTIC change to the permission "
         "gate and must be reviewed explicitly — do NOT blindly regenerate the "
         "fixture.\n"
