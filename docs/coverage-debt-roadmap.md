@@ -9,8 +9,10 @@ hard `FAIL`.
 
 That list is debt, not a feature, so as of W5-7 (2026-07-06) it is a
 **one-way ratchet**: `PHASE17_PENDING_BASELINE_COUNT` caps it at its current
-size (114 entries — six previously-stale entries referencing deleted/renamed
-files were pruned in the same change), and `_check_phase17_pending_invariants()`
+size (113 entries — six previously-stale entries referencing deleted/renamed
+files were pruned in the same change, and the `captcha.py` entry was removed
+separately by main/PR #226 when the captcha service was deleted entirely;
+merged into this branch), and `_check_phase17_pending_invariants()`
 hard-fails CI if the set grows past the cap or references a file that no
 longer exists. See the comment block above `PHASE17_PENDING` in
 `scripts/check_coverage_threshold.py` for the mechanism and per-batch removal
@@ -18,7 +20,7 @@ history (PR-B through PR-H, 2026-05-09 .. 2026-05-31).
 
 ## Current size
 
-- **114 entries** (as of 2026-07-06, W5-7).
+- **113 entries** (as of 2026-07-06, W5-7, post-merge with main/PR #226).
 
 ## Easiest next burn-down candidates
 
@@ -33,11 +35,15 @@ module needs only unit-level mocking (no live DB / Celery / GPU fixture).
 | 2 | `echoroo/api/v1/search/sessions/__init__.py` | 80 | Also a compat façade; `router` is an intentionally-empty `APIRouter`, rest is re-exports. One test module covering the re-export surface clears it. | Comment in file explicitly documents the façade intent. |
 | 3 | `echoroo/repositories/superuser_credentials.py` | 58 | Comment in `check_coverage_threshold.py` already reports 83.3% unit-only — only ~1.7pp short of the 85% "other" threshold (not permission-tier). Store is an **in-memory stub** (no DB), so no integration fixture is needed. | Currently re-added to PENDING because it "requires live-DB integration tests" per an older note, but the implementation itself (`InMemorySuperuserCredentialStore`) is pure Python — worth re-checking with a plain unit test first. |
 | 4 | `echoroo/api/v1/settings.py` | 42 | Single GET endpoint, one repository call, no branching beyond the default fallback inside the repository. 2-3 FastAPI TestClient cases (default value, configured value, unauthenticated 401) should clear 85% easily. | Small enough that a full rewrite-as-test could hit 100%. |
-| 5 | `echoroo/services/captcha.py` | 63 | One async function, ~5 branches (missing secret + prod/dev, network success, network exception + prod/non-prod). All branches are reachable with `httpx` mocked/monkeypatched — no external network or DB needed. | Already has a docstring example; branches map 1:1 to test cases. |
-| 6 | `echoroo/workers/two_factor_tasks.py` | 62 | Single Celery task wrapping one service call; only needs `AsyncSessionLocal` and `run_dispatch_due_requests` mocked to exercise the summary-logging branch (`inspected` truthy/falsy). | Mirrors the already-cleared `trusted_expiry_dispatcher`-style workers pattern. |
-| 7 | `echoroo/services/h3_utils.py` | 110 | Likely pure geometry/index helper functions (H3 cell math) — good candidate for property-style unit tests once confirmed branch-free. | Verify no import-time GPU/model dependency before committing to full unit coverage. |
-| 8 | `echoroo/services/vernacular.py` | 109 | Locale-resolution helper; if it's mostly IN-query + dict construction (per MEMORY.md notes on vernacular resolution), it's DB-adjacent but the branch logic (locale fallback rules) can likely be isolated and unit-tested with a fake repository. | Cross-check with `services/vernacular.py` callers before scoping the test — some branches may need a DB fixture. |
-| 9 | `echoroo/scripts/initial_iucn_sync.py` | 107 | CLI script; the T998 runbook-smoke-test gate already exercises `--help`, so most of the CLI parsing path is proven — extending to cover the sync logic branches (with the IUCN client mocked) is incremental, not net-new test infra. | Runbook smoke gate (T998) already covers the entry point; this is "finish the job." |
+| 5 | `echoroo/workers/two_factor_tasks.py` | 62 | Single Celery task wrapping one service call; only needs `AsyncSessionLocal` and `run_dispatch_due_requests` mocked to exercise the summary-logging branch (`inspected` truthy/falsy). | Mirrors the already-cleared `trusted_expiry_dispatcher`-style workers pattern. |
+| 6 | `echoroo/services/h3_utils.py` | 110 | Likely pure geometry/index helper functions (H3 cell math) — good candidate for property-style unit tests once confirmed branch-free. | Verify no import-time GPU/model dependency before committing to full unit coverage. |
+| 7 | `echoroo/services/vernacular.py` | 109 | Locale-resolution helper; if it's mostly IN-query + dict construction (per MEMORY.md notes on vernacular resolution), it's DB-adjacent but the branch logic (locale fallback rules) can likely be isolated and unit-tested with a fake repository. | Cross-check with `services/vernacular.py` callers before scoping the test — some branches may need a DB fixture. |
+| 8 | `echoroo/scripts/initial_iucn_sync.py` | 107 | CLI script; the T998 runbook-smoke-test gate already exercises `--help`, so most of the CLI parsing path is proven — extending to cover the sync logic branches (with the IUCN client mocked) is incremental, not net-new test infra. | Runbook smoke gate (T998) already covers the entry point; this is "finish the job." |
+
+Note: `echoroo/services/captcha.py` was previously listed here as an easy
+candidate (small, few branches, no DB) but the captcha service was deleted
+entirely on main (PR #226) before this roadmap merged, so its
+`PHASE17_PENDING` entry and this row no longer apply.
 
 ## Not worth chasing yet
 

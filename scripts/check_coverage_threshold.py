@@ -458,11 +458,13 @@ PHASE17_PENDING: frozenset[str] = frozenset(
 #      this same change — see the NOTE comments above), the stale entry
 #      must be pruned from PHASE17_PENDING in the same PR.
 #
-# Baseline set at prune time (2026-07-06, W5-7): 114 entries. See
+# Baseline set at prune time (2026-07-06, W5-7): 114 entries, then
+# re-synced to 113 after merging main (PR #226 deleted the captcha service
+# entirely and removed its PHASE17_PENDING entry ahead of this branch). See
 # docs/coverage-debt-roadmap.md for a shrink-roadmap tracking which entries
 # are the cheapest to burn down next.
 # ---------------------------------------------------------------------------
-PHASE17_PENDING_BASELINE_COUNT = 114
+PHASE17_PENDING_BASELINE_COUNT = 113
 
 
 def _check_phase17_pending_invariants() -> list[str]:
