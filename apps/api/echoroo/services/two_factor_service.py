@@ -16,6 +16,7 @@ import os
 import secrets
 import string
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
@@ -288,9 +289,22 @@ def _verify_backup_hash(code: str, hashed: str) -> bool:
 class TwoFactorService:
     """Service-layer primitives for TOTP enrollment, verification, and reset."""
 
-    def __init__(self, db: AsyncSession, redis: Redis | _RedisRateLimiter | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        redis: Redis | _RedisRateLimiter | None = None,
+        *,
+        audit_log_factory: Callable[[AsyncSession], AuditLogService] | None = None,
+    ) -> None:
         self.db = db
         self.redis = redis
+        # Dependency-injection seam for tests. When ``None`` the module-level
+        # ``AuditLogService`` is resolved at call time (see
+        # ``_record_audit_event``) so existing monkeypatch-based tests keep
+        # working. An injected factory MUST build an ``AuditLogService`` on
+        # the FRESH session passed to it — the SERIALIZABLE upgrade has to be
+        # the first statement on the audit connection.
+        self._audit_log_factory = audit_log_factory
 
     async def begin_enrollment(self, user: User) -> TwoFactorEnrollmentArtifacts:
         """Generate TOTP secret and provisioning URI without persisting user 2FA state."""
@@ -683,7 +697,8 @@ class TwoFactorService:
     ) -> None:
         async with AsyncSessionLocal() as audit_session:
             try:
-                audit = AuditLogService(audit_session)
+                factory = self._audit_log_factory or AuditLogService
+                audit = factory(audit_session)
                 await audit.write_platform_event(
                     actor_user_id=actor_id,
                     action=action,
