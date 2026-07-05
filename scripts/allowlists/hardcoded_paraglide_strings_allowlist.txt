@@ -162,6 +162,17 @@ apps/web/src/lib/components/data/VisibilitySelector.svelte:Visibility:hardcoded-
 apps/web/src/lib/components/map/H3MapPicker.svelte:Resolution::hardcoded-ui-string
 apps/web/src/lib/components/map/H3MapPicker.svelte:Selected H3::hardcoded-ui-string
 apps/web/src/lib/components/models/ALRoundView.svelte:Score distribution:hardcoded-ui-string
+apps/web/src/lib/components/models/ApplyToDatasetDialog.svelte:Close dialog:hardcoded-ui-string
+apps/web/src/lib/components/models/ApplyToDatasetDialog.svelte:Dataset:hardcoded-ui-string
+apps/web/src/lib/components/models/ApplyToDatasetDialog.svelte:Loading...:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelDetailView.svelte:Continue in Search:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelDetailView.svelte:Internal Validation:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelDetailView.svelte:Origin::hardcoded-ui-string
+apps/web/src/lib/components/models/ModelDetailView.svelte:Polling for updates every 3 seconds...:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelDetailView.svelte:Source: Search Session:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelListView.svelte:Failed to load models. Please refresh the page.:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelListView.svelte:Go to Search:hardcoded-ui-string
+apps/web/src/lib/components/models/ModelListView.svelte:No trained models yet:hardcoded-ui-string
 apps/web/src/lib/components/models/ReviewTab.svelte:Seed sampling in progress...:hardcoded-ui-string
 apps/web/src/lib/components/models/ScoreHistogram.svelte:Score distribution:hardcoded-ui-string
 apps/web/src/lib/components/search/AddSourcePanel.svelte:Decoding audio...:hardcoded-ui-string
@@ -218,16 +229,6 @@ apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Member::hardcoded-u
 apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Show role descriptions:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/members/+page.svelte:Viewer::hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Close dialog:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Continue in Search:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Dataset:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Failed to load models. Please refresh the page.:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Go to Search:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Internal Validation:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Loading...:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:No trained models yet:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Origin::hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Polling for updates every 3 seconds...:hardcoded-ui-string
-apps/web/src/routes/(app)/projects/[id]/models/+page.svelte:Source: Search Session:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Audio filter settings:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Ch:hardcoded-ui-string
 apps/web/src/routes/(app)/projects/[id]/recordings/[recordingId]/+page.svelte:Download original file:hardcoded-ui-string

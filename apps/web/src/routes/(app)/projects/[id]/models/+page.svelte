@@ -16,7 +16,6 @@
    * Model creation has been moved to the Search page.
    */
 
-  import { onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { localizeHref } from '$lib/paraglide/runtime';
@@ -30,10 +29,10 @@
   } from '$lib/api/custom-models';
   import { fetchDatasets } from '$lib/api/datasets';
   import { toasts } from '$lib/stores/toast';
-  import type { CustomModel } from '$lib/types/custom-model';
-  import { getCustomModelStatusClass, getCustomModelStatusLabel } from '$lib/utils/statusFormatters';
-  import ReviewTab from '$lib/components/models/ReviewTab.svelte';
-  import RecentApplications from '$lib/components/models/RecentApplications.svelte';
+  import ModelListView from '$lib/components/models/ModelListView.svelte';
+  import ModelDetailView from '$lib/components/models/ModelDetailView.svelte';
+  import ApplyToDatasetDialog from '$lib/components/models/ApplyToDatasetDialog.svelte';
+  import { useModelPolling } from '$lib/components/models/useModelPolling.svelte';
 
   const projectId = $derived($page.params.id as string);
   const queryClient = useQueryClient();
@@ -73,24 +72,6 @@
   let applyError = $state<string | null>(null);
 
   // ============================================
-  // Training polling state
-  // ============================================
-
-  let pollingInterval = $state<ReturnType<typeof setInterval> | null>(null);
-  let polledModel = $state<CustomModel | null>(null);
-
-  function stopPolling() {
-    if (pollingInterval !== null) {
-      clearInterval(pollingInterval);
-      pollingInterval = null;
-    }
-  }
-
-  onDestroy(() => {
-    stopPolling();
-  });
-
-  // ============================================
   // Queries
   // ============================================
 
@@ -121,36 +102,24 @@
     })
   );
 
-  // Start polling when a model is training
-  $effect(() => {
-    const model = $detailQuery.data;
-    if (model?.status === 'training') {
-      if (pollingInterval === null) {
-        pollingInterval = setInterval(async () => {
-          try {
-            const updated = await getCustomModelStatus(projectId, model.id);
-            polledModel = updated;
-            if (updated.status !== 'training') {
-              stopPolling();
-              // Invalidate list + detail so both refresh
-              queryClient.invalidateQueries({ queryKey: ['custom-models', projectId] });
-              queryClient.invalidateQueries({
-                queryKey: ['custom-model', projectId, model.id],
-              });
-            }
-          } catch (err) {
-            console.warn('Model status polling error:', err);
-          }
-        }, 3000);
-      }
-    } else {
-      stopPolling();
-      polledModel = null;
-    }
+  // ============================================
+  // Training polling
+  // ============================================
+
+  const polling = useModelPolling({
+    projectId: () => projectId,
+    model: () => $detailQuery.data ?? null,
+    onComplete: (modelId) => {
+      // Invalidate list + detail so both refresh
+      queryClient.invalidateQueries({ queryKey: ['custom-models', projectId] });
+      queryClient.invalidateQueries({
+        queryKey: ['custom-model', projectId, modelId],
+      });
+    },
   });
 
   // Use polled data if available (fresher than TanStack cache during training)
-  const displayedModel = $derived(polledModel ?? $detailQuery.data ?? null);
+  const displayedModel = $derived(polling.polledModel ?? $detailQuery.data ?? null);
 
   // ============================================
   // Mutations
@@ -249,52 +218,13 @@
   }
 
   function handleBackToList() {
-    stopPolling();
-    polledModel = null;
+    polling.reset();
     selectedModelId = null;
     viewMode = 'list';
     const url = new URL(window.location.href);
     url.searchParams.delete('model');
     history.replaceState({}, '', url.toString());
   }
-
-  // ============================================
-  // Helpers
-  // ============================================
-
-  function statusLabel(status: string): string {
-    return getCustomModelStatusLabel(status, {
-      draft: m.models_status_draft,
-      training: m.models_status_training,
-      trained: m.models_status_trained,
-      deployed: m.models_status_deployed,
-      failed: m.models_status_failed,
-    });
-  }
-
-  function statusClasses(status: string): string {
-    return getCustomModelStatusClass(status);
-  }
-
-  function formatDuration(seconds: number): string {
-    if (seconds < 60) return `${Math.round(seconds)}s`;
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    return `${mins}m ${secs}s`;
-  }
-
-  function formatPercent(value: number): string {
-    return `${(value * 100).toFixed(1)}%`;
-  }
-
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  }
-
 </script>
 
 <svelte:head>
@@ -328,468 +258,34 @@
        Mode: list
   ==================================================== -->
   {#if viewMode === 'list'}
-    <div class="space-y-6">
-
-      <!-- Page header -->
-      <div class="flex items-start justify-between">
-        <div>
-          <h1 class="text-2xl font-bold text-stone-900">{m.models_title()}</h1>
-          <p class="mt-1 text-sm text-stone-500">{m.models_description()}</p>
-        </div>
-      </div>
-
-      <!-- Model list -->
-      {#if $modelsQuery.isLoading}
-        <div class="flex items-center gap-2 text-sm text-stone-400">
-          <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-          </svg>
-          {m.nav_loading()}
-        </div>
-
-      {:else if $modelsQuery.isError}
-        <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
-          Failed to load models. Please refresh the page.
-        </div>
-
-      {:else if $modelsQuery.data && $modelsQuery.data.models.length === 0}
-        <!-- Empty state: direct users to Search page for model creation -->
-        <div class="rounded-xl border-2 border-dashed border-stone-200 bg-surface-card p-12 text-center dark:border-stone-700">
-          <svg class="mx-auto h-12 w-12 text-stone-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-          <h2 class="mt-4 text-base font-semibold text-stone-700">No trained models yet</h2>
-          <p class="mt-1 text-sm text-stone-500">{m.models_empty_create_from_search()}</p>
-          <a
-            href={localizeHref(`/projects/${projectId}/search`)}
-            class="mt-6 inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-              <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            Go to Search
-          </a>
-        </div>
-
-      {:else if $modelsQuery.data}
-        <div class="space-y-3">
-          {#each $modelsQuery.data.models as model (model.id)}
-            <div
-              class="cursor-pointer rounded-xl border border-card bg-surface-card p-5 shadow-sm transition-shadow hover:shadow-md"
-              onclick={() => handleSelectModel(model.id)}
-              onkeydown={(e) => e.key === 'Enter' && handleSelectModel(model.id)}
-              role="button"
-              tabindex="0"
-            >
-              <div class="flex items-start justify-between gap-4">
-                <!-- Left: name + description + tags -->
-                <div class="min-w-0 flex-1">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <h2 class="text-base font-semibold text-stone-900">
-                      {model.name}
-                    </h2>
-                    <!-- Status badge -->
-                    <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium {statusClasses(model.status)}">
-                      {#if model.status === 'training'}
-                        <svg class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                        </svg>
-                      {/if}
-                      {statusLabel(model.status)}
-                    </span>
-                    <!-- Embedding model -->
-                    <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800">
-                      {model.embedding_model_name}
-                    </span>
-                  </div>
-
-                  {#if model.description}
-                    <p class="mt-1 text-sm text-stone-500 line-clamp-2">{model.description}</p>
-                  {/if}
-
-                  <p class="mt-1.5 text-xs text-stone-400">
-                    {m.models_created_at()} {formatDate(model.created_at)}
-                    {#if model.completed_at}
-                      &middot; {m.models_trained_at()} {formatDate(model.completed_at)}
-                    {/if}
-                  </p>
-                </div>
-
-                <!-- Right: action buttons -->
-                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-                <div class="flex shrink-0 items-center gap-2" onclick={(e) => e.stopPropagation()} role="group">
-                  {#if model.status === 'draft'}
-                    <!-- Draft: navigate to detail view with ReviewTab instead of direct train -->
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400 dark:hover:bg-primary-900/40"
-                      onclick={() => handleSelectModel(model.id)}
-                    >
-                      <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {m.models_review_and_train()}
-                    </button>
-                  {:else if model.status === 'failed'}
-                    <!-- Failed: allow quick retry train -->
-                    <button
-                      type="button"
-                      class="inline-flex items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 dark:border-primary-700 dark:bg-primary-900/20 dark:text-primary-400 dark:hover:bg-primary-900/40 disabled:opacity-50"
-                      onclick={() => handleTrain(model.id)}
-                      disabled={$trainMutationState.isPending}
-                    >
-                      <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {m.models_train()}
-                    </button>
-                  {/if}
-                  <button
-                    type="button"
-                    class="rounded-lg p-1.5 text-stone-400 transition-colors hover:bg-danger-light hover:text-danger"
-                    onclick={() => handleDeleteRequest(model.id)}
-                    aria-label={m.models_delete()}
-                  >
-                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    <ModelListView
+      {projectId}
+      isLoading={$modelsQuery.isLoading}
+      isError={$modelsQuery.isError}
+      models={$modelsQuery.data?.models}
+      trainPending={$trainMutationState.isPending}
+      onSelectModel={handleSelectModel}
+      onTrain={handleTrain}
+      onDeleteRequest={handleDeleteRequest}
+    />
 
   <!-- ====================================================
        Mode: detail
   ==================================================== -->
   {:else if viewMode === 'detail'}
-    <div class="space-y-6">
-      <!-- Back link -->
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 text-sm text-stone-500 transition-colors hover:text-stone-900 dark:hover:text-stone-100"
-        onclick={handleBackToList}
-      >
-        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M19 12H5M12 19l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        {m.models_back_to_list()}
-      </button>
-
-      {#if $detailQuery.isLoading && !displayedModel}
-        <div class="flex items-center gap-2 text-sm text-stone-400">
-          <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-          </svg>
-          {m.nav_loading()}
-        </div>
-
-      {:else if displayedModel}
-        {@const model = displayedModel}
-
-        <!-- Model header -->
-        <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-          <div class="flex items-start justify-between gap-4">
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-2">
-                <h1 class="text-2xl font-bold text-stone-900">{model.name}</h1>
-                <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium {statusClasses(model.status)}">
-                  {#if model.status === 'training'}
-                    <svg class="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                  {/if}
-                  {statusLabel(model.status)}
-                </span>
-              </div>
-
-              {#if model.description}
-                <p class="mt-2 text-sm text-stone-500">{model.description}</p>
-              {/if}
-
-              <dl class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-stone-400">
-                <div class="flex items-center gap-1">
-                  <dt class="font-medium">{m.models_embedding_model()}:</dt>
-                  <dd>{model.embedding_model_name}</dd>
-                </div>
-                <div class="flex items-center gap-1">
-                  <dt class="font-medium">{m.models_created_at()}:</dt>
-                  <dd>{formatDate(model.created_at)}</dd>
-                </div>
-                {#if model.completed_at}
-                  <div class="flex items-center gap-1">
-                    <dt class="font-medium">{m.models_trained_at()}:</dt>
-                    <dd>{formatDate(model.completed_at)}</dd>
-                  </div>
-                {/if}
-              </dl>
-            </div>
-
-            <!-- Actions -->
-            <div class="flex shrink-0 flex-wrap gap-2">
-              {#if model.status === 'trained' || model.status === 'deployed'}
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-2 rounded-lg border border-success/40 bg-success-light px-4 py-2 text-sm font-medium text-success transition-colors hover:bg-success/20"
-                  onclick={openApplyDialog}
-                >
-                  <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  {m.models_apply()}
-                </button>
-              {/if}
-              {#if model.status === 'failed'}
-                <button
-                  type="button"
-                  class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-                  onclick={() => handleTrain(model.id)}
-                  disabled={$trainMutationState.isPending}
-                >
-                  {#if $trainMutationState.isPending && $trainMutationState.variables === model.id}
-                    <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                    </svg>
-                    {m.models_training()}
-                  {:else}
-                    {m.models_train()}
-                  {/if}
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="inline-flex items-center gap-2 rounded-lg border border-danger/40 px-4 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger-light"
-                onclick={() => handleDeleteRequest(model.id)}
-              >
-                {m.models_delete()}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Source session links (only shown when search_session_id is set) -->
-        {#if model.search_session_id}
-          <div class="flex flex-wrap gap-3 rounded-lg border border-stone-200 bg-stone-50 px-4 py-3 dark:border-stone-700 dark:bg-stone-800/40">
-            <span class="text-xs font-medium text-stone-500 self-center">Origin:</span>
-            <a
-              href={localizeHref(`/projects/${projectId}/search?session=${model.search_session_id}`)}
-              class="inline-flex items-center gap-1.5 text-sm text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-            >
-              <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              Source: Search Session
-            </a>
-            {#if model.status === 'draft' || model.status === 'training' || model.status === 'failed'}
-              <span class="text-stone-300 dark:text-stone-600 self-center">|</span>
-              <a
-                href={localizeHref(`/projects/${projectId}/search?session=${model.search_session_id}`)}
-                class="inline-flex items-center gap-1.5 text-sm text-warning hover:opacity-80"
-              >
-                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-                Continue in Search
-              </a>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Training in progress notice -->
-        {#if model.status === 'training'}
-          <div class="flex items-center gap-3 rounded-lg border border-warning/20 bg-warning-light p-4 text-sm text-warning">
-            <svg class="h-4 w-4 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            <span>{m.models_status_training()} Polling for updates every 3 seconds...</span>
-          </div>
-        {/if}
-
-        <!-- Error message -->
-        {#if model.error_message}
-          <div class="rounded-lg border border-danger/30 bg-danger-light p-4 text-sm text-danger">
-            <span class="font-medium">{m.models_error_prefix()}</span> {model.error_message}
-          </div>
-        {/if}
-
-        <!-- Recent Applications: show progress/history of Apply-to-Dataset jobs.
-             Only relevant once the model is trainable/trained (trained/deployed),
-             since Apply is only enabled in those states. -->
-        {#if model.status === 'trained' || model.status === 'deployed'}
-          <RecentApplications {projectId} modelId={model.id} />
-        {/if}
-
-        <!-- Review & Labeling section (draft/failed/trained models).
-             For trained models, the user can continue the active-learning loop:
-             label more samples from new AL rounds, then retrain to improve. -->
-        {#if model.status === 'draft' || model.status === 'failed' || model.status === 'trained'}
-          <div class="rounded-xl border border-card bg-surface-card p-5 shadow-sm">
-            <h2 class="mb-4 text-base font-semibold text-stone-800 dark:text-stone-200">
-              {m.models_review_and_labeling()}
-            </h2>
-            {#if model.status === 'trained'}
-              <p class="mb-4 text-xs text-stone-500 dark:text-stone-400">
-                {m.models_trained_continue_al_hint()}
-              </p>
-            {/if}
-            <ReviewTab
-              {projectId}
-              modelId={model.id}
-              isTrained={model.status === 'trained'}
-              onTrainRequest={() => {
-                queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, model.id] });
-              }}
-            />
-          </div>
-        {/if}
-
-        <!-- Metrics (only shown when trained) -->
-        {#if model.metrics}
-          {@const metrics = model.metrics}
-          <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-            <div class="mb-5 flex flex-wrap items-center gap-2">
-              <h2 class="text-sm font-semibold uppercase tracking-wider text-stone-500">
-                Internal Validation
-              </h2>
-              {#if metrics.cv_method}
-                <span class="rounded-full bg-stone-100 px-2 py-0.5 text-xs text-stone-500 dark:bg-stone-800">
-                  {metrics.cv_method}
-                </span>
-              {/if}
-            </div>
-
-            {#if metrics.cv_warning}
-              <div class="mb-4 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning-light p-3 text-xs text-warning">
-                <svg class="mt-0.5 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                </svg>
-                {metrics.cv_warning}
-              </div>
-            {/if}
-
-            <!-- Primary metric bars -->
-            <div class="space-y-4">
-              {#each [
-                { label: m.models_metrics_f1(), value: metrics.f1 },
-                { label: m.models_metrics_auc_roc(), value: metrics.roc_auc },
-                { label: m.models_metrics_pr_auc(), value: metrics.pr_auc },
-                { label: m.models_metrics_accuracy(), value: metrics.accuracy },
-                { label: m.models_metrics_precision(), value: metrics.precision },
-                { label: m.models_metrics_recall(), value: metrics.recall },
-              ] as metric}
-                <div>
-                  <div class="mb-1 flex items-center justify-between text-sm">
-                    <span class="font-medium text-stone-700">{metric.label}</span>
-                    <span class="font-mono text-stone-900">{formatPercent(metric.value as number)}</span>
-                  </div>
-                  <div class="h-2 w-full overflow-hidden rounded-full bg-stone-100 dark:bg-stone-800">
-                    <div
-                      class="h-full rounded-full bg-primary-500 transition-all"
-                      style="width: {((metric.value as number) * 100).toFixed(1)}%"
-                    ></div>
-                  </div>
-                </div>
-              {/each}
-            </div>
-          </div>
-
-          <!-- Confusion matrix + hyperparameters -->
-          <div class="grid gap-4 sm:grid-cols-2">
-            <!-- Confusion matrix -->
-            <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
-                {m.models_detail_confusion_matrix()}
-              </h2>
-              {#if metrics.confusion_matrix}
-                {@const [[tn, fp], [fn, tp]] = metrics.confusion_matrix}
-                <div class="grid grid-cols-2 gap-2 text-center text-sm">
-                  <div class="rounded-lg bg-success-light p-3">
-                    <p class="text-xs font-medium text-success">{m.models_detail_true_positive()}</p>
-                    <p class="mt-1 text-xl font-bold text-success">{tp}</p>
-                  </div>
-                  <div class="rounded-lg bg-danger-light p-3">
-                    <p class="text-xs font-medium text-danger">{m.models_detail_false_positive()}</p>
-                    <p class="mt-1 text-xl font-bold text-danger">{fp}</p>
-                  </div>
-                  <div class="rounded-lg bg-danger-light p-3">
-                    <p class="text-xs font-medium text-danger">{m.models_detail_false_negative()}</p>
-                    <p class="mt-1 text-xl font-bold text-danger">{fn}</p>
-                  </div>
-                  <div class="rounded-lg bg-success-light p-3">
-                    <p class="text-xs font-medium text-success">{m.models_detail_true_negative()}</p>
-                    <p class="mt-1 text-xl font-bold text-success">{tn}</p>
-                  </div>
-                </div>
-              {/if}
-            </div>
-
-            <!-- Hyperparameters -->
-            <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-              <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
-                {m.models_detail_hyperparameters()}
-              </h2>
-              <dl class="space-y-2 text-sm">
-                {#if model.hyperparameters?.best_c !== undefined}
-                  <div class="flex items-center justify-between">
-                    <dt class="text-stone-500">{m.models_detail_best_c()}</dt>
-                    <dd class="font-mono font-semibold text-stone-900">{model.hyperparameters.best_c}</dd>
-                  </div>
-                {/if}
-              </dl>
-              {#if model.hyperparameters}
-                {#each Object.entries(model.hyperparameters).filter(([k]) => k !== 'best_c') as [key, value]}
-                  <dl class="mt-2 space-y-2 text-sm">
-                    <div class="flex items-center justify-between">
-                      <dt class="text-stone-500">{key}</dt>
-                      <dd class="font-mono font-semibold text-stone-900">{String(value)}</dd>
-                    </div>
-                  </dl>
-                {/each}
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <!-- Training stats -->
-        {#if model.training_stats}
-          {@const stats = model.training_stats}
-          <div class="rounded-xl border border-card bg-surface-card p-6 shadow-sm">
-            <h2 class="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
-              {m.models_detail_training_stats()}
-            </h2>
-            <div class="flex flex-wrap gap-6">
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_positive()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.positive_count.toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_negative()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.negative_count.toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_unlabeled()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900">{stats.unlabeled_count.toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs font-medium uppercase tracking-wider text-stone-400">{m.models_detail_duration()}</p>
-                <p class="mt-1 text-2xl font-bold text-stone-900">{formatDuration(stats.training_duration_s)}</p>
-              </div>
-            </div>
-          </div>
-        {/if}
-      {/if}
-    </div>
+    <ModelDetailView
+      {projectId}
+      model={displayedModel}
+      detailLoading={$detailQuery.isLoading}
+      trainPending={$trainMutationState.isPending}
+      trainVariables={$trainMutationState.variables}
+      onBackToList={handleBackToList}
+      onApply={openApplyDialog}
+      onTrain={handleTrain}
+      onDeleteRequest={handleDeleteRequest}
+      onReviewTrainRequest={(id) =>
+        queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, id] })}
+    />
   {/if}
 
 </div>
@@ -798,112 +294,16 @@
      Apply to Dataset Dialog
 ==================================================== -->
 {#if showApplyDialog}
-  <!-- Backdrop -->
-  <div
-    class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
-    onclick={closeApplyDialog}
-    onkeydown={(e) => e.key === 'Escape' && closeApplyDialog()}
-    role="button"
-    tabindex="-1"
-    aria-label="Close dialog"
-  ></div>
-
-  <!-- Dialog panel -->
-  <div
-    class="fixed inset-x-0 bottom-0 z-50 mx-auto max-w-lg rounded-t-2xl border border-card bg-surface-card p-6 shadow-2xl sm:inset-x-auto sm:left-1/2 sm:top-1/2 sm:w-full sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:p-8"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="apply-dialog-title"
-  >
-    <div class="mb-6">
-      <h2 id="apply-dialog-title" class="text-lg font-semibold text-stone-900">
-        {m.models_apply()}
-      </h2>
-      <p class="mt-1 text-sm text-stone-500">
-        {m.models_apply_description()}
-      </p>
-    </div>
-
-    <form
-      class="space-y-5"
-      onsubmit={(e) => { e.preventDefault(); handleApply(); }}
-    >
-      <!-- Dataset selector -->
-      <div>
-        <label for="apply-dataset" class="block text-sm font-medium text-stone-700">
-          Dataset <span class="text-danger">*</span>
-        </label>
-        <select
-          id="apply-dataset"
-          bind:value={applyDatasetId}
-          class="mt-1.5 block w-full rounded-lg border border-stone-300 bg-surface-card px-3 py-2 text-sm text-stone-900 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500 dark:border-stone-600"
-        >
-          <option value="">— Select a dataset —</option>
-          {#if $datasetsQuery.isLoading}
-            <option disabled>Loading...</option>
-          {:else if $datasetsQuery.data}
-            {#each $datasetsQuery.data.items as dataset (dataset.id)}
-              <option value={dataset.id}>{dataset.name}</option>
-            {/each}
-          {/if}
-        </select>
-      </div>
-
-      <!-- Threshold slider -->
-      <div>
-        <label for="apply-threshold" class="block text-sm font-medium text-stone-700">
-          {m.models_apply_threshold()}
-          <span class="ml-2 font-mono text-primary-600 dark:text-primary-400">{applyThreshold.toFixed(2)}</span>
-        </label>
-        <input
-          id="apply-threshold"
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
-          bind:value={applyThreshold}
-          class="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-stone-200 accent-primary-500 dark:bg-stone-700"
-        />
-        <div class="mt-1 flex justify-between text-xs text-stone-400">
-          <span>0</span>
-          <span>0.5</span>
-          <span>1</span>
-        </div>
-      </div>
-
-      <!-- Error message -->
-      {#if applyError}
-        <p class="text-sm text-danger">{applyError}</p>
-      {/if}
-
-      <!-- Footer buttons -->
-      <div class="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          class="rounded-lg border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 dark:border-stone-600 dark:hover:bg-stone-800"
-          onclick={closeApplyDialog}
-          disabled={$applyMutationState.isPending}
-        >
-          {m.models_cancel()}
-        </button>
-        <button
-          type="submit"
-          class="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
-          disabled={$applyMutationState.isPending}
-        >
-          {#if $applyMutationState.isPending}
-            <svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-            {m.models_applying()}
-          {:else}
-            {m.models_apply()}
-          {/if}
-        </button>
-      </div>
-    </form>
-  </div>
+  <ApplyToDatasetDialog
+    datasetsLoading={$datasetsQuery.isLoading}
+    datasets={$datasetsQuery.data?.items}
+    bind:applyDatasetId
+    bind:applyThreshold
+    {applyError}
+    pending={$applyMutationState.isPending}
+    onClose={closeApplyDialog}
+    onSubmit={handleApply}
+  />
 {/if}
 
 <!-- ====================================================
