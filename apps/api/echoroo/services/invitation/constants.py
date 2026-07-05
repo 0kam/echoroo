@@ -35,6 +35,12 @@ RATE_LIMIT_ACTOR_PER_HOUR: int = 50
 RATE_LIMIT_PROJECT_PER_HOUR: int = 200
 _RATE_LIMIT_WINDOW_SECONDS: int = 3600
 
+#: FR-056 Redis key prefixes for the fixed-window rate counters. Kept here
+#: (the single source of truth) so the literal strings never re-appear in
+#: the rate-limit helper as inline f-strings.
+RATE_LIMIT_ACTOR_KEY_PREFIX: str = "invitation_rate:actor:"
+RATE_LIMIT_PROJECT_KEY_PREFIX: str = "invitation_rate:project:"
+
 #: FR-053 idempotency: cached accept outcomes live for 24 h. Same key,
 #: same token -> 200 dedupe; same key, different token -> 409 conflict.
 _IDEMPOTENCY_TTL_SECONDS: int = 24 * 3600

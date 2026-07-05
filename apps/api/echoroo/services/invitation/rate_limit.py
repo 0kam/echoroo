@@ -14,9 +14,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from .constants import (
-    RATE_LIMIT_ACTOR_PER_HOUR,
-    RATE_LIMIT_PROJECT_PER_HOUR,
     _RATE_LIMIT_WINDOW_SECONDS,
+    RATE_LIMIT_ACTOR_KEY_PREFIX,
+    RATE_LIMIT_ACTOR_PER_HOUR,
+    RATE_LIMIT_PROJECT_KEY_PREFIX,
+    RATE_LIMIT_PROJECT_PER_HOUR,
 )
 from .errors import InvitationInfraUnavailableError, InvitationRateLimitError
 
@@ -42,8 +44,8 @@ async def check_rate_limits(
     unreachable Redis surfaces as :class:`InvitationInfraUnavailableError`
     so the issuer cannot bypass the cap by waiting out an outage.
     """
-    actor_key = f"invitation_rate:actor:{actor_user_id}"
-    project_key = f"invitation_rate:project:{project_id}"
+    actor_key = f"{RATE_LIMIT_ACTOR_KEY_PREFIX}{actor_user_id}"
+    project_key = f"{RATE_LIMIT_PROJECT_KEY_PREFIX}{project_id}"
 
     try:
         actor_count = await redis.incr(actor_key)
