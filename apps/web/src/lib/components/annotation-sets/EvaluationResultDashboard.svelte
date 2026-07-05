@@ -57,7 +57,7 @@
   const customModelsQuery = $derived(
     createQuery({
       queryKey: ['custom-models-name-lookup', projectId],
-      queryFn: () => fetchCustomModels(projectId, { limit: 500 }),
+      queryFn: () => fetchCustomModels(projectId, { limit: 200 }),
       refetchOnWindowFocus: false,
     }),
   );
