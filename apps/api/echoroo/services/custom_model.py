@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.detection_run import DetectionRun
 from echoroo.models.enums import DetectionRunStatus
@@ -109,6 +110,10 @@ class CustomModelService:
         Returns:
             Tuple of (models list, total count)
         """
+        # Clamp the client-controlled limit to MAX_PAGE_SIZE so a caller cannot
+        # force an unbounded SQL query regardless of the entry point.
+        limit = min(max(limit, 1), MAX_PAGE_SIZE)
+        offset = max(offset, 0)
         return await self._repo.list_for_project(
             project_id=project_id,
             limit=limit,

@@ -61,6 +61,7 @@ from echoroo.core.actions import (
     CUSTOM_MODEL_TRAIN_ACTION,
 )
 from echoroo.core.database import DbSession
+from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.custom_model import (
@@ -92,8 +93,8 @@ async def list_custom_models(
     current_user: CurrentUser,
     db: DbSession,
     service: legacy_custom_models.CustomModelServiceDep,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
     tag_id: UUID | None = None,
     search_session_id: UUID | None = Query(
         default=None, description="Filter by source search session"

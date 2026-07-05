@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
+from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.models.clip import Clip
 from echoroo.repositories.base import BaseRepository
 
@@ -84,8 +85,11 @@ class ClipRepository(BaseRepository[Clip]):
         else:
             query = query.order_by(sort_column.desc())
 
-        # Apply pagination
-        offset = (page - 1) * page_size
+        # Apply pagination. Clamp the client-controlled page_size to
+        # MAX_PAGE_SIZE so a caller cannot force an unbounded SQL query
+        # regardless of the entry point (v1 helper, BFF delegate, or internal).
+        page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
+        offset = (max(page, 1) - 1) * page_size
         query = query.offset(offset).limit(page_size)
 
         result = await self.db.execute(query)
