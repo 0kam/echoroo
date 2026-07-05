@@ -1449,6 +1449,7 @@
   "search_xc_loading": "検索中...",
   "search_xc_page_info": "{total}ページ中{page}ページ",
   "search_xc_listen": "Xeno-cantoで聴く",
+  "search_license_label": "ライセンス",
   "search_origin_xc": "Xeno-canto",
   "search_source_s3": "保存済み",
   "search_rerun": "再検索",

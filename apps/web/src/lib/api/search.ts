@@ -224,6 +224,11 @@ export async function searchBatch(
         source_url: src.source_url ?? null,
         start_time: src.start_time ?? null,
         end_time: src.end_time ?? null,
+        // Xeno-canto attribution metadata (CC compliance): persisted with the
+        // session so the license + recordist can be shown on reconstruction.
+        xc_id: src.xc_id ?? null,
+        recordist: src.recordist ?? null,
+        license: src.license ?? null,
       };
     }),
   }));
@@ -446,6 +451,11 @@ export async function rerunSearchSession(
         source_url: src.source_url ?? null,
         start_time: src.start_time ?? null,
         end_time: src.end_time ?? null,
+        // Xeno-canto attribution metadata (CC compliance): persisted with the
+        // session so the license + recordist can be shown on reconstruction.
+        xc_id: src.xc_id ?? null,
+        recordist: src.recordist ?? null,
+        license: src.license ?? null,
       };
     }),
   }));

@@ -161,6 +161,11 @@ export function useSessionReconstruction(
                   label: resolvedXcId ? `XC${resolvedXcId}` : (sourceUrl ?? 'URL source'),
                   source_url: sourceUrl,
                   xc_id: resolvedXcId,
+                  // Xeno-canto attribution metadata (CC compliance). Persisted
+                  // sessions created before W5-1 lack these fields; they stay
+                  // undefined and the caption renders nothing (conditional).
+                  recordist: src['recordist'] as string | undefined,
+                  license: src['license'] as string | undefined,
                   start_time: src['start_time'] as number | undefined,
                   end_time: src['end_time'] as number | undefined,
                 });
