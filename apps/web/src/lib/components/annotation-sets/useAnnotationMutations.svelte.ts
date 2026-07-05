@@ -88,6 +88,9 @@ export function useAnnotationMutations(
   }
 
   const createAnnotationMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (args: CreateArgs) =>
       createAnnotation(input.projectId(), args.capturedSegmentId, args.body),
     onSuccess: (annotation: TimeRangeAnnotation, args: CreateArgs) => {
@@ -112,6 +115,9 @@ export function useAnnotationMutations(
   });
 
   const updateAnnotationSpeciesMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (args: { id: string; speciesId: string }) =>
       updateAnnotation(input.projectId(), args.id, { species_id: args.speciesId }),
     onSuccess: () => {
@@ -137,6 +143,9 @@ export function useAnnotationMutations(
   }
 
   const deleteAnnotationMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (args: DeleteArgs) => deleteAnnotation(input.projectId(), args.id),
     onSuccess: (_result, args: DeleteArgs) => {
       if (disposed) return;
@@ -158,6 +167,9 @@ export function useAnnotationMutations(
   });
 
   const updateSegmentMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (body: {
       status?: AnnotationSegmentDetail['status'];
       is_empty?: boolean;
@@ -180,6 +192,9 @@ export function useAnnotationMutations(
   });
 
   const addPaletteMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (speciesId: string) =>
       addPalette(input.projectId(), input.setId(), { species_id: speciesId }),
     onSuccess: () => {
@@ -195,6 +210,9 @@ export function useAnnotationMutations(
   });
 
   const createSegmentNoteMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (body: { content: string; is_issue: boolean }) =>
       createSegmentNote(input.projectId(), input.segmentId(), body),
     onSuccess: () => {
@@ -211,6 +229,9 @@ export function useAnnotationMutations(
   });
 
   const createAnnotationNoteMutation = createMutation({
+    // Surfaces its own toast error in `onError`; opt out of the
+    // global generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     mutationFn: (args: {
       annotationId: string;
       content: string;

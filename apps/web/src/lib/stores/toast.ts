@@ -1,5 +1,7 @@
 import { writable } from 'svelte/store';
 import { generateId } from '$lib/utils/id';
+import { ApiError } from '$lib/api/client';
+import * as m from '$lib/paraglide/messages';
 
 export interface Toast {
   id: string;
@@ -43,3 +45,29 @@ function createToastStore() {
 }
 
 export const toasts = createToastStore();
+
+/**
+ * Surface an error as a toast, unwrapping an `ApiError` when present.
+ *
+ * Message resolution order:
+ *   1. `ApiError.detail` (the backend's human-readable detail string)
+ *   2. `ApiError.message` (or a plain `Error.message`)
+ *   3. `fallbackMessage`
+ *   4. the generic `error_action_generic` i18n string
+ *
+ * Used as the default handler for the global `MutationCache.onError`
+ * fallback (see `$lib/api/query-client`) so any mutation that does not
+ * opt out via `meta: { suppressErrorToast: true }` still gives the user
+ * feedback when it fails.
+ */
+export function toastError(err: unknown, fallbackMessage?: string): void {
+  let message: string | undefined;
+
+  if (err instanceof ApiError) {
+    message = err.detail || err.message || undefined;
+  } else if (err instanceof Error) {
+    message = err.message || undefined;
+  }
+
+  toasts.error(message ?? fallbackMessage ?? m.error_action_generic());
+}

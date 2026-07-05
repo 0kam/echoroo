@@ -69,6 +69,9 @@
   // ---- Mutation
   const createMutationState = createMutation({
     mutationFn: (body: AnnotationSetCreate) => createAnnotationSet(body),
+    // Surfaces its own inline error via `submitError`; opt out of the
+    // global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (created) => {
       toasts.success('Annotation set created.');
       void goto(localizeHref(`/projects/${projectId}/annotation-sets/${created.id}`));

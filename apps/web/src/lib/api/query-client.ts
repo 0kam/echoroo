@@ -43,8 +43,20 @@ import {
 } from '@tanstack/svelte-query';
 import { goto } from '$app/navigation';
 import { localizeHref } from '$lib/paraglide/runtime';
-import { toasts } from '$lib/stores/toast';
+import { toasts, toastError } from '$lib/stores/toast';
 import { ApiError } from './client';
+
+/**
+ * Per-mutation meta options recognised by the global
+ * `MutationCache.onError` fallback below.
+ *
+ * `suppressErrorToast`: opt out of the generic error toast when the
+ * mutation already surfaces its own inline / toast feedback in a local
+ * `onError` handler, so the user does not get double feedback.
+ */
+interface MutationErrorMeta {
+  suppressErrorToast?: boolean;
+}
 
 /**
  * Dedupe key used when a 403 has no associated project (account-level
@@ -270,18 +282,28 @@ export const queryClient: QueryClient = new QueryClient({
   }),
   mutationCache: new MutationCache({
     onError: (error, _variables, _context, mutation) => {
-      if (!is403(error)) return;
-      _handle403(
-        mutation.options.meta as Record<string, unknown> | undefined,
-        {
-          kind: 'mutation',
-          url: urlFromError(
-            error,
-            mutation.options.meta as Record<string, unknown> | undefined,
-          ),
-        },
-        queryClient,
-      );
+      if (is403(error)) {
+        _handle403(
+          mutation.options.meta as Record<string, unknown> | undefined,
+          {
+            kind: 'mutation',
+            url: urlFromError(
+              error,
+              mutation.options.meta as Record<string, unknown> | undefined,
+            ),
+          },
+          queryClient,
+        );
+        return;
+      }
+
+      // Generic fallback for non-403 mutation failures: surface a toast
+      // so the user always gets feedback, UNLESS the mutation opts out
+      // via `meta: { suppressErrorToast: true }` because it already
+      // renders its own inline / toast error.
+      const meta = mutation.options.meta as MutationErrorMeta | undefined;
+      if (meta?.suppressErrorToast) return;
+      toastError(error);
     },
   }),
 });

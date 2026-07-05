@@ -41,8 +41,10 @@
 
   const startImportMutation = createMutation({
     mutationFn: () => startImport(projectId, datasetId),
+    // Surfaces its own inline error via `mutationError`; opt out of the
+    // global generic error toast to avoid double feedback.
     // eslint-disable-next-line svelte/valid-compile
-    meta: { projectId },
+    meta: { projectId, suppressErrorToast: true },
     onSuccess: () => {
       mutationError = null;
       queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });

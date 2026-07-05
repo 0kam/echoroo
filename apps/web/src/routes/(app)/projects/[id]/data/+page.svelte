@@ -94,6 +94,9 @@
 
   const datasetDeleteMutation = createMutation({
     mutationFn: (datasetId: string) => deleteDataset(projectId, datasetId),
+    // Surfaces its own inline error via `datasetDeleteError`; opt out of
+    // the global generic error toast to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['datasets', projectId] });
       datasetToDelete = null;

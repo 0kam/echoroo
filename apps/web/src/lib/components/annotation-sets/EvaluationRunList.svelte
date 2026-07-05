@@ -81,6 +81,9 @@
 
   const deleteMutation = createMutation({
     mutationFn: (id: string) => deleteEvaluationRun(projectId, id),
+    // Surfaces its own toast error in `onError`; opt out of the global
+    // generic error-toast fallback to avoid double feedback.
+    meta: { suppressErrorToast: true },
     onSuccess: (_, id) => {
       if (expandedId === id) expandedId = null;
       deletingId = null;
