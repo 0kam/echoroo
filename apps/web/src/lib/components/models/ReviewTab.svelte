@@ -22,6 +22,7 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { toastError } from '$lib/stores/toast';
   import { untrack } from 'svelte';
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { getSamplingRounds, getSamplingRound, suggestNextSamples, trainCustomModel } from '$lib/api/custom-models';
@@ -147,6 +148,11 @@
       roundDetailCache = { ...roundDetailCache, [roundId]: detail };
     } catch (err) {
       console.error('Failed to fetch round detail:', err);
+      // Only surface foreground loads; silent background refreshes stay quiet
+      // to avoid a toast on every transient poll failure.
+      if (!silent) {
+        toastError(err, m.round_detail_load_failed());
+      }
     } finally {
       if (!silent) {
         roundDetailLoading = new Set([...roundDetailLoading].filter((id) => id !== roundId));
@@ -267,6 +273,7 @@
       });
     } catch (err) {
       console.error('Failed to start training:', err);
+      toastError(err, m.training_start_failed());
     }
     // Notify parent after all invalidations so it can react to updated state
     onTrainRequest();

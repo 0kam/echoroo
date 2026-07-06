@@ -6,6 +6,7 @@
    */
 
   import * as m from '$lib/paraglide/messages';
+  import { toastError } from '$lib/stores/toast';
   import { exportSearchSessionCSV } from '$lib/api/search';
 
   interface Props {
@@ -24,6 +25,7 @@
       await exportSearchSessionCSV(projectId, sessionId);
     } catch (e) {
       console.error('Export failed:', e);
+      toastError(e, m.search_export_failed());
     } finally {
       isExporting = false;
     }

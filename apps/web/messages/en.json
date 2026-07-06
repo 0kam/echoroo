@@ -2571,5 +2571,18 @@
   "hspec_y_maps_polygon_aria_unlabeled": "Coarse detection area",
   "hspec_y_maps_focus_dot_aria_labeled": "Activate area for {label} ({tier})",
   "hspec_y_maps_focus_dot_aria_unlabeled": "Activate {tier}",
-  "hspec_y_maps_focus_dot_tooltip": "Activate area"
+  "hspec_y_maps_focus_dot_tooltip": "Activate area",
+
+  "models_detail_load_failed": "Failed to load model details.",
+  "models_polling_stopped": "Lost connection while checking training progress. Please refresh to see the latest status.",
+  "job_stalled_hint": "This job has been running for a while and may be stalled. You can cancel and retry if it does not finish.",
+  "vote_failed": "Failed to submit your vote.",
+  "vote_remove_failed": "Failed to remove your vote.",
+  "round_detail_load_failed": "Failed to load round details.",
+  "training_start_failed": "Failed to start training.",
+  "search_sessions_load_failed": "Failed to load search sessions.",
+  "search_session_delete_failed": "Failed to delete the search session.",
+  "search_recordings_export_failed": "Failed to export recordings.",
+  "search_export_failed": "Failed to export the search session.",
+  "search_job_polling_stopped": "Lost connection while checking search progress. Please try again."
 }
