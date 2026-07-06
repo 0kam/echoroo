@@ -20,13 +20,17 @@ Echoroo is built for wildlife surveyors — NPOs, local governments, and researc
 
 *Detection review — verify BirdNET detections at a glance from a spectrogram grid, voting Agree/Disagree on each clip.*
 
+![New Search screen browsing Xeno-canto recordings of Barn Swallow, with waveform thumbnails, recordist attribution, and CC license labels](docs/images/search-reference-sounds.png)
+
+*Sound search — build a similarity search from reference sounds fetched directly from Xeno-canto, with recordist attribution and CC licenses shown in-app.*
+
 ![Recording viewer with an interactive spectrogram, playback controls, and zoom/pan navigation](docs/images/recording-viewer.png)
 
 *Recording viewer — explore a full recording with an interactive spectrogram, audio playback, and zoom/pan controls.*
 
-![Detections overview listing per-species detection counts and confidence for a BirdNET run](docs/images/detections-overview.png)
+![Activity patterns view showing per-species 24-hour circular charts of detections per hour for a BirdNET run](docs/images/activity-patterns.png)
 
-*Detections overview — per-species summary of a BirdNET run, showing counts and review progress for each species.*
+*Activity patterns — per-species diel (24-hour) activity charts summarizing when each species was detected across a BirdNET run.*
 
 ## Quick Start
 
