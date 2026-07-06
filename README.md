@@ -14,6 +14,20 @@ Echoroo is built for wildlife surveyors — NPOs, local governments, and researc
 - **Exports** — detection CSVs for survey reports, and ML-ready training datasets (positive + negative clips with metadata).
 - **Data management** — projects, sites (H3 map cells), datasets, and recordings, with roles, permissions, and cross-project sharing of verified detections.
 
+## Screenshots
+
+![Detection review screen showing a grid of spectrogram thumbnails with Agree/Disagree voting buttons](docs/images/detection-review.png)
+
+*Detection review — verify BirdNET detections at a glance from a spectrogram grid, voting Agree/Disagree on each clip.*
+
+![Recording viewer with an interactive spectrogram, playback controls, and zoom/pan navigation](docs/images/recording-viewer.png)
+
+*Recording viewer — explore a full recording with an interactive spectrogram, audio playback, and zoom/pan controls.*
+
+![Detections overview listing per-species detection counts and confidence for a BirdNET run](docs/images/detections-overview.png)
+
+*Detections overview — per-species summary of a BirdNET run, showing counts and review progress for each species.*
+
 ## Quick Start
 
 `./echoroo.sh` is **the supported install and management path** for Echoroo. It runs the full stack (PostgreSQL + pgvector, Redis, LocalStack, backend, frontend, Celery ML workers) with Docker.
