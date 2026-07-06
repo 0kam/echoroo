@@ -2,11 +2,23 @@
 
 Echoroo is an open-source, web-based ecoacoustic platform. Integrated with state-of-the-art AI, Echoroo enables fast and efficient analysis, search, and development of new models for acoustic data.
 
+Echoroo is built for wildlife surveyors — NPOs, local governments, and researchers — who collect field recordings with autonomous recorders (e.g. AudioMoth) and want to know *which species were present, where, and when*, without being experts in bioacoustics or machine learning. See [VISION.md](VISION.md) for the full product vision.
+
+## Features
+
+- **ML-first workflow** — recordings are automatically analyzed on import (BirdNET species detection + Perch acoustic embeddings); users review ML results instead of annotating from scratch.
+- **Detection review** — species-list and card-based review UIs with spectrograms; confirm, reject, or re-label detections with precise time ranges.
+- **Similarity search** — find species not covered by BirdNET (mammals, amphibians, insects, rare species) by searching the whole dataset with Perch embeddings and pgvector.
+- **Sampling review** — review random time segments to build negative data and quality-check ML results; "nothing found" is recorded distinctly from "not yet reviewed".
+- **Traceability** — every detection carries its origin: model name, version, confidence, and human verification status.
+- **Exports** — detection CSVs for survey reports, and ML-ready training datasets (positive + negative clips with metadata).
+- **Data management** — projects, sites (H3 map cells), datasets, and recordings, with roles, permissions, and cross-project sharing of verified detections.
+
 ## Quick Start
 
-### Docker (Recommended)
+`./echoroo.sh` is **the supported install and management path** for Echoroo. It runs the full stack (PostgreSQL + pgvector, Redis, LocalStack, backend, frontend, Celery ML workers) with Docker.
 
-The easiest way to get started with Echoroo:
+**Prerequisites:** [Docker](https://docs.docker.com/get-docker/) 24.0+ with [Docker Compose](https://docs.docker.com/compose/install/) 2.0+.
 
 ```bash
 # Clone the repository
@@ -35,85 +47,40 @@ Then open http://localhost:5173 in your browser.
 If `.env` is missing, `install` creates it from `.env.example` and exits
 non-zero so you can edit the required values before starting.
 
-See [DOCKER.md](DOCKER.md) for detailed Docker instructions.
+### Everyday commands
 
-### Local Development (Without Docker)
-
-For development without Docker:
-
-```bash
-# Start PostgreSQL (required)
-# See CONFIGURATION.md for database setup options
-
-# Start backend (Terminal 1)
-cd apps/api && uv run uvicorn echoroo.main:app --reload
-
-# Start frontend (Terminal 2)
-cd apps/web && npm run dev
-```
-
-**Requirements:** Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20+, PostgreSQL (or SQLite)
-
-For detailed instructions, refer to the [Configuration Guide](CONFIGURATION.md).
-
-## Usage
-
-### Running Echoroo with Docker
-
-**Development:**
 ```bash
 ./echoroo.sh start          # Start
 ./echoroo.sh status         # Show containers and health
 ./echoroo.sh logs           # View logs
 ./echoroo.sh stop           # Stop containers, keep data
-./echoroo.sh db             # Connect to database
 ./echoroo.sh migrate        # Run Alembic migrations
-./echoroo.sh update --ref main
-./echoroo.sh update --yes-migrate
-./echoroo.sh seed e2e [args...]  # Seed E2E data; stdout includes sensitive JSON
+./echoroo.sh update --ref main   # Update to latest main and rebuild
+./echoroo.sh help           # Full command reference
 ```
 
-**Rebuild images:**
-```bash
-./echoroo.sh start --build
-./echoroo.sh build
-./echoroo.sh build --no-cache
-```
+See the [Docker Guide](DOCKER.md) for the full `./echoroo.sh` command table, service topology, GPU setup, and container troubleshooting.
 
-### Documentation
+### Running without Docker
 
-For detailed information about using Echoroo, refer to:
-- [Docker Guide](DOCKER.md) - Docker deployment instructions
-- [Configuration Guide](CONFIGURATION.md) - Environment configuration
+Local (non-Docker) development requires Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 20+, and PostgreSQL (or SQLite). See [CONTRIBUTING.md](CONTRIBUTING.md#running-without-docker) for the commands and the [Configuration Guide](CONFIGURATION.md#2-local-development-without-docker) for database setup.
 
 ## ML Configuration
 
-Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch — both on TensorFlow) for species detection. The defaults below preserve GPU behaviour, so a host with a working GPU needs none of these set. Configure them in your `.env` file:
+Echoroo uses GPU-accelerated machine learning models (BirdNET, Perch — both on TensorFlow) for species detection. The defaults preserve GPU behaviour, so a host with a working NVIDIA GPU needs no extra settings.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ECHOROO_ML_USE_GPU` | Use the GPU for inference. `false` forces CPU (`CUDA_VISIBLE_DEVICES=-1`) for both BirdNET and Perch. | `true` |
-| `ECHOROO_ML_GPU_BATCH_SIZE` | Segments processed in parallel per inference batch | `16` |
-| `ECHOROO_ML_FEEDERS` | Number of file feeder processes for audio loading | `1` |
-| `ECHOROO_ML_WORKERS` | Number of inference workers | `1` |
-| `ECHOROO_ML_CPU_NUM_THREADS` | Thread cap applied **only** in CPU mode (bounds TF / OpenMP / BLAS pools so CPU inference does not exhaust RAM) | `8` |
-| `ECHOROO_ML_CPU_WARMUP_BATCHES` | Comma-separated Perch warmup batch sizes used **only** in CPU mode (empty = skip warmup). GPU mode always warms up `1,6,10,16`. | `1` |
-| `ECHOROO_ML_GPU_ALLOW_GROWTH` | In GPU mode, set `TF_FORCE_GPU_ALLOW_GROWTH=true` so TF grows GPU memory on demand | `true` |
-| `ECHOROO_WORKER_MEM_LIMIT` | Compose-level RAM cap for the worker container (`0` = unlimited). Set e.g. `24g` on a CPU/Blackwell box to keep the host alive. | `0` |
+- Full ML environment-variable reference and performance tuning (batch size, feeders, CPU mode, memory limits): [Configuration Guide](CONFIGURATION.md#machine-learning-settings)
+- Running without an NVIDIA GPU, or with a GPU TensorFlow cannot use (e.g. Blackwell / RTX 50-series), and `CUDA_ERROR_OUT_OF_MEMORY` troubleshooting: [Docker Guide — GPU Support](DOCKER.md#gpu-support)
 
-### Troubleshooting: CUDA_ERROR_OUT_OF_MEMORY
+## Documentation
 
-If you encounter GPU memory errors during ML inference:
-
-1. **Reduce batch size:** Lower `ECHOROO_ML_GPU_BATCH_SIZE` (try 8 or 4)
-2. **Reduce feeders:** Lower `ECHOROO_ML_FEEDERS`
-3. **Use CPU:** Set `ECHOROO_ML_USE_GPU=false` (slower but avoids GPU memory issues; also bound RAM with `ECHOROO_WORKER_MEM_LIMIT`)
-
-### GPU present but unusable by TensorFlow (e.g. Blackwell / sm_120)
-
-On a host whose GPU is **present** but enumerated-yet-unusable by TensorFlow (e.g. NVIDIA Blackwell / RTX 50-series / sm_120), TF lists the device then crashes at kernel launch, so auto-detection alone is not enough. Set `ECHOROO_ML_USE_GPU=false` to force CPU inference for both BirdNET and Perch, and set `ECHOROO_WORKER_MEM_LIMIT` (e.g. `24g`, ~40% of host RAM) to keep CPU inference from exhausting RAM and rebooting the host. CPU mode is slower but stable.
-
-On a host with **no NVIDIA GPU at all**, `ECHOROO_ML_USE_GPU=false` is necessary but not sufficient: the `worker` service still reserves an NVIDIA device, so you must also remove or comment out the `worker.deploy.resources.reservations.devices` block in `compose.dev.yaml`, otherwise the worker container will not start. See [DOCKER.md](DOCKER.md#gpu-support).
+- [Docker Guide](DOCKER.md) — services, volumes, GPU support, container troubleshooting, production deployment notes
+- [Configuration Guide](CONFIGURATION.md) — environment variable reference and deployment scenarios
+- [Contributing Guide](CONTRIBUTING.md) — development setup, quality gates, PR conventions
+- [Architecture](ARCHITECTURE.md) — technical specification
+- [Product Vision](VISION.md) — mission, target users, and roadmap
+- [Model Licenses](MODEL_LICENSES.md) — licenses for ML model weights (BirdNET, Perch)
+- [Operational Runbooks](docs/runbook/) — backups, key rotation, release readiness
 
 ## Licensing
 
