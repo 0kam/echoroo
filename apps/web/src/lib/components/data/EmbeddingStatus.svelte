@@ -70,6 +70,30 @@
     refetchInterval = run && (run.status === 'pending' || run.status === 'running') ? 10000 : false;
   });
 
+  // Client-side stall hint: if a run has been pending/running past a generous
+  // ceiling it is likely stuck. This is purely informational — we never stop
+  // the refetch (server state is the source of truth). Uses started_at when the
+  // job has begun, otherwise created_at (queued but not yet started).
+  const STALL_CEILING_MS = 30 * 60 * 1000;
+  let nowMs = $state(Date.now());
+  $effect(() => {
+    const run = latestRun;
+    if (!run || (run.status !== 'pending' && run.status !== 'running')) return;
+    const timer = setInterval(() => {
+      nowMs = Date.now();
+    }, 60000);
+    return () => clearInterval(timer);
+  });
+  const isStalled = $derived.by(() => {
+    const run = latestRun;
+    if (!run || (run.status !== 'pending' && run.status !== 'running')) return false;
+    const startedIso = run.started_at ?? run.created_at;
+    if (!startedIso) return false;
+    const started = new Date(startedIso).getTime();
+    if (Number.isNaN(started)) return false;
+    return nowMs - started > STALL_CEILING_MS;
+  });
+
   let mutationError = $state<string | null>(null);
 
   const createMut = createMutation({
@@ -224,6 +248,9 @@
         {$cancelMut.isPending ? 'Cancelling...' : 'Cancel'}
       </button>
     </div>
+    {#if isStalled}
+      <p class="mt-2 text-xs text-warning">{m.job_stalled_hint()}</p>
+    {/if}
   {:else if latestRun.status === 'completed'}
     <!-- Completed state -->
     <div class="flex items-center justify-between gap-4">

@@ -277,6 +277,8 @@
       {projectId}
       model={displayedModel}
       detailLoading={$detailQuery.isLoading}
+      detailError={$detailQuery.isError}
+      detailErrorObj={$detailQuery.error}
       trainPending={$trainMutationState.isPending}
       trainVariables={$trainMutationState.variables}
       onBackToList={handleBackToList}
@@ -285,6 +287,7 @@
       onDeleteRequest={handleDeleteRequest}
       onReviewTrainRequest={(id) =>
         queryClient.invalidateQueries({ queryKey: ['custom-model', projectId, id] })}
+      onRetry={() => $detailQuery.refetch()}
     />
   {/if}
 

@@ -7,6 +7,7 @@
   import type { APITokenCreateResponse } from '$lib/types';
   import { createToken } from '$lib/api/tokens';
   import * as m from '$lib/paraglide/messages';
+  import { toasts } from '$lib/stores/toast';
 
   interface Props {
     open: boolean;
@@ -84,7 +85,10 @@
         copied = false;
       }, 2000);
     } catch (err) {
+      // The token is still displayed, so this is a non-fatal warning: prompt
+      // the user to copy it manually rather than raising an error toast.
       console.error('Failed to copy token:', err);
+      toasts.warning(m.setup_copy_failed_message());
     }
   }
 </script>

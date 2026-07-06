@@ -16,6 +16,7 @@
   import { createQuery } from '@tanstack/svelte-query';
   import { localizeHref, getLocale } from '$lib/paraglide/runtime';
   import * as m from '$lib/paraglide/messages';
+  import { toastError } from '$lib/stores/toast';
   import { searchBatch, rerunSearchSession, getSearchJobStatus, fetchEmbeddingStats } from '$lib/api/search';
   import ReferenceSoundsPanel from '$lib/components/search/ReferenceSoundsPanel.svelte';
   import SearchConfigBar from '$lib/components/search/SearchConfigBar.svelte';
@@ -167,10 +168,15 @@
       _searchJobId = response.job_id;
       searchSessionId = response.session_id ?? null;
 
-      // Begin polling the job status endpoint every 2 seconds
+      // Begin polling the job status endpoint every 2 seconds. Tolerate
+      // transient failures, but give up after a bounded number of CONSECUTIVE
+      // errors and surface a single toast (not per tick).
+      let pollFailureCount = 0;
+      const MAX_POLL_FAILURES = 5;
       pollingInterval = setInterval(async () => {
         try {
           const status = await getSearchJobStatus(projectId, response.job_id, getLocale());
+          pollFailureCount = 0;
 
           // Capture session_id from polling response if not yet available
           if (status.session_id) {
@@ -200,8 +206,16 @@
           }
           // 'pending' state: keep polling without any state change
         } catch (pollErr) {
-          // Do not stop polling on transient network errors
+          // Tolerate transient network errors, but stop after a bounded number
+          // of consecutive failures so a persistent fault does not poll forever.
           console.warn('Search job polling error:', pollErr);
+          pollFailureCount += 1;
+          if (pollFailureCount >= MAX_POLL_FAILURES) {
+            stopPolling();
+            isSearching = false;
+            searchError = m.search_job_polling_stopped();
+            toastError(pollErr, m.search_job_polling_stopped());
+          }
         }
       }, 2000);
     } catch (err) {

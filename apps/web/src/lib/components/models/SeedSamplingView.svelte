@@ -14,6 +14,7 @@
 
   import { onDestroy, untrack } from 'svelte';
   import * as m from '$lib/paraglide/messages';
+  import { toastError } from '$lib/stores/toast';
   import { castAnnotationVote, deleteAnnotationVote } from '$lib/api/votes';
   import type { SamplingRound, SamplingRoundItem } from '$lib/types/custom-model';
   import type { DetectionStatus, VoteSummary, VoteValue, SignalQuality } from '$lib/types/detection';
@@ -161,6 +162,7 @@
       onVoteChanged();
     } catch (err) {
       console.error('Seed sampling vote error:', err);
+      toastError(err, m.vote_failed());
     } finally {
       loadingIds = new Set([...loadingIds].filter((id) => id !== annotationId));
     }
@@ -177,6 +179,7 @@
       onVoteChanged();
     } catch (err) {
       console.error('Seed sampling remove-vote error:', err);
+      toastError(err, m.vote_remove_failed());
     } finally {
       loadingIds = new Set([...loadingIds].filter((id) => id !== annotationId));
     }

@@ -13,12 +13,15 @@
   import type { CustomModel } from '$lib/types/custom-model';
   import ReviewTab from './ReviewTab.svelte';
   import RecentApplications from './RecentApplications.svelte';
+  import ErrorState from '$lib/components/ui/ErrorState.svelte';
   import { statusLabel, statusClasses, formatDate, formatDuration, formatPercent } from './modelFormatters';
 
   let {
     projectId,
     model,
     detailLoading,
+    detailError = false,
+    detailErrorObj = undefined,
     trainPending,
     trainVariables,
     onBackToList,
@@ -26,10 +29,13 @@
     onTrain,
     onDeleteRequest,
     onReviewTrainRequest,
+    onRetry,
   }: {
     projectId: string;
     model: CustomModel | null;
     detailLoading: boolean;
+    detailError?: boolean;
+    detailErrorObj?: unknown;
     trainPending: boolean;
     trainVariables: string | undefined;
     onBackToList: () => void;
@@ -37,6 +43,7 @@
     onTrain: (modelId: string) => void;
     onDeleteRequest: (modelId: string) => void;
     onReviewTrainRequest: (modelId: string) => void;
+    onRetry?: () => void;
   } = $props();
 </script>
 
@@ -61,6 +68,13 @@
       </svg>
       {m.nav_loading()}
     </div>
+
+  {:else if detailError && !model}
+    <ErrorState
+      message={m.models_detail_load_failed()}
+      error={detailErrorObj}
+      onRetry={onRetry}
+    />
 
   {:else if model}
 

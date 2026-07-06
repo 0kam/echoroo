@@ -283,7 +283,9 @@ function createAuthStore() {
         // NOT called.
         await webLogoutUser();
       } catch (error) {
-        // Continue with logout even if API call fails.
+        // Continue with logout even if API call fails. Console-only on purpose:
+        // client-side teardown proceeds regardless, so a toast during logout
+        // would be noise the user cannot act on.
         console.error('Web logout API call failed:', error);
       }
       // Clear client-side state regardless of API outcomes.

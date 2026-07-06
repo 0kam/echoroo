@@ -11,6 +11,7 @@
 
   import * as m from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { toastError } from '$lib/stores/toast';
   import type { SearchSessionListItem } from '$lib/types/search';
   import { listSearchSessions, deleteSearchSession } from '$lib/api/search';
   import {
@@ -48,6 +49,7 @@
       sessions = response.sessions;
     } catch (e) {
       console.error('Failed to load sessions:', e);
+      toastError(e, m.search_sessions_load_failed());
     } finally {
       isLoading = false;
     }
@@ -68,6 +70,7 @@
       sessions = sessions.filter((s) => s.id !== sessionId);
     } catch (e) {
       console.error('Failed to delete session:', e);
+      toastError(e, m.search_session_delete_failed());
     } finally {
       deletingId = null;
     }

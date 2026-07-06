@@ -10,6 +10,7 @@
   import { onDestroy } from 'svelte';
   import * as m from '$lib/paraglide/messages';
   import { getLocale, localizeHref } from '$lib/paraglide/runtime';
+  import { toastError } from '$lib/stores/toast';
   import { goto } from '$app/navigation';
   import { exportSearchSessionRecordingsCSV } from '$lib/api/search';
   import { generateId } from '$lib/utils/id';
@@ -94,6 +95,7 @@
       await exportSearchSessionRecordingsCSV(projectId, current.id, getLocale());
     } catch (e) {
       console.error('Recordings export failed:', e);
+      toastError(e, m.search_recordings_export_failed());
     } finally {
       isExportingRecordings = false;
     }

@@ -14,6 +14,7 @@
     getBulkInvitationStatusBadgeClass,
   } from '$lib/utils/statusFormatters';
   import * as m from '$lib/paraglide/messages';
+  import { toasts } from '$lib/stores/toast';
   import { buildBulkCsv } from './csv';
 
   interface Props {
@@ -75,7 +76,12 @@
           csvCopied = false;
         }, 2000);
       })
-      .catch((err) => console.error('Failed to copy CSV:', err));
+      .catch((err) => {
+        // The CSV is generated client-side and can be re-copied; a failed
+        // clipboard write is a non-fatal warning, not an error.
+        console.error('Failed to copy CSV:', err);
+        toasts.warning(m.setup_copy_failed_message());
+      });
   }
 </script>
 

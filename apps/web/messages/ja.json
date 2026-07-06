@@ -2571,5 +2571,18 @@
   "hspec_y_maps_polygon_aria_unlabeled": "粗い検出範囲",
   "hspec_y_maps_focus_dot_aria_labeled": "{label}の範囲を選択（{tier}）",
   "hspec_y_maps_focus_dot_aria_unlabeled": "{tier}を選択",
-  "hspec_y_maps_focus_dot_tooltip": "範囲を選択"
+  "hspec_y_maps_focus_dot_tooltip": "範囲を選択",
+
+  "models_detail_load_failed": "モデルの詳細を読み込めませんでした。",
+  "models_polling_stopped": "学習状況の確認中に接続が失われました。最新の状態を確認するには再読み込みしてください。",
+  "job_stalled_hint": "この処理は長時間実行されており、停止している可能性があります。完了しない場合はキャンセルして再試行できます。",
+  "vote_failed": "投票を送信できませんでした。",
+  "vote_remove_failed": "投票を取り消せませんでした。",
+  "round_detail_load_failed": "ラウンドの詳細を読み込めませんでした。",
+  "training_start_failed": "学習を開始できませんでした。",
+  "search_sessions_load_failed": "検索セッションを読み込めませんでした。",
+  "search_session_delete_failed": "検索セッションを削除できませんでした。",
+  "search_recordings_export_failed": "録音のエクスポートに失敗しました。",
+  "search_export_failed": "検索セッションのエクスポートに失敗しました。",
+  "search_job_polling_stopped": "検索状況の確認中に接続が失われました。もう一度お試しください。"
 }

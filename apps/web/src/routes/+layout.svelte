@@ -38,6 +38,8 @@
     if (browser) {
       const silent = isAuthAgnosticRoute();
       authStore.initialize({ silent }).catch((error) => {
+        // Console-only on purpose: init failure either redirects to /login or
+        // is silent on auth-agnostic routes; a toast during boot would be noise.
         console.error('Auth initialization failed:', error);
       });
     }
@@ -47,6 +49,8 @@
   let errorMessage = $state<string | null>(null);
 
   function handleError(event: ErrorEvent) {
+    // Console-only on purpose: the global handler already surfaces a dismissible
+    // banner via `errorMessage`, so an additional toast would double up.
     console.error('Global error:', event.error);
     errorMessage = event.error?.message || 'An unexpected error occurred';
 
