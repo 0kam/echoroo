@@ -132,6 +132,39 @@ CANONICAL_TEST_LICENSES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_token_revocation_fail_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the legacy Bearer/JWT revocation check to fail-OPEN in tests.
+
+    W4-2 SFR-2 made
+    :meth:`echoroo.services.auth.AuthService.is_token_revoked` fail CLOSED
+    (HTTP 503) when its legacy Redis-backed revocation store is unavailable.
+    The test suite has no reliable Redis for that legacy path: the process-
+    global ``redis.asyncio`` client (``echoroo.core.redis._redis_client``) is
+    created lazily on the *first* test's event loop and then reused on every
+    subsequent function-scoped loop, so ``redis.get()`` raises
+    ``ConnectionError`` mid-suite. Before W4-2 that error was silently
+    swallowed (fail-open); with fail-closed it now surfaces as a 503 on every
+    Bearer-authenticated request.
+
+    Rather than wire a fakeredis into every Bearer-minting fixture, we restore
+    the historical fail-open behaviour for the whole suite by flipping the
+    module-bound settings flag. Tests that specifically assert the fail-closed
+    503 contract (``tests/unit/services/test_auth_revocation_fail_closed.py``)
+    re-enable it explicitly with their own ``monkeypatch.setattr`` in the test
+    body, which runs after this fixture and therefore wins. The production
+    default remains ``True`` (fail-closed) — this only affects the test env.
+    """
+    from echoroo.services import auth as _auth_module
+
+    monkeypatch.setattr(
+        _auth_module.settings,
+        "ECHOROO_AUTH_REVOCATION_FAIL_CLOSED",
+        False,
+        raising=False,
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001
     """Provision the per-xdist-worker Postgres database (W3-2).
 

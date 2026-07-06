@@ -282,7 +282,12 @@ async def get_current_user_optional(
         user = await auth_service.get_current_user(token)
         await _stamp_superuser_status(db, user)
         return user
-    except HTTPException:
+    except HTTPException as exc:
+        # W4-2 SFR-2: a 503 from a fail-closed token-revocation check is an
+        # infrastructure outage, NOT a bad credential — propagate it rather
+        # than silently downgrading the caller to Guest.
+        if exc.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+            raise
         # FR-016 Phase 5: a *bad* token on a Public endpoint must still allow
         # Guest fall-through rather than 401-ing the response. Production
         # security is enforced by the central permission gate downstream.

@@ -81,6 +81,7 @@ from echoroo.services.auth_service import (
     DEFAULT_RATE_LIMIT_POLICY,
     AccountLockedError,
     HibpChecker,
+    HibpUnavailableError,
     HttpHibpChecker,
     InMemoryLoginAttemptRecorder,
     InvalidCredentialsError,
@@ -158,6 +159,13 @@ class _HttpxHibpChecker:
 
 
 _hibp_checker: HibpChecker = _HttpxHibpChecker()
+
+#: W4-2 SFR-6 — HTTP 503 detail surfaced when the HIBP breach-check
+#: service is unavailable and the fail-closed policy is active. Phrased so
+#: it is unmistakably a transient service outage, not a weak password.
+_HIBP_UNAVAILABLE_DETAIL: Final[str] = (
+    "password strength verification service unavailable, try again later"
+)
 webauthn_service = WebAuthnService()
 _superuser_credential_store = get_default_store()
 
@@ -893,6 +901,12 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=exc.reason,
+        ) from exc
+    except HibpUnavailableError as exc:
+        # W4-2 SFR-6: HIBP outage -> 503 (NOT a weak-password rejection).
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_HIBP_UNAVAILABLE_DETAIL,
         ) from exc
 
     repo = UserRepository(db)
@@ -2038,6 +2052,16 @@ async def _handle_change_password(
                 "message": exc.reason,
             },
         ) from exc
+    except HibpUnavailableError as exc:
+        # W4-2 SFR-6: HIBP outage -> 503 (NOT a weak-password rejection).
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "hibp_unavailable",
+                "message": _HIBP_UNAVAILABLE_DETAIL,
+            },
+        ) from exc
 
     # The service flushed the User update + trusted-device revocations
     # into the caller's transaction (including the new ``security_stamp``);
@@ -2651,6 +2675,13 @@ async def accept_invitation_public(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=exc.reason,
+            ) from exc
+        except HibpUnavailableError as exc:
+            # W4-2 SFR-6: HIBP outage -> 503 (NOT a weak-password rejection).
+            await _invitation_public_sleep_for_minimum(started_at)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_HIBP_UNAVAILABLE_DETAIL,
             ) from exc
 
         normalized_email = _normalize_email(new_user_payload.email)

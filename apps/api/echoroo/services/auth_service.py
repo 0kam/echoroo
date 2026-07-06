@@ -72,6 +72,16 @@ class PasswordPolicyError(AuthenticationError):
         self.reason = reason
 
 
+class HibpUnavailableError(AuthenticationError):
+    """The HaveIBeenPwned breach-check service could not be reached.
+
+    W4-2 SFR-6. Raised by :meth:`HttpHibpChecker.pwned_count` when the
+    HIBP lookup fails and the fail-closed policy is active (the default).
+    The router MUST translate this to HTTP 503 (service unavailable) —
+    NOT 400/422 — so it is never mistaken for a weak-password rejection.
+    """
+
+
 # =============================================================================
 # Config
 # =============================================================================
@@ -143,6 +153,22 @@ class AlwaysFreshHibp:
         return 0
 
 
+def _hibp_should_fail_open() -> bool:
+    """Return True when an HIBP outage should be silently tolerated.
+
+    W4-2 SFR-6. Fail-open is permitted only as a dev / offline escape
+    hatch: either the explicit ``ECHOROO_HIBP_FAIL_OPEN`` flag is set, or
+    the app runs in ``TEST_MODE``. A production ``ENVIRONMENT`` refuses the
+    flag at settings-validation time, so this can only be true outside
+    production.
+    """
+    # Imported lazily to keep this module import-time side-effect free.
+    from echoroo.core.settings import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    return bool(settings.ECHOROO_HIBP_FAIL_OPEN or settings.TEST_MODE)
+
+
 class HttpHibpChecker:
     """Real HIBP k-anonymity client.
 
@@ -169,9 +195,18 @@ class HttpHibpChecker:
         prefix, suffix = sha1[:5], sha1[5:]
         try:
             response = await self._http_get(self._base_url + prefix)
-        except Exception:  # noqa: BLE001 - HIBP outages must not block login
-            logger.warning("HIBP lookup failed; failing open", exc_info=True)
-            return 0
+        except Exception as exc:
+            # W4-2 SFR-6: an HIBP outage fails CLOSED (503) by default so a
+            # breached password is never silently accepted. The dev-only
+            # ``ECHOROO_HIBP_FAIL_OPEN`` flag (or TEST_MODE) restores the
+            # historical return-0 fail-open behaviour.
+            if _hibp_should_fail_open():
+                logger.warning(
+                    "HIBP lookup failed; failing OPEN (opt-out enabled)", exc_info=True
+                )
+                return 0
+            logger.error("HIBP lookup failed; failing closed with HTTP 503", exc_info=True)
+            raise HibpUnavailableError("HIBP breach-check service unavailable") from exc
         text = getattr(response, "text", "") or ""
         for line in text.splitlines():
             parts = line.strip().split(":")
