@@ -41,3 +41,6 @@ __pycache__/
 # pytest-cov data file (Phase 17 §C close, 2026-05-07)
 .coverage
 .coverage.*
+
+# Sample recordings fetched by scripts/fetch_sample_data.py (never vendored)
+sample_data/
