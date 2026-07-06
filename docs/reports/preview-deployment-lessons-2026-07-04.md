@@ -132,8 +132,11 @@ restart ポリシーが無く**、14日間停止したままだった。backend 
 
 main への反映状況（本ドキュメント取り込み時点）:
 
-- **§1 KMS 固定鍵 init**: **未反映**。固定 UUID + 固定鍵素材インポート方式の init は
-  main にまだ無い（フォローアップ PR で対応中）。
+- **§1 KMS 固定鍵 init**: **本 PR (#246) で反映済み**。scripts/init-localstack.sh が
+  4 CMK を固定 UUID（LocalStack `_custom_id_` タグ）+ EXTERNAL origin + 決定的鍵素材
+  インポート（openssl RSAES_OAEP_SHA_256）で冪等にプロビジョニングする方式に変更。
+  dev 実機で LocalStack restart を跨いだ DEK unwrap / PII MAC / audit-chain / 2FA
+  ログインの round-trip 検証済み。
 - **§2 イメージ pin**: **反映済み**。compose.dev.yaml / ci.yml / e2e.yml とも
   community-archive digest 固定済み。
 - **§3 fresh-install 小物**: **反映済み**。paraglide は `.gitkeep` ではなく
