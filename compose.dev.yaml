@@ -147,8 +147,6 @@ services:
       # is localhost the public entry duplicates the first one — harmless.
       - ALLOWED_ORIGINS=["http://localhost:${ECHOROO_FRONTEND_PORT:-5173}","http://localhost:3000","http://frontend:5173","http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173}"]
       - AUDIO_ROOT=/data/audio
-      - TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY:-1x0000000000000000000000000000000AA}
-      - TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
       # spec/011 NFR-011-010 — invitation token signing (KID + HMAC).
       # Required at every boot (dev + staging + prod). The 32-char minimum
       # only applies in prod/staging, but we keep the default strong so the
@@ -389,7 +387,6 @@ services:
       # Browser-facing API base derives from ECHOROO_PUBLIC_HOST (default
       # localhost) + the existing ECHOROO_API_PORT knob.
       - PUBLIC_API_URL=http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_API_PORT:-8002}
-      - PUBLIC_TURNSTILE_SITE_KEY=${TURNSTILE_SITE_KEY:-1x00000000000000000000AA}
       # Passed through so vite.config.ts can add the public host to
       # server.allowedHosts (Vite rejects non-localhost Host headers by
       # default). Empty/unset is fine — the config only appends when set.
