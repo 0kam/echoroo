@@ -1,36 +1,16 @@
 # Echoroo Docker Guide
 
-This guide covers the current Docker development environment. The top-level
-`./echoroo.sh` script is the supported user-facing entry point.
+This guide covers the Docker container environment in depth: the management
+script, service topology, volumes, GPU support, and troubleshooting. For
+installation and first-time setup, see the [README Quick Start](README.md#quick-start)
+— `./echoroo.sh install` / `./echoroo.sh start` is the supported entry point.
 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) 24.0+
 - [Docker Compose](https://docs.docker.com/compose/install/) 2.0+
 
-## Quick Start
-
-```bash
-git clone https://github.com/0kam/echoroo.git
-cd echoroo
-
-cp .env.example .env
-# Edit .env and set:
-#   - POSTGRES_PASSWORD
-#   - INVITATION_TOKEN_HMAC_KEY
-#   - ECHOROO_AUDIO_DIR
-# Generate a value for INVITATION_TOKEN_HMAC_KEY with:
-openssl rand -hex 32
-
-./echoroo.sh install
-./echoroo.sh checkenv
-./echoroo.sh start
-```
-
-If `.env` is missing, `install` creates it from `.env.example` and exits
-non-zero so you can edit the required values before starting the stack.
-
-Open http://localhost:5173 in your browser. The backend API is exposed at http://localhost:8002.
+Once the stack is running, the frontend is at http://localhost:5173 and the backend API at http://localhost:8002.
 
 ## Management Script
 
