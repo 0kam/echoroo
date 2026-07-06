@@ -87,8 +87,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
       # TEST_MODE shared-TOTP contract (memory/preview-test-accounts.md): the
       # helper helpers/spec011-auth.ts defaults E2E_SHARED_TOTP_SECRET to this

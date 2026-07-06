@@ -253,8 +253,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
     steps:
       - uses: actions/checkout@v4
@@ -435,8 +433,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
     services:
       postgres:
@@ -658,8 +654,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
       REPO_ROOT: ${{ github.workspace }}
       AWS_DEFAULT_REGION: us-east-1
@@ -956,8 +950,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
       # Phase 17 A-8: tests/security/crypto/test_dek_rewrap_and_kms_isolation.py
       # walks upward from __file__ to locate scripts/rewrap_dek.py and
@@ -1137,8 +1129,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
       # PR-C5 (Phase 17 §C, 2026-05-07): minimal AWS baseline.
       # See the security-tests env block above for the full rationale.
@@ -1433,8 +1423,6 @@ jobs:
       JWT_SECRET_KEY: ci-test-secret
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
-      TURNSTILE_SECRET_KEY: 1x0000000000000000000000000000000AA
-      TURNSTILE_SITE_KEY: 1x00000000000000000000AA
       ENVIRONMENT: development
       # LocalStack S3 endpoint — check_wipe_guard reads S3_PUBLIC_ENDPOINT_URL
       # from app settings to locate the audit bucket genesis marker.

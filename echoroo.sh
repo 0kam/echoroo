@@ -239,18 +239,47 @@ check_env_values() {
   ensure_env_file
 
   local failures=0
-  local postgres_password invitation_key audio_dir
+  local postgres_password invitation_key invitation_kid audio_dir
+  local invitation_kid_old invitation_key_old
+  local environment test_mode test_totp
+  local database_url redis_url s3_endpoint s3_bucket jwt_secret
+  local web_session_secret two_factor_hmac
   postgres_password="$(env_value POSTGRES_PASSWORD)"
   invitation_key="$(env_value INVITATION_TOKEN_HMAC_KEY)"
+  invitation_kid="$(env_value INVITATION_TOKEN_KID_NEW)"
+  invitation_kid_old="$(env_value INVITATION_TOKEN_KID_OLD)"
+  invitation_key_old="$(env_value INVITATION_TOKEN_HMAC_KEY_OLD)"
   audio_dir="$(env_value ECHOROO_AUDIO_DIR)"
+  environment="$(env_value ENVIRONMENT)"
+  test_mode="$(env_value TEST_MODE)"
+  test_totp="$(env_value TEST_TOTP_SECRET_BASE32)"
+  database_url="$(env_value DATABASE_URL)"
+  redis_url="$(env_value REDIS_URL)"
+  s3_endpoint="$(env_value S3_ENDPOINT_URL)"
+  s3_bucket="$(env_value S3_BUCKET)"
+  jwt_secret="$(env_value JWT_SECRET_KEY)"
+  web_session_secret="$(env_value web_session_secret)"
+  two_factor_hmac="$(env_value TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY)"
 
   if [[ -z "${postgres_password}" || "${postgres_password}" == "CHANGE_ME_BEFORE_USE" ]]; then
     err "POSTGRES_PASSWORD must be set to a non-placeholder value."
     failures=1
   fi
 
+  # Invitation-token signing — KID_NEW + HMAC_KEY are required at every boot
+  # in every environment (spec/011 NFR-011-010; enforced by settings.py).
   if [[ -z "${invitation_key}" ]]; then
-    err "INVITATION_TOKEN_HMAC_KEY must be set."
+    err "INVITATION_TOKEN_HMAC_KEY must be set (required at every boot)."
+    failures=1
+  fi
+  if [[ -z "${invitation_kid}" ]]; then
+    err "INVITATION_TOKEN_KID_NEW must be set (required at every boot)."
+    failures=1
+  fi
+  # The _OLD rotation pair must be set together or both unset.
+  if [[ -n "${invitation_kid_old}" && -z "${invitation_key_old}" ]] \
+    || [[ -z "${invitation_kid_old}" && -n "${invitation_key_old}" ]]; then
+    err "INVITATION_TOKEN_KID_OLD and INVITATION_TOKEN_HMAC_KEY_OLD must be set together (or both unset)."
     failures=1
   fi
 
@@ -267,6 +296,63 @@ check_env_values() {
       ;;
   esac
 
+  # TEST_MODE is a dev-only 2FA bypass; when enabled the shared TOTP secret
+  # is mandatory (mirrors the settings.py model_validator).
+  if [[ "${test_mode,,}" == "true" || "${test_mode}" == "1" ]]; then
+    if [[ -z "${test_totp}" ]]; then
+      err "TEST_MODE is enabled but TEST_TOTP_SECRET_BASE32 is not set."
+      failures=1
+    fi
+    if [[ "${environment,,}" == "production" ]]; then
+      err "TEST_MODE must not be enabled when ENVIRONMENT=production."
+      failures=1
+    fi
+  fi
+
+  # Connection-string sanity checks — only when set explicitly (the dev
+  # Docker stack builds DATABASE_URL / REDIS_URL from POSTGRES_* / REDIS_*
+  # inside compose, so an empty value here is expected and not an error).
+  if [[ -n "${database_url}" && "${database_url}" != postgresql* ]]; then
+    err "DATABASE_URL must be a postgresql:// (asyncpg) connection string, got: ${database_url}"
+    failures=1
+  fi
+  if [[ -n "${redis_url}" && "${redis_url}" != redis://* && "${redis_url}" != rediss://* ]]; then
+    err "REDIS_URL must start with redis:// or rediss://, got: ${redis_url}"
+    failures=1
+  fi
+  # Object storage — only format-check when overridden (compose supplies the
+  # dev defaults). Both must be non-empty together to be usable.
+  if [[ -n "${s3_endpoint}" && "${s3_endpoint}" != http://* && "${s3_endpoint}" != https://* ]]; then
+    err "S3_ENDPOINT_URL must be an http(s):// URL, got: ${s3_endpoint}"
+    failures=1
+  fi
+  if [[ -n "${s3_endpoint}" && -z "${s3_bucket}" ]]; then
+    err "S3_ENDPOINT_URL is set but S3_BUCKET is empty."
+    failures=1
+  fi
+
+  # Production/staging secret-strength gate — mirrors the settings.py
+  # validate_production_secrets guard so a bad .env fails here (fast, offline)
+  # rather than at container boot. KMS aliases default to the LocalStack
+  # bootstrap values, so they are only checked for format when set.
+  if [[ "${environment,,}" == "production" || "${environment,,}" == "staging" ]]; then
+    require_strong_secret "JWT_SECRET_KEY" "${jwt_secret}" \
+      "your-secret-key-change-in-production dev-secret-key-change-in-production" \
+      failures
+    require_strong_secret "web_session_secret" "${web_session_secret}" \
+      "dev-web-session-secret-change-in-production" failures
+    require_strong_secret "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY" "${two_factor_hmac}" \
+      "dev-two-factor-confirmation-hmac-change-in-production" failures
+    require_strong_secret "INVITATION_TOKEN_HMAC_KEY" "${invitation_key}" "" failures
+    local s3_secret
+    s3_secret="$(env_value S3_SECRET_KEY)"
+    if [[ "${s3_secret}" == "echoroo-dev" ]]; then
+      err "S3_SECRET_KEY must be changed from the dev default in production/staging."
+      failures=1
+    fi
+    check_kms_alias_format failures
+  fi
+
   if redis_cert_missing; then
     err "Redis TLS certificates are missing under config/redis/tls. Run './echoroo.sh install'."
     failures=1
@@ -277,6 +363,63 @@ check_env_values() {
   fi
 
   ok ".env looks usable for the dev Docker stack."
+}
+
+# require_strong_secret NAME VALUE "weak default1 default2 ..." FAILVAR
+# Flags an empty value, any listed weak default, or a value shorter than 32
+# chars. FAILVAR is the name of the caller's failures variable (set to 1 on
+# error). Used only inside the production/staging branch of check_env_values.
+require_strong_secret() {
+  local name="$1" value="$2" weak_defaults="$3" fail_var="$4"
+  if [[ -z "${value}" ]]; then
+    err "${name} must be set to a strong secret (>=32 chars) in production/staging."
+    printf -v "${fail_var}" '%s' 1
+    return
+  fi
+  local weak
+  for weak in ${weak_defaults}; do
+    if [[ "${value}" == "${weak}" ]]; then
+      err "${name} is still the insecure default value; change it in production/staging."
+      printf -v "${fail_var}" '%s' 1
+      return
+    fi
+  done
+  if [[ "${#value}" -lt 32 ]]; then
+    err "${name} must be at least 32 characters in production/staging (got ${#value})."
+    printf -v "${fail_var}" '%s' 1
+  fi
+}
+
+# check_kms_alias_format FAILVAR
+# When a KMS CMK alias is set explicitly, sanity-check it is an alias/... name
+# or an arn:aws:kms ARN. Unset aliases fall back to the code defaults and are
+# fine. Also enforces the TOTP-DEK rotation _OLD alias/kid co-presence rule.
+check_kms_alias_format() {
+  local fail_var="$1" var value
+  for var in \
+    AWS_KMS_CMK_2FA_ALIAS \
+    AWS_KMS_CMK_PII_HASH_ALIAS \
+    AWS_KMS_CMK_PII_HASH_ALIAS_V2 \
+    AWS_KMS_CMK_AUDIT_CHAIN_ALIAS \
+    AWS_KMS_CMK_INVITATION_HMAC_ALIAS \
+    AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW \
+    AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD \
+    AWS_KMS_CMK_2FA_DEK_ALIAS_NEW \
+    AWS_KMS_CMK_2FA_DEK_ALIAS_OLD; do
+    value="$(env_value "${var}")"
+    if [[ -n "${value}" && "${value}" != alias/* && "${value}" != arn:aws:kms:* ]]; then
+      err "${var} must be an 'alias/...' name or a KMS ARN, got: ${value}"
+      printf -v "${fail_var}" '%s' 1
+    fi
+  done
+  local dek_alias_old dek_kid_old
+  dek_alias_old="$(env_value AWS_KMS_CMK_2FA_DEK_ALIAS_OLD)"
+  dek_kid_old="$(env_value AWS_KMS_CMK_2FA_DEK_KID_OLD)"
+  if [[ -n "${dek_alias_old}" && -z "${dek_kid_old}" ]] \
+    || [[ -z "${dek_alias_old}" && -n "${dek_kid_old}" ]]; then
+    err "AWS_KMS_CMK_2FA_DEK_ALIAS_OLD and AWS_KMS_CMK_2FA_DEK_KID_OLD must be set together (or both unset)."
+    printf -v "${fail_var}" '%s' 1
+  fi
 }
 
 print_urls() {
