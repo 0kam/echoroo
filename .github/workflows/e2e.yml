@@ -311,9 +311,12 @@ jobs:
       #     profile/settings; logged-out login page; deleted-route smoke)
       #   - banner-stack.spec.ts                  (e2e-member: notification stack)
       #   - permissions/seeded-vote-comment.spec.ts (P5 annotation-consolidation:
-      #     role×visibility vote/comment permission matrix against /api/v1 using
-      #     seeded API keys; gated by E2E_VOTE_COMMENT_ENABLED — explicitly
-      #     opted-in below so local `npx playwright test` runs stay unaffected)
+      #     role×visibility vote/comment permission matrix — votes via the
+      #     /web-api/v1 BFF (UI login session + Bearer + CSRF; the generic
+      #     /api/v1 vote routes were unmounted in W2-3 PR-7), comments via
+      #     /api/v1 using seeded API keys; gated by E2E_VOTE_COMMENT_ENABLED —
+      #     explicitly opted-in below so local `npx playwright test` runs stay
+      #     unaffected)
       # Playwright starts its own Vite (CI=true → reuseExistingServer:false).
       - name: Run seeded smoke specs (Playwright)
         working-directory: apps/web
