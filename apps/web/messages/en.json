@@ -1449,6 +1449,7 @@
   "search_xc_loading": "Searching...",
   "search_xc_page_info": "Page {page} of {total}",
   "search_xc_listen": "Listen on Xeno-canto",
+  "search_license_label": "License",
   "search_origin_xc": "Xeno-canto",
   "search_source_s3": "Saved",
   "search_rerun": "Re-run Search",

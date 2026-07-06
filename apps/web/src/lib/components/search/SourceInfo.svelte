@@ -6,6 +6,7 @@
    * Shows XC metadata (recordist, quality, location) for URL-origin sources.
    */
   import * as m from '$lib/paraglide/messages.js';
+  import { formatLicenseLabel, licenseHref } from '$lib/utils/licenseFormatters';
   import type { SoundSource } from '$lib/types/search';
 
   interface Props {
@@ -57,6 +58,27 @@
     {#if hasClipRange}
       <p class="text-xs text-primary-600 dark:text-primary-400">
         {m.search_clip_range({ start: (source.start_time ?? 0).toFixed(1) + 's', end: (source.end_time ?? 0).toFixed(1) + 's' })}
+      </p>
+    {/if}
+    {#if source.license}
+      {@const licLabel = formatLicenseLabel(source.license)}
+      {@const licUrl = licenseHref(source.license)}
+      <p class="truncate text-xs text-stone-400">
+        {m.search_license_label()}:
+        {#if licUrl}
+          <a href={licUrl} target="_blank" rel="noopener noreferrer" class="hover:underline">{licLabel}</a>
+        {:else}
+          {licLabel}
+        {/if}
+        {#if source.xc_id}
+          &middot;
+          <a
+            href={`https://xeno-canto.org/${source.xc_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:underline"
+          >XC{source.xc_id}</a>
+        {/if}
       </p>
     {/if}
   {:else}

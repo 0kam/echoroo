@@ -122,6 +122,22 @@ class SourceConfig(BaseModel):
         default=None,
         description="Server-internal: S3 object key for persisted reference audio",
     )
+    # Xeno-canto attribution metadata (compliance). Persisted with the session
+    # so the CC license + recordist + XC id can be displayed wherever a
+    # reference recording is shown, including reconstructed saved sessions.
+    # These fields are informational only and are ignored by the search logic.
+    xc_id: str | None = Field(
+        default=None,
+        description="Xeno-canto recording ID (for url sources sourced from Xeno-canto)",
+    )
+    recordist: str | None = Field(
+        default=None,
+        description="Xeno-canto recordist name (attribution)",
+    )
+    license: str | None = Field(
+        default=None,
+        description="Creative Commons license URL/label for the reference recording",
+    )
 
 
 class SpeciesSearchConfig(BaseModel):

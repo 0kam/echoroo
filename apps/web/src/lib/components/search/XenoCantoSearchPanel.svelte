@@ -18,6 +18,7 @@
   import { searchXenoCanto } from '$lib/api/search';
   import { ApiError } from '$lib/api/client';
   import { generateId } from '$lib/utils/id';
+  import { formatLicenseLabel, licenseHref } from '$lib/utils/licenseFormatters';
   import type { SoundSource, XenoCantoRecording, XenoCantoSearchResponse } from '$lib/types/search';
 
   interface Props {
@@ -255,6 +256,7 @@
       recording_type: recording.recording_type,
       recordist: recording.recordist,
       location: recording.location,
+      license: recording.license,
     }));
 
     if (sources.length > 0) {
@@ -470,6 +472,25 @@
                   {[recording.location, recording.country].filter(Boolean).join(', ')}
                 {/if}
               </p>
+
+              <!-- License / attribution (CC compliance) -->
+              {#if recording.license}
+                {@const licLabel = formatLicenseLabel(recording.license)}
+                {@const licUrl = licenseHref(recording.license)}
+                <p class="truncate text-xs text-stone-400">
+                  {m.search_license_label()}:
+                  {#if licUrl}
+                    <a
+                      href={licUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="hover:underline"
+                    >{licLabel}</a>
+                  {:else}
+                    {licLabel}
+                  {/if}
+                </p>
+              {/if}
             </div>
 
             <!-- Play / Pause button -->

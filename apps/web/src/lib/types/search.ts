@@ -132,6 +132,8 @@ export interface SoundSource {
   recording_type?: string;
   /** Name of the recordist */
   recordist?: string;
+  /** Creative Commons license URL/label for the recording (XC attribution) */
+  license?: string;
   /** Geographic location of the recording */
   location?: string;
 
