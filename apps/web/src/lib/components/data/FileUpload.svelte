@@ -61,8 +61,18 @@
     | 'uploading'   // Uploading files to presigned URLs
     | 'completing'  // Calling complete endpoint
     | 'polling'     // Polling session status (validating/importing)
+    | 'stalled'     // Polling gave up after the hard cap without a terminal state
     | 'done'        // All done (imported)
     | 'error';      // Terminal error
+
+  // ── Stall / timeout thresholds ───────────────────────────────────────────────
+  // The backend can leave an upload session sitting in a transient state
+  // (validating / validated / importing / uploaded) if a worker dies. Rather
+  // than spinning forever, we surface a soft hint after `STALL_HINT_MS` and,
+  // after `STALL_HARD_CAP_MS` with no terminal transition, stop polling and
+  // move to a distinct "stalled" UI that offers retry / start-over actions.
+  const STALL_HINT_MS = 30 * 1000; // 30s → soft "taking longer than usual" hint
+  const STALL_HARD_CAP_MS = 5 * 60 * 1000; // 5min → give up and show stalled UI
 
   // ── State ──────────────────────────────────────────────────────────────────
   let step = $state<WorkflowStep>('select');
@@ -98,9 +108,41 @@
 
   let importTriggered = $state(false);
 
+  // ── Stall tracking ───────────────────────────────────────────────────────────
+  // `pollStartedAt` marks when we entered the polling step (or last re-checked).
+  // A 1s ticker advances `nowMs` while polling so the elapsed-time derivations
+  // stay live without leaking a timer once we leave the polling state.
+  let pollStartedAt = $state<number | null>(null);
+  let nowMs = $state(Date.now());
+
+  $effect(() => {
+    if (!isPolling) return;
+    const timer = setInterval(() => {
+      nowMs = Date.now();
+    }, 1000);
+    return () => clearInterval(timer);
+  });
+
+  const pollElapsedMs = $derived(
+    isPolling && pollStartedAt !== null ? nowMs - pollStartedAt : 0
+  );
+
+  // Soft, non-blocking hint (Gold/warning): the session is still working but is
+  // taking longer than a healthy import usually does.
+  const showStallHint = $derived(isPolling && pollElapsedMs > STALL_HINT_MS);
+
   // Watch polling results: trigger import when validated, finish when imported
   $effect(() => {
     if (!isPolling) return;
+
+    // Hard cap: if we have been polling past the ceiling without reaching a
+    // terminal state (imported / failed), stop and surface the stalled UI.
+    // Leaving the polling step flips `isPolling` false, which halts refetching.
+    if (pollElapsedMs > STALL_HARD_CAP_MS) {
+      step = 'stalled';
+      return;
+    }
+
     const data = $statusQuery.data;
     if (!data) return;
 
@@ -217,6 +259,8 @@
       await completeUploadSession(projectId, datasetId, session.session_id);
 
       // Phase 5: Poll for validation + import
+      pollStartedAt = Date.now();
+      nowMs = Date.now();
       step = 'polling';
     } catch (e) {
       step = 'error';
@@ -289,6 +333,23 @@
     sessionId = null;
     _sessionData = null;
     importTriggered = false;
+    pollStartedAt = null;
+  }
+
+  // Retry from the stalled state: restart the poll clock and re-check the
+  // session status once. If the import has since progressed this recovers to
+  // the normal polling flow; otherwise it will hit the hard cap again.
+  function retryPolling() {
+    if (!sessionId) {
+      resetToSelect();
+      return;
+    }
+    pollStartedAt = Date.now();
+    nowMs = Date.now();
+    step = 'polling';
+    queryClient.invalidateQueries({
+      queryKey: ['upload-session-status', projectId, datasetId, sessionId],
+    });
   }
 </script>
 
@@ -435,6 +496,44 @@
           </div>
         {/if}
       {/if}
+
+      <!-- Soft stall hint: still working, just slower than usual -->
+      {#if showStallHint}
+        <p class="text-xs text-warning">{m.file_upload_stall_hint()}</p>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ── Step: Stalled (hard cap reached) ─────────────────────────────────── -->
+  {#if step === 'stalled'}
+    <div class="space-y-4">
+      <div class="rounded-md border border-danger/20 bg-danger-light p-4">
+        <div class="mb-2 flex items-center gap-2">
+          <svg class="h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span class="text-sm font-semibold text-danger">{m.file_upload_stalled_title()}</span>
+        </div>
+        <p class="text-sm text-danger">
+          {m.file_upload_stalled_desc({ minutes: Math.round(STALL_HARD_CAP_MS / 60000) })}
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-2">
+        <button
+          onclick={resetToSelect}
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+        >
+          {m.file_upload_start_over()}
+        </button>
+        <button
+          onclick={retryPolling}
+          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+        >
+          {m.file_upload_recheck()}
+        </button>
+      </div>
     </div>
   {/if}
 
