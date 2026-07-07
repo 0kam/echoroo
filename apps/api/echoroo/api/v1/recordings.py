@@ -558,16 +558,14 @@ async def delete_recording(
 
 
 # T061: Audio streaming with HTTP Range support
-@router.get(
-    "/{recording_id}/audio",
-    summary="Stream audio with HTTP Range support",
-    description=(
-        "Stream audio for playback with full HTTP Range request support. "
-        "Speed and time_expansion are applied via WAV header manipulation "
-        "(zero-cost, no resampling). Supports clip trimming via start/end params. "
-        "Accepts auth via Authorization header or ?token query parameter."
-    ),
-)
+#
+# W2-4 PR-D (2026-07-07): the ``@router.get("/{recording_id}/audio", ...)``
+# decorator was removed so the last legacy ``/api/v1`` recordings media route is
+# unmounted in favour of the ``/web-api/v1`` BFF media surface. ``stream_audio``
+# survives as an importable helper delegated to by
+# ``echoroo.api.web_v1.projects._media.stream_audio``; the frontend calls the
+# BFF twin. Only the route registration is removed here — the HTTP
+# Range handling, mid-stream gate re-check, and token-auth wiring are unchanged.
 async def stream_audio(
     project_id: UUID,
     recording_id: UUID,
@@ -1132,8 +1130,9 @@ async def get_spectrogram(
 # unmounted from ``/api/v1`` in favour of the ``/web-api/v1`` BFF media-token
 # surface. The handler body stays as an importable helper delegated to by
 # ``echoroo.api.web_v1.projects._media.download_recording``; only the route
-# decorator is removed here. The ``/audio`` and ``/stream`` media routes stay
-# mounted (later PR).
+# decorator is removed here. W2-4 PR-D (2026-07-07) unmounted the final
+# ``/audio`` media route, so ``recordings.router`` now defines ZERO routes and
+# its ``include_router`` was removed from ``echoroo.api.v1.__init__``.
 async def download_recording(
     project_id: UUID,
     recording_id: UUID,

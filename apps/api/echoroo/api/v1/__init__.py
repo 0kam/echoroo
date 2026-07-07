@@ -12,7 +12,6 @@ from echoroo.api.v1 import (
     h3,
     licenses,
     projects,
-    recordings,
     taxa,
     users,
 )
@@ -38,7 +37,14 @@ api_router.include_router(projects.router)
 # ``echoroo.api.web_v1.projects._sites``; only the v1 route registration is
 # removed here.
 api_router.include_router(datasets.router)
-api_router.include_router(recordings.router)
+# W2-4 PR-D: the browser-superseded recording media routes (download / audio /
+# spectrogram / stream) were unmounted from ``/api/v1`` in favour of the
+# ``/web-api/v1`` BFF media-token surface across W2-4 PR-A..PR-D. With PR-D
+# unmounting the final ``/{recording_id}/audio`` route, ``recordings.router`` now
+# defines ZERO routes, so its ``include_router`` + import were removed here
+# (mirroring the ``clips`` / ``xeno_canto`` precedent above/below). The handler
+# bodies survive as importable helpers (``echoroo.api.v1.recordings.{stream_audio,
+# download_recording,...}``) delegated to by ``echoroo.api.web_v1.projects._media``.
 # W2-4 PR-A: the three browser-superseded clip media routes (audio / spectrogram
 # / download) were unmounted from ``/api/v1`` in favour of the ``/web-api/v1``
 # BFF media-token surface. Since W2-3 PR-13 already unmounted the clip CRUD /

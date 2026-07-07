@@ -21,9 +21,6 @@ recordings`` handler and collapses to 404 on a Restricted project
 BFF adapters require a real session, so their no-auth path stays 401 (auth
 fires before the permission gate).
 
-The audio media route (``TestRecordingAudioEndpoints``) KEEPS its ``/api/v1``
-Bearer semantics — it is not migrated in this PR.
-
 W2-4 PR-A (2026-07-04): the recording download route was migrated to the
 ``/web-api/v1`` BFF media-token surface (``_media.py:download_recording``), so
 ``test_download_recording_*`` now exercise the BFF path (session-authed via
@@ -31,8 +28,18 @@ W2-4 PR-A (2026-07-04): the recording download route was migrated to the
 
 W2-4 PR-E (2026-07-05): the legacy ``/{recording_id}/stream`` alias (a pure
 delegate to the ``/audio`` handler, ``include_in_schema=False``, zero callers)
-was unmounted. The former ``test_stream_audio_*`` contract tests now exercise
+was unmounted. The former ``test_stream_audio_*`` contract tests then exercised
 the surviving ``/audio`` route directly.
+
+W2-4 PR-D (2026-07-07): the final ``/{recording_id}/audio`` media route was
+unmounted from ``/api/v1`` in favour of the ``/web-api/v1`` BFF adapter
+(``_media.py:stream_audio``), so ``recordings.router`` now defines zero routes
+and was removed from ``echoroo.api.v1.__init__``. The ``TestRecordingAudioEndpoints``
+audio tests now exercise the BFF path: success / not-found are session-authed via
+``csrf_headers`` (the adapter's ``OptionalCurrentUser`` accepts the Bearer), and
+the anonymous no-credential case collapses to a plain 401 at the BFF media
+auth-router (before the permission gate), matching the ``/spectrogram`` and
+``/download`` media siblings.
 """
 
 from __future__ import annotations
@@ -597,14 +604,21 @@ class TestRecordingAudioEndpoints:
     async def test_stream_audio_success(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio - Stream audio."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/audio - Stream audio.
+
+        W2-4 PR-D unmounted the last legacy ``/api/v1`` recording media route;
+        the audio stream is now served by the ``/web-api/v1`` BFF adapter, which
+        delegates to the same legacy handler behind ``RECORDING_MEDIA_ACTION``.
+        The adapter authenticates via ``OptionalCurrentUser`` (session Bearer /
+        media token), so success is exercised with a real BFF session.
+        """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio",
+            headers=csrf_headers,
         )
 
         # Note: May return 404 if audio file doesn't exist in test environment
@@ -623,14 +637,14 @@ class TestRecordingAudioEndpoints:
     async def test_stream_audio_not_found(
         self,
         client: AsyncClient,
-        auth_headers: dict[str, str],
+        csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio with non-existent ID."""
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/audio with non-existent ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{fake_id}/audio",
-            headers=auth_headers,
+            f"/web-api/v1/projects/{test_project_id}/recordings/{fake_id}/audio",
+            headers=csrf_headers,
         )
 
         assert response.status_code == 404
@@ -641,17 +655,21 @@ class TestRecordingAudioEndpoints:
         test_project_id: str,
         test_recording: Recording,
     ) -> None:
-        """Test GET /api/v1/projects/{project_id}/recordings/{recording_id}/audio denies anonymous access.
+        """Test GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/audio denies anonymous access.
 
-        Unlike the removed ``/stream`` alias (strict ``CurrentUser`` -> 401), the
-        surviving ``/audio`` route accepts a ``FlexibleCurrentUser`` (media-token
-        aware) and the media gate rejects an anonymous guest with 403.
+        Unlike the legacy ``/api/v1`` route (``FlexibleCurrentUser`` resolves an
+        anonymous request to a guest and the media gate answers 403), the BFF
+        media auth-router (``echoroo.middleware.auth_router``) rejects a request
+        that carries NO credential at all (no session cookie, no Bearer, no
+        scoped ``media_token``) with 401 BEFORE the permission gate runs — the
+        same contract as the sibling ``/spectrogram`` and ``/download`` media
+        routes. A media-token holder still falls through to the gate.
         """
         response = await client.get(
-            f"/api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio"
+            f"/web-api/v1/projects/{test_project_id}/recordings/{test_recording.id}/audio"
         )
 
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     async def test_get_spectrogram_success(
         self,
@@ -784,11 +802,13 @@ class TestRecordingAudioEndpoints:
         assert response.status_code == 401
 
 
-def test_v1_recording_download_route_unmounted() -> None:
-    """The legacy /api/v1 recording download route must stay unmounted (W2-4 PR-A).
+def test_v1_recording_media_routes_unmounted() -> None:
+    """The legacy /api/v1 recording media routes must stay unmounted.
 
-    Only the download surface moved in PR-A; the v1 audio route stays mounted.
-    The legacy ``/stream`` alias was unmounted in W2-4 PR-E.
+    W2-4 PR-A unmounted the download route, PR-E the ``/stream`` alias, and
+    PR-D the final ``/audio`` route. With ``/audio`` gone, ``recordings.router``
+    defines zero routes and was removed from ``echoroo.api.v1.__init__``; the
+    media surface now lives entirely on the ``/web-api/v1`` BFF.
     """
     from echoroo.main import create_app
 
@@ -796,4 +816,4 @@ def test_v1_recording_download_route_unmounted() -> None:
     base = "/api/v1/projects/{project_id}/recordings/{recording_id}"
     assert f"{base}/download" not in paths
     assert f"{base}/stream" not in paths
-    assert f"{base}/audio" in paths
+    assert f"{base}/audio" not in paths

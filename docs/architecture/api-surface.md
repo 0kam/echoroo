@@ -67,3 +67,23 @@ unmounted from `/api/v1` in W2-4 PR-C in favour of their BFF twins:
 The legacy handler bodies (`search_xeno_canto`, `proxy_audio`) survive as
 importable helpers delegated to by the BFF adapter. With PR-C the legacy
 `xeno_canto.router` defines zero routes, so its `include_router` was removed.
+
+## Recording media routes (W2-4 PR-A / PR-D / PR-E)
+
+The project recording media surface is browser-first and moved to the
+`/web-api/v1` BFF across the W2-4 recordings sub-track:
+
+- `GET /web-api/v1/projects/{project_id}/recordings/{recording_id}/audio` — HTTP
+  Range streaming, gated by `RECORDING_MEDIA_ACTION` (`OptionalCurrentUser`, so a
+  scoped `media_token` also authenticates). Unmounted from `/api/v1` in PR-D.
+- `GET .../recordings/{recording_id}/playback` and `.../spectrogram` — same media
+  gate; moved earlier in the sub-track.
+- `GET .../recordings/{recording_id}/download` — media-token download surface,
+  unmounted in PR-A.
+
+The legacy `/{recording_id}/stream` alias (a schema-hidden delegate to `/audio`)
+was unmounted in PR-E. With PR-D removing the final `/audio` route, the legacy
+`recordings.router` defines zero routes, so its `include_router` + import were
+removed from `echoroo.api.v1.__init__`. The handler bodies (`stream_audio`,
+`download_recording`, …) survive as importable helpers that the BFF adapter
+(`echoroo.api.web_v1.projects._media`) delegates to.
