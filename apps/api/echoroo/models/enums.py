@@ -224,6 +224,25 @@ class DetectionRunStatus(StrEnum):
     FAILED = "failed"
 
 
+class DetectionRunType(StrEnum):
+    """First-class discriminator for what a detection run produces.
+
+    Replaces the fragile client-side heuristic that inferred the run kind from
+    ``parameters->embedding_only`` plus ``model_name`` allowlists.
+
+    - ``detection``: a species-detection run that writes annotations
+      (e.g. BirdNET, or any future non-embedding detector).
+    - ``embedding``: an embedding-generation run (e.g. Perch) that produces
+      embeddings for similarity search rather than species annotations.
+    - ``custom``: a custom-model (``custom_svm``) inference run, surfaced only
+      through the custom-models UI.
+    """
+
+    DETECTION = "detection"
+    EMBEDDING = "embedding"
+    CUSTOM = "custom"
+
+
 class UploadSessionStatus(StrEnum):
     """Upload session lifecycle states."""
 

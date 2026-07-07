@@ -196,6 +196,19 @@ export interface CastVoteRequest {
  */
 export type DetectionRunStatus = 'pending' | 'running' | 'completed' | 'failed';
 
+/**
+ * First-class discriminator for what a detection run produces.
+ * Replaces the former client-side heuristic (model_name allowlist +
+ * parameters.embedding_only).
+ *
+ * - `detection`: species-detection run that writes annotations (BirdNET, or any
+ *   future non-embedding detector).
+ * - `embedding`: embedding-generation run (Perch) for similarity search.
+ * - `custom`: custom-model (`custom_svm`) inference run, surfaced only via the
+ *   custom-models UI.
+ */
+export type DetectionRunType = 'detection' | 'embedding' | 'custom';
+
 // ============================================
 // Core Entity Types
 // ============================================
@@ -280,6 +293,8 @@ export interface DetectionRun {
   model_version: string;
   /** Model-specific parameters used during this run */
   parameters: Record<string, unknown> | null;
+  /** First-class run-kind discriminator (detection / embedding / custom) */
+  run_type: DetectionRunType;
   /** Current lifecycle status of the run */
   status: DetectionRunStatus;
   /** Total number of detections produced by this run */

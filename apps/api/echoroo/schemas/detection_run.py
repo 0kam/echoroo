@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.enums import DetectionRunStatus, DetectionRunType
 
 
 class DetectionRunCreate(BaseModel):
@@ -37,6 +37,7 @@ class DetectionRunResponse(BaseModel):
     model_name: str
     model_version: str
     parameters: dict[str, object] | None
+    run_type: DetectionRunType
     status: DetectionRunStatus
     annotation_count: int
     started_at: datetime | None

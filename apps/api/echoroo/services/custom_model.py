@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.detection_run import DetectionRun
-from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.enums import DetectionRunStatus, DetectionRunType
 from echoroo.models.sampling_round import SamplingRound
 from echoroo.repositories.custom_model import CustomModelRepository
 from echoroo.repositories.sampling_round import SamplingRoundRepository
@@ -522,6 +522,7 @@ class CustomModelService:
                 "threshold": threshold,
                 "embedding_model_name": model.embedding_model_name,
             },
+            run_type=DetectionRunType.CUSTOM,
             status=DetectionRunStatus.PENDING,
             annotation_count=0,
         )
