@@ -358,6 +358,18 @@ check_env_values() {
     failures=1
   fi
 
+  # Xeno-Canto search is an optional feature (settings.py xeno_canto_enabled).
+  # It is enabled only when XENO_CANTO_API_KEY is a real, non-"demo" key; the
+  # backend degrades gracefully otherwise (typed 409 + hidden UI tab). This is
+  # purely informational and never fails the check.
+  local xeno_canto_key
+  xeno_canto_key="$(env_value XENO_CANTO_API_KEY)"
+  if [[ -z "${xeno_canto_key}" ]]; then
+    info "Xeno-Canto search is disabled (XENO_CANTO_API_KEY not set) — optional feature."
+  elif [[ "${xeno_canto_key}" == "demo" ]]; then
+    info "Xeno-Canto search is disabled (XENO_CANTO_API_KEY='demo' is treated as unset) — optional feature."
+  fi
+
   if [[ "${failures}" -ne 0 ]]; then
     exit 1
   fi
@@ -423,11 +435,14 @@ check_kms_alias_format() {
 }
 
 print_urls() {
-  local frontend_port backend_port
+  local frontend_port backend_port public_host
   frontend_port="$(env_value ECHOROO_FRONTEND_PORT)"
   backend_port="$(env_value ECHOROO_API_PORT)"
-  printf 'Frontend: http://localhost:%s\n' "${frontend_port:-5173}"
-  printf 'Backend:  http://localhost:%s\n' "${backend_port:-8002}"
+  # ECHOROO_PUBLIC_HOST is the single deploy knob (default localhost); showing
+  # the effective value lets LAN/FQDN deployers see the real browser URLs.
+  public_host="$(env_value ECHOROO_PUBLIC_HOST)"
+  printf 'Frontend: http://%s:%s\n' "${public_host:-localhost}" "${frontend_port:-5173}"
+  printf 'Backend:  http://%s:%s\n' "${public_host:-localhost}" "${backend_port:-8002}"
 }
 
 start_stack() {
