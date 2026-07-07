@@ -112,6 +112,30 @@ def test_celery_app_module_imports_and_exposes_app_object() -> None:
     assert routes["echoroo.workers.ml_tasks.run_birdnet_detection"]["queue"] == "gpu"
 
 
+def test_iucn_red_list_sync_is_scheduled_weekly() -> None:
+    """The FR-036 IUCN sync is wired as a weekly beat task on the default queue.
+
+    The admin force-resync endpoint documents ``sync_iucn_red_list`` as
+    "the weekly task"; this pins the beat entry so that contract stays
+    accurate. The module must also be imported (``conf.include``) or beat
+    would dispatch a task the workers never registered, and it must NOT be
+    routed to the GPU queue.
+    """
+    mod = importlib.import_module("echoroo.workers.celery_app")
+    task_name = "echoroo.workers.iucn_sync.sync_iucn_red_list"
+
+    entry = mod.app.conf.beat_schedule["sync-iucn-red-list-weekly"]
+    assert entry["task"] == task_name
+
+    # Weekly cadence == a crontab restricted to a single day_of_week.
+    schedule = entry["schedule"]
+    assert schedule.day_of_week == {0}
+
+    # Registered for dispatch, and never on the GPU queue.
+    assert "echoroo.workers.iucn_sync" in mod.app.conf.include
+    assert task_name not in mod.app.conf.task_routes
+
+
 def test_celery_app_module_reload_with_rediss_settings_exercises_ssl_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

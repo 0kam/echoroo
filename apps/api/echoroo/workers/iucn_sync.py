@@ -1,7 +1,7 @@
 """IUCN Red List weekly sync worker (Phase 11 / T620, FR-036).
 
 This Celery task is the only mutator of :class:`TaxonSensitivity` rows
-whose ``source = 'iucn'``. It runs weekly via Celery Beat (Sunday 04:30
+whose ``source = 'iucn'``. It runs weekly via Celery Beat (Sunday 04:00
 UTC, off-peak slot reserved by spec §retention table) and is also
 invoked synchronously by:
 
@@ -440,7 +440,11 @@ async def _run_sync_async(force: bool = False) -> dict[str, Any]:
         )
         if force:
             raise RuntimeError(msg)
-        logger.error(msg)
+        # Non-force path backs the weekly beat schedule: a deployment that
+        # never configured a token would otherwise emit an ERROR every
+        # Sunday. Log at WARNING and return a clean no-op success instead so
+        # the scheduled run stays quiet without hiding the misconfiguration.
+        logger.warning(msg)
         return {"status": "skipped", "reason": "missing IUCN_API_TOKEN"}
 
     base_url = os.environ.get("IUCN_API_BASE_URL", _IUCN_API_BASE_URL_DEFAULT)
