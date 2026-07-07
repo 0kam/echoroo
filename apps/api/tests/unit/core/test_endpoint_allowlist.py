@@ -162,6 +162,10 @@ class TestIsAllowlisted:
         # legacy /api/v1 login entry together with its route).
         assert not is_allowlisted("/web-api/v1/auth/login", "GET")
 
-    def test_xeno_canto_search_is_external_proxy(self) -> None:
+    def test_v1_xeno_canto_search_no_longer_allowlisted(self) -> None:
+        # W2-4 PR-C unmounted the legacy
+        # ``/api/v1/projects/{project_id}/xeno-canto/search`` route (its BFF twin
+        # is gated by SEARCH_SESSION_LIST_ACTION), so the EXTERNAL_PROXY entry was
+        # removed. The path must no longer resolve as allowlisted.
         path = "/api/v1/projects/8b3a5f12-1234-4abc-9def-0123456789ab/xeno-canto/search"
-        assert is_allowlisted(path, "GET")
+        assert not is_allowlisted(path, "GET")
