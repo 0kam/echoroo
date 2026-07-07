@@ -72,6 +72,12 @@ app.conf.update(
     worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (prevent memory leaks)
     worker_prefetch_multiplier=1,  # Fair scheduling
     task_default_queue="default",  # Non-routed tasks go to 'default' queue
+    # Redis-broker redelivery window for acks_late tasks. Must exceed
+    # task_time_limit (600s) so a legitimately long-running task is never
+    # redelivered while it is still executing. 1800s gives ample headroom;
+    # true stuck sessions are still bounded by the #249 self-heal (900s)
+    # and the */10 reaper, not by this timeout.
+    broker_transport_options={"visibility_timeout": 1800},
 )
 
 # Route GPU-intensive ML tasks to the dedicated GPU queue.
