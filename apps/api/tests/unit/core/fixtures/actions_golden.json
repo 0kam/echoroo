@@ -485,6 +485,12 @@
     "is_superuser_only": true,
     "required_permission": null
   },
+  "platform.upload.recover": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
   "project.archive": {
     "is_mutating": true,
     "is_platform_scope": false,

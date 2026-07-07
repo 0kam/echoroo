@@ -48,7 +48,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import sqlalchemy as sa
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 
 from echoroo.core.actions import (
@@ -56,6 +56,7 @@ from echoroo.core.actions import (
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
+    PLATFORM_UPLOAD_RECOVER_ACTION,
     PROJECT_ARCHIVE_ACTION,
     PROJECT_RESTORE_ACTION,
     PROJECT_TAXON_OVERRIDE_APPROVE_ACTION,
@@ -74,11 +75,13 @@ from echoroo.core.database import AsyncSessionLocal, DbSession
 from echoroo.core.permissions import Action, gate_action, is_allowed, load_project_or_404
 from echoroo.middleware.auth import OptionalCurrentUser
 from echoroo.middleware.step_up import require_step_up_token
-from echoroo.models.enums import ProjectStatus
+from echoroo.models.enums import ProjectStatus, UploadSessionStatus
 from echoroo.models.project import ProjectMember
 from echoroo.models.superuser import Superuser
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
+from echoroo.models.upload import UploadSession
 from echoroo.models.user import User
+from echoroo.repositories.upload import UploadSessionRepository
 from echoroo.schemas.admin import (
     AdminPasswordResetBody,
     AdminPasswordResetResponse,
@@ -88,6 +91,8 @@ from echoroo.schemas.admin import (
     ResetTwoFactorRequest,
     RestoreRequest,
     RestoreResponse,
+    StuckUploadSessionListResponse,
+    StuckUploadSessionSummary,
     SuperuserActionResponse,
     SuperuserAddRequest,
     SuperuserApprovalRequestListResponse,
@@ -624,6 +629,202 @@ async def force_iucn_resync(
         task_id=async_result.id,
         enqueued_at=enqueued_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# Upload-session recovery (platform-scope, superuser-only)
+# ---------------------------------------------------------------------------
+#
+# Operators occasionally hit an upload session that wedges mid-pipeline
+# (worker crash, lost message, stuck import). These two endpoints let a
+# superuser inspect the wedged sessions and force-fail a specific one so
+# the affected user can safely re-upload. There is deliberately NO
+# re-dispatch / retry endpoint: re-running a partially-applied import is
+# unsafe, so force-fail + user re-upload is the sanctioned recovery path.
+
+# Terminal states a session can never leave; a force-fail on one of these
+# is a no-op that would only hide a real state bug, so we reject it (409).
+_TERMINAL_UPLOAD_STATUSES = (
+    UploadSessionStatus.IMPORTED,
+    UploadSessionStatus.FAILED,
+)
+
+_UPLOAD_FORCE_FAIL_ERROR = "Force-failed by admin (recovery)"
+
+
+def _stuck_session_summary(session: UploadSession) -> StuckUploadSessionSummary:
+    """Project an :class:`UploadSession` (with ``dataset`` eager-loaded).
+
+    ``project_id`` is resolved via the parent dataset — the session row has
+    no direct project FK.
+    """
+    return StuckUploadSessionSummary(
+        id=session.id,
+        dataset_id=session.dataset_id,
+        project_id=session.dataset.project_id,
+        status=session.status.value,
+        error=session.error,
+        total_files=session.total_files,
+        validated_files=session.validated_files,
+        imported_files=session.imported_files,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
+
+
+@router.get(
+    "/uploads/stuck",
+    response_model=StuckUploadSessionListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List stuck upload sessions (Superuser)",
+    description=(
+        "Return upload sessions stuck in a non-terminal, mid-processing "
+        "state (UPLOADED / VALIDATING / VALIDATED / IMPORTING), oldest "
+        "first, so an operator can spot and recover wedged imports. Pass "
+        "``older_than_seconds`` to restrict the result to sessions idle for "
+        "at least that long. Platform-scope (no project_id); writes no "
+        "audit row (read-only)."
+    ),
+)
+async def list_stuck_uploads(
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    older_than_seconds: int | None = Query(
+        None,
+        ge=0,
+        description=(
+            "Only return sessions whose last update is older than this many "
+            "seconds. Omit to return every non-terminal session."
+        ),
+    ),
+    limit: int = Query(100, ge=1, le=500, description="Page size"),
+    offset: int = Query(0, ge=0, description="Rows to skip"),
+) -> StuckUploadSessionListResponse:
+    """List non-terminal stuck upload sessions for admin recovery."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    allowed, _ = is_allowed(
+        action=PLATFORM_UPLOAD_RECOVER_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Upload recovery is restricted to superusers",
+        )
+
+    repo = UploadSessionRepository(db)
+    sessions = await repo.list_stuck_sessions(
+        older_than_seconds=older_than_seconds,
+        limit=limit,
+        offset=offset,
+    )
+    return StuckUploadSessionListResponse(
+        items=[_stuck_session_summary(s) for s in sessions],
+    )
+
+
+@router.post(
+    "/uploads/{session_id}/fail",
+    response_model=StuckUploadSessionSummary,
+    status_code=status.HTTP_200_OK,
+    summary="Force-fail a stuck upload session (Superuser)",
+    description=(
+        "Force-mark a wedged upload session as FAILED so the user can "
+        "safely re-upload. Rejects sessions that are already terminal "
+        "(IMPORTED / FAILED) with 409, and unknown ids with 404. "
+        "Platform-scope; writes a ``platform_audit_log`` entry."
+    ),
+)
+async def force_fail_upload(
+    session_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> StuckUploadSessionSummary:
+    """Force a stuck upload session into the FAILED terminal state."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    allowed, _ = is_allowed(
+        action=PLATFORM_UPLOAD_RECOVER_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Upload recovery is restricted to superusers",
+        )
+
+    repo = UploadSessionRepository(db)
+    session = await repo.get_by_id(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upload session not found",
+        )
+    if session.status in _TERMINAL_UPLOAD_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Upload session is already terminal (status={session.status.value}) "
+                "and cannot be force-failed"
+            ),
+        )
+
+    await repo.update_status(
+        session_id,
+        UploadSessionStatus.FAILED,
+        error=_UPLOAD_FORCE_FAIL_ERROR,
+    )
+
+    # Re-read so the response reflects the persisted FAILED state + error,
+    # with the dataset relationship loaded for project_id resolution.
+    updated = await repo.get_by_id(session_id)
+    assert updated is not None
+    response = _stuck_session_summary(updated)
+
+    # Mirror force_iucn_resync (Phase 13 P1 R3): the request-scoped session
+    # already ran the superuser probe, so the SERIALIZABLE audit write must
+    # ride a fresh AsyncSessionLocal after the main TX commits.
+    await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(platform_audit_session).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.upload.recover",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "session_id": str(session_id),
+                        "dataset_id": str(response.dataset_id),
+                        "project_id": str(response.project_id),
+                        "previous_status": session.status.value,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks recovery
+        logger.warning(
+            "platform.upload.recover audit write failed (FR-089 soft alert): "
+            "actor=%s session_id=%s error=%r",
+            current_user.id,
+            session_id,
+            exc,
+        )
+
+    return response
 
 
 # ---------------------------------------------------------------------------
