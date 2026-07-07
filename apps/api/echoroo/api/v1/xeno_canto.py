@@ -323,14 +323,13 @@ def _transform_recording(raw: dict[str, object]) -> XenoCantoRecording | None:
     )
 
 
-@router.get(
-    "/audio/{xc_id}",
-    summary="Proxy Xeno-canto audio download",
-    description=(
-        "Streams an audio file from Xeno-canto, proxying the request to avoid CORS issues. "
-        "Enforces a 50 MB size limit and a 30-second timeout."
-    ),
-)
+# W2-4 PR-C: the ``@router.get("/audio/{xc_id}", ...)`` decorator was removed so
+# the legacy ``/api/v1`` Xeno-canto audio route is unmounted. ``proxy_audio``
+# survives as a plain helper that the ``/web-api/v1`` search adapter
+# (``echoroo.api.web_v1.projects._search.proxy_xeno_canto_audio``) imports and
+# delegates to; the frontend calls the BFF twin. Only the route registration is
+# removed here — the streaming body, gate_action wiring, and size/timeout guards
+# are unchanged.
 async def proxy_audio(
     project_id: UUID,
     xc_id: str,
@@ -586,16 +585,13 @@ async def proxy_sonogram(
     )
 
 
-@router.get(
-    "/search",
-    response_model=XenoCantoSearchResponse,
-    summary="Search Xeno-canto recordings",
-    description=(
-        "Proxy search to the Xeno-canto v3 API. "
-        "Hides the API key and returns a cleaned response. "
-        "Supports species, country, area, quality, and recording type filters."
-    ),
-)
+# W2-4 PR-C: the ``@router.get("/search", ...)`` decorator was removed so the
+# legacy ``/api/v1`` Xeno-canto search route is unmounted. ``search_xeno_canto``
+# survives as a plain helper that the ``/web-api/v1`` search adapter
+# (``echoroo.api.web_v1.projects._search.search_xeno_canto``) imports and
+# delegates to; the frontend calls the BFF twin. Only the route registration is
+# removed here — the API-key hiding, query building, and sonogram-URL rewrite
+# (which already targets the ``/web-api/v1`` sonogram proxy) are unchanged.
 async def search_xeno_canto(
     project_id: UUID,
     current_user: CurrentUser,

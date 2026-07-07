@@ -275,4 +275,13 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     # allowlist is the control); server-emitted ``sonogram_url`` now targets
     # this path so native ``<img>`` elements avoid Chrome ORB.
     "/web-api/v1/projects/{project_id}/xeno-canto/sonogram GET",
+    # W2-4 PR-C — Xeno-canto search + audio proxy: the browser-superseded
+    # ``/api/v1/.../xeno-canto/search`` and ``/api/v1/.../xeno-canto/audio/{xc_id}``
+    # routes were unmounted in favour of the ``/web-api/v1`` BFF twins. Search is
+    # gated by ``SEARCH_SESSION_LIST_ACTION`` (mirroring the legacy
+    # ``check_project_access`` baseline) and audio by ``XENO_CANTO_AUDIO_ACTION``;
+    # the legacy handler bodies survive as importable helpers delegated to by the
+    # BFF adapter. With this PR the legacy ``xeno_canto.router`` defines zero routes.
+    "/web-api/v1/projects/{project_id}/xeno-canto/search GET",
+    "/web-api/v1/projects/{project_id}/xeno-canto/audio/{xc_id} GET",
 ]

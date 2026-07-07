@@ -15,7 +15,6 @@ from echoroo.api.v1 import (
     recordings,
     taxa,
     users,
-    xeno_canto,
 )
 from echoroo.api.v1 import (
     search as search_module,
@@ -121,8 +120,13 @@ api_router.include_router(annotation_comments.router)
 # legacy handlers survive as importable helpers (``echoroo.api.v1.custom_models``)
 # delegated to by ``echoroo.api.web_v1.projects._custom_models``; only the v1
 # route registration is removed here.
-# Xeno-canto proxy router
-api_router.include_router(xeno_canto.router)
+# W2-4 PR-C: the browser-superseded Xeno-canto search + audio routes were
+# unmounted from ``/api/v1`` in favour of the ``/web-api/v1`` BFF twins
+# (``echoroo.api.web_v1.projects._search``). Since W2-4 PR-D already unmounted
+# the sonogram proxy route, ``xeno_canto.router`` now defines ZERO routes, so its
+# ``include_router`` + import were removed here. The handler bodies survive as
+# importable helpers (``echoroo.api.v1.xeno_canto.{search_xeno_canto,proxy_audio,
+# proxy_sonogram}``) delegated to by the BFF adapter.
 
 # Cross-model evaluation router (003-annotation A3)
 # W2-3 PR-5: the public ``/api/v1/annotation-sets/*/evaluate`` +

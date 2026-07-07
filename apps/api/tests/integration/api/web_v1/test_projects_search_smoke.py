@@ -32,6 +32,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import Response, StreamingResponse
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 
 from echoroo.api.v1 import xeno_canto as legacy_xeno_canto
@@ -310,6 +311,60 @@ async def test_xeno_canto_sonogram_bff_delegates_to_legacy_ungated(
     assert captured["url"] == sono_url
     # Un-gated: no gate_action should have fired.
     assert gate_captured == {}
+
+
+# ---------------------------------------------------------------------------
+# W2-4 PR-C: legacy /api/v1 xeno-canto search + audio routes are unmounted
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_xeno_canto_router_has_no_registered_routes() -> None:
+    """W2-4 PR-C leaves ``xeno_canto.router`` with zero mounted routes.
+
+    Search + audio decorators were removed by this PR; the sonogram decorator
+    was removed by W2-4 PR-D. All three handler bodies survive only as
+    importable helpers delegated to by the ``/web-api/v1`` BFF adapter, so the
+    legacy router must register nothing.
+    """
+    route_paths = [
+        route.path
+        for route in legacy_xeno_canto.router.routes
+        if isinstance(route, APIRoute)
+    ]
+    assert route_paths == [], (
+        "legacy xeno_canto.router must expose no routes after W2-4 PR-C; "
+        f"found {route_paths}"
+    )
+    # The helper coroutines remain importable for the BFF adapter to delegate to.
+    assert callable(legacy_xeno_canto.search_xeno_canto)
+    assert callable(legacy_xeno_canto.proxy_audio)
+    assert callable(legacy_xeno_canto.proxy_sonogram)
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_xeno_canto_search_and_audio_return_404() -> None:
+    """The unmounted legacy ``/api/v1`` search + audio paths 404 at the router.
+
+    Mounting the legacy router under ``/api/v1`` and requesting the old paths
+    proves the routes are gone (404), not merely returning an auth error.
+    """
+    from echoroo.api.v1 import api_router as legacy_api_router
+
+    project_id = uuid4()
+    app = FastAPI()
+    app.include_router(legacy_api_router)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        search_resp = await client.get(
+            f"/api/v1/projects/{project_id}/xeno-canto/search?query=Larus"
+        )
+        audio_resp = await client.get(
+            f"/api/v1/projects/{project_id}/xeno-canto/audio/1234"
+        )
+
+    assert search_resp.status_code == 404, search_resp.text
+    assert audio_resp.status_code == 404, audio_resp.text
 
 
 @pytest.mark.asyncio

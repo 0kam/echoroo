@@ -479,28 +479,14 @@ ALLOWLIST: list[AllowlistEntry] = [
         last_reviewed_at=_TODAY_REVIEWED,
     ),
     # ---- external_proxy: xeno-canto search -------------------------------
-    # NOTE: xeno-canto search is mounted under
-    #   /api/v1/projects/{project_id}/xeno-canto/search
-    # so the path contains {project_id}; per spec/007 Codex Rev.3 重要-3 this
-    # endpoint is non-project-scoped in semantics (a global Cornell Lab
-    # proxy that simply happens to be namespaced under a project for
-    # routing convenience). Hence project_scope_allowed=True with explicit
-    # justification.
-    AllowlistEntry(
-        path_pattern="/api/v1/projects/{project_id}/xeno-canto/search",
-        methods=frozenset({"GET"}),
-        category=AllowlistCategory.EXTERNAL_PROXY,
-        reason=(
-            "Global xeno-canto search proxy; the {project_id} segment is "
-            "routing-only and the upstream is the Cornell Lab catalogue "
-            "(no project-scoped data is exposed). Codex Rev.3 重要-3."
-        ),
-        owner=_DEFAULT_OWNER,
-        spec_ref=f"{_SPEC_006}#xeno-canto-search",
-        expiry=None,
-        last_reviewed_at=_TODAY_REVIEWED,
-        project_scope_allowed=True,
-    ),
+    # W2-4 PR-C: the legacy ``/api/v1/projects/{project_id}/xeno-canto/search``
+    # route was unmounted in favour of the ``/web-api/v1`` BFF twin
+    # (``echoroo.api.web_v1.projects._search.search_xeno_canto``). The BFF twin
+    # is gated by a canonical Action (``SEARCH_SESSION_LIST_ACTION``) rather than
+    # bypassing the ACTIONS registry, so it needs no allowlist entry; the
+    # EXTERNAL_PROXY entry that used to describe the v1 route is therefore
+    # removed. ``AllowlistCategory.EXTERNAL_PROXY`` is retained above as the
+    # documented escape hatch even though no live entry currently uses it.
     # ---- infra_health ----------------------------------------------------
     AllowlistEntry(
         path_pattern="/health",
