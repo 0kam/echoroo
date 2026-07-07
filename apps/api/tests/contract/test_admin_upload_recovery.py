@@ -14,6 +14,7 @@ plain user for the negative case. A minimal Project -> Site -> Dataset
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -32,6 +33,7 @@ from echoroo.models.site import Site
 from echoroo.models.superuser import Superuser
 from echoroo.models.upload import UploadSession
 from echoroo.models.user import User
+from echoroo.repositories.upload import UploadSessionRepository
 from tests.contract.conftest import bff_session_headers
 
 pytestmark = pytest.mark.asyncio
@@ -308,3 +310,99 @@ class TestForceFailUpload:
             headers=regular_user_headers,
         )
         assert response.status_code == 403
+
+    async def test_force_fail_passes_cas_and_409_on_concurrent_transition(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        superuser_headers: dict[str, str],
+        admin_superuser: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The handler must CAS on the read status and 409 on a lost race.
+
+        We spy ``UploadSessionRepository.update_status`` to (a) prove the
+        handler forwards ``expected_status`` (the compare-and-set guard) and
+        (b) simulate the background import winning the race by returning
+        ``False`` (0 rows matched). The handler must then re-fetch and reply
+        409 instead of reporting a misleading 200.
+        """
+        session, _ = await _seed_upload_session(
+            db_session,
+            admin_superuser,
+            status=UploadSessionStatus.IMPORTING,
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def fake_update_status(
+            self: UploadSessionRepository,
+            session_id: UUID,
+            status: UploadSessionStatus,
+            error: str | None = None,
+            expected_status: UploadSessionStatus | None = None,
+        ) -> bool:
+            captured["expected_status"] = expected_status
+            captured["status"] = status
+            return False  # simulate a concurrent transition (0 rows matched)
+
+        monkeypatch.setattr(
+            UploadSessionRepository, "update_status", fake_update_status
+        )
+
+        response = await client.post(
+            f"/web-api/v1/admin/uploads/{session.id}/fail",
+            headers=superuser_headers,
+        )
+
+        assert response.status_code == 409, response.text
+        assert "transitioned concurrently" in response.json()["detail"]
+        # The CAS guard was forwarded with the status we read (IMPORTING).
+        assert captured["expected_status"] == UploadSessionStatus.IMPORTING
+        assert captured["status"] == UploadSessionStatus.FAILED
+
+    async def test_force_fail_audit_logs_pre_call_previous_status(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        superuser_headers: dict[str, str],
+        admin_superuser: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The audit ``previous_status`` is the pre-UPDATE status.
+
+        The ORM-enabled UPDATE mutates the in-memory session to FAILED, so a
+        naive read after the write would always log ``"failed"``. We spy the
+        audit emit to capture the ``detail`` payload (the real KMS-backed
+        hash-chain write is unavailable in the contract harness and is a
+        best-effort soft alert anyway) and assert it carries ``"importing"``.
+        """
+        session, _ = await _seed_upload_session(
+            db_session,
+            admin_superuser,
+            status=UploadSessionStatus.IMPORTING,
+        )
+
+        captured: dict[str, Any] = {}
+
+        async def fake_write_platform_event(
+            self: Any, **kwargs: Any
+        ) -> UUID:
+            captured.update(kwargs)
+            return uuid4()
+
+        monkeypatch.setattr(
+            "echoroo.services.audit_service.AuditLogService.write_platform_event",
+            fake_write_platform_event,
+        )
+
+        response = await client.post(
+            f"/web-api/v1/admin/uploads/{session.id}/fail",
+            headers=superuser_headers,
+        )
+        assert response.status_code == 200, response.text
+
+        assert captured.get("action") == "platform.upload.recover"
+        detail = captured["detail"]
+        assert detail["session_id"] == str(session.id)
+        assert detail["previous_status"] == UploadSessionStatus.IMPORTING.value

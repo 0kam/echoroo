@@ -778,11 +778,32 @@ async def force_fail_upload(
             ),
         )
 
-    await repo.update_status(
+    # Capture the status BEFORE the UPDATE: SQLAlchemy's ORM-enabled UPDATE
+    # mutates the identity-mapped ``session`` instance in place, so reading
+    # ``session.status`` after ``update_status`` would already return FAILED.
+    previous_status = session.status.value
+
+    # Compare-and-set on the status we read: if the background import task
+    # transitioned the session (e.g. IMPORTING -> IMPORTED) between our read
+    # and this write, the guard matches 0 rows and we must NOT force-fail a
+    # legitimately completed import.
+    updated_ok = await repo.update_status(
         session_id,
         UploadSessionStatus.FAILED,
         error=_UPLOAD_FORCE_FAIL_ERROR,
+        expected_status=session.status,
     )
+    if not updated_ok:
+        # Re-fetch to report the status the session raced into.
+        current = await repo.get_by_id(session_id)
+        current_status = current.status.value if current is not None else "unknown"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Upload session transitioned concurrently and was not "
+                f"force-failed; now {current_status}"
+            ),
+        )
 
     # Re-read so the response reflects the persisted FAILED state + error,
     # with the dataset relationship loaded for project_id resolution.
@@ -808,7 +829,7 @@ async def force_fail_upload(
                         "session_id": str(session_id),
                         "dataset_id": str(response.dataset_id),
                         "project_id": str(response.project_id),
-                        "previous_status": session.status.value,
+                        "previous_status": previous_status,
                     },
                 )
                 await platform_audit_session.commit()
