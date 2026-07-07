@@ -170,14 +170,17 @@ async def web_client(
             return await call_next(request)
 
     app.add_middleware(_BearerPrincipalMiddleware)
+    # W2-4 PR-D (2026-07-07): the legacy ``/api/v1`` recording audio route was
+    # unmounted (``recordings.router`` now defines zero routes), so the
+    # Trusted-overlay 致命 2 test drives the ``gate_action`` invocation through
+    # the production ``/web-api/v1/projects/{id}/recordings/{id}/audio`` BFF
+    # adapter instead, which applies the SAME ``RECORDING_MEDIA_ACTION`` gate via
+    # ``OptionalCurrentUser`` (Bearer/media-token aware). The ``web_v1_router``
+    # mounted here already carries that route. ``recordings_module`` is still
+    # imported below purely to key the ``get_audio_service`` override (the BFF
+    # adapter delegates to ``legacy_recordings.stream_audio``, which resolves the
+    # same ``get_audio_service`` dependency).
     app.include_router(web_v1_router)
-    # Phase 10 Batch 2 Round 3 fix (Major 1): mount the production
-    # ``/api/v1/projects/{id}/recordings`` router so the Trusted-overlay
-    # 致命 2 test reaches a real ``gate_action`` invocation. The
-    # ``recordings.router`` defines its own ``/projects/{project_id}/
-    # recordings`` prefix; we mount it under ``/api/v1`` so the test URL
-    # mirrors the production layout.
-    app.include_router(recordings_module.router, prefix="/api/v1")
 
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:
@@ -545,15 +548,18 @@ async def test_trusted_overlay_grants_view_media_via_http_gate(
     and unions VIEW_MEDIA into the effective set; the gate returns 200
     (or 404 if the recording does not exist, but NEVER 403).
 
-    Phase 10 Batch 2 Round 3 fix (Major 1): the previous version of
-    this test hit
-    ``/web-api/v1/projects/.../recordings/.../audio`` which is NOT a
-    registered route on the Web router (recordings live on
-    ``/api/v1``). The 404 from the unknown route gave the assertion a
-    false positive — the gate was never executed. We now mount the
-    production recordings router under ``/api/v1`` in the test app and
-    drive the gate through the Bearer + ``?token=`` flexible auth path
-    that production uses for media URLs.
+    Phase 10 Batch 2 Round 3 fix (Major 1): an earlier version of this
+    test hit a route that was not registered on the test app, so the 404
+    from the unknown route gave the assertion a false positive — the gate
+    was never executed.
+
+    W2-4 PR-D (2026-07-07): the legacy ``/api/v1`` recording audio route
+    was unmounted, so this test now drives the SAME ``gate_action`` through
+    the production ``/web-api/v1/projects/.../recordings/.../audio`` BFF
+    adapter (registered on the ``web_v1_router`` mounted by the fixture).
+    The adapter's ``OptionalCurrentUser`` resolves the Bearer principal
+    (production's flexible media-auth path), so the Trusted-overlay
+    semantics under test are preserved end-to-end.
     """
     await _purge(db_session)
     owner = await _seed_user(
@@ -581,7 +587,7 @@ async def test_trusted_overlay_grants_view_media_via_http_gate(
     # status code that proves the gate ran (200 or 404).
     nonexistent_recording_id = uuid4()
     response = await web_client.get(
-        f"/api/v1/projects/{project.id}/recordings/{nonexistent_recording_id}/audio",
+        f"/web-api/v1/projects/{project.id}/recordings/{nonexistent_recording_id}/audio",
         headers=_bearer(target),
     )
     assert response.status_code != 403, (
