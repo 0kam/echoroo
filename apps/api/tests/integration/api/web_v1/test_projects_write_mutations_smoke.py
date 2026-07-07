@@ -58,6 +58,7 @@ from echoroo.models.enums import (
     DatasetStatus,
     DatasetVisibility,
     DetectionRunStatus,
+    DetectionRunType,
     DetectionSource,
     DetectionStatus,
 )
@@ -88,6 +89,7 @@ def _fake_detection_run_response(
         model_name="birdnet",
         model_version="2.4",
         parameters=None,
+        run_type=DetectionRunType.DETECTION,
         status=DetectionRunStatus.PENDING,
         annotation_count=0,
         started_at=None,
