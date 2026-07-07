@@ -783,6 +783,21 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             taxa_reconciliation_col_exists_result.scalar()
         )
 
+        # W1-4 (Alembic 0032): probe the new ``detection_runs.run_type`` column.
+        # ``Base.metadata.create_all`` never alters an existing table, so a
+        # long-lived reused test DB predating this column would otherwise be
+        # (wrongly) treated as "up to date" and skip the idempotent add below.
+        detection_run_type_col_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'detection_runs'"
+                " AND column_name = 'run_type')"
+            )
+        )
+        detection_run_type_col_exists = bool(
+            detection_run_type_col_exists_result.scalar()
+        )
+
         # Existing test DBs may still carry the pre-0017 project_id FK. We
         # drop it below before any early return so hard-deleted projects do
         # not require rewriting append-only audit rows during cleanup.
@@ -1114,6 +1129,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and audit_v2_col_exists
         and token_families_exists
         and taxa_reconciliation_col_exists
+        and detection_run_type_col_exists
     )
     if non_license_schema_current and not license_schema_current:
         await _sync_0023_license_schema(engine)
@@ -1278,6 +1294,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ),
             ("detectionstatus", ["unreviewed", "confirmed", "rejected"]),
             ("detectionrunstatus", ["pending", "running", "completed", "failed"]),
+            ("detectionruntype", ["detection", "embedding", "custom"]),
             (
                 "uploadsessionstatus",
                 ["issued", "uploaded", "validating", "validated", "importing", "imported", "failed"],
@@ -1348,6 +1365,27 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         await conn.run_sync(
             lambda c: Base.metadata.create_all(
                 c, tables=_tables_to_create, checkfirst=True
+            )
+        )
+
+        # W1-4 (Alembic 0032): ``detection_runs.run_type`` is a new NOT NULL
+        # enum column. ``Base.metadata.create_all`` runs with ``checkfirst=True``
+        # so it never alters an existing ``detection_runs`` table — a reused test
+        # DB predating this column would keep an old shape. Add it idempotently
+        # (with the same server_default as the migration) so existing rows heal
+        # to ``detection`` and new inserts have the column. The paired index is
+        # likewise added if missing.
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE detection_runs "
+                "ADD COLUMN IF NOT EXISTS run_type detectionruntype "
+                "NOT NULL DEFAULT 'detection'"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE INDEX IF NOT EXISTS ix_detection_runs_project_id_run_type "
+                "ON detection_runs (project_id, run_type)"
             )
         )
 

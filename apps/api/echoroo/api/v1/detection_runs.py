@@ -18,6 +18,7 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
+from echoroo.models.enums import DetectionRunType
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
 from echoroo.schemas.detection_run import (
@@ -68,6 +69,7 @@ async def list_detection_runs(
     page: int = 1,
     page_size: int = 50,
     dataset_id: UUID | None = None,
+    run_type: DetectionRunType | None = None,
 ) -> DetectionRunListResponse:
     """List detection runs for a project.
 
@@ -79,6 +81,8 @@ async def list_detection_runs(
         page: Page number (default: 1)
         page_size: Items per page (default: 50)
         dataset_id: Optional filter by dataset ID
+        run_type: Optional filter by run kind (detection / embedding / custom).
+            Scopes both items and total/pages to the requested type.
 
     Returns:
         Paginated list of detection runs
@@ -99,6 +103,7 @@ async def list_detection_runs(
         page=page,
         page_size=page_size,
         dataset_id=dataset_id,
+        run_type=run_type,
     )
 
 

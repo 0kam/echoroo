@@ -53,7 +53,7 @@
     ($modelsQuery.data ?? []).filter((model) => DETECTION_MODELS.includes(model))
   );
 
-  const queryKey = $derived(['detection-runs', projectId, datasetId]);
+  const queryKey = $derived(['detection-runs', projectId, datasetId, 'detection']);
 
   // Separate state for refetch interval to avoid derived_references_self circular reference.
   // The query is created once; $effect updates refetchInterval reactively after data arrives.
@@ -63,20 +63,12 @@
     createQuery({
       queryKey: queryKey,
       queryFn: async () => {
-        const result = await fetchDetectionRuns(projectId, datasetId);
-        // Detection UI shows detector-model runs only (issue #4, Option C).
-        // Embedding/similarity runs (Perch) live in EmbeddingStatus. We require
-        // the run's model to be a detection model AND not flagged embedding_only,
-        // so any Perch run is excluded regardless of whether the (older) record
-        // carries the embedding_only flag. Note: result.total/pages still count
-        // embedding runs, but this UI only consumes items.
-        return {
-          ...result,
-          items: result.items.filter(
-            (run) =>
-              DETECTION_MODELS.includes(run.model_name) && run.parameters?.embedding_only !== true
-          ),
-        };
+        // Server-side `run_type=detection` filter replaces the former client
+        // heuristic (model allowlist + parameters.embedding_only). The server
+        // scopes both items AND total/pages to detection runs, so the previous
+        // count-leak caveat no longer applies. `detection` includes any future
+        // non-birdnet detector; custom_svm runs are `custom` and stay excluded.
+        return await fetchDetectionRuns(projectId, datasetId, 'detection');
       },
       refetchInterval: refetchInterval,
     })

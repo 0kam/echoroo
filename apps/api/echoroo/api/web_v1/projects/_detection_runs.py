@@ -23,6 +23,7 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
 from echoroo.middleware.auth import CurrentUser
+from echoroo.models.enums import DetectionRunType
 
 router = APIRouter()
 
@@ -42,6 +43,7 @@ async def list_detection_runs(
     page: int = 1,
     page_size: int = 50,
     dataset_id: UUID | None = None,
+    run_type: DetectionRunType | None = None,
 ) -> legacy_detection_runs.DetectionRunListResponse:
     """Delegate detection-run listing to the legacy handler."""
     await gate_action(
@@ -60,6 +62,7 @@ async def list_detection_runs(
         page=page,
         page_size=page_size,
         dataset_id=dataset_id,
+        run_type=run_type,
     )
 
 

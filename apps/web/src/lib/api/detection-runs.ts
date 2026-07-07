@@ -7,7 +7,7 @@
  * API-key callers (FR-006).
  */
 
-import type { DetectionRun, DetectionRunListResponse } from '$lib/types/detection';
+import type { DetectionRun, DetectionRunListResponse, DetectionRunType } from '$lib/types/detection';
 import { apiClient } from './client';
 
 const WEB_API_BASE = '/web-api/v1';
@@ -43,15 +43,22 @@ const MODEL_VERSIONS: Record<string, string> = {
 };
 
 /**
- * Fetch detection runs for a project, optionally filtered by dataset server-side.
+ * Fetch detection runs for a project, optionally filtered by dataset and/or
+ * run type server-side. When `runType` is provided the returned totals/pages
+ * are scoped to that type, so callers can rely on server-side filtering rather
+ * than a client-side heuristic.
  */
 export async function fetchDetectionRuns(
   projectId: string,
-  datasetId?: string
+  datasetId?: string,
+  runType?: DetectionRunType
 ): Promise<DetectionRunListResponse> {
   const url = new URL(`${WEB_API_BASE}/projects/${projectId}/detection-runs`, window.location.origin);
   if (datasetId) {
     url.searchParams.set('dataset_id', datasetId);
+  }
+  if (runType) {
+    url.searchParams.set('run_type', runType);
   }
   return apiClient.get<DetectionRunListResponse>(url.pathname + url.search);
 }

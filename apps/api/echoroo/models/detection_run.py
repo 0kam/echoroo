@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
-from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.enums import DetectionRunStatus, DetectionRunType
 
 if TYPE_CHECKING:
     from echoroo.models.dataset import Dataset
@@ -30,6 +30,7 @@ class DetectionRun(UUIDMixin, TimestampMixin, Base):
         model_name: Name of the detection model used
         model_version: Version of the detection model
         parameters: Optional JSONB parameters passed to the model
+        run_type: First-class discriminator (detection / embedding / custom)
         status: Current execution status of the run
         annotation_count: Number of annotations created by this run
         started_at: When the run started executing
@@ -65,6 +66,18 @@ class DetectionRun(UUIDMixin, TimestampMixin, Base):
         JSONB,
         nullable=True,
         doc="Optional model parameters as JSON",
+    )
+    run_type: Mapped[DetectionRunType] = mapped_column(
+        Enum(
+            DetectionRunType,
+            name="detectionruntype",
+            create_type=False,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=DetectionRunType.DETECTION,
+        server_default=DetectionRunType.DETECTION.value,
+        nullable=False,
+        doc="First-class run-kind discriminator (detection / embedding / custom)",
     )
     status: Mapped[DetectionRunStatus] = mapped_column(
         Enum(
@@ -122,6 +135,7 @@ class DetectionRun(UUIDMixin, TimestampMixin, Base):
         Index("ix_detection_runs_project_id", "project_id"),
         Index("ix_detection_runs_dataset_id", "dataset_id"),
         Index("ix_detection_runs_status", "status"),
+        Index("ix_detection_runs_project_id_run_type", "project_id", "run_type"),
     )
 
     def __repr__(self) -> str:

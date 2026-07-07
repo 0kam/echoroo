@@ -6,11 +6,17 @@ Feature 003: Detection Review.
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
-from echoroo.models.enums import DatasetStatus, DatasetVisibility, DetectionRunStatus
+from echoroo.models.enums import (
+    DatasetStatus,
+    DatasetVisibility,
+    DetectionRunStatus,
+    DetectionRunType,
+)
 from echoroo.models.project import Project
 from echoroo.models.site import Site
 
@@ -86,6 +92,25 @@ async def test_detection_run(db_session: AsyncSession, test_project: Project) ->
 
 
 @pytest.fixture
+def stub_celery_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the Celery ``.delay`` dispatch so create tests need no live broker.
+
+    The create path commits the ``DetectionRun`` (including its ``run_type``)
+    and only then enqueues a Celery task. The enqueue requires a reachable
+    broker, which is unavailable outside the docker network. Replacing the two
+    task ``.delay`` methods with no-op stubs keeps the create contract
+    (status/response shape, run_type mapping) deterministic in every
+    environment without exercising the ML worker.
+    """
+    from unittest.mock import MagicMock
+
+    from echoroo.workers import ml_tasks
+
+    monkeypatch.setattr(ml_tasks.run_detection, "delay", MagicMock())
+    monkeypatch.setattr(ml_tasks.run_embedding_generation, "delay", MagicMock())
+
+
+@pytest.fixture
 def test_run_id(test_detection_run: DetectionRun) -> str:
     """Get test detection run ID.
 
@@ -151,6 +176,52 @@ class TestDetectionRunListEndpoints:
         assert "model_version" in item
         assert "status" in item
         assert "annotation_count" in item
+        # W1-4: run_type is a first-class field on the response. The default
+        # fixture run has no embedding flag / custom model, so it is a detection.
+        assert item["run_type"] == DetectionRunType.DETECTION.value
+
+    async def test_list_detection_runs_filter_by_run_type(
+        self,
+        client: AsyncClient,
+        csrf_headers: dict[str, str],
+        db_session: AsyncSession,
+        test_project: Project,
+        test_project_id: str,
+        test_detection_run: DetectionRun,
+    ) -> None:
+        """W1-4: ``?run_type=embedding`` narrows both items and total server-side."""
+        # test_detection_run is a DETECTION run; add one EMBEDDING run.
+        embedding_run = DetectionRun(
+            project_id=test_project.id,
+            model_name="perch",
+            model_version="2.0",
+            parameters={"embedding_only": True},
+            run_type=DetectionRunType.EMBEDDING,
+            status=DetectionRunStatus.COMPLETED,
+            annotation_count=0,
+        )
+        db_session.add(embedding_run)
+        await db_session.commit()
+
+        # Unfiltered: both runs are visible.
+        all_resp = await client.get(
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
+        )
+        assert all_resp.status_code == 200
+        assert all_resp.json()["total"] >= 2
+
+        # Filtered to embedding: only the embedding run, and total is scoped.
+        resp = await client.get(
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
+            params={"run_type": DetectionRunType.EMBEDDING.value},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == 1
+        assert len(data["items"]) == 1
+        assert data["items"][0]["run_type"] == DetectionRunType.EMBEDDING.value
 
     async def test_list_detection_runs_unauthorized(
         self,
@@ -175,6 +246,7 @@ class TestDetectionRunCRUDEndpoints:
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset_for_runs: Dataset,
+        stub_celery_dispatch: None,
     ) -> None:
         """Test POST /web-api/v1/projects/{project_id}/detection-runs - create run.
 
@@ -211,6 +283,36 @@ class TestDetectionRunCRUDEndpoints:
         assert data["status"] == "pending"
         assert data["annotation_count"] == 0
         assert "created_at" in data
+        # W1-4: a plain create (no embedding_only flag) is a detection run.
+        assert data["run_type"] == DetectionRunType.DETECTION.value
+
+    async def test_create_embedding_only_maps_to_embedding_run_type(
+        self,
+        client: AsyncClient,
+        csrf_headers: dict[str, str],
+        test_project_id: str,
+        test_dataset_for_runs: Dataset,
+        stub_celery_dispatch: None,
+    ) -> None:
+        """W1-4: the back-compat ``embedding_only`` flag maps to run_type=embedding."""
+        run_data = {
+            "dataset_id": str(test_dataset_for_runs.id),
+            "model_name": "perch",
+            "model_version": "2.0",
+            "embedding_only": True,
+        }
+
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/detection-runs",
+            headers=csrf_headers,
+            json=run_data,
+        )
+
+        assert response.status_code == 201, response.text
+        data = response.json()
+        assert data["run_type"] == DetectionRunType.EMBEDDING.value
+        # The legacy parameters flag is still persisted for back-compat.
+        assert data["parameters"] == {"embedding_only": True}
 
     async def test_get_detection_run(
         self,
@@ -285,3 +387,66 @@ class TestDetectionRunCRUDEndpoints:
         )
 
         assert response.status_code == 401
+
+
+# W1-4: the test database is built from ``create_all`` (not by replaying
+# Alembic), so the migration's UPDATE cannot be run against it directly. This
+# DB-backed test instead executes the migration's exact backfill CASE
+# expression as a SELECT over seeded rows, locking the classification SQL for
+# all four branches (and their priority ordering).
+_BACKFILL_CASE_SQL = text(
+    """
+    SELECT CASE
+        WHEN parameters->>'embedding_only' = 'true' THEN 'embedding'
+        WHEN model_name = 'custom_svm' THEN 'custom'
+        WHEN model_name = 'perch' AND annotation_count = 0 THEN 'embedding'
+        ELSE 'detection'
+    END AS derived
+    FROM detection_runs
+    WHERE id = :run_id
+    """
+)
+
+
+@pytest.mark.asyncio
+class TestRunTypeBackfillClassification:
+    """Exercise the migration 0032 backfill CASE expression against real rows."""
+
+    @pytest.mark.parametrize(
+        ("model_name", "parameters", "annotation_count", "expected"),
+        [
+            # Priority 1: embedding_only flag wins over model_name.
+            ("perch", {"embedding_only": True}, 5, "embedding"),
+            ("custom_svm", {"embedding_only": True}, 0, "embedding"),
+            # Priority 2: custom_svm (no flag) -> custom, even at 0 annotations.
+            ("custom_svm", {"threshold": 0.5}, 0, "custom"),
+            # Priority 3: legacy Perch embedding rows predating the flag.
+            ("perch", None, 0, "embedding"),
+            # else: birdnet, and perch runs that produced annotations.
+            ("birdnet", {"min_confidence": 0.5}, 10, "detection"),
+            ("perch", None, 7, "detection"),
+        ],
+    )
+    async def test_backfill_case_classifies_row(
+        self,
+        db_session: AsyncSession,
+        test_project: Project,
+        model_name: str,
+        parameters: dict[str, object] | None,
+        annotation_count: int,
+        expected: str,
+    ) -> None:
+        run = DetectionRun(
+            project_id=test_project.id,
+            model_name=model_name,
+            model_version="1.0",
+            parameters=parameters,
+            status=DetectionRunStatus.COMPLETED,
+            annotation_count=annotation_count,
+        )
+        db_session.add(run)
+        await db_session.commit()
+        await db_session.refresh(run)
+
+        result = await db_session.execute(_BACKFILL_CASE_SQL, {"run_id": run.id})
+        assert result.scalar_one() == expected

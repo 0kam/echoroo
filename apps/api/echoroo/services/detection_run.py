@@ -11,7 +11,7 @@ from sqlalchemy import select
 from echoroo.core.pagination import paginate
 from echoroo.models.dataset import Dataset
 from echoroo.models.detection_run import DetectionRun
-from echoroo.models.enums import DetectionRunStatus
+from echoroo.models.enums import DetectionRunStatus, DetectionRunType
 from echoroo.repositories.annotation import AnnotationRepository
 from echoroo.repositories.detection_run import DetectionRunRepository
 from echoroo.schemas.detection_run import (
@@ -45,6 +45,7 @@ class DetectionRunService:
         page: int = 1,
         page_size: int = 50,
         dataset_id: UUID | None = None,
+        run_type: DetectionRunType | None = None,
     ) -> DetectionRunListResponse:
         """List detection runs for a project.
 
@@ -53,6 +54,7 @@ class DetectionRunService:
             page: Page number (1-indexed)
             page_size: Items per page
             dataset_id: Optional filter by dataset UUID
+            run_type: Optional filter by run kind (detection / embedding / custom)
 
         Returns:
             Paginated detection run list response
@@ -64,6 +66,7 @@ class DetectionRunService:
             page=pagination.page,
             page_size=pagination.page_size,
             dataset_id=dataset_id,
+            run_type=run_type,
         )
 
         return DetectionRunListResponse(
@@ -161,11 +164,18 @@ class DetectionRunService:
                 detail="Dataset not found",
             )
 
-        # Merge embedding_only flag into parameters so retry() can reconstruct
-        # the correct task type without requiring a schema change to DetectionRun.
+        # Keep merging the embedding_only flag into parameters for backward
+        # compatibility (older readers / legacy rows). The authoritative signal
+        # is now the first-class ``run_type`` column set below.
         merged_parameters: dict[str, object] = dict(request.parameters or {})
         if request.embedding_only:
             merged_parameters["embedding_only"] = True
+
+        run_type = (
+            DetectionRunType.EMBEDDING
+            if request.embedding_only
+            else DetectionRunType.DETECTION
+        )
 
         run = DetectionRun(
             project_id=project_id,
@@ -173,6 +183,7 @@ class DetectionRunService:
             model_name=request.model_name,
             model_version=request.model_version,
             parameters=merged_parameters if merged_parameters else None,
+            run_type=run_type,
             status=DetectionRunStatus.PENDING,
         )
 
@@ -355,10 +366,8 @@ class DetectionRunService:
         await self.detection_run_repo.db.commit()
 
         # Determine whether to dispatch an embedding-only or full detection task
-        # based on the flag stored in the parameters dict at creation time.
-        is_embedding_only = bool(
-            run.parameters and run.parameters.get("embedding_only")
-        )
+        # from the first-class ``run_type`` discriminator set at creation time.
+        is_embedding_only = run.run_type == DetectionRunType.EMBEDDING
 
         # Queue Celery task with the existing run_id and model_name.
         # If dispatch fails, mark the run as FAILED so it is not stuck in PENDING

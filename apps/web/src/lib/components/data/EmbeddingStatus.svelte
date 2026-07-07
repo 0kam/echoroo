@@ -38,7 +38,7 @@
   });
 
   // Use a separate query key for embedding runs to avoid interfering with detection run cache
-  const queryKey = $derived(['embedding-runs', projectId, datasetId]);
+  const queryKey = $derived(['embedding-runs', projectId, datasetId, 'embedding']);
 
   let refetchInterval = $state<number | false>(false);
 
@@ -46,14 +46,10 @@
     createQuery({
       queryKey: queryKey,
       queryFn: async () => {
-        const result = await fetchDetectionRuns(projectId, datasetId);
-        // Filter to only embedding-only runs
-        return {
-          ...result,
-          items: result.items.filter(
-            (run) => run.parameters?.embedding_only === true
-          ),
-        };
+        // Server-side `run_type=embedding` filter replaces the former client
+        // heuristic (parameters.embedding_only). Totals/pages are scoped to
+        // embedding runs by the backend.
+        return await fetchDetectionRuns(projectId, datasetId, 'embedding');
       },
       refetchInterval: refetchInterval,
     })

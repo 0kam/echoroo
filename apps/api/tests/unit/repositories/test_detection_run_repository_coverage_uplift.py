@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 
+from echoroo.models.enums import DetectionRunType
 from echoroo.repositories.detection_run import DetectionRunRepository
 
 
@@ -94,6 +95,38 @@ async def test_list_by_project_no_dataset_filter() -> None:
     items, total = await repo.list_by_project(project_id=uuid4())
     assert items == []
     assert total == 0
+
+
+@pytest.mark.asyncio
+async def test_list_by_project_filters_by_run_type() -> None:
+    """list_by_project(run_type=...) adds the run_type WHERE branch (W1-4).
+
+    The count and page queries are captured so we can assert the compiled SQL
+    references the ``run_type`` column when the filter is supplied.
+    """
+    rows = [MagicMock()]
+    db = MagicMock()
+    count_result = MagicMock()
+    count_result.scalar_one.return_value = 1
+    page_result = MagicMock()
+    scalars_obj = MagicMock()
+    scalars_obj.all.return_value = rows
+    page_result.scalars.return_value = scalars_obj
+    db.execute = AsyncMock(side_effect=[count_result, page_result])
+
+    repo = DetectionRunRepository(db)
+    items, total = await repo.list_by_project(
+        project_id=uuid4(),
+        run_type=DetectionRunType.EMBEDDING,
+    )
+    assert items == rows
+    assert total == 1
+
+    # Both the count and page statements must carry the run_type predicate.
+    for call in db.execute.await_args_list:
+        stmt = call.args[0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        assert "run_type" in compiled
 
 
 @pytest.mark.asyncio
