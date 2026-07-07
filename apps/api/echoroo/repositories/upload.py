@@ -164,19 +164,35 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
         )
         return list(result.scalars().all())
 
-    async def get_stale_sessions(self, max_age_hours: int = 24) -> list[UploadSession]:
+    async def get_stale_sessions(
+        self,
+        max_age_hours: int = 24,
+        max_age_seconds: int | None = None,
+    ) -> list[UploadSession]:
         """Return sessions stuck in an intermediate processing state.
 
-        Stale means the session is in UPLOADED or VALIDATING status and has not
-        been updated within max_age_hours.
+        Stale means the session is in one of UPLOADED / VALIDATING / VALIDATED /
+        IMPORTING status and has not been updated within the staleness window.
+        A live worker bumps ``updated_at`` on every progress tick, so an idle
+        row this old has genuinely stalled and is safe to reap.
 
         Args:
-            max_age_hours: Number of hours without an update before a session is stale
+            max_age_hours: Hours without an update before a session is stale.
+                Used only when ``max_age_seconds`` is not provided (kept for
+                backward compatibility with older callers).
+            max_age_seconds: Preferred, finer-grained staleness window in
+                seconds. When provided it takes precedence over
+                ``max_age_hours``.
 
         Returns:
             List of stale UploadSession instances
         """
-        cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+        window = (
+            timedelta(seconds=max_age_seconds)
+            if max_age_seconds is not None
+            else timedelta(hours=max_age_hours)
+        )
+        cutoff = datetime.now(UTC) - window
         result = await self.db.execute(
             select(UploadSession).where(
                 UploadSession.status.in_(_STALE_STATUSES),

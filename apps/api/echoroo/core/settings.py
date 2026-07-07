@@ -242,6 +242,37 @@ class Settings(BaseSettings):
     UPLOAD_SESSION_TTL: int = 3600  # 1 hour TTL for ISSUED sessions
     UPLOAD_ALLOWED_EXTENSIONS: list[str] = [".wav", ".flac", ".mp3", ".ogg", ".opus"]
 
+    # Upload session self-heal / reaper tuning.
+    #
+    # ``ECHOROO_UPLOAD_STALE_TIMEOUT_SECONDS`` is the idle threshold after
+    # which an upload session that is still in a "processing" state
+    # (UPLOADED / VALIDATING / VALIDATED / IMPORTING) is considered dead.
+    # A live import bumps ``updated_at`` on every progress tick, so a row
+    # idle for this long has genuinely stalled (crashed worker, lost task).
+    # It is consumed in two places:
+    #   1. ``UploadService.create_session`` — a new upload against a dataset
+    #      whose only "active" session is a *stale* processing session
+    #      auto-recovers (marks the old one FAILED) instead of returning 409.
+    #   2. The ``cleanup_orphan_uploads`` beat sweep — reaps stale processing
+    #      sessions so nothing stays wedged until the next manual retry.
+    # Default 900s (15 min) — well above any legitimate per-file processing
+    # gap, well below the old 24h that let a stuck session block a dataset
+    # for a full day.
+    UPLOAD_STALE_TIMEOUT_SECONDS: int = Field(
+        default=900,
+        validation_alias="ECHOROO_UPLOAD_STALE_TIMEOUT_SECONDS",
+        description="Idle seconds before a processing upload session is treated as dead.",
+    )
+    # Beat cadence (seconds) advertised for the orphan-upload cleanup task.
+    # The actual schedule is a crontab(minute='*/10') in celery_app; this
+    # value documents the intended interval and is available to any future
+    # settings-driven schedule wiring.
+    UPLOAD_CLEANUP_INTERVAL_SECONDS: int = Field(
+        default=600,
+        validation_alias="ECHOROO_UPLOAD_CLEANUP_INTERVAL_SECONDS",
+        description="Intended interval (seconds) between orphan-upload cleanup sweeps.",
+    )
+
     # Project storage quota
     DEFAULT_STORAGE_QUOTA: int = 100 * 1024 * 1024 * 1024  # 100GB default
 

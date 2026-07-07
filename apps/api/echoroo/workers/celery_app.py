@@ -153,7 +153,11 @@ app.conf.include = [
 app.conf.beat_schedule = {
     "cleanup-orphan-uploads": {
         "task": "echoroo.workers.upload_tasks.cleanup_orphan_uploads",
-        "schedule": crontab(minute=0),  # Every hour at :00
+        # Every 10 minutes — reaps stalled processing sessions promptly so a
+        # crashed import cannot block new uploads to a dataset for long
+        # (previously hourly, which combined with the old 24h stale window
+        # let a wedged session block a dataset for up to a day).
+        "schedule": crontab(minute="*/10"),
     },
     "cleanup-orphan-search-reference": {
         "task": "echoroo.workers.search_tasks.cleanup_orphan_search_reference",
