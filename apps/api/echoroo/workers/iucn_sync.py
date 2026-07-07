@@ -1,7 +1,7 @@
 """IUCN Red List weekly sync worker (Phase 11 / T620, FR-036).
 
 This Celery task is the only mutator of :class:`TaxonSensitivity` rows
-whose ``source = 'iucn'``. It runs weekly via Celery Beat (Sunday 04:30
+whose ``source = 'iucn'``. It runs weekly via Celery Beat (Sunday 04:00
 UTC, off-peak slot reserved by spec §retention table) and is also
 invoked synchronously by:
 
