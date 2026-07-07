@@ -201,6 +201,50 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
         )
         return list(result.scalars().all())
 
+    async def list_stuck_sessions(
+        self,
+        older_than_seconds: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[UploadSession]:
+        """List non-terminal, mid-processing upload sessions for admin recovery.
+
+        "Stuck" here means the session is in one of the intermediate
+        :data:`_STALE_STATUSES` states (UPLOADED / VALIDATING / VALIDATED /
+        IMPORTING) — i.e. it has neither reached IMPORTED nor FAILED. When
+        ``older_than_seconds`` is provided, only sessions whose ``updated_at``
+        predates ``now - older_than_seconds`` are returned (the same staleness
+        semantics as :meth:`get_stale_sessions`); when omitted, every
+        non-terminal session is returned regardless of age.
+
+        The ``dataset`` relationship is eager-loaded so callers can resolve
+        ``dataset.project_id`` without triggering a lazy N+1 lookup.
+
+        Args:
+            older_than_seconds: Optional staleness window in seconds. When set,
+                filters to sessions idle for at least this long.
+            limit: Maximum number of rows to return (pagination).
+            offset: Number of rows to skip (pagination).
+
+        Returns:
+            List of stuck UploadSession instances ordered by ``updated_at`` asc
+            (oldest / most wedged first).
+        """
+        stmt = (
+            select(UploadSession)
+            .where(UploadSession.status.in_(_STALE_STATUSES))
+            .options(selectinload(UploadSession.dataset))
+            .order_by(UploadSession.updated_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if older_than_seconds is not None:
+            cutoff = datetime.now(UTC) - timedelta(seconds=older_than_seconds)
+            stmt = stmt.where(UploadSession.updated_at < cutoff)
+
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_total_storage_by_project(self, project_id: UUID) -> int:
         """Get total storage consumed by committed and active upload sessions for a project.
 

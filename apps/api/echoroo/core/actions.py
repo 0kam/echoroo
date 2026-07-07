@@ -324,6 +324,20 @@ _ACTION_ROWS: tuple[_Row, ...] = (
         True,
         True,
     ),
+    # Upload-session recovery is platform-scope (no project_id parameter): the
+    # superuser inspects and force-fails stuck upload sessions across every
+    # project so a wedged import can be unblocked (the user then re-uploads).
+    # ``is_platform_scope=True`` routes it through the Step-0a superuser-only
+    # branch, and ``is_mutating=True`` because the fail action rewrites session
+    # state. The Step -1 universal api_key veto denies any API-key principal.
+    _Row(
+        "PLATFORM_UPLOAD_RECOVER_ACTION",
+        "platform.upload.recover",
+        None,
+        True,
+        True,
+        True,
+    ),
     # -------------------------------------------------------------------------
     # Phase 15 Batch 5a — Superuser CRUD admin endpoints (FR-111 / FR-072 / FR-084)
     # -------------------------------------------------------------------------
@@ -888,6 +902,7 @@ PLATFORM_TAXON_SEED_BIRDNET_ACTION: Action = _BUILT["PLATFORM_TAXON_SEED_BIRDNET
 PLATFORM_TAXON_SYNC_VERNACULAR_ACTION: Action = _BUILT[
     "PLATFORM_TAXON_SYNC_VERNACULAR_ACTION"
 ]
+PLATFORM_UPLOAD_RECOVER_ACTION: Action = _BUILT["PLATFORM_UPLOAD_RECOVER_ACTION"]
 
 # Superuser CRUD (Phase 15 Batch 5a)
 SUPERUSER_LIST_ACTION: Action = _BUILT["SUPERUSER_LIST_ACTION"]

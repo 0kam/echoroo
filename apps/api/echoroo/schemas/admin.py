@@ -834,6 +834,48 @@ class TaskDispatchResponse(BaseModel):
     )
 
 
+class StuckUploadSessionSummary(BaseModel):
+    """Snapshot of an upload session for the admin recovery surface.
+
+    Surfaced by ``GET /admin/uploads/stuck`` (list) and
+    ``POST /admin/uploads/{session_id}/fail`` (single, post force-fail) so a
+    superuser can inspect wedged sessions and confirm the recovery action.
+    ``project_id`` is resolved via the session's parent ``dataset`` (the
+    session row itself has no direct project FK).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(..., description="Upload session identifier")
+    dataset_id: UUID = Field(..., description="Parent dataset id")
+    project_id: UUID = Field(
+        ..., description="Owning project id (resolved via dataset.project_id)"
+    )
+    status: str = Field(..., description="Current upload-session lifecycle state")
+    error: str | None = Field(
+        None, description="Error message if the session has recorded one"
+    )
+    total_files: int = Field(..., description="Number of files in the session")
+    validated_files: int = Field(
+        ..., description="Number of files that passed validation"
+    )
+    imported_files: int = Field(
+        ..., description="Number of files imported as recordings"
+    )
+    created_at: datetime = Field(..., description="Session creation timestamp")
+    updated_at: datetime = Field(..., description="Last progress-tick timestamp")
+
+
+class StuckUploadSessionListResponse(BaseModel):
+    """Body for ``GET /admin/uploads/stuck`` — a page of stuck sessions."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[StuckUploadSessionSummary] = Field(
+        ..., description="Stuck (non-terminal) upload sessions, oldest first"
+    )
+
+
 class TaxonSyncVernacularRequest(BaseModel):
     """Body for ``POST /admin/taxon/sync-vernacular``.
 
