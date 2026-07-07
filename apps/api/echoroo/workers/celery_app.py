@@ -153,6 +153,11 @@ app.conf.include = [
     # (``DEFAULT_BANNER_MAX_AGE_DAYS``). Single ``DELETE ... RETURNING``
     # so the sweep is idempotent and stateless across runs.
     "echoroo.workers.banner_gc",
+    # FR-036 — weekly IUCN Red List sync. The module is not a ``tasks.py``
+    # so autodiscover would skip it; listing it here registers
+    # ``sync_iucn_red_list`` in every worker so the beat entry below can
+    # dispatch it by name (and the admin force-resync ``.delay()`` resolves).
+    "echoroo.workers.iucn_sync",
 ]
 
 # Periodic tasks (beat schedule)
@@ -173,6 +178,17 @@ app.conf.beat_schedule = {
         "task": "echoroo.workers.taxon_tasks.fetch_japanese_vernacular_names",
         "schedule": crontab(hour=2, minute=0, day_of_week=0),  # Every Sunday at 02:00 UTC
         "kwargs": {"batch_size": 100},
+    },
+    # FR-036 — weekly IUCN Red List sync (the canonical cadence the admin
+    # force-resync endpoint refers to as "the weekly task"). Sunday 04:00
+    # UTC sits clear of the daily lifecycle sweeps (00:00–03:30) and the
+    # 02:00 vernacular sync so the batch never contends for connections on
+    # boot. The task records its own ``IucnSyncAttempt`` row, is idempotent
+    # via a PostgreSQL advisory lock, and short-circuits to a "skipped"
+    # no-op when ``IUCN_API_TOKEN`` is unconfigured — safe to run weekly.
+    "sync-iucn-red-list-weekly": {
+        "task": "echoroo.workers.iucn_sync.sync_iucn_red_list",
+        "schedule": crontab(hour=4, minute=0, day_of_week=0),  # Every Sunday at 04:00 UTC
     },
     # Drain the transactional outbox at 1Hz-ish (every 30s — the
     # spec's SLO is p95 ≤ 10s end-to-end which is set by the worker
