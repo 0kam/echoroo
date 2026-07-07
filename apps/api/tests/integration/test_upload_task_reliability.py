@@ -13,6 +13,7 @@ SIGKILL without silently losing an in-flight upload task:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -122,9 +123,15 @@ async def test_redelivered_import_is_idempotent_and_terminal(
     the session is marked FAILED, and no Recording rows are created — and the
     task terminates without scheduling a (doomed) retry.
     """
+    # Capture ids as plain values up front: the worker task commits on a
+    # separate connection, and reading these off the ORM objects afterwards
+    # could trigger a lazy refresh outside the async greenlet.
+    dataset_id = reliability_dataset.id
+    owner_id = test_project.owner_id
+
     upload_session = UploadSession(
-        dataset_id=reliability_dataset.id,
-        created_by_id=test_project.owner_id,
+        dataset_id=dataset_id,
+        created_by_id=owner_id,
         status=UploadSessionStatus.IMPORTING,
         total_files=1,
         total_bytes=1024,
@@ -139,7 +146,7 @@ async def test_redelivered_import_is_idempotent_and_terminal(
         result = await db_session.execute(
             select(func.count())
             .select_from(Recording)
-            .where(Recording.dataset_id == reliability_dataset.id)
+            .where(Recording.dataset_id == dataset_id)
         )
         return int(result.scalar_one())
 
@@ -153,15 +160,19 @@ async def test_redelivered_import_is_idempotent_and_terminal(
         ),
         patch.object(upload_tasks.import_from_upload_session, "retry") as mock_retry,
     ):
-        # apply() runs the task locally (eager). The guard-mismatch path raises
-        # Ignore, so this returns without invoking retry.
-        upload_tasks.import_from_upload_session.apply(args=[str(session_id)])
+        # apply() runs the task locally (eager). Run it in a separate thread so
+        # the task body's asyncio.run() has no running loop (this test is itself
+        # async). The guard-mismatch path raises Ignore, so no retry is invoked.
+        await asyncio.to_thread(
+            upload_tasks.import_from_upload_session.apply, args=[str(session_id)]
+        )
 
     # NOT retried — a redelivered doomed task must not loop.
     mock_retry.assert_not_called()
 
     # The session ends FAILED, and no duplicate recordings were created.
-    db_session.expire_all()
+    # Column-only selects read committed values directly from the DB (no ORM
+    # identity-map caching), so the worker's cross-connection commit is visible.
     status_result = await db_session.execute(
         select(UploadSession.status).where(UploadSession.id == UUID(str(session_id)))
     )
