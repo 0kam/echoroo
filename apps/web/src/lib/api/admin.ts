@@ -53,6 +53,61 @@ export interface TaxonMaintenanceDispatchResponse {
 }
 
 /**
+ * Response for the IUCN force-resync dispatch
+ * (`POST /admin/iucn/force-resync`).
+ *
+ * The endpoint is fire-and-forget: it enqueues the `sync_iucn_red_list`
+ * Celery task and returns immediately. `task_id` is the Celery task id and
+ * `enqueued_at` is the ISO-8601 UTC dispatch timestamp. There is no
+ * task-status polling surface — the operator correlates the id with the
+ * worker's own `IucnSyncAttempt` progress rows.
+ */
+export interface IucnForceResyncResponse {
+  task_id: string;
+  enqueued_at: string;
+}
+
+/**
+ * Snapshot of a wedged upload session surfaced by the admin recovery
+ * endpoints (`GET /admin/uploads/stuck` list + `POST /admin/uploads/{id}/fail`
+ * post-action single). `project_id` is resolved via the session's parent
+ * dataset (the session row has no direct project FK).
+ */
+export interface StuckUploadSessionSummary {
+  id: string;
+  dataset_id: string;
+  project_id: string;
+  status: string;
+  error: string | null;
+  total_files: number;
+  validated_files: number;
+  imported_files: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Body for `GET /admin/uploads/stuck` — a page of stuck (non-terminal)
+ * upload sessions, oldest first.
+ */
+export interface StuckUploadSessionListResponse {
+  items: StuckUploadSessionSummary[];
+}
+
+/**
+ * Query parameters for the stuck-upload listing.
+ *
+ * All optional; omitting them lets the backend apply its defaults.
+ * `older_than_seconds` filters to sessions whose last progress tick is at
+ * least this old; `limit`/`offset` paginate.
+ */
+export interface StuckUploadListParams {
+  older_than_seconds?: number;
+  limit?: number;
+  offset?: number;
+}
+
+/**
  * Request body for the vernacular-name sync dispatch.
  *
  * All fields are optional; omitting them lets the backend apply its
@@ -205,6 +260,69 @@ export const adminApi = {
     return apiClient.post<TaxonMaintenanceDispatchResponse>(
       `${WEB_API_BASE}/admin/taxon/sync-vernacular`,
       data ?? {},
+      { headers: csrfHeaders() }
+    );
+  },
+
+  /**
+   * Dispatch the IUCN Red List force-resync task (superuser only).
+   *
+   * Enqueues the `sync_iucn_red_list` Celery task and returns immediately.
+   * The request body is intentionally empty; mirrors the taxon maintenance
+   * dispatch shape. Fire-and-forget — there is no task-status polling
+   * surface; the returned `task_id` correlates with the worker's own
+   * progress rows.
+   */
+  forceIucnResync: async (): Promise<IucnForceResyncResponse> => {
+    return apiClient.post<IucnForceResyncResponse>(
+      `${WEB_API_BASE}/admin/iucn/force-resync`,
+      {},
+      { headers: csrfHeaders() }
+    );
+  },
+
+  /**
+   * List stuck (non-terminal) upload sessions (superuser only).
+   *
+   * Returns wedged sessions oldest first so a superuser can inspect and
+   * recover them. All query parameters are optional and fall back to
+   * backend defaults when omitted.
+   */
+  listStuckUploads: async (
+    params?: StuckUploadListParams
+  ): Promise<StuckUploadSessionListResponse> => {
+    const queryParams = new URLSearchParams();
+    if (params?.older_than_seconds !== undefined) {
+      queryParams.set('older_than_seconds', params.older_than_seconds.toString());
+    }
+    if (params?.limit !== undefined) {
+      queryParams.set('limit', params.limit.toString());
+    }
+    if (params?.offset !== undefined) {
+      queryParams.set('offset', params.offset.toString());
+    }
+
+    const query = queryParams.toString();
+    const endpoint = `${WEB_API_BASE}/admin/uploads/stuck${query ? `?${query}` : ''}`;
+
+    return apiClient.get<StuckUploadSessionListResponse>(endpoint);
+  },
+
+  /**
+   * Force-fail a stuck upload session (superuser only).
+   *
+   * Transitions a wedged session to a terminal `failed` state and returns
+   * the updated session summary. The backend responds 404 for an unknown
+   * session and 409 when the session is already terminal or transitioned
+   * concurrently — callers should surface the 409 detail message (it is
+   * informative, not a bug: the session may have completed on its own).
+   */
+  forceFailUpload: async (
+    sessionId: string
+  ): Promise<StuckUploadSessionSummary> => {
+    return apiClient.post<StuckUploadSessionSummary>(
+      `${WEB_API_BASE}/admin/uploads/${sessionId}/fail`,
+      {},
       { headers: csrfHeaders() }
     );
   },

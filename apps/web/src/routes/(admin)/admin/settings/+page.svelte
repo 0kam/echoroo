@@ -13,6 +13,8 @@
   import SpeciesFilterSettings from '$lib/components/admin/settings/SpeciesFilterSettings.svelte';
   import BirdnetSeedPanel from '$lib/components/admin/settings/BirdnetSeedPanel.svelte';
   import VernacularSyncPanel from '$lib/components/admin/settings/VernacularSyncPanel.svelte';
+  import IucnResyncPanel from '$lib/components/admin/settings/IucnResyncPanel.svelte';
+  import UploadRecoveryPanel from '$lib/components/admin/settings/UploadRecoveryPanel.svelte';
 
   // State
   let settings = $state<Record<string, SystemSetting>>({});
@@ -37,6 +39,7 @@
   // success/error banners as the settings form.
   let isSeedingBirdnet = $state(false);
   let isSyncingVernacular = $state(false);
+  let isResyncingIucn = $state(false);
   // Sync vernacular form inputs.
   let vernacularBatchSize = $state(100);
   let vernacularLocales = $state('ja');
@@ -189,6 +192,36 @@
   }
 
   /**
+   * Dispatch the IUCN Red List force-resync task after confirmation.
+   *
+   * Fire-and-forget: the endpoint enqueues a Celery task and returns the
+   * task id, which is echoed in the success banner. There is no
+   * task-status polling surface.
+   */
+  async function handleForceIucnResync() {
+    isResyncingIucn = true;
+    error = null;
+    successMessage = null;
+
+    try {
+      const result = await adminApi.forceIucnResync();
+      successMessage = m.admin_settings_iucn_resync_success({ taskId: result.task_id });
+
+      setTimeout(() => {
+        successMessage = null;
+      }, 5000);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        error = err.detail || err.message;
+      } else {
+        error = m.admin_settings_iucn_resync_error();
+      }
+    } finally {
+      isResyncingIucn = false;
+    }
+  }
+
+  /**
    * Format date
    */
   function formatDate(dateString: string): string {
@@ -310,6 +343,22 @@
             bind:vernacularLocales
             bind:vernacularSkipExisting
           />
+
+          <div class="border-t border-stone-200 pt-6">
+            <IucnResyncPanel isResyncing={isResyncingIucn} onResync={handleForceIucnResync} />
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload Recovery Card -->
+      <div class="overflow-hidden rounded-lg bg-surface-card shadow">
+        <div class="border-b border-stone-200 px-6 py-4">
+          <h2 class="text-lg font-medium text-stone-900">{m.admin_settings_uploads_heading()}</h2>
+          <p class="mt-1 text-sm text-stone-500">{m.admin_settings_uploads_description()}</p>
+        </div>
+
+        <div class="px-6 py-5">
+          <UploadRecoveryPanel />
         </div>
       </div>
 
