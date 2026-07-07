@@ -22,6 +22,8 @@ from os.path import splitext
 from typing import Any
 from uuid import UUID, uuid4
 
+from celery.exceptions import Ignore
+
 from echoroo.core.s3 import (
     delete_objects_by_prefix,
     get_object_stream,
@@ -47,6 +49,17 @@ from echoroo.workers.celery_app import app
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
+
+
+class UploadSessionStateError(Exception):
+    """Raised when a session's status does not match the expected precondition.
+
+    These are terminal, non-transient failures (e.g. a redelivered acks_late
+    task finding the session already past its expected state). Retrying can
+    never succeed, so the task marks the session FAILED and terminates without
+    re-queuing.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Audio format magic byte signatures
@@ -319,7 +332,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
 
             # Guard: only transition from UPLOADED state
             if upload_session.status != UploadSessionStatus.UPLOADED:
-                raise ValueError(
+                raise UploadSessionStateError(
                     f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED"
                 )
 
@@ -330,7 +343,9 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                 expected_status=UploadSessionStatus.UPLOADED,
             )
             if not transitioned:
-                raise ValueError(f"Session {session_id} state changed concurrently, aborting validation")
+                raise UploadSessionStateError(
+                    f"Session {session_id} state changed concurrently, aborting validation"
+                )
             await db.commit()
 
             valid_count = 0
@@ -575,7 +590,7 @@ async def _run_import(
                 raise ValueError(f"Upload session not found: {session_id}")
 
             if upload_session.status != UploadSessionStatus.VALIDATED:
-                raise ValueError(
+                raise UploadSessionStateError(
                     f"Session {session_id} is in status {upload_session.status.value}, "
                     "expected VALIDATED"
                 )
@@ -587,7 +602,9 @@ async def _run_import(
                 expected_status=UploadSessionStatus.VALIDATED,
             )
             if not transitioned:
-                raise ValueError(f"Session {session_id} state changed concurrently, aborting import")
+                raise UploadSessionStateError(
+                    f"Session {session_id} state changed concurrently, aborting import"
+                )
             await db.commit()
 
             dataset = upload_session.dataset
@@ -899,6 +916,12 @@ async def _mark_import_failed(session_id: str, error: str) -> None:
     bind=True,
     name="echoroo.workers.upload_tasks.validate_upload_session",
     max_retries=1,
+    # acks_late + reject_on_worker_lost: if the worker child is recycled
+    # (worker_max_tasks_per_child), OOM-killed, or SIGKILLed mid-task, the
+    # message is redelivered instead of silently lost. The CAS status guards
+    # in _run_validate make a redelivery idempotent.
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def validate_upload_session(self: Any, session_id: str) -> dict[str, Any]:
     """Validate audio files in an upload session using ffprobe.
@@ -916,6 +939,14 @@ def validate_upload_session(self: Any, session_id: str) -> dict[str, Any]:
     logger.info("Starting validation for session %s", session_id)
     try:
         return asyncio.run(_run_validate(session_id))
+    except UploadSessionStateError as exc:
+        # Terminal precondition failure (e.g. a redelivered task whose session
+        # already moved past UPLOADED). Retrying can never succeed, so mark the
+        # session FAILED and stop without re-queuing.
+        logger.warning("Validation aborted for session %s: %s", session_id, exc)
+        with contextlib.suppress(Exception):
+            asyncio.run(_mark_session_failed(session_id, str(exc)))
+        raise Ignore() from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Validation failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
@@ -927,6 +958,11 @@ def validate_upload_session(self: Any, session_id: str) -> dict[str, Any]:
     bind=True,
     name="echoroo.workers.upload_tasks.import_from_upload_session",
     max_retries=1,
+    # acks_late + reject_on_worker_lost: survive worker child-recycle / OOM /
+    # SIGKILL by redelivering the message. The VALIDATED->IMPORTING CAS guard in
+    # _run_import prevents a redelivery from creating duplicate Recording rows.
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
 def import_from_upload_session(
     self: Any,
@@ -953,6 +989,15 @@ def import_from_upload_session(
     logger.info("Starting import for session %s", session_id)
     try:
         return asyncio.run(_run_import(session_id, datetime_pattern, datetime_format, datetime_timezone))
+    except UploadSessionStateError as exc:
+        # Terminal precondition failure (e.g. a redelivered task whose session
+        # already moved past VALIDATED, so the CAS to IMPORTING failed). Retrying
+        # can never succeed and could risk duplicate work, so mark FAILED and
+        # stop without re-queuing.
+        logger.warning("Import aborted for session %s: %s", session_id, exc)
+        with contextlib.suppress(Exception):
+            asyncio.run(_mark_import_failed(session_id, str(exc)))
+        raise Ignore() from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Import failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
