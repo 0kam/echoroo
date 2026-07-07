@@ -1870,6 +1870,11 @@
   "file_upload_more": "追加ファイルをアップロード",
   "file_upload_error": "アップロードエラー",
   "file_upload_try_again": "再試行",
+  "file_upload_stall_hint": "処理に時間がかかっています。大量のファイルは検証とインポートに数分かかることがあります…",
+  "file_upload_stalled_title": "インポートが停止している可能性があります",
+  "file_upload_stalled_desc": "{minutes}分間進捗がなかったため確認を停止しました。状態を再確認するか、最初からやり直して再アップロードしてください。再アップロードすると停止したセッションは自動的に復旧されます。",
+  "file_upload_recheck": "状態を再確認",
+  "file_upload_start_over": "最初からやり直す",
 
   "clip_detail_spectrogram_alt": "クリップのスペクトログラム",
   "clip_detail_time_range": "時間範囲:",

@@ -1870,6 +1870,11 @@
   "file_upload_more": "Upload More Files",
   "file_upload_error": "Upload Error",
   "file_upload_try_again": "Try Again",
+  "file_upload_stall_hint": "This is taking longer than usual. Large batches can take a few minutes to validate and import…",
+  "file_upload_stalled_title": "Import appears to be stuck",
+  "file_upload_stalled_desc": "We stopped checking after {minutes} minutes without progress. You can re-check the status, or start over and upload again — re-uploading automatically recovers the stalled session.",
+  "file_upload_recheck": "Re-check status",
+  "file_upload_start_over": "Start Over",
 
   "clip_detail_spectrogram_alt": "Clip spectrogram",
   "clip_detail_time_range": "Time range:",
