@@ -475,22 +475,49 @@ class UploadService:
         # 2. Check for existing active session
         active_session = await self.session_repo.get_active_by_dataset(dataset_id)
         if active_session is not None:
-            # Auto-cancel stale ISSUED/UPLOADED sessions (user retried after a failure)
+            processing_statuses = (
+                UploadSessionStatus.VALIDATING,
+                UploadSessionStatus.VALIDATED,
+                UploadSessionStatus.IMPORTING,
+            )
             if active_session.status in (
                 UploadSessionStatus.ISSUED,
                 UploadSessionStatus.UPLOADED,
             ):
+                # Not-yet-processing session (user retried after a failure) —
+                # always safe to supersede.
                 await self.session_repo.update_status(
                     active_session.id,
                     UploadSessionStatus.FAILED,
                     error="Superseded by new upload session",
                 )
-            else:
-                # Session is actively processing (VALIDATING/VALIDATED/IMPORTING)
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An active upload session is currently being processed for this dataset",
-                )
+            elif active_session.status in processing_statuses:
+                # Session claims to be actively processing
+                # (VALIDATING/VALIDATED/IMPORTING). A live worker bumps
+                # ``updated_at`` on every progress tick, so a session that has
+                # not been touched within the stale timeout has genuinely died
+                # (crashed worker, lost task). Self-heal it instead of blocking
+                # the dataset for up to 24h until the reaper runs.
+                stale_after = timedelta(seconds=settings.UPLOAD_STALE_TIMEOUT_SECONDS)
+                idle_for = datetime.now(UTC) - active_session.updated_at
+                if idle_for >= stale_after:
+                    await self.session_repo.update_status(
+                        active_session.id,
+                        UploadSessionStatus.FAILED,
+                        error="Auto-recovered: processing stalled",
+                    )
+                else:
+                    # Genuinely being worked on right now — reject the retry,
+                    # but tell the caller it will auto-recover on its own.
+                    retry_after = int((stale_after - idle_for).total_seconds())
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "An active upload session is currently being processed "
+                            "for this dataset. If it is stuck, it will auto-recover "
+                            f"in about {max(retry_after, 0)}s; retry after that."
+                        ),
+                    )
 
         # 3. Validate file count
         if len(files) > settings.UPLOAD_MAX_SESSION_FILES:

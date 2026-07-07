@@ -808,7 +808,14 @@ async def _run_cleanup() -> dict[str, Any]:
                 expired_count += 1
 
             # --- Cleanup stale mid-processing sessions ---
-            stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(max_age_hours=24)
+            # Processing states (UPLOADED/VALIDATING/VALIDATED/IMPORTING) bump
+            # updated_at on every progress tick, so the short stale timeout
+            # (default 15 min) only reaps genuinely dead sessions — not slow
+            # but alive imports.
+            stale_timeout_seconds = get_settings().UPLOAD_STALE_TIMEOUT_SECONDS
+            stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(
+                max_age_seconds=stale_timeout_seconds
+            )
             for upload_session in stale_sessions:
                 dataset = upload_session.dataset
                 prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
@@ -1074,7 +1081,9 @@ def cleanup_orphan_uploads() -> dict[str, Any]:
 
     Handles two categories:
     - Expired ISSUED sessions: presigned URLs have passed their expiry without upload.
-    - Stale sessions: stuck in UPLOADED or VALIDATING state for more than 24 hours.
+    - Stale sessions: stuck in a processing state (UPLOADED / VALIDATING /
+      VALIDATED / IMPORTING) with no progress update within
+      ``ECHOROO_UPLOAD_STALE_TIMEOUT_SECONDS`` (default 15 min).
 
     Deletes S3 objects for each orphaned session and marks the session as FAILED.
 

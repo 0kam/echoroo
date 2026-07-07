@@ -3,17 +3,22 @@
 Tests verify the complete upload lifecycle from session creation through status monitoring.
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.models.dataset import Dataset
-from echoroo.models.enums import DatasetStatus
+from echoroo.models.enums import DatasetStatus, UploadSessionStatus
 from echoroo.models.site import Site
+from echoroo.models.upload import UploadSession
 from echoroo.models.user import User
+from echoroo.repositories.upload import UploadSessionRepository
 from tests.integration.conftest import bff_session_headers
 
 if TYPE_CHECKING:
@@ -243,6 +248,169 @@ class TestUploadWorkflow:
         )
         assert status_response.status_code == 200
         assert status_response.json()["status"] == "failed"
+
+    async def _force_session_state(
+        self,
+        db_session: AsyncSession,
+        session_id: str,
+        *,
+        status: UploadSessionStatus,
+        idle_seconds: int,
+    ) -> None:
+        """Drive an existing session into a processing state with a chosen idle age.
+
+        ``updated_at`` is set explicitly so the ORM ``onupdate`` hook does not
+        clobber the back-dated value — this is exactly how the reaper's
+        staleness clock reads.
+        """
+        stale_updated_at = datetime.now(UTC) - timedelta(seconds=idle_seconds)
+        await db_session.execute(
+            update(UploadSession)
+            .where(UploadSession.id == UUID(session_id))
+            .values(status=status, updated_at=stale_updated_at)
+        )
+        await db_session.commit()
+
+    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
+    @patch("echoroo.core.s3.generate_presigned_upload_url")
+    @patch("echoroo.core.s3.get_s3_client")
+    async def test_upload_session_stale_processing_auto_recovers(
+        self,
+        mock_get_s3_client: MagicMock,
+        mock_presigned_url: MagicMock,
+        mock_ensure_bucket: MagicMock,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        csrf_headers: dict[str, str],
+        test_project_id: str,
+        test_dataset: Dataset,
+    ) -> None:
+        """A stalled VALIDATING session must self-heal (no 409) on the next create."""
+        mock_get_s3_client.return_value = MagicMock()
+        mock_presigned_url.return_value = "https://minio:9000/fake-url"
+        mock_ensure_bucket.return_value = None
+
+        files = [{"filename": "recording.wav", "size": 1024000, "checksum_sha256": "a" * 64}]
+
+        response1 = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
+            json={"files": files},
+        )
+        assert response1.status_code == 201
+        session1_id = response1.json()["session_id"]
+
+        # Wedge it: VALIDATING, untouched for well past the 900s stale timeout.
+        await self._force_session_state(
+            db_session,
+            session1_id,
+            status=UploadSessionStatus.VALIDATING,
+            idle_seconds=3600,
+        )
+
+        # New create must auto-recover the dead session instead of 409.
+        response2 = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
+            json={"files": files},
+        )
+        assert response2.status_code == 201
+        session2_id = response2.json()["session_id"]
+        assert session2_id != session1_id
+
+        # The stalled session is now FAILED with the auto-recovery reason.
+        status_response = await client.get(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions/{session1_id}",
+            headers=csrf_headers,
+        )
+        assert status_response.status_code == 200
+        assert status_response.json()["status"] == "failed"
+
+    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
+    @patch("echoroo.core.s3.generate_presigned_upload_url")
+    @patch("echoroo.core.s3.get_s3_client")
+    async def test_upload_session_fresh_processing_returns_409(
+        self,
+        mock_get_s3_client: MagicMock,
+        mock_presigned_url: MagicMock,
+        mock_ensure_bucket: MagicMock,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        csrf_headers: dict[str, str],
+        test_project_id: str,
+        test_dataset: Dataset,
+    ) -> None:
+        """A genuinely active (recently updated) processing session still returns 409."""
+        mock_get_s3_client.return_value = MagicMock()
+        mock_presigned_url.return_value = "https://minio:9000/fake-url"
+        mock_ensure_bucket.return_value = None
+
+        files = [{"filename": "recording.wav", "size": 1024000, "checksum_sha256": "a" * 64}]
+
+        response1 = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
+            json={"files": files},
+        )
+        assert response1.status_code == 201
+        session1_id = response1.json()["session_id"]
+
+        # IMPORTING and freshly updated a moment ago — a live worker.
+        await self._force_session_state(
+            db_session,
+            session1_id,
+            status=UploadSessionStatus.IMPORTING,
+            idle_seconds=5,
+        )
+
+        response2 = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
+            json={"files": files},
+        )
+        assert response2.status_code == 409
+
+    async def test_get_stale_sessions_picks_up_processing(
+        self,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        csrf_headers: dict[str, str],
+        test_project_id: str,
+        test_dataset: Dataset,
+    ) -> None:
+        """The reaper query returns a processing session idle beyond the short timeout."""
+        with (
+            patch("echoroo.core.s3.get_s3_client", return_value=MagicMock()),
+            patch(
+                "echoroo.core.s3.generate_presigned_upload_url",
+                return_value="https://minio:9000/fake-url",
+            ),
+            patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists", return_value=None),
+        ):
+            files = [{"filename": "recording.wav", "size": 1024000, "checksum_sha256": "a" * 64}]
+            response = await client.post(
+                f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+                headers=csrf_headers,
+                json={"files": files},
+            )
+        assert response.status_code == 201
+        session_id = response.json()["session_id"]
+
+        # Idle IMPORTING for 20 min — well past the 900s (15 min) window.
+        await self._force_session_state(
+            db_session,
+            session_id,
+            status=UploadSessionStatus.IMPORTING,
+            idle_seconds=1200,
+        )
+
+        repo = UploadSessionRepository(db_session)
+        stale = await repo.get_stale_sessions(max_age_seconds=900)
+        assert UUID(session_id) in {s.id for s in stale}
+
+        # A generous window (2h) must NOT flag a 20-min-idle session.
+        not_stale = await repo.get_stale_sessions(max_age_seconds=7200)
+        assert UUID(session_id) not in {s.id for s in not_stale}
 
     @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
     @patch("echoroo.core.s3.generate_presigned_upload_url")
