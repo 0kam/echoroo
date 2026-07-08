@@ -8,8 +8,6 @@ output captured in the Phase 13 inventory (T800):
 - ``id`` UUID PK with ``gen_random_uuid()`` server default
 - ``recording_id`` UUID NOT NULL, FK ``recordings.id`` ON DELETE CASCADE
 - ``project_id`` UUID NOT NULL, FK ``projects.id`` ON DELETE CASCADE
-- ``taxon_id`` VARCHAR(64) NULL — legacy GBIF taxon key (string-formatted
-  integer); a future migration (Phase 14+) will rebind it to ``taxa.id``
 - ``source`` ENUM ``detectionsource`` NOT NULL
 - ``status`` ENUM ``detectionstatus`` NOT NULL DEFAULT ``'unreviewed'``
 - ``start_time`` / ``end_time`` DOUBLE PRECISION NOT NULL (seconds)
@@ -26,9 +24,12 @@ the legacy schema) but never invoked from this ORM. Both layers produce
 the same value space; the asymmetry is intentional and applies uniformly
 to every model in the codebase.
 
+The legacy ``taxon_id`` ``VARCHAR(64)`` column (a stringified GBIF taxon key)
+was dropped in migration 0033 — the canonical species reference is via
+``tag_id`` -> ``tags`` (whose ``taxon_id`` is a UUID FK to ``taxa.id``).
+
 Indexes (existing, recreated idempotently by the static migration):
 
-- ``ix_detections_project_taxon`` on ``(project_id, taxon_id)``
 - ``ix_detections_recording`` on ``(recording_id)``
 - ``ix_detections_created_at`` from :class:`TimestampMixin`
 
@@ -40,7 +41,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Enum, Float, ForeignKey, Index, String, text
+from sqlalchemy import Enum, Float, ForeignKey, Index, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -73,14 +74,6 @@ class Detection(UUIDMixin, TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         doc="Project scope (FR-005)",
-    )
-    taxon_id: Mapped[str | None] = mapped_column(
-        String(64),
-        nullable=True,
-        doc=(
-            "Legacy taxon identifier — currently a stringified GBIF taxon "
-            "key. Phase 14+ migration will swap to a UUID FK to taxa.id."
-        ),
     )
     source: Mapped[DetectionSource] = mapped_column(
         Enum(
@@ -120,6 +113,5 @@ class Detection(UUIDMixin, TimestampMixin, Base):
     )
 
     __table_args__ = (
-        Index("ix_detections_project_taxon", "project_id", "taxon_id"),
         Index("ix_detections_recording", "recording_id"),
     )
