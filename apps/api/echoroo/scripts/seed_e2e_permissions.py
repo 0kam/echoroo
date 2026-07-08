@@ -770,7 +770,6 @@ async def _upsert_detection(
             id=uuid4(),
             project_id=project.id,
             recording_id=recording.id,
-            taxon_id="9192711",
             source=DetectionSource.BIRDNET,
             status=DetectionStatus.UNREVIEWED,
             start_time=1.0,
@@ -779,7 +778,6 @@ async def _upsert_detection(
         )
         session.add(detection)
     else:
-        detection.taxon_id = "9192711"
         detection.status = DetectionStatus.UNREVIEWED
         detection.confidence = 0.87
 
