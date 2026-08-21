@@ -22,7 +22,10 @@ class TaxonVernacularName(UUIDMixin, TimestampMixin, Base):
         taxon_id: FK to taxa table
         locale: Language code (e.g. "en", "ja")
         name: Vernacular name in the given locale
-        source: Origin of the name ("gbif", "birdnet", "user")
+        source: Origin of the name ("authority", "user", "inaturalist",
+            "gbif", "birdnet"). "authority" is reserved for curated national
+            checklists. Display resolution prefers sources in that order
+            (see ``services/vernacular.py``).
         is_primary: Whether this is the primary name for the locale
     """
 

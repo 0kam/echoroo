@@ -20,6 +20,25 @@ from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 
 logger = logging.getLogger(__name__)
 
+# Rank of vernacular-name sources within a locale tier (lower = preferred).
+# "authority" is reserved for curated national checklists (e.g. the Check-List
+# of Japanese Birds, 8th ed.); "user" is a manual override entered in-app.
+# iNaturalist ja names skew katakana while GBIF ja names skew kanji, so
+# preferring iNaturalist keeps Japanese lists script-consistent until an
+# authority source is loaded.
+_SOURCE_RANK: dict[str, int] = {
+    "authority": 0,
+    "user": 1,
+    "inaturalist": 2,
+    "gbif": 3,
+    "birdnet": 4,
+}
+_SOURCE_RANK_UNKNOWN = len(_SOURCE_RANK)
+
+
+def _source_rank(source: str) -> int:
+    return _SOURCE_RANK.get(source.lower(), _SOURCE_RANK_UNKNOWN)
+
 
 async def resolve_vernacular_names(
     db: AsyncSession,
@@ -36,6 +55,12 @@ async def resolve_vernacular_names(
     2. requested-locale row (any)
     3. English (``en``) row with ``is_primary = TRUE``
     4. English (``en``) row (any)
+
+    Within each tier, ties between rows from different sources are broken by
+    source rank: ``authority`` > ``user`` > ``inaturalist`` > ``gbif`` >
+    ``birdnet`` > anything else. Without this tiebreak a taxon holding e.g.
+    both a ``ja/gbif`` and a ``ja/inaturalist`` row would resolve to an
+    arbitrary one of the two (kanji vs katakana flapping across a list).
 
     When ``locale == "en"`` the chain collapses to the English candidates only.
     Taxa that have neither a requested-locale nor an English row are omitted
@@ -83,22 +108,27 @@ async def resolve_vernacular_names(
     #   1: requested-locale any
     #   2: english primary
     #   3: english any
-    best: dict[UUID, tuple[int, str]] = {}
+    # Ties within a tier are broken by source rank (authority > user >
+    # inaturalist > gbif > birdnet > unknown). The trailing (source, name)
+    # components only matter between two unknown sources, where they keep the
+    # winner deterministic instead of DB-return-order dependent.
+    best: dict[UUID, tuple[tuple[int, int, str, str], str]] = {}
     for vn in result.scalars().all():
         # Base offset 0 for the requested locale, 2 for the English fallback;
         # +1 within each pair when the row is not primary.
         locale_offset = 0 if vn.locale == locale else 2
         tier = locale_offset + (0 if vn.is_primary else 1)
+        key = (tier, _source_rank(vn.source), vn.source, vn.name)
         current = best.get(vn.taxon_id)
-        if current is None or tier < current[0]:
-            best[vn.taxon_id] = (tier, vn.name)
+        if current is None or key < current[0]:
+            best[vn.taxon_id] = (key, vn.name)
 
     # Surface where the requested locale had no row and we silently fell back
     # to the English candidate (tier >= 2). No behaviour change — this is a
     # diagnostic so operators can spot locales (e.g. ``ja``) with poor coverage.
     if locale != "en" and logger.isEnabledFor(logging.DEBUG):
-        for taxon_id, (tier, _name) in best.items():
-            if tier >= 2:
+        for taxon_id, (key, _name) in best.items():
+            if key[0] >= 2:
                 logger.debug(
                     "vernacular name for taxon %s fell back to English: "
                     "no %r row found",
