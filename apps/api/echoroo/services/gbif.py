@@ -644,7 +644,10 @@ class GBIFService:
             and (vn.get("source") or "gbif") == source
             for vn in existing
         ):
-            existing.append({"name": name, "language": locale, "source": source})
+            # Prepend rather than append: the frontend picker takes the first
+            # entry for its locale, so the resolved (highest-ranked) name must
+            # lead the list to agree with ``vernacular_name`` below.
+            existing.insert(0, {"name": name, "language": locale, "source": source})
         entry["vernacular_names"] = existing
         entry["vernacular_name"] = name
 

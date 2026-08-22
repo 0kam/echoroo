@@ -833,4 +833,7 @@ async def test_bundled_name_is_added_alongside_same_name_from_another_source(
 
     ja_names = [vn for vn in results[0]["vernacular_names"] if vn["language"] == "ja"]
     assert {(vn["name"], vn.get("source")) for vn in ja_names} >= {("ツバメ", "ioc")}
+    # The resolved entry leads the list: the frontend picker displays the
+    # first entry for its locale, so this is what the user sees.
+    assert ja_names[0] == {"name": "ツバメ", "language": "ja", "source": "ioc"}
     assert results[0]["vernacular_name"] == "ツバメ"
