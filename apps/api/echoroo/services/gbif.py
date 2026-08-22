@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -71,6 +72,34 @@ GBIF_LANG_CODE_MAP: dict[str, str] = {
     "tr": "tur", "th": "tha", "uk": "ukr", "ar": "ara",
     "af": "afr", "sl": "slv",
 }
+
+
+@lru_cache(maxsize=1)
+def _bundled_ja_names() -> dict[str, str]:
+    """Bundled IOC Japanese names keyed by BirdNET *and* AviList scientific names.
+
+    Loaded once per process from ``echoroo.data.vernacular`` (no network). The
+    BirdNET crosswalk is folded in so a GBIF/eBird-style name such as
+    ``Accipiter gularis`` resolves even though the IOC list files it under
+    ``Tachyspiza gularis``. Any failure degrades to an empty map — enrichment
+    must never break search.
+    """
+    try:
+        from echoroo.services.vernacular_bundle import (
+            read_bundled_birdnet_crosswalk,
+            read_bundled_ja_names,
+        )
+
+        names = dict(read_bundled_ja_names())
+        for birdnet_name, avilist_name in read_bundled_birdnet_crosswalk().items():
+            if birdnet_name not in names and avilist_name in names:
+                names[birdnet_name] = names[avilist_name]
+        return names
+    except Exception:  # noqa: BLE001 — degrade to the online sources
+        logger.warning(
+            "Bundled Japanese names unavailable for search enrichment", exc_info=True
+        )
+        return {}
 
 
 def _normalize_locale(locale: str) -> str:
@@ -271,10 +300,15 @@ class GBIFService:
                     continue
                 seen_keys.add(gbif_key)
 
-                # Build vernacular names list; inject iNaturalist common name as Japanese entry
+                # Build vernacular names list; inject iNaturalist common name as
+                # Japanese entry. The explicit ``source`` matters: without it the
+                # repository allow-list coerces the persisted row to "gbif",
+                # mislabelling crowd-sourced names as authoritative.
                 vernacular_names: list[dict[str, str]] = []
                 if common_name:
-                    vernacular_names.append({"name": common_name, "language": "ja"})
+                    vernacular_names.append(
+                        {"name": common_name, "language": "ja", "source": "inaturalist"}
+                    )
 
                 entry: dict[str, Any] = {
                     "gbif_key": gbif_key,
@@ -616,16 +650,31 @@ class GBIFService:
         """Resolve a single entry's vernacular name for ``locale``.
 
         Returns ``(name, source)`` or ``None`` when no locale-specific name is
-        found. Resolution order: iNaturalist (exact match) → GBIF vernacular
-        names. Each source is independently cached in Redis.
+        found. Resolution order: bundled IOC list (``ja`` only, birds, no
+        network) → name already carried by the entry → iNaturalist (exact
+        match) → GBIF vernacular names. The external sources are each cached
+        in Redis.
+
+        The bundled list goes first so that what the species picker shows is
+        the same versioned name the detections/annotation screens resolve to
+        (``services/vernacular.py`` ranks ``ioc`` above the scraped sources).
+        Crowd-sourced iNaturalist names are therefore only written for taxa
+        the bundle does not cover (non-birds and the few unresolved labels).
         """
+        canonical = str(entry.get("canonical_name") or entry.get("scientific_name") or "")
+
+        # 0) Bundled, versioned names (birds only; empty map for everything else).
+        if locale == "ja" and canonical:
+            bundled = _bundled_ja_names().get(canonical)
+            if bundled:
+                return bundled, "ioc"
+
         # If the entry already carries a name in the requested locale (e.g. from
         # the iNat fallback path), keep it without any extra external calls.
         for vn in entry.get("vernacular_names") or []:
             if vn.get("language") == locale and vn.get("name"):
                 return str(vn["name"]), str(vn.get("source") or "gbif")
 
-        canonical = str(entry.get("canonical_name") or entry.get("scientific_name") or "")
         gbif_key_raw = entry.get("gbif_key")
         gbif_key = int(gbif_key_raw) if gbif_key_raw is not None else None
 

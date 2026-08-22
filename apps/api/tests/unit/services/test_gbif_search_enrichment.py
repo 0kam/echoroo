@@ -149,13 +149,18 @@ async def test_en_search_makes_no_enrichment_calls(
 async def test_ja_search_enriches_via_inaturalist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A ``ja`` search injects the iNat ja name and overwrites vernacular_name."""
+    """A ``ja`` search injects the iNat ja name and overwrites vernacular_name.
+
+    Uses a species absent from the bundled IOC list so the online path is
+    actually exercised (bundled names take precedence, see
+    ``test_ja_search_prefers_bundled_ioc_name``).
+    """
     search_payload = {
         "results": [
             {
                 "key": 1001,
-                "scientificName": "Hirundo rustica",
-                "canonicalName": "Hirundo rustica",
+                "scientificName": "Hirundo testus",
+                "canonicalName": "Hirundo testus",
                 "rank": "SPECIES",
                 "datasetKey": gbif_module.GBIF_BACKBONE_DATASET_KEY,
                 "vernacularNames": [
@@ -166,7 +171,7 @@ async def test_ja_search_enriches_via_inaturalist(
     }
     inat_payload = {
         "results": [
-            {"name": "Hirundo rustica", "preferred_common_name": "ツバメ"},
+            {"name": "Hirundo testus", "preferred_common_name": "ツバメ"},
         ]
     }
     _install_client(
@@ -196,8 +201,8 @@ async def test_ja_search_falls_back_to_gbif_vernacular(
         "results": [
             {
                 "key": 2002,
-                "scientificName": "Passer montanus",
-                "canonicalName": "Passer montanus",
+                "scientificName": "Passer testus",
+                "canonicalName": "Passer testus",
                 "rank": "SPECIES",
                 "datasetKey": gbif_module.GBIF_BACKBONE_DATASET_KEY,
                 "vernacularNames": [
@@ -679,3 +684,117 @@ def test_parse_excludes_empty_language_vernacular_entries() -> None:
     assert "No Language" not in names
     assert "Null Language" not in names
     assert "" not in names
+
+
+# ---------------------------------------------------------------------------
+# Bundled IOC names take precedence over the online sources (WS-A v2 slice 2b)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ja_search_prefers_bundled_ioc_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bird in the bundled IOC list resolves offline, with ``source == "ioc"``.
+
+    Neither iNaturalist nor GBIF /vernacularNames may be consulted: the
+    species picker must show the same versioned name the detection screens
+    resolve to, and crowd-sourced names must not be written for covered birds.
+    """
+    search_payload = {
+        "results": [
+            {
+                "key": 3003,
+                "scientificName": "Hirundo rustica",
+                "canonicalName": "Hirundo rustica",
+                "rank": "SPECIES",
+                "datasetKey": gbif_module.GBIF_BACKBONE_DATASET_KEY,
+                "vernacularNames": [
+                    {"vernacularName": "Barn Swallow", "language": "eng"},
+                ],
+            }
+        ]
+    }
+    _install_client(monkeypatch, {"/species/search": search_payload})
+
+    async def _boom(*args: Any, **kwargs: Any) -> str | None:
+        raise AssertionError("online vernacular lookup must not run for bundled birds")
+
+    monkeypatch.setattr(GBIFService, "_resolve_inat_vernacular", _boom)
+    monkeypatch.setattr(GBIFService, "_resolve_gbif_vernacular", _boom)
+
+    svc = GBIFService()
+    results = await svc.search_species_full("swallow", limit=10, locale="ja")
+
+    entry = results[0]
+    assert entry["vernacular_name"] == "ツバメ"
+    ja_names = [vn for vn in entry["vernacular_names"] if vn["language"] == "ja"]
+    assert ja_names == [{"name": "ツバメ", "language": "ja", "source": "ioc"}]
+
+
+@pytest.mark.asyncio
+async def test_bundled_lookup_follows_the_birdnet_crosswalk() -> None:
+    """An eBird/GBIF-style name resolves through the AviList crosswalk."""
+    svc = GBIFService()
+    entry = {"scientific_name": "Accipiter gularis", "canonical_name": "Accipiter gularis"}
+
+    resolved = await svc._resolve_locale_vernacular(entry, "ja")
+
+    assert resolved == ("ツミ", "ioc")
+
+
+@pytest.mark.asyncio
+async def test_bundled_lookup_is_ja_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Other locales never consult the bundle and fall through to the online path."""
+    calls: list[str] = []
+
+    async def _inat(self: GBIFService, canonical: str, locale: str) -> str | None:
+        calls.append(locale)
+        return None
+
+    async def _gbif(self: GBIFService, key: int, locale: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(GBIFService, "_resolve_inat_vernacular", _inat)
+    monkeypatch.setattr(GBIFService, "_resolve_gbif_vernacular", _gbif)
+
+    svc = GBIFService()
+    entry = {"scientific_name": "Hirundo rustica", "canonical_name": "Hirundo rustica"}
+    assert await svc._resolve_locale_vernacular(entry, "de") is None
+    assert calls == ["de"]
+
+
+@pytest.mark.asyncio
+async def test_inat_search_fallback_entries_carry_their_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Names injected by the kana-search fallback are labelled ``inaturalist``.
+
+    Without the explicit source the repository allow-list used to coerce the
+    persisted row to ``gbif``, mislabelling crowd-sourced names as
+    authoritative.
+    """
+    inat_payload = {
+        "results": [
+            {"name": "Passer testus", "preferred_common_name": "テストスズメ", "rank": "species"},
+        ]
+    }
+    match_payload = {
+        "usageKey": 4004,
+        "matchType": "EXACT",
+        "scientificName": "Passer testus",
+        "canonicalName": "Passer testus",
+        "rank": "SPECIES",
+        "class": "Aves",
+    }
+    _install_client(
+        monkeypatch,
+        {"inaturalist.org/v1/taxa": inat_payload, "/species/match": match_payload},
+    )
+
+    svc = GBIFService()
+    parsed = await svc._search_via_inaturalist("テスト", limit=5)
+
+    assert parsed[0]["vernacular_names"] == [
+        {"name": "テストスズメ", "language": "ja", "source": "inaturalist"}
+    ]
