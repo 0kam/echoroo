@@ -15,6 +15,7 @@ coverage here).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from uuid import uuid4
 
 import pytest
@@ -28,21 +29,26 @@ from echoroo.services.vernacular import resolve_vernacular_names
 async def _seed_taxon(
     db: AsyncSession,
     scientific_name: str,
-    vernaculars: list[tuple[str, str, bool]],
+    vernaculars: Sequence[tuple[str, str, bool] | tuple[str, str, bool, str]],
 ) -> Taxon:
-    """Create a taxon with the given ``(locale, name, is_primary)`` rows."""
+    """Create a taxon with ``(locale, name, is_primary[, source])`` rows.
+
+    ``source`` defaults to ``"gbif"`` when the 3-tuple form is used.
+    """
     taxon = Taxon(scientific_name=scientific_name, rank="SPECIES")
     db.add(taxon)
     await db.commit()
     await db.refresh(taxon)
 
-    for locale, name, is_primary in vernaculars:
+    for row in vernaculars:
+        locale, name, is_primary = row[0], row[1], row[2]
+        source = row[3] if len(row) == 4 else "gbif"
         db.add(
             TaxonVernacularName(
                 taxon_id=taxon.id,
                 locale=locale,
                 name=name,
-                source="gbif",
+                source=source,
                 is_primary=is_primary,
             )
         )
@@ -174,3 +180,144 @@ async def test_no_fallback_log_when_locale_present(
         and str(taxon.id) in record.getMessage()
         for record in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_inaturalist_beats_gbif_within_ja_tier(
+    db_session: AsyncSession,
+) -> None:
+    """Both ja rows non-primary → the iNaturalist name wins over GBIF.
+
+    This is the trial-feedback fix: GBIF ja names skew kanji, iNaturalist
+    skew katakana, and without a source tiebreak the winner was arbitrary.
+    """
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source inat-vs-gbif {suffix}",
+        [
+            ("ja", "鶯", False, "gbif"),
+            ("ja", "ウグイス", False, "inaturalist"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "ウグイス"
+
+
+@pytest.mark.asyncio
+async def test_user_beats_inaturalist_and_authority_beats_user(
+    db_session: AsyncSession,
+) -> None:
+    """Full source ranking: authority > user > inaturalist."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source authority-chain {suffix}",
+        [
+            ("ja", "イナットメイ", False, "inaturalist"),
+            ("ja", "ユーザーメイ", False, "user"),
+            ("ja", "モクロクメイ", False, "authority"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "モクロクメイ"
+
+
+@pytest.mark.asyncio
+async def test_primary_flag_outranks_source(db_session: AsyncSession) -> None:
+    """A primary row wins even against a higher-ranked non-primary source.
+
+    ``is_primary`` is an explicit curation decision, so it stays above the
+    source tiebreak.
+    """
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source primary-wins {suffix}",
+        [
+            ("ja", "キュレーションメイ", True, "gbif"),
+            ("ja", "イナットメイ", False, "inaturalist"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "キュレーションメイ"
+
+
+@pytest.mark.asyncio
+async def test_unknown_source_ranks_last(db_session: AsyncSession) -> None:
+    """A row with an unrecognized source loses to any known source."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source unknown-last {suffix}",
+        [
+            ("ja", "ミチノミナモト", False, "mystery-import"),
+            ("ja", "バードネットメイ", False, "birdnet"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "バードネットメイ"
+
+
+@pytest.mark.asyncio
+async def test_source_tiebreak_applies_to_en_fallback_tier(
+    db_session: AsyncSession,
+) -> None:
+    """The tiebreak also stabilizes the en fallback tier when ja is absent."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source en-tier {suffix}",
+        [
+            ("en", "Gbif English", False, "gbif"),
+            ("en", "User English", False, "user"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "User English"
+
+
+@pytest.mark.asyncio
+async def test_two_unknown_sources_resolve_deterministically(
+    db_session: AsyncSession,
+) -> None:
+    """Two unrecognized sources tie on rank → lexicographic source order wins.
+
+    Guards against the winner depending on DB return order.
+    """
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source unknown-pair {suffix}",
+        [
+            ("ja", "ミナモトビー", False, "mystery-b"),
+            ("ja", "ミナモトエー", False, "mystery-a"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "ミナモトエー"
+
+
+@pytest.mark.asyncio
+async def test_source_tiebreak_applies_to_en_request(
+    db_session: AsyncSession,
+) -> None:
+    """A plain ``en`` request also uses the source tiebreak."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source en-request {suffix}",
+        [
+            ("en", "Birdnet English", False, "birdnet"),
+            ("en", "Gbif English", False, "gbif"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "en")
+    assert mapping[taxon.id] == "Gbif English"
