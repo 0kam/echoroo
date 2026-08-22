@@ -79,6 +79,22 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["echoroo"]
+# The bundled reference data under echoroo/data/** is *not* Python source, so
+# state it explicitly rather than relying on hatchling's default whole-package
+# inclusion. Without these files ``echoroo.services.vernacular_bundle`` raises
+# FileNotFoundError at runtime instead of loading the Japanese names.
+# See THIRD_PARTY_LICENSES.md for the upstream attribution.
+# ``birdnet_unresolved.txt`` is intentionally NOT shipped: it is a curation
+# aid for maintainers (and reproduces BirdNET label text), not runtime data.
+artifacts = [
+    "echoroo/data/vernacular/*.csv",
+    "echoroo/data/vernacular/*.json",
+]
+# ``packages`` already selects everything under echoroo/, so the txt must be
+# excluded explicitly to stay out of the wheel.
+exclude = [
+    "echoroo/data/vernacular/*.txt",
+]
 
 [tool.ruff]
 line-length = 100

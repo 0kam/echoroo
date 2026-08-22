@@ -1,0 +1,138 @@
+Acanthis cabaret	Lesser Redpoll
+Acanthis hornemanni	Hoary Redpoll
+Acris crepitans	Northern Cricket Frog
+Acris gryllus	Southern Cricket Frog
+Acrocephalus baeticatus	African Reed Warbler
+Allonemobius allardi	Allard's Ground Cricket
+Allonemobius tinnulus	Tinkling Ground Cricket
+Allonemobius walkeri	Walker's Ground Cricket
+Alouatta pigra	Mexican Black Howler Monkey
+Amblycorypha alexanderi	Clicker Round-winged Katydid
+Amblycorypha longinicta	Common Virtuoso Katydid
+Amblycorypha oblongifolia	Oblong-winged Katydid
+Amblycorypha rotundifolia	Rattler Round-winged Katydid
+Anaxipha exigua	Say's Trig
+Anaxyrus americanus	American Toad
+Anaxyrus canorus	Yosemite Toad
+Anaxyrus cognatus	Great Plains Toad
+Anaxyrus fowleri	Fowler's Toad
+Anaxyrus houstonensis	Houston Toad
+Anaxyrus microscaphus	Arizona Toad
+Anaxyrus quercicus	Oak Toad
+Anaxyrus speciosus	Texas Toad
+Anaxyrus terrestris	Southern Toad
+Anaxyrus woodhousii	Woodhouse's Toad
+Apis mellifera	Honey Bee
+Asthenes sclateri	Puna Canastero
+Atlanticus testaceus	Protean Shieldback
+Cacomantis leucolophus	White-crowned Koel
+Calendulauda alopex	Foxy Lark
+Canis latrans	Coyote
+Canis lupus	Gray Wolf
+Caprimulgus nigriscapularis	Black-shouldered Nightjar
+Cecropis striolata	Striated Swallow
+Celeus grammicus	Scale-breasted Woodpecker
+Colluricincla rufogaster	Rufous Shrikethrush
+Conocephalus brevipennis	Short-winged Meadow Katydid
+Conocephalus fasciatus	Slender Meadow Katydid
+Corvus cornix	Hooded Crow
+Cyanoderma ambiguum	Buff-chested Babbler
+Cyrtoxipha columbiana	Columbian Trig
+Dicrurus divaricatus	Glossy-backed Drongo
+Dog	Dog
+Dryophytes andersonii	Pine Barrens Treefrog
+Dryophytes arenicolor	Canyon Treefrog
+Dryophytes avivoca	Bird-voiced Treefrog
+Dryophytes chrysoscelis	Cope's Gray Treefrog
+Dryophytes cinereus	Green Treefrog
+Dryophytes femoralis	Pine Woods Treefrog
+Dryophytes gratiosus	Barking Treefrog
+Dryophytes squirellus	Squirrel Treefrog
+Dryophytes versicolor	Gray Treefrog
+Dryotriorchis spectabilis	Congo Serpent-Eagle
+Eleutherodactylus planirostris	Greenhouse Frog
+Empidonax occidentalis	Cordilleran Flycatcher
+Engine	Engine
+Environmental	Environmental
+Eunemobius carolinus	Carolina Ground Cricket
+Eunemobius confusus	Confused Ground Cricket
+Fireworks	Fireworks
+Gastrophryne carolinensis	Eastern Narrow-mouthed Toad
+Gastrophryne olivacea	Great Plains Narrow-mouthed Toad
+Gryllus assimilis	Gryllus assimilis
+Gryllus fultoni	Southern Wood Cricket
+Gryllus pennsylvanicus	Fall Field Cricket
+Gryllus rubens	Southeastern Field Cricket
+Gun	Gun
+Horornis vulcanius	Sunda Bush Warbler
+Human non-vocal	Human non-vocal
+Human vocal	Human vocal
+Human whistle	Human whistle
+Hyliola regilla	Pacific Chorus Frog
+Incilius valliceps	Gulf Coast Toad
+Lichmera limbata	Indonesian Honeyeater
+Lithobates catesbeianus	American Bullfrog
+Lithobates clamitans	Green Frog
+Lithobates palustris	Pickerel Frog
+Lithobates sylvaticus	Wood Frog
+Microcentrum rhombifolium	Greater Angle-wing
+Miogryllus saussurei	Miogryllus saussurei
+Neoconocephalus bivocatus	False Robust Conehead
+Neoconocephalus ensiger	Sword-bearing Conehead
+Neoconocephalus retusus	Round-tipped Conehead
+Neoconocephalus robustus	Robust Conehead
+Neonemobius cubensis	Cuban Ground Cricket
+Noise	Noise
+Ochthoeca frontalis	Crowned Chat-Tyrant
+Odocoileus virginianus	White-tailed Deer
+Oecanthus celerinictus	Fast-calling Tree Cricket
+Oecanthus exclamationis	Davis's Tree Cricket
+Oecanthus fultoni	Snowy Tree Cricket
+Oecanthus nigricornis	Blackhorned Tree Cricket
+Oecanthus niveus	Narrow-winged Tree Cricket
+Oecanthus pini	Pine Tree Cricket
+Oecanthus quadripunctatus	Four-spotted Tree Cricket
+Orchelimum agile	Agile Meadow Katydid
+Orchelimum concinnum	Stripe-faced Meadow Katydid
+Orchelimum pulchellum	Handsome Meadow Katydid
+Orocharis saltator	Jumping Bush Cricket
+Otus madagascariensis	Torotoroka Scops-Owl
+Oxyura ferruginea	Andean Duck
+Pachycephala fuliginosa	Western Whistler
+Pachycephala fulvotincta	Rusty-breasted Whistler
+Pericrocotus speciosus	Scarlet Minivet
+Phyllopalpus pulchellus	Handsome Trig
+Phylloscartes difficilis	Serra do Mar Tyrannulet
+Phylloscartes paulista	Sao Paulo Tyrannulet
+Phylloscopus occisinensis	Alpine Leaf Warbler
+Porphyrio madagascariensis	African Swamphen
+Porphyrio melanotus	Australasian Swamphen
+Porphyrio poliocephalus	Gray-headed Swamphen
+Power tools	Power tools
+Pseudacris brimleyi	Brimley's Chorus Frog
+Pseudacris clarkii	Spotted Chorus Frog
+Pseudacris crucifer	Spring Peeper
+Pseudacris feriarum	Upland Chorus Frog
+Pseudacris nigrita	Southern Chorus Frog
+Pseudacris ocularis	Little Grass Frog
+Pseudacris ornata	Ornate Chorus Frog
+Pseudacris streckeri	Strecker's Chorus Frog
+Pseudacris triseriata	Striped Chorus Frog
+Pterophylla camellifolia	Common True Katydid
+Pteruthius ripleyi	Himalayan Shrike-Babbler
+Saxicola stejnegeri	Amur Stonechat
+Scaphiopus couchii	Couch's Spadefoot
+Sciurus carolinensis	Eastern Gray Squirrel
+Scudderia curvicauda	Curve-tailed Bush Katydid
+Scudderia furcata	Fork-tailed Bush Katydid
+Scudderia texensis	Texas Bush Katydid
+Serpophaga munda	White-bellied Tyrannulet
+Siren	Siren
+Spea bombifrons	Plains Spadefoot
+Sporophila murallae	Caqueta Seedeater
+Sturnia blythii	Malabar Starling
+Tamias striatus	Eastern Chipmunk
+Tamiasciurus hudsonicus	Red Squirrel
+Trachyphonus purpuratus	Yellow-billed Barbet
+Tumbezia salvini	Tumbes Tyrant
+Vanellus cayanus	Pied Lapwing

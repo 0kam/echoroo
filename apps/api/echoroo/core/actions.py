@@ -324,6 +324,14 @@ _ACTION_ROWS: tuple[_Row, ...] = (
         True,
         True,
     ),
+    _Row(
+        "PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION",
+        "platform.taxon.load_bundled_vernacular",
+        None,
+        True,
+        True,
+        True,
+    ),
     # Upload-session recovery is platform-scope (no project_id parameter): the
     # superuser inspects and force-fails stuck upload sessions across every
     # project so a wedged import can be unblocked (the user then re-uploads).
@@ -901,6 +909,9 @@ PLATFORM_IUCN_FORCE_RESYNC_ACTION: Action = _BUILT["PLATFORM_IUCN_FORCE_RESYNC_A
 PLATFORM_TAXON_SEED_BIRDNET_ACTION: Action = _BUILT["PLATFORM_TAXON_SEED_BIRDNET_ACTION"]
 PLATFORM_TAXON_SYNC_VERNACULAR_ACTION: Action = _BUILT[
     "PLATFORM_TAXON_SYNC_VERNACULAR_ACTION"
+]
+PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION: Action = _BUILT[
+    "PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION"
 ]
 PLATFORM_UPLOAD_RECOVER_ACTION: Action = _BUILT["PLATFORM_UPLOAD_RECOVER_ACTION"]
 

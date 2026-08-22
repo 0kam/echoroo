@@ -67,6 +67,42 @@ docker exec echoroo-backend uv run python -m echoroo.scripts.initial_iucn_sync
 docker exec echoroo-backend uv run python -m echoroo.scripts.seed_moe_rdb <csv-path> --confirm
 ```
 
+### Taxonomy and Japanese vernacular names (和名)
+
+**Admin → Settings → "Seed BirdNET taxa"** populates the `taxa` table from the
+BirdNET V2.4 species list. Since WS-A v2 slice 2a it *also* loads the Japanese
+names in the same transaction, so a fresh install has 和名 with no extra step
+and no network access.
+
+Those names come from a **versioned bundle shipped inside the package**
+(`apps/api/echoroo/data/vernacular/`), built from the IOC World Bird List
+v15.2 Multilingual list. BirdNET labels follow eBird/Clements taxonomy, so a
+packaged AviList v2025b crosswalk bridges renamed genera (e.g. BirdNET's
+`Accipiter gularis` → IOC `Tachyspiza gularis` → ツミ). Attribution and
+licensing: [THIRD_PARTY_LICENSES.md](../../THIRD_PARTY_LICENSES.md).
+
+`POST /web-api/v1/admin/taxon/load-bundled-vernacular` (superuser-only,
+returns 202 + a Celery task id) re-runs *only* the name load. Use it after the
+bundle is regenerated from a newer upstream release — the load is idempotent
+and rewrites only rows whose name actually changed. Regenerate the bundle
+with:
+
+```bash
+cd apps/api && uv run --with openpyxl python scripts/build_vernacular_bundle.py \
+  --ioc <Multiling IOC xlsx> --avilist <AviList extended xlsx> \
+  --birdnet-labels <BirdNET V2.4 English labels txt> \
+  --out-dir echoroo/data/vernacular
+```
+
+Labels the crosswalk could not resolve (non-birds such as `Engine` / `Dog`,
+plus genuine taxonomic splits) land in `birdnet_unresolved.txt`; add curated
+pairs to `overrides.csv` and rebuild to fix them.
+
+The bundled names are ranked below an operator-loaded national checklist
+(`source="authority"`) and below in-app manual overrides (`source="user"`),
+and above the GBIF / iNaturalist names fetched by
+`POST /web-api/v1/admin/taxon/sync-vernacular`.
+
 Role-based test users plus a sample project and dataset come from the seeded-permission E2E fixture. Run `./echoroo.sh seed e2e` to bootstrap the same Viewer / Annotator / Manager users the trial scenarios reference. Its stdout JSON includes credentials and tokens; handle it as sensitive.
 
 ## 6. Invite Trial Users
