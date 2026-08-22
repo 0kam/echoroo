@@ -633,6 +633,19 @@ class GBIFService:
         # defensively so a degenerate value cannot poison the payload.
         if not name or not locale:
             return
+        # A bundled (versioned) name supersedes crowd-sourced iNaturalist names
+        # for the same locale: drop them so they are not persisted alongside it.
+        # GBIF-sourced entries are kept — they are an institutional aggregator
+        # and the resolver already ranks them below ``ioc``.
+        if source == "ioc":
+            existing = [
+                vn
+                for vn in existing
+                if not (
+                    vn.get("language") == locale
+                    and (vn.get("source") or "gbif") == "inaturalist"
+                )
+            ]
         # Avoid duplicating a (locale, name, source) triple that is already
         # present. The source is part of the key on purpose: GBIF's own payload
         # often carries an iNaturalist-sourced ja name identical to the bundled
@@ -672,8 +685,11 @@ class GBIFService:
         """
         canonical = str(entry.get("canonical_name") or entry.get("scientific_name") or "")
 
-        # 0) Bundled, versioned names (birds only; empty map for everything else).
-        if locale == "ja" and canonical:
+        # 0) Bundled, versioned names — birds only. The class gate is strict on
+        # purpose: the IOC list is keyed by scientific name alone, and cross-
+        # kingdom homonyms exist (a plant or insect hit must never inherit a
+        # bird's 和名). Entries without a class fall through to the online path.
+        if locale == "ja" and canonical and entry.get("class_name") == "Aves":
             bundled = _bundled_ja_names().get(canonical)
             if bundled:
                 return bundled, "ioc"
