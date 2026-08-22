@@ -798,3 +798,39 @@ async def test_inat_search_fallback_entries_carry_their_source(
     assert parsed[0]["vernacular_names"] == [
         {"name": "テストスズメ", "language": "ja", "source": "inaturalist"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_bundled_name_is_added_alongside_same_name_from_another_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GBIF often already carries the identical ja name (iNaturalist-sourced).
+
+    Both provenances must reach the payload: the persisted rows are unique on
+    (taxon, locale, source) and the resolver ranks ``ioc`` above
+    ``inaturalist``, so dropping the bundled entry as a "duplicate" would lose
+    the versioned provenance.
+    """
+    search_payload = {
+        "results": [
+            {
+                "key": 5005,
+                "scientificName": "Hirundo rustica",
+                "canonicalName": "Hirundo rustica",
+                "rank": "SPECIES",
+                "datasetKey": gbif_module.GBIF_BACKBONE_DATASET_KEY,
+                "vernacularNames": [
+                    {"vernacularName": "Barn Swallow", "language": "eng"},
+                    {"vernacularName": "ツバメ", "language": "jpn", "source": "iNaturalist"},
+                ],
+            }
+        ]
+    }
+    _install_client(monkeypatch, {"/species/search": search_payload})
+
+    svc = GBIFService()
+    results = await svc.search_species_full("swallow", limit=10, locale="ja")
+
+    ja_names = [vn for vn in results[0]["vernacular_names"] if vn["language"] == "ja"]
+    assert {(vn["name"], vn.get("source")) for vn in ja_names} >= {("ツバメ", "ioc")}
+    assert results[0]["vernacular_name"] == "ツバメ"

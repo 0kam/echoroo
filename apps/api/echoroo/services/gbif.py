@@ -633,9 +633,15 @@ class GBIFService:
         # defensively so a degenerate value cannot poison the payload.
         if not name or not locale:
             return
-        # Avoid duplicating a (locale, name) pair that is already present.
+        # Avoid duplicating a (locale, name, source) triple that is already
+        # present. The source is part of the key on purpose: GBIF's own payload
+        # often carries an iNaturalist-sourced ja name identical to the bundled
+        # IOC one, and both provenances must survive to the persisted rows
+        # (unique on taxon/locale/source) so the resolver can rank ``ioc`` first.
         if not any(
-            vn.get("language") == locale and vn.get("name") == name
+            vn.get("language") == locale
+            and vn.get("name") == name
+            and (vn.get("source") or "gbif") == source
             for vn in existing
         ):
             existing.append({"name": name, "language": locale, "source": source})
