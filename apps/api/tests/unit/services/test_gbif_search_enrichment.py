@@ -874,6 +874,50 @@ async def test_bundled_name_is_added_alongside_same_name_from_another_source(
     # first entry for its locale, so this is what the user sees.
     assert ja_names[0] == {"name": "ツバメ", "language": "ja", "source": "ioc"}
     assert results[0]["vernacular_name"] == "ツバメ"
+    # The GBIF-echoed iNaturalist provenance ("iNaturalist", mixed case) is
+    # dropped for a bundled bird; nothing crowd-sourced survives for ja.
+    assert not any("inaturalist" in str(vn.get("source") or "").lower() for vn in ja_names)
+
+
+def test_inject_moves_an_existing_identical_entry_to_the_front() -> None:
+    """An identical (locale, name, source) triple later in the list is hoisted.
+
+    Codex review: without the hoist the frontend would keep showing whatever
+    entry happened to be first.
+    """
+    entry: dict[str, Any] = {
+        "vernacular_names": [
+            {"name": "English", "language": "en", "source": "gbif"},
+            {"name": "古い名前", "language": "ja", "source": "gbif"},
+            {"name": "ツバメ", "language": "ja", "source": "ioc"},
+        ]
+    }
+
+    GBIFService._inject_vernacular(entry, "ツバメ", "ja", "ioc")
+
+    ja_names = [vn for vn in entry["vernacular_names"] if vn["language"] == "ja"]
+    assert ja_names[0] == {"name": "ツバメ", "language": "ja", "source": "ioc"}
+    assert ja_names.count({"name": "ツバメ", "language": "ja", "source": "ioc"}) == 1
+    assert {"name": "古い名前", "language": "ja", "source": "gbif"} in ja_names
+    assert entry["vernacular_name"] == "ツバメ"
+
+
+def test_inject_ioc_drops_mixed_case_inaturalist_entries() -> None:
+    """iNaturalist provenance is matched case-insensitively by substring."""
+    entry: dict[str, Any] = {
+        "vernacular_names": [
+            {"name": "クラウド名", "language": "ja", "source": "iNaturalist Taxonomy"},
+            {"name": "ほかの名", "language": "ja", "source": "INATURALIST"},
+            {"name": "Cloud", "language": "en", "source": "inaturalist"},
+        ]
+    }
+
+    GBIFService._inject_vernacular(entry, "ツバメ", "ja", "ioc")
+
+    assert entry["vernacular_names"] == [
+        {"name": "ツバメ", "language": "ja", "source": "ioc"},
+        {"name": "Cloud", "language": "en", "source": "inaturalist"},
+    ]
 
 
 @pytest.mark.asyncio

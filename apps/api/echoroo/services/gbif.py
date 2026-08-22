@@ -633,34 +633,38 @@ class GBIFService:
         # defensively so a degenerate value cannot poison the payload.
         if not name or not locale:
             return
+        def _same_locale(vn: dict[str, str]) -> bool:
+            return vn.get("language") == locale
+
+        def _is_inaturalist(vn: dict[str, str]) -> bool:
+            # Sources arrive in several spellings ("inaturalist" from our own
+            # fallback, "iNaturalist …" echoed from GBIF payloads); compare
+            # case-insensitively by substring so none slip through.
+            return "inaturalist" in str(vn.get("source") or "").lower()
+
         # A bundled (versioned) name supersedes crowd-sourced iNaturalist names
         # for the same locale: drop them so they are not persisted alongside it.
         # GBIF-sourced entries are kept — they are an institutional aggregator
         # and the resolver already ranks them below ``ioc``.
         if source == "ioc":
-            existing = [
-                vn
-                for vn in existing
-                if not (
-                    vn.get("language") == locale
-                    and (vn.get("source") or "gbif") == "inaturalist"
-                )
-            ]
-        # Avoid duplicating a (locale, name, source) triple that is already
-        # present. The source is part of the key on purpose: GBIF's own payload
-        # often carries an iNaturalist-sourced ja name identical to the bundled
-        # IOC one, and both provenances must survive to the persisted rows
-        # (unique on taxon/locale/source) so the resolver can rank ``ioc`` first.
-        if not any(
-            vn.get("language") == locale
-            and vn.get("name") == name
-            and (vn.get("source") or "gbif") == source
+            existing = [vn for vn in existing if not (_same_locale(vn) and _is_inaturalist(vn))]
+        # Remove any identical (locale, name, source) triple, then put the
+        # resolved entry first: the frontend picker displays the first entry
+        # for its locale, so the resolved (highest-ranked) name must lead the
+        # list to agree with ``vernacular_name`` below. The source is part of
+        # the key on purpose — GBIF's own payload often carries an identical
+        # ja name under another provenance and both must survive to the
+        # persisted rows (unique on taxon/locale/source).
+        existing = [
+            vn
             for vn in existing
-        ):
-            # Prepend rather than append: the frontend picker takes the first
-            # entry for its locale, so the resolved (highest-ranked) name must
-            # lead the list to agree with ``vernacular_name`` below.
-            existing.insert(0, {"name": name, "language": locale, "source": source})
+            if not (
+                _same_locale(vn)
+                and vn.get("name") == name
+                and (vn.get("source") or "gbif") == source
+            )
+        ]
+        existing.insert(0, {"name": name, "language": locale, "source": source})
         entry["vernacular_names"] = existing
         entry["vernacular_name"] = name
 
