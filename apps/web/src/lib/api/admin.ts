@@ -248,6 +248,23 @@ export const adminApi = {
   },
 
   /**
+   * Dispatch the bundled vernacular-name load task (superuser only).
+   *
+   * Enqueues a Celery task that upserts the versioned Japanese names shipped
+   * inside the API package (IOC World Bird List via the AviList crosswalk)
+   * onto the local taxa. No network access; idempotent. The BirdNET seed
+   * already performs this load, so this is for re-running after the bundle
+   * is regenerated. Empty body, mirrors the seed dispatch shape.
+   */
+  loadBundledVernacular: async (): Promise<TaxonMaintenanceDispatchResponse> => {
+    return apiClient.post<TaxonMaintenanceDispatchResponse>(
+      `${WEB_API_BASE}/admin/taxon/load-bundled-vernacular`,
+      {},
+      { headers: csrfHeaders() }
+    );
+  },
+
+  /**
    * Dispatch the vernacular-name sync task (superuser only).
    *
    * Enqueues a Celery task that fetches/refreshes locale-specific vernacular

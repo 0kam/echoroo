@@ -12,6 +12,7 @@
   import RegistrationSettings from '$lib/components/admin/settings/RegistrationSettings.svelte';
   import SpeciesFilterSettings from '$lib/components/admin/settings/SpeciesFilterSettings.svelte';
   import BirdnetSeedPanel from '$lib/components/admin/settings/BirdnetSeedPanel.svelte';
+  import BundledVernacularPanel from '$lib/components/admin/settings/BundledVernacularPanel.svelte';
   import VernacularSyncPanel from '$lib/components/admin/settings/VernacularSyncPanel.svelte';
   import IucnResyncPanel from '$lib/components/admin/settings/IucnResyncPanel.svelte';
   import UploadRecoveryPanel from '$lib/components/admin/settings/UploadRecoveryPanel.svelte';
@@ -38,6 +39,7 @@
   // while a dispatch is in flight; results surface through the same shared
   // success/error banners as the settings form.
   let isSeedingBirdnet = $state(false);
+  let isLoadingBundledVernacular = $state(false);
   let isSyncingVernacular = $state(false);
   let isResyncingIucn = $state(false);
   // Sync vernacular form inputs.
@@ -149,6 +151,32 @@
       }
     } finally {
       isSeedingBirdnet = false;
+    }
+  }
+
+  /**
+   * Dispatch the bundled vernacular-name load task after confirmation.
+   */
+  async function handleLoadBundledVernacular() {
+    isLoadingBundledVernacular = true;
+    error = null;
+    successMessage = null;
+
+    try {
+      const result = await adminApi.loadBundledVernacular();
+      successMessage = m.admin_settings_taxon_bundled_vernacular_success({ taskId: result.task_id });
+
+      setTimeout(() => {
+        successMessage = null;
+      }, 5000);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        error = err.detail || err.message;
+      } else {
+        error = m.admin_settings_taxon_bundled_vernacular_error();
+      }
+    } finally {
+      isLoadingBundledVernacular = false;
     }
   }
 
@@ -335,6 +363,11 @@
 
         <div class="space-y-8 px-6 py-5">
           <BirdnetSeedPanel isSeeding={isSeedingBirdnet} onSeed={handleSeedBirdnet} />
+
+          <BundledVernacularPanel
+            isLoading={isLoadingBundledVernacular}
+            onLoad={handleLoadBundledVernacular}
+          />
 
           <VernacularSyncPanel
             isSyncing={isSyncingVernacular}
