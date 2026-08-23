@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,7 +35,38 @@ class Taxon(UUIDMixin, TimestampMixin, Base):
         gbif_match_confidence: GBIF match confidence (0..100)
         gbif_backbone_version: GBIF/COL backbone version pinned at match time
         verbatim_scientific_name: Original name as supplied before normalization
-        accepted_scientific_name: GBIF canonical/accepted name
+        accepted_scientific_name: Canonical/accepted name (COL XR since WS-A v2
+            slice 3; previously reserved for the frozen GBIF backbone)
+        col_xr_id: Catalogue of Life XR usage key of the matched name
+        col_xr_accepted_id: COL XR usage key of the ACCEPTED name
+        col_xr_accepted_rank: Rank of the COL XR accepted usage
+        col_xr_status: COL XR usage status (ACCEPTED/SYNONYM/...)
+        col_xr_match_type: COL XR matchType (EXACT/VARIANT/FUZZY/HIGHERRANK/NONE)
+        col_xr_match_confidence: COL XR match confidence (0..100)
+        col_xr_release: COL release alias pinned at match time (e.g. "COL26.6 XR").
+            Stamped for EVERY resolved row, rejects included — see below.
+        col_xr_clb_dataset_key: ChecklistBank dataset key of that release
+        col_xr_resolved_at: When COL XR resolution ran (stamped incl. rejects)
+        authorship: Authorship of the matched name
+        accepted_authorship: Authorship of the accepted name
+        col_xr_classification: ``{rank: {key, name}}`` for the accepted lineage
+
+    Catalogue of Life XR replaces the frozen GBIF backbone as the re-matchable
+    external identity (WS-A v2 slice 3). For birds the bundled AviList
+    crosswalk remains the *name* authority; COL XR is cross-domain *identity*.
+
+    The release pin (``col_xr_release`` + ``col_xr_clb_dataset_key``) is written
+    for every row a resolution pass touches, INCLUDING rows whose match was
+    rejected (HIGHERRANK/NONE, which keep ``col_xr_id`` NULL). A reject is a
+    result of that particular release, and the pin is what
+    ``resolve_col_xr_batch(force=True)`` selects on: rows already stamped with
+    the current release drop out of the pass, so a forced re-resolution walks
+    the catalogue in resumable chunks instead of grinding the same first rows.
+    A COL release bump changes the pin and makes every row eligible again.
+
+    ``accepted_scientific_name`` is always the AUTHORSHIP-FREE canonical name
+    ("Acacia acuminata", never "Acacia acuminata Benth."); the authorship lives
+    in ``accepted_authorship``.
     """
 
     __tablename__ = "taxa"
@@ -76,7 +107,50 @@ class Taxon(UUIDMixin, TimestampMixin, Base):
         String(300), nullable=True, doc="Original name as supplied (BirdNET/user) before normalization",
     )
     accepted_scientific_name: Mapped[str | None] = mapped_column(
-        String(300), nullable=True, doc="GBIF canonical/accepted name",
+        String(300), nullable=True, doc="Canonical/accepted name (COL XR)",
+    )
+
+    # Catalogue of Life XR identity (WS-A v2 slice 3, Alembic 0035). Populated
+    # by ``resolve_col_xr_batch``; every processed row gets ``col_xr_resolved_at``
+    # (and ``col_xr_match_type``) even when the match was rejected, so a rerun
+    # never reprocesses it without ``force``.
+    col_xr_id: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, doc="COL XR usage key of the matched name",
+    )
+    col_xr_accepted_id: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, doc="COL XR usage key of the accepted name",
+    )
+    col_xr_accepted_rank: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, doc="Rank of the COL XR accepted usage",
+    )
+    col_xr_status: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, doc="COL XR usage status (ACCEPTED/SYNONYM/...)",
+    )
+    col_xr_match_type: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        doc="COL XR matchType (EXACT/VARIANT/FUZZY/HIGHERRANK/NONE)",
+    )
+    col_xr_match_confidence: Mapped[int | None] = mapped_column(
+        SmallInteger, nullable=True, doc="COL XR match confidence (0..100)",
+    )
+    col_xr_release: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, doc="COL release alias pinned at match time",
+    )
+    col_xr_clb_dataset_key: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, doc="ChecklistBank dataset key of the COL release",
+    )
+    col_xr_resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, doc="When COL XR resolution ran",
+    )
+    authorship: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, doc="Authorship of the matched name",
+    )
+    accepted_authorship: Mapped[str | None] = mapped_column(
+        String(200), nullable=True, doc="Authorship of the accepted name",
+    )
+    col_xr_classification: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB, nullable=True, doc="COL XR accepted lineage as {rank: {key, name}}",
     )
 
     # Relationships
@@ -91,6 +165,9 @@ class Taxon(UUIDMixin, TimestampMixin, Base):
         Index("ix_taxa_gbif_taxon_key", "gbif_taxon_key", unique=True, postgresql_where=gbif_taxon_key.isnot(None)),
         Index("ix_taxa_scientific_name", "scientific_name"),
         Index("ix_taxa_is_non_biological", "is_non_biological"),
+        # Non-unique: taxonomic lumps map several taxa onto one COL XR usage.
+        Index("ix_taxa_col_xr_id", "col_xr_id"),
+        Index("ix_taxa_col_xr_accepted_id", "col_xr_accepted_id"),
     )
 
     def __repr__(self) -> str:

@@ -91,6 +91,40 @@ class GBIFUnavailableError(ExternalServiceError):
         super().__init__(message, service="gbif")
 
 
+class COLXRUnavailableError(ExternalServiceError):
+    """The Catalogue of Life XR match upstream is unavailable.
+
+    Mirrors :class:`GBIFUnavailableError` (the COL XR checklist is served by
+    the same ``api.gbif.org`` host under ``/v2/species/match``) but carries its
+    own ``service`` tag so an outage of the identity resolver is
+    distinguishable from an outage of the legacy GBIF backbone paths. Raised
+    only when the HTTP request itself fails (transport error, timeout, 5xx, or
+    a 429 that survived every retry) — never when COL responds successfully
+    with ``matchType: NONE``.
+    """
+
+    def __init__(self, message: str = "Catalogue of Life XR service unavailable"):
+        super().__init__(message, service="col_xr")
+
+
+class COLXRMetadataError(COLXRUnavailableError):
+    """The COL XR release pin could not be established.
+
+    Resolving without knowing which COL release answered would produce rows
+    nobody can later invalidate (and, since the ``force`` re-resolution
+    selects on exactly that pin, rows that can never be re-resolved). A batch
+    therefore aborts BEFORE its first write when the matching index does not
+    report both a release alias and a ChecklistBank dataset key.
+
+    A subclass of :class:`COLXRUnavailableError` so existing outage handling
+    keeps working unchanged; distinct so "the index metadata is malformed" is
+    separable from "the host is down".
+    """
+
+    def __init__(self, message: str = "COL XR index metadata unavailable"):
+        super().__init__(message)
+
+
 # Exception handlers
 
 

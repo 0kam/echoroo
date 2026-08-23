@@ -193,6 +193,67 @@ class TaxonRepository(BaseRepository[Taxon]):
         )
         return list(result.scalars().all())
 
+    async def get_col_xr_unresolved(
+        self,
+        limit: int = 500,
+        *,
+        force: bool = False,
+        release: str | None = None,
+        clb_dataset_key: int | None = None,
+    ) -> list[Taxon]:
+        """Get biological taxa awaiting Catalogue of Life XR resolution.
+
+        A single query per batch — the caller then walks the returned rows.
+
+        Two selection modes, both of which must make progress when called
+        repeatedly with a ``limit`` smaller than the catalogue:
+
+        * **normal** (``force=False``): taxa never resolved at all, i.e.
+          ``col_xr_resolved_at IS NULL``.
+        * **force** (``force=True``): taxa not yet resolved *at the release the
+          caller is currently pinned to*, i.e. whose ``col_xr_release`` or
+          ``col_xr_clb_dataset_key`` differs from the supplied pair (NULLs
+          included, hence ``IS DISTINCT FROM``). Filtering on the pin rather
+          than simply dropping the ``resolved_at`` predicate is what makes a
+          forced re-resolution *resumable*: each pass stamps the rows it
+          handled with the current pin, so they drop out of the next pass and
+          the batch advances instead of grinding the same first ``limit`` rows
+          forever.
+
+        Args:
+            limit: Maximum number of taxa to return.
+            force: Select against the release pin instead of "never resolved".
+            release: Current COL release alias (required when ``force``).
+            clb_dataset_key: Current ChecklistBank dataset key (required when
+                ``force``).
+
+        Returns:
+            Taxa ordered by ``created_at`` ascending (stable, seed order).
+
+        Raises:
+            ValueError: ``force`` without a complete release pin — that would
+                silently degrade to the non-resumable "re-resolve everything"
+                behaviour.
+        """
+        stmt = select(Taxon).where(Taxon.is_non_biological.is_(False))
+        if force:
+            if release is None or clb_dataset_key is None:
+                raise ValueError(
+                    "force=True requires both release and clb_dataset_key"
+                )
+            stmt = stmt.where(
+                or_(
+                    Taxon.col_xr_release.is_distinct_from(release),
+                    Taxon.col_xr_clb_dataset_key.is_distinct_from(clb_dataset_key),
+                )
+            )
+        else:
+            stmt = stmt.where(Taxon.col_xr_resolved_at.is_(None))
+        result = await self.db.execute(
+            stmt.order_by(Taxon.created_at.asc()).limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def list_taxa(
         self,
         search: str | None = None,

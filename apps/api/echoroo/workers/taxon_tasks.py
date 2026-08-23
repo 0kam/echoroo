@@ -24,6 +24,13 @@ _GBIF_REQUEST_DELAY = 0.15
 # completed run where every taxon was actually errored.
 _GBIF_OUTAGE_THRESHOLD = 5
 
+# COL XR dispatch sizing. Mirrors the service-side constants (imported lazily
+# there to keep the slim API image free of the worker dependency tree) and the
+# ``le=2000`` bound on the admin request schema: at ~0.35s/taxon a 2000-row
+# dispatch is ~12 min, inside the 900s hard / 840s soft task limit.
+_COL_XR_DEFAULT_BATCH_SIZE = 500
+_COL_XR_MAX_BATCH_SIZE = 2000
+
 
 # ---------------------------------------------------------------------------
 # Async implementations
@@ -82,6 +89,24 @@ async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
             "resolved": batch_result.resolved,
             "taxa_errored": batch_result.errored,
         }
+    finally:
+        await engine.dispose()
+
+
+async def _run_resolve_col_xr_batch(
+    batch_size: int, force: bool
+) -> dict[str, object]:
+    """Async implementation of Catalogue of Life XR identity resolution."""
+    from echoroo.services.taxon import resolve_col_xr_batch
+
+    engine, session_factory = get_worker_engine_and_session_factory()
+    try:
+        async with session_factory() as db:
+            result = await resolve_col_xr_batch(
+                db, batch_size=batch_size, force=force
+            )
+            await db.commit()
+        return {"status": "completed", **result}
     finally:
         await engine.dispose()
 
@@ -493,6 +518,63 @@ def resolve_gbif_batch(batch_size: int = 100) -> dict[str, object]:
         return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("GBIF batch resolution failed: %s", exc)
+        raise
+
+
+@app.task(  # type: ignore[untyped-decorator]
+    name="echoroo.workers.taxon_tasks.resolve_col_xr_batch",
+    time_limit=900,       # 15 min hard limit
+    soft_time_limit=840,  # 14 min soft limit
+)
+def resolve_col_xr_batch(
+    batch_size: int = _COL_XR_DEFAULT_BATCH_SIZE, force: bool = False
+) -> dict[str, object]:
+    """Resolve taxa against the Catalogue of Life XR checklist.
+
+    GBIF's legacy backbone is frozen, so COL XR carries the re-matchable
+    external identity of a taxon. For up to ``batch_size`` taxa this stores the
+    COL usage key, the accepted usage key/name/rank, the usage status,
+    authorships, the filtered classification, and the COL release the match was
+    pinned to.
+
+    Both selection modes are resumable, and progress is committed every 100
+    taxa, so a dispatch that hits the time limit still banks its work:
+
+    * without ``force``: biological taxa with no ``col_xr_resolved_at`` stamp;
+    * with ``force``: biological taxa not yet stamped with the COL release this
+      run is pinned to. Successive forced dispatches therefore ADVANCE through
+      the catalogue rather than redoing the same first rows.
+
+    Rejected matches (HIGHERRANK / NONE) are stamped with the release too —
+    they are a resolved "no identity" at that release, not a pending row.
+
+    ``batch_size`` is clamped to 2000: at the measured ~0.35s per taxon that is
+    ~12 min, inside this task's 900s hard / 840s soft limit.
+
+    Args:
+        batch_size: Maximum number of taxa to resolve in this invocation
+            (clamped to 1..2000).
+        force: Re-resolve taxa whose release pin differs from the current COL
+            release. Use after a release bump to refresh the catalogue.
+
+    Returns:
+        Dict with ``status`` plus ``processed`` / ``accepted`` / ``review`` /
+        ``rejected`` / ``unavailable`` counters and the pinned ``release``.
+    """
+    effective_batch_size = min(max(batch_size, 1), _COL_XR_MAX_BATCH_SIZE)
+    logger.info(
+        "Starting COL XR resolution task (batch_size=%d, force=%s)",
+        effective_batch_size,
+        force,
+    )
+    try:
+        result: dict[str, object] = asyncio.run(
+            _run_resolve_col_xr_batch(effective_batch_size, force)
+        )
+        logger.info("COL XR resolution complete: %s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("COL XR resolution failed: %s", exc)
         raise
 
 

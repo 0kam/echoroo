@@ -5,8 +5,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
@@ -21,8 +23,17 @@ from echoroo.schemas.taxon import (
     TaxonSearchResult,
     VernacularNameResponse,
 )
+from echoroo.services.col_xr import (
+    COLXRIndex,
+    COLXRMatch,
+    COLXRService,
+    decide_match,
+)
 from echoroo.services.gbif import GBIFService
 from echoroo.services.vernacular import resolve_vernacular_names
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +42,31 @@ logger = logging.getLogger(__name__)
 # Celery task ends in FAILURE instead of silently reporting a completed run
 # where every taxon was actually errored.
 _GBIF_OUTAGE_THRESHOLD = 5
+
+# Same idea for the Catalogue of Life XR identity resolver: this many
+# back-to-back upstream failures abort the batch instead of silently marking
+# thousands of taxa "unavailable".
+_COL_XR_OUTAGE_THRESHOLD = 5
+
+# ``decide_match`` verdict -> counter key returned by ``resolve_col_xr_batch``.
+_COL_XR_DECISION_COUNTER: dict[str, str] = {
+    "accept": "accepted",
+    "review": "review",
+    "reject": "rejected",
+}
+
+# Rows resolved between commits. Small enough that a hard kill (Celery time
+# limit, OOM, redeploy) loses at most a few seconds of work, large enough that
+# the commit overhead stays negligible next to the ~0.35s upstream round trip.
+_COL_XR_COMMIT_CHUNK = 100
+
+# Default rows per dispatch.
+COL_XR_DEFAULT_BATCH_SIZE = 500
+
+# Hard ceiling on rows per dispatch. At the measured ~0.35s/taxon a full 2000
+# rows is ~12 min, which fits inside the task's 900s hard / 840s soft limit
+# with margin. Anything larger would be killed mid-run.
+COL_XR_MAX_BATCH_SIZE = 2000
 
 
 @dataclass
@@ -420,3 +456,217 @@ class TaxonService:
                 )
                 consecutive_errors = 0
         return GBIFBatchResolveResult(resolved=resolved_count, errored=errored_count)
+
+
+# ---------------------------------------------------------------------------
+# Catalogue of Life XR identity resolution (WS-A v2 slice 3)
+# ---------------------------------------------------------------------------
+
+
+async def resolve_col_xr_batch(
+    db: AsyncSession,
+    *,
+    batch_size: int = COL_XR_DEFAULT_BATCH_SIZE,
+    force: bool = False,
+    service: COLXRService | None = None,
+) -> dict[str, object]:
+    """Resolve a batch of taxa against the Catalogue of Life XR checklist.
+
+    Mirrors :meth:`TaxonService.resolve_gbif_batch`'s outage handling: a single
+    taxon's upstream failure never aborts the batch, but
+    ``_COL_XR_OUTAGE_THRESHOLD`` consecutive ones re-raise so the Celery task
+    ends in FAILURE instead of reporting a "completed" run in which nothing
+    resolved. Anything that is NOT an upstream failure (a ``SQLAlchemyError``, a
+    programming error) propagates immediately — those are bugs, not weather.
+
+    Release pin
+    -----------
+    The COL release is read ONCE up front, BEFORE any write, and stamped on
+    every row this run touches — accepted, review AND rejected alike. A reject
+    was still *evaluated* at that release, so it carries the pin (with
+    ``col_xr_id`` NULL); that is what lets a later release bump re-examine it.
+
+    Resumability
+    ------------
+    Both modes are resumable, which matters because a full catalogue is far
+    larger than one dispatch:
+
+    * without ``force``, rows are picked by ``col_xr_resolved_at IS NULL``;
+    * with ``force``, rows are picked by "release pin differs from the one this
+      run is on". Since each pass stamps what it handled, successive forced
+      passes advance through the catalogue instead of re-resolving the same
+      first ``batch_size`` rows forever.
+
+    Progress is committed every ``_COL_XR_COMMIT_CHUNK`` taxa, so a hard kill
+    (Celery time limit, OOM, redeploy) loses at most one chunk and the next
+    dispatch picks up where this one stopped.
+
+    Args:
+        db: Session to read and write ``taxa`` on. Chunk commits happen on it;
+            the caller still commits the trailing partial chunk.
+        batch_size: Maximum number of taxa to process in this pass. Clamped to
+            ``COL_XR_MAX_BATCH_SIZE`` so one dispatch cannot exceed the Celery
+            time limit (~0.35s/taxon).
+        force: Re-resolve taxa not yet stamped with the current release pin.
+        service: Injectable :class:`COLXRService` (tests pass a stub).
+
+    Returns:
+        ``{processed, accepted, review, rejected, unavailable, release,
+        clb_dataset_key}``.
+
+    Raises:
+        COLXRMetadataError: the release pin could not be read; nothing written.
+        ExternalServiceError: ``_COL_XR_OUTAGE_THRESHOLD`` consecutive upstream
+            failures (treated as a hard outage).
+    """
+    effective_batch_size = min(max(batch_size, 1), COL_XR_MAX_BATCH_SIZE)
+    if effective_batch_size != batch_size:
+        logger.warning(
+            "COL XR batch_size %d clamped to %d (Celery time-limit guard)",
+            batch_size,
+            effective_batch_size,
+        )
+
+    col_service = service or COLXRService()
+    # Only the connection WE opened is ours to close; an injected service keeps
+    # its own lifecycle (tests pass stubs, callers may pool across batches).
+    owns_service = service is None
+    repo = TaxonRepository(db)
+
+    counts = {
+        "processed": 0,
+        "accepted": 0,
+        "review": 0,
+        "rejected": 0,
+        "unavailable": 0,
+    }
+    consecutive_errors = 0
+    uncommitted = 0
+
+    try:
+        # Read the release pin BEFORE any row is written, and refuse to
+        # continue without a complete one: resolving against an unknown
+        # release would produce rows that ``force`` could never re-select.
+        index = await col_service.get_index_metadata()
+
+        taxa = await repo.get_col_xr_unresolved(
+            limit=effective_batch_size,
+            force=force,
+            release=index.alias,
+            clb_dataset_key=index.clb_dataset_key,
+        )
+        total = len(taxa)
+        logger.info(
+            "COL XR batch starting: %d taxa, release=%s, force=%s",
+            total,
+            index.alias,
+            force,
+        )
+
+        for position, taxon in enumerate(taxa, start=1):
+            try:
+                col_match = await col_service.match(taxon.scientific_name)
+            except (ExternalServiceError, httpx.HTTPError):
+                # Upstream outage for this taxon: leave it unresolved so the
+                # next run retries it, and treat a run of these as an outage.
+                # NOTE: deliberately narrow — a SQLAlchemyError or a
+                # programming error must NOT be laundered into "unavailable".
+                counts["unavailable"] += 1
+                consecutive_errors += 1
+                logger.warning(
+                    "COL XR unavailable resolving taxon %s (id=%s); "
+                    "consecutive_errors=%d",
+                    taxon.scientific_name,
+                    taxon.id,
+                    consecutive_errors,
+                )
+                if consecutive_errors >= _COL_XR_OUTAGE_THRESHOLD:
+                    logger.error(
+                        "Aborting COL XR batch after %d consecutive upstream "
+                        "failures; treating as hard outage",
+                        consecutive_errors,
+                    )
+                    if uncommitted:
+                        await db.commit()
+                    raise
+                continue
+
+            consecutive_errors = 0
+            decision = decide_match(col_match)
+            _apply_col_xr_match(taxon, col_match, decision, index)
+            await repo.update(taxon)
+
+            counts["processed"] += 1
+            counts[_COL_XR_DECISION_COUNTER[decision]] += 1
+            uncommitted += 1
+
+            # Durable progress: a kill after this point loses at most the rows
+            # since the last chunk boundary.
+            if uncommitted >= _COL_XR_COMMIT_CHUNK:
+                await db.commit()
+                uncommitted = 0
+                logger.info("COL XR progress: %d/%d %s", position, total, counts)
+    finally:
+        if owns_service:
+            await col_service.aclose()
+
+    logger.info("COL XR batch complete (release=%s): %s", index.alias, counts)
+    return {
+        **counts,
+        "release": index.alias,
+        "clb_dataset_key": index.clb_dataset_key,
+    }
+
+
+def _apply_col_xr_match(
+    taxon: Taxon,
+    col_match: COLXRMatch | None,
+    decision: str,
+    index: COLXRIndex,
+) -> None:
+    """Write one COL XR resolution onto ``taxon`` in place.
+
+    Kept separate from the batch loop so the (purely field-mapping) write rules
+    are testable and readable on their own.
+
+    The release pin (``col_xr_release`` / ``col_xr_clb_dataset_key``) is written
+    for EVERY decision, rejects included. A reject means "this release has no
+    identity for this name", which is itself a result of that release — and,
+    operationally, it is what keeps a rejected row out of the next forced pass
+    (the pass selects on the pin) while still making it eligible again the
+    moment COL ships a new release.
+    """
+    now = datetime.now(UTC)
+    taxon.col_xr_resolved_at = now
+    taxon.col_xr_match_type = col_match.match_type if col_match else "NONE"
+    taxon.col_xr_release = index.alias
+    taxon.col_xr_clb_dataset_key = index.clb_dataset_key
+
+    if decision == "reject":
+        # A HIGHERRANK/NONE hit is not an identity: keep ``col_xr_id`` NULL.
+        # Every identity-bearing field is cleared so a ``force`` re-resolution
+        # that flips a previously accepted taxon to rejected cannot leave a
+        # stale identity behind.
+        taxon.col_xr_id = None
+        taxon.col_xr_accepted_id = None
+        taxon.col_xr_accepted_rank = None
+        taxon.col_xr_status = None
+        taxon.col_xr_match_confidence = None
+        taxon.col_xr_classification = None
+        taxon.authorship = None
+        taxon.accepted_authorship = None
+        taxon.accepted_scientific_name = None
+        return
+
+    assert col_match is not None  # decide_match() rejects a missing match
+
+    taxon.col_xr_id = col_match.usage_key
+    taxon.col_xr_accepted_id = col_match.accepted_key
+    taxon.col_xr_accepted_rank = col_match.accepted_rank
+    taxon.col_xr_status = col_match.status
+    taxon.col_xr_match_confidence = col_match.confidence
+    taxon.col_xr_classification = dict(col_match.classification) or None
+    taxon.authorship = col_match.authorship
+    taxon.accepted_authorship = col_match.accepted_authorship
+    # Guaranteed authorship-free by ``COLXRService._parse_match``.
+    taxon.accepted_scientific_name = col_match.accepted_canonical_name

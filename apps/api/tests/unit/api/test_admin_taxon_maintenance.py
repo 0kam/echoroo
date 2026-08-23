@@ -1,9 +1,9 @@
 """Unit tests for the taxon-catalog maintenance admin endpoints.
 
 Covers ``POST /web-api/v1/admin/taxon/seed-birdnet``,
-``POST /web-api/v1/admin/taxon/sync-vernacular`` and
-``POST /web-api/v1/admin/taxon/load-bundled-vernacular`` (admin maintenance
-surface).
+``POST /web-api/v1/admin/taxon/sync-vernacular``,
+``POST /web-api/v1/admin/taxon/load-bundled-vernacular`` and
+``POST /web-api/v1/admin/taxon/resolve-col-xr`` (admin maintenance surface).
 
 These mirror the IUCN force-resync endpoint's testing strategy: the handlers
 are invoked directly with mocked dependencies so neither the database, the
@@ -32,7 +32,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from echoroo.api.web_v1 import admin as mod
-from echoroo.schemas.admin import TaxonSyncVernacularRequest
+from echoroo.schemas.admin import (
+    TaxonResolveCOLXRRequest,
+    TaxonSyncVernacularRequest,
+)
 
 
 class _AsyncSessionContext:
@@ -333,3 +336,105 @@ async def test_load_bundled_vernacular_audit_failure_is_soft(
         request=_request(), current_user=_superuser(), db=db
     )
     assert out.task_id == "task-bundle-2"
+
+
+# ---------------------------------------------------------------------------
+# resolve-col-xr (WS-A v2 slice 3)
+# ---------------------------------------------------------------------------
+
+
+def _patch_col_xr_task(monkeypatch: pytest.MonkeyPatch, task_id: str) -> MagicMock:
+    fake_task = MagicMock()
+    fake_task.delay = MagicMock(return_value=SimpleNamespace(id=task_id))
+    monkeypatch.setattr(
+        "echoroo.workers.taxon_tasks.resolve_col_xr_batch",
+        fake_task,
+        raising=False,
+    )
+    return fake_task
+
+
+@pytest.mark.asyncio
+async def test_resolve_col_xr_superuser_dispatches_and_audits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    audit_service = _patch_audit(monkeypatch)
+    fake_task = _patch_col_xr_task(monkeypatch, "task-colxr-1")
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    payload = TaxonResolveCOLXRRequest(batch_size=250, force=True)
+    out = await mod.resolve_taxon_col_xr(
+        request=_request(), payload=payload, current_user=_superuser(), db=db
+    )
+
+    assert out.task_id == "task-colxr-1"
+    fake_task.delay.assert_called_once_with(batch_size=250, force=True)
+    audit_service.write_platform_event.assert_awaited_once()
+    audit_kwargs = audit_service.write_platform_event.await_args.kwargs
+    assert audit_kwargs["action"] == "platform.taxon.resolve_col_xr"
+    # The dispatch parameters must be reconstructible from the audit row.
+    assert audit_kwargs["detail"]["batch_size"] == 250
+    assert audit_kwargs["detail"]["force"] is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_col_xr_non_superuser_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=False)
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await mod.resolve_taxon_col_xr(
+            request=_request(),
+            payload=TaxonResolveCOLXRRequest(),
+            current_user=_superuser(),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_resolve_col_xr_audit_failure_is_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    _patch_audit(monkeypatch, fail=True)
+    _patch_col_xr_task(monkeypatch, "task-colxr-2")
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    # Must not raise even though the audit write blows up.
+    out = await mod.resolve_taxon_col_xr(
+        request=_request(),
+        payload=TaxonResolveCOLXRRequest(),
+        current_user=_superuser(),
+        db=db,
+    )
+    assert out.task_id == "task-colxr-2"
+
+
+def test_resolve_col_xr_defaults() -> None:
+    req = TaxonResolveCOLXRRequest()
+    assert req.batch_size == 500
+    assert req.force is False
+
+
+def test_resolve_col_xr_invalid_body_rejected() -> None:
+    with pytest.raises(ValidationError):
+        TaxonResolveCOLXRRequest(batch_size=0)
+    with pytest.raises(ValidationError):
+        TaxonResolveCOLXRRequest(unexpected="x")  # type: ignore[call-arg]
+
+
+def test_resolve_col_xr_batch_size_capped_at_the_task_time_limit() -> None:
+    """~0.35s/taxon against a 900s hard limit => 2000 rows is the ceiling."""
+    assert TaxonResolveCOLXRRequest(batch_size=2000).batch_size == 2000
+    with pytest.raises(ValidationError):
+        TaxonResolveCOLXRRequest(batch_size=2001)
