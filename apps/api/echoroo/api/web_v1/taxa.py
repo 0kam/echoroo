@@ -108,7 +108,7 @@ async def create_taxon_from_gbif(
     locale: str | None = None,
 ) -> TaxonSearchResult:
     """Materialise a GBIF search pick into a local taxon for the Web UI."""
-    _require_authenticated(current_user)
+    user = _require_authenticated(current_user)
     return await service.create_from_gbif(
         scientific_name=payload.scientific_name,
         gbif_taxon_key=payload.gbif_taxon_key,
@@ -119,6 +119,9 @@ async def create_taxon_from_gbif(
             if payload.vernacular_names
             else None
         ),
+        # WS-A v2 slice 5: attribute the resulting identity-history row (the
+        # GBIF key assignment) to the human who picked the species.
+        actor_user_id=user.id,
     )
 
 

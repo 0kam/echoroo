@@ -952,3 +952,94 @@ class TaxonResolveCOLXRRequest(BaseModel):
             "repeated calls advance through the catalogue."
         ),
     )
+
+
+class TaxonIdentityHistoryEntry(BaseModel):
+    """One journalled identity change (WS-A v2 slice 5).
+
+    Surfaced by ``GET /admin/taxon/{taxon_id}/identity-history``. Values are
+    rendered as text because the journal spans columns of different types
+    (a COL usage key, a GBIF integer key, an authorship string).
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="History row identifier")
+    taxon_id: UUID = Field(..., description="Taxon whose identity changed")
+    field: str = Field(..., description="Identity column that changed")
+    old_value: str | None = Field(
+        None, description="Previous value as text (null when it was unset)"
+    )
+    new_value: str | None = Field(
+        None, description="New value as text (null when the field was cleared)"
+    )
+    source: str = Field(..., description="col_xr / gbif / admin / migration")
+    resolver: str | None = Field(
+        None, description="Concrete producer, e.g. ``resolve_col_xr_batch``"
+    )
+    release: str | None = Field(
+        None, description="External release pinned at change time"
+    )
+    actor_kind: str = Field(..., description="user / task / system")
+    actor_user_id: UUID | None = Field(
+        None, description="Request user that caused the change, when any"
+    )
+    actor_task_id: str | None = Field(
+        None, description="Celery task id that caused the change, when any"
+    )
+    changed_at: datetime = Field(..., description="When the change was applied")
+    detail: dict[str, object] | None = Field(
+        None, description="Free-form context recorded with the change"
+    )
+
+
+class TaxonIdentityHistoryListResponse(BaseModel):
+    """Body for ``GET /admin/taxon/{taxon_id}/identity-history``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[TaxonIdentityHistoryEntry] = Field(
+        ..., description="Identity changes for the taxon, newest first"
+    )
+
+
+class TaxonConceptRelationEntry(BaseModel):
+    """One directed taxon-concept edge (WS-A v2 slice 5).
+
+    ``to_taxon_id`` is null whenever the target concept does not exist as a
+    local taxon — the normal case, because COL accepted usages are usually not
+    themselves BirdNET labels. ``to_col_xr_id`` is the durable key.
+    """
+
+    model_config = ConfigDict(from_attributes=True, frozen=True)
+
+    id: UUID = Field(..., description="Relation identifier")
+    from_taxon_id: UUID = Field(..., description="Local taxon the edge starts at")
+    to_taxon_id: UUID | None = Field(
+        None, description="Local target taxon, null when the target is not local"
+    )
+    to_col_xr_id: str | None = Field(
+        None, description="COL XR usage key of the target concept"
+    )
+    to_scientific_name: str | None = Field(
+        None, description="Accepted name of the target concept"
+    )
+    relation: str = Field(
+        ..., description="synonym_of / lumped_into / split_into / renamed_to"
+    )
+    release: str | None = Field(
+        None, description="COL release the edge was derived from"
+    )
+    authority: str | None = Field(None, description="Authority asserting the edge")
+    source: str = Field(..., description="col_xr_auto / operator / import")
+    created_at: datetime = Field(..., description="When the edge was recorded")
+
+
+class TaxonConceptRelationListResponse(BaseModel):
+    """Body for ``GET /admin/taxon/concept-relations``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[TaxonConceptRelationEntry] = Field(
+        ..., description="Concept relations, newest first"
+    )

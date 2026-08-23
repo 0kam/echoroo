@@ -340,6 +340,21 @@ _ACTION_ROWS: tuple[_Row, ...] = (
         True,
         True,
     ),
+    # WS-A v2 slice 5 — read-only inspection of the taxon identity journal
+    # (``taxon_identity_history``) and of the concept relations derived from
+    # it (``taxon_concept_relations``). Platform-scope superuser-only like the
+    # maintenance triggers above, but ``is_mutating=False``: both endpoints
+    # only SELECT and write no audit row. One Action is shared by both reads —
+    # they are two views of the same identity-provenance dataset, so splitting
+    # them would create a permission distinction nothing can act on.
+    _Row(
+        "PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION",
+        "platform.taxon.identity_history.read",
+        None,
+        False,
+        True,
+        True,
+    ),
     # Upload-session recovery is platform-scope (no project_id parameter): the
     # superuser inspects and force-fails stuck upload sessions across every
     # project so a wedged import can be unblocked (the user then re-uploads).
@@ -923,6 +938,9 @@ PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION: Action = _BUILT[
 ]
 PLATFORM_TAXON_RESOLVE_COL_XR_ACTION: Action = _BUILT[
     "PLATFORM_TAXON_RESOLVE_COL_XR_ACTION"
+]
+PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION: Action = _BUILT[
+    "PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION"
 ]
 PLATFORM_UPLOAD_RECOVER_ACTION: Action = _BUILT["PLATFORM_UPLOAD_RECOVER_ACTION"]
 

@@ -198,6 +198,53 @@ when every biological row reports the current alias, the re-resolution is
 complete. No credentials are needed — COL XR is served by the public GBIF v2
 matching API.
 
+#### Identity provenance: what changed, and where a concept went (WS-A v2 slice 5)
+
+A re-resolution **overwrites** the identity columns above, so slice 5 records
+what it replaced. Two read-only, superuser-only endpoints expose it:
+
+* **`GET /web-api/v1/admin/taxon/{taxon_id}/identity-history`** — the
+  append-only journal for one taxon, newest first. One row per changed
+  identity field: `col_xr_id`, `col_xr_accepted_id`, `col_xr_status`,
+  `accepted_scientific_name`, `authorship`, `accepted_authorship`,
+  `gbif_taxon_key` and the `col_xr_release` pin. Each row carries the old and
+  new value, the `source` (`col_xr` / `gbif` / `admin` / `migration`), the
+  `resolver` that wrote it, the release it was pinned to, and the actor — the
+  Celery task id for a batch dispatch, the user id when a human materialised a
+  GBIF pick. Filters: `field`, `source`, `since`, plus `limit` (1-500) /
+  `offset`.
+* **`GET /web-api/v1/admin/taxon/concept-relations`** — the directed "where did
+  this concept go" edges. A `synonym_of` edge is seeded automatically whenever
+  a taxon resolves with `col_xr_status='SYNONYM'`. Its target is keyed by the
+  **COL usage key** (`to_col_xr_id`), not by a local id, because the accepted
+  usage is usually not itself a local taxon — today every one of the ~302
+  synonym targets is external, so `to_taxon_id` is null (`Accipiter badius` →
+  `CVWCS Tachyspiza badia`). Filters: `relation`, `from_taxon_id`, `release`,
+  `unresolved_target`, plus the same pagination.
+
+Two things are deliberately true of this journal:
+
+* **An identical re-resolution records nothing.** Re-running the endpoint with
+  `{"force": true}` against an unchanged COL release rewrites the same values,
+  and a database CHECK (`old_value IS DISTINCT FROM new_value`) plus the writer
+  drop no-op rewrites, so the journal does not grow. A growing journal means
+  the catalogue really moved.
+* **Vernacular (display-name) changes are NOT identity changes** and never
+  appear here. 和名 / English names come from the bundled IOC file, the loaded
+  national checklist and the GBIF/iNaturalist sync — all re-derivable by
+  re-running their loaders, so they need no journal.
+
+Neither endpoint writes a `platform_audit_log` entry (both are read-only). Spot
+check the journal and the edges with:
+
+```bash
+docker exec echoroo-db psql -U postgres -d echoroo \
+  -c "SELECT field, count(*) FROM taxon_identity_history GROUP BY 1 ORDER BY 2 DESC"
+docker exec echoroo-db psql -U postgres -d echoroo \
+  -c "SELECT relation, (to_taxon_id IS NULL) AS target_external, count(*) \
+      FROM taxon_concept_relations GROUP BY 1,2"
+```
+
 #### National checklist as the top-ranked authority (日本鳥類目録改訂第8版)
 
 The Ornithological Society of Japan's checklist is the authority for
