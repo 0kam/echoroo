@@ -103,6 +103,34 @@ The bundled names are ranked below an operator-loaded national checklist
 and above the GBIF / iNaturalist names fetched by
 `POST /web-api/v1/admin/taxon/sync-vernacular`.
 
+#### National checklist as the top-ranked authority (日本鳥類目録改訂第8版)
+
+The Ornithological Society of Japan's checklist is the authority for
+Japanese names but is **not bundled** (its terms allow derived use without
+stating a redistribution license). An operator loads it themselves:
+
+1. Download the official species list XLSX from
+   <https://ornithology.jp/checklist.html> (`jpbirdlist8ed_ver1.xlsx`).
+2. Convert it on the host (species rows only, Part A + B):
+   ```bash
+   cd apps/api && uv run --with openpyxl python scripts/convert_osj_checklist.py \
+     jpbirdlist8ed_ver1.xlsx --out osj8_ja.csv
+   ```
+3. Load it inside the container under `source="authority"` (idempotent,
+   same race-safe loader as the bundle, crosswalk applied):
+   ```bash
+   docker cp osj8_ja.csv echoroo-backend:/tmp/osj8_ja.csv
+   docker exec echoroo-backend uv run python -m echoroo.scripts.load_authority_checklist \
+     /tmp/osj8_ja.csv --confirm
+   ```
+
+Expect roughly 600 of the ~680 checklist species to match the BirdNET taxa;
+the remainder are Japanese endemics and rarities BirdNET does not model
+(メグロ, ノグチゲラ, ヤンバルクイナ, …) and will be named automatically once
+those taxa exist. Where the checklist and the IOC bundle disagree (a handful
+of species, e.g. *Anthus rubescens* タヒバリ vs アメリカタヒバリ) the
+checklist wins.
+
 Role-based test users plus a sample project and dataset come from the seeded-permission E2E fixture. Run `./echoroo.sh seed e2e` to bootstrap the same Viewer / Annotator / Manager users the trial scenarios reference. Its stdout JSON includes credentials and tokens; handle it as sensitive.
 
 ## 6. Invite Trial Users
