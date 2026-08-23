@@ -126,6 +126,78 @@ The bundled names are ranked below an operator-loaded national checklist
 and above the GBIF / iNaturalist names fetched by
 `POST /web-api/v1/admin/taxon/sync-vernacular`.
 
+#### Catalogue of Life XR identity (WS-A v2 slice 3)
+
+GBIF's legacy backbone taxonomy is frozen, so a taxon's *re-matchable external
+identity* is resolved against the **Catalogue of Life XR** checklist instead.
+This is identity only — for birds the bundled AviList/IOC crosswalk above
+remains the authority for names, and nothing here rewrites a display name or
+the local `taxa.id` UUID (which stays immutable).
+
+**Admin → the superuser-only endpoint
+`POST /web-api/v1/admin/taxon/resolve-col-xr`** (body
+`{"batch_size": 500, "force": false}`, returns 202 + a Celery task id) queues
+`resolve_col_xr_batch`. For each biological taxon it stores, on the `taxa`
+row: the COL usage key (`col_xr_id`), the accepted usage key / rank
+(`col_xr_accepted_id`, `col_xr_accepted_rank`) and accepted name
+(`accepted_scientific_name`, always authorship-free — the authorship lives in
+`accepted_authorship`), the usage status (`col_xr_status`, e.g. `SYNONYM` for
+*Accipiter gularis* → *Tachyspiza gularis*), both authorships, the
+classification filtered to the seven principal ranks
+(`col_xr_classification`), the match type and confidence, and the COL release
+the match was pinned to (`col_xr_release` / `col_xr_clb_dataset_key`, read once
+per run, e.g. `COL26.6 XR`). The release read is mandatory: if the matching
+index does not report both an alias and a dataset key the run aborts before
+writing anything.
+
+**Sizing.** `batch_size` is capped at **2000**. The upstream costs ~0.35 s per
+taxon and the task has a 900 s hard / 840 s soft Celery limit, so ~2000 rows
+(~12 min) is the largest dispatch that reliably completes; a full ~6,500-taxon
+catalogue is four dispatches. Progress is committed every 100 taxa, so a
+dispatch that is killed (time limit, OOM, redeploy) still banks its work and
+the next one resumes where it stopped.
+
+Acceptance is decided by the match type, never by the usage status (a
+`HIGHERRANK` hit returns an *accepted* genus or kingdom and must not become an
+identity):
+
+| match type | confidence | outcome |
+| --- | --- | --- |
+| `EXACT` | any | stored |
+| `VARIANT` / `FUZZY` | ≥ 90 | stored, flagged for review via `col_xr_match_type` |
+| `VARIANT` / `FUZZY` | < 90 | rejected |
+| `HIGHERRANK` / `NONE` | — | rejected |
+
+Rejected rows keep `col_xr_id` NULL but are still stamped with
+`col_xr_match_type`, `col_xr_resolved_at` **and the release pin**: a rejection
+is a *resolved* "no identity at this release", not a pending row. That stamp is
+what makes the endpoint resumable — repeated calls walk the remaining taxa
+rather than redoing the first `batch_size` rows.
+
+Review the outcome with:
+
+```bash
+docker exec echoroo-db psql -U postgres -d echoroo \
+  -c "SELECT col_xr_match_type, col_xr_status, count(*) FROM taxa GROUP BY 1,2 ORDER BY 3 DESC"
+```
+
+**After a COL release bump** (the alias in `col_xr_release` no longer matches
+what `GET https://api.gbif.org/v2/species/match/metadata?checklistKey=xcol`
+reports), re-run the endpoint with `{"force": true}`. A forced pass selects the
+taxa whose stored release pin differs from the release the run is on, so —
+exactly like the normal pass — **repeated dispatches advance through the
+catalogue** instead of re-resolving the same first rows, and any identity that
+no longer matches is cleared. Check what is left with:
+
+```bash
+docker exec echoroo-db psql -U postgres -d echoroo \
+  -c "SELECT col_xr_release, count(*) FROM taxa WHERE NOT is_non_biological GROUP BY 1"
+```
+
+when every biological row reports the current alias, the re-resolution is
+complete. No credentials are needed — COL XR is served by the public GBIF v2
+matching API.
+
 #### National checklist as the top-ranked authority (日本鳥類目録改訂第8版)
 
 The Ornithological Society of Japan's checklist is the authority for

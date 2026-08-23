@@ -783,6 +783,21 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             taxa_reconciliation_col_exists_result.scalar()
         )
 
+        # WS-A v2 slice 3 (Alembic 0035): probe the Catalogue of Life XR
+        # identity columns added to ``taxa``. Same rationale as the 0027 probe
+        # above — ``Base.metadata.create_all`` never alters an existing table,
+        # so a reused test DB predating this migration would keep the old
+        # shape. Probing one representative column is sufficient: the migration
+        # adds all twelve in a single transaction.
+        taxa_col_xr_col_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'taxa'"
+                " AND column_name = 'col_xr_id')"
+            )
+        )
+        taxa_col_xr_col_exists = bool(taxa_col_xr_col_exists_result.scalar())
+
         # W1-4 (Alembic 0032): probe the new ``detection_runs.run_type`` column.
         # ``Base.metadata.create_all`` never alters an existing table, so a
         # long-lived reused test DB predating this column would otherwise be
@@ -1129,6 +1144,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and audit_v2_col_exists
         and token_families_exists
         and taxa_reconciliation_col_exists
+        and taxa_col_xr_col_exists
         and detection_run_type_col_exists
     )
     if non_license_schema_current and not license_schema_current:
@@ -1256,6 +1272,42 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     "ADD COLUMN IF NOT EXISTS gbif_backbone_version VARCHAR(20) NULL, "
                     "ADD COLUMN IF NOT EXISTS verbatim_scientific_name VARCHAR(300) NULL, "
                     "ADD COLUMN IF NOT EXISTS accepted_scientific_name VARCHAR(300) NULL"
+                )
+            )
+
+    # WS-A v2 slice 3 (Alembic 0035): idempotent column add for legacy test DBs
+    # that pre-date the Catalogue of Life XR identity migration. All twelve
+    # columns are nullable so the add is safe on existing rows. Guarded on
+    # ``taxa`` existing for the same xdist reason as the 0027 heal above.
+    if _taxa_table_exists and not taxa_col_xr_col_exists:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text(
+                    "ALTER TABLE taxa "
+                    "ADD COLUMN IF NOT EXISTS col_xr_id VARCHAR(16) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_accepted_id VARCHAR(16) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_accepted_rank VARCHAR(20) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_status VARCHAR(32) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_match_type VARCHAR(20) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_match_confidence SMALLINT NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_release VARCHAR(32) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_clb_dataset_key INTEGER NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_resolved_at TIMESTAMP WITH TIME ZONE NULL, "
+                    "ADD COLUMN IF NOT EXISTS authorship VARCHAR(200) NULL, "
+                    "ADD COLUMN IF NOT EXISTS accepted_authorship VARCHAR(200) NULL, "
+                    "ADD COLUMN IF NOT EXISTS col_xr_classification JSONB NULL"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "CREATE INDEX IF NOT EXISTS ix_taxa_col_xr_id "
+                    "ON taxa (col_xr_id)"
+                )
+            )
+            await conn.execute(
+                sa.text(
+                    "CREATE INDEX IF NOT EXISTS ix_taxa_col_xr_accepted_id "
+                    "ON taxa (col_xr_accepted_id)"
                 )
             )
 

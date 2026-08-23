@@ -915,3 +915,40 @@ class TaxonSyncVernacularRequest(BaseModel):
             "requested locales."
         ),
     )
+
+
+class TaxonResolveCOLXRRequest(BaseModel):
+    """Body for ``POST /admin/taxon/resolve-col-xr``.
+
+    Drives ``resolve_col_xr_batch``, which resolves taxa against the Catalogue
+    of Life XR checklist (GBIF's legacy backbone is frozen) and stores the COL
+    usage/accepted keys, status, authorships, classification and the pinned COL
+    release.
+
+    ``batch_size`` is capped at 2000 because the task carries a 900s hard /
+    840s soft Celery time limit and the upstream costs ~0.35s per taxon: 2000
+    rows is ~12 min, which fits with margin, while a larger dispatch would be
+    killed mid-run. Both the resolver and the endpoint are resumable, so a
+    catalogue larger than one dispatch is simply several dispatches.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_size: int = Field(
+        default=500,
+        ge=1,
+        le=2000,
+        description=(
+            "Maximum number of taxa to resolve in this invocation (1-2000). "
+            "At ~0.35s/taxon, 2000 rows is ~12 min and fits the 900s task "
+            "limit."
+        ),
+    )
+    force: bool = Field(
+        default=False,
+        description=(
+            "When True, re-resolve taxa that are not yet stamped with the "
+            "COL release this run is pinned to. Use after a COL release bump; "
+            "repeated calls advance through the catalogue."
+        ),
+    )

@@ -22,7 +22,14 @@ class VernacularNameResponse(BaseModel):
 
 
 class TaxonResponse(BaseModel):
-    """Taxon response schema (compact)."""
+    """Taxon response schema (compact).
+
+    The ``col_xr_*`` / ``authorship`` fields are the read-only Catalogue of Life
+    XR identity resolved by ``resolve_col_xr_batch`` (WS-A v2 slice 3). They are
+    additive and default to ``None``, so every pre-existing response contract
+    stays valid: a taxon that has not been resolved yet simply reports nulls.
+    Clients must not write them — the resolver is the only writer.
+    """
 
     id: UUID
     scientific_name: str
@@ -30,6 +37,22 @@ class TaxonResponse(BaseModel):
     rank: str | None
     is_non_biological: bool
     created_at: datetime
+
+    col_xr_id: str | None = Field(
+        None, description="Catalogue of Life XR usage key of the matched name"
+    )
+    col_xr_accepted_id: str | None = Field(
+        None, description="COL XR usage key of the currently accepted name"
+    )
+    col_xr_status: str | None = Field(
+        None, description="COL XR usage status (ACCEPTED / SYNONYM / ...)"
+    )
+    col_xr_release: str | None = Field(
+        None, description="COL release the identity was pinned to (e.g. COL26.6 XR)"
+    )
+    authorship: str | None = Field(
+        None, description="Authorship of the matched scientific name"
+    )
 
     model_config = {"from_attributes": True}
 

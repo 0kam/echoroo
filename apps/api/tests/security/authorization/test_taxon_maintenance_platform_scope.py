@@ -1,8 +1,8 @@
 """Platform-scope gate coverage for the taxon-catalog maintenance actions.
 
-The three admin maintenance triggers (``platform.taxon.seed_birdnet``,
-``platform.taxon.sync_vernacular`` and
-``platform.taxon.load_bundled_vernacular``) are platform-scope superuser-only
+The four admin maintenance triggers (``platform.taxon.seed_birdnet``,
+``platform.taxon.sync_vernacular``, ``platform.taxon.load_bundled_vernacular``
+and ``platform.taxon.resolve_col_xr``) are platform-scope superuser-only
 actions. They mirror ``platform.iucn.force_resync`` and must therefore route
 through the Step-0a branch of :func:`echoroo.core.permissions.is_allowed`:
 
@@ -21,6 +21,7 @@ import pytest
 
 from echoroo.core.actions import (
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
+    PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
 )
@@ -30,6 +31,7 @@ _TAXON_MAINTENANCE_ACTIONS = (
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
+    PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
 )
 
 

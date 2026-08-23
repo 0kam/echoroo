@@ -55,6 +55,7 @@ from echoroo.core.actions import (
     ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
+    PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
     PLATFORM_UPLOAD_RECOVER_ACTION,
@@ -108,6 +109,7 @@ from echoroo.schemas.admin import (
     TaskDispatchResponse,
     TaxonOverrideRejectRequest,
     TaxonOverrideResponse,
+    TaxonResolveCOLXRRequest,
     TaxonSyncVernacularRequest,
 )
 from echoroo.services import admin_password_reset, superuser_service
@@ -1129,6 +1131,115 @@ async def sync_taxon_vernacular(
     except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
         logger.warning(
             "platform.taxon.sync_vernacular audit write failed (FR-089 soft "
+            "alert): actor=%s task_id=%s error=%r",
+            current_user.id,
+            async_result.id,
+            exc,
+        )
+
+    return TaskDispatchResponse(
+        task_id=async_result.id,
+        enqueued_at=enqueued_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/taxon/resolve-col-xr (WS-A v2 slice 3)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/taxon/resolve-col-xr",
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Resolve taxa against Catalogue of Life XR (Superuser)",
+    description=(
+        "Fire-and-forget Celery dispatch of ``resolve_col_xr_batch``. GBIF's "
+        "legacy backbone is frozen, so the re-matchable external identity of a "
+        "taxon is resolved against the Catalogue of Life XR checklist: the "
+        "task stores the COL usage key, the accepted usage key/name/rank, the "
+        "usage status, authorships, the filtered classification and the COL "
+        "release the match was pinned to (that release pin is written for "
+        "every processed row, rejected matches included).\n\n"
+        "Without ``force`` only biological taxa that were never resolved are "
+        "picked up. With ``force`` the pass selects taxa whose release pin "
+        "differs from the release it is currently on, so repeated dispatches "
+        "ADVANCE through the catalogue instead of redoing the same rows; use "
+        "it after a COL release bump.\n\n"
+        "``batch_size`` is capped at 2000: the upstream costs ~0.35s per taxon "
+        "and the task carries a 900s hard / 840s soft limit, so ~2000 rows "
+        "(~12 min) is the largest dispatch that reliably completes. Progress "
+        "is committed every 100 taxa, so a dispatch that is killed still banks "
+        "its work and the next one resumes. A full ~6,500-taxon catalogue is "
+        "therefore four dispatches.\n\n"
+        "The endpoint only surfaces the queued task id. The action is "
+        "platform-scope (no project_id) and writes a ``platform_audit_log`` "
+        "entry."
+    ),
+)
+async def resolve_taxon_col_xr(
+    request: Request,
+    payload: TaxonResolveCOLXRRequest,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> TaskDispatchResponse:
+    """Enqueue the COL XR identity resolution and return the Celery task id."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row.
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="COL XR resolution is restricted to superusers",
+        )
+
+    # Lazy import: see the rationale in :func:`force_iucn_resync` — pulling in
+    # the worker module at import time would force the slim API image to load
+    # the audio + ML worker dependency tree.
+    from echoroo.workers.taxon_tasks import resolve_col_xr_batch as resolve_task
+
+    async_result = resolve_task.delay(
+        batch_size=payload.batch_size, force=payload.force
+    )
+    enqueued_at = datetime.now(UTC)
+
+    # The request-scoped ``db`` session already issued the superuser probe, so
+    # reuse the IUCN endpoint's fresh-session audit pattern (see its note).
+    await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.taxon.resolve_col_xr",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "task_id": async_result.id,
+                        "enqueued_at": enqueued_at.isoformat(),
+                        "batch_size": payload.batch_size,
+                        "force": payload.force,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
+        logger.warning(
+            "platform.taxon.resolve_col_xr audit write failed (FR-089 soft "
             "alert): actor=%s task_id=%s error=%r",
             current_user.id,
             async_result.id,

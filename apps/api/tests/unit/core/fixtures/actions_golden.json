@@ -479,6 +479,12 @@
     "is_superuser_only": true,
     "required_permission": null
   },
+  "platform.taxon.resolve_col_xr": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
   "platform.taxon.seed_birdnet": {
     "is_mutating": true,
     "is_platform_scope": true,
