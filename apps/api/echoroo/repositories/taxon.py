@@ -26,8 +26,11 @@ _LOCALE_NORMALIZE: dict[str, str] = {
 # Allowed provenance values for a persisted vernacular name. Any unknown/empty
 # value from a (client-supplied) payload is coerced to a safe default so an
 # arbitrary string can never reach the ``source`` column.
+# "ioc" is the bundled IOC World Bird List (see services/vernacular_bundle.py)
+# and "authority" an operator-loaded national checklist; both must be listed
+# here or their rows would be silently rewritten as "gbif".
 _VERNACULAR_SOURCE_ALLOWED: frozenset[str] = frozenset(
-    {"gbif", "inaturalist", "birdnet", "user"}
+    {"authority", "ioc", "gbif", "inaturalist", "birdnet", "user"}
 )
 _VERNACULAR_SOURCE_DEFAULT = "gbif"
 

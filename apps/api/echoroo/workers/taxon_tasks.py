@@ -44,6 +44,27 @@ async def _run_seed_birdnet_taxa() -> dict[str, object]:
         await engine.dispose()
 
 
+async def _run_load_bundled_vernacular_names() -> dict[str, object]:
+    """Async implementation of the bundled vernacular-name load."""
+    from echoroo.services.vernacular_bundle import load_bundled_ja_names
+
+    engine, session_factory = get_worker_engine_and_session_factory()
+    try:
+        async with session_factory() as db:
+            result = await load_bundled_ja_names(db)
+            await db.commit()
+        return {
+            "status": "completed",
+            "matched_taxa": result.matched_taxa,
+            "inserted": result.inserted,
+            "updated": result.updated,
+            "unchanged": result.unchanged,
+            "unmatched_names": result.unmatched_names,
+        }
+    finally:
+        await engine.dispose()
+
+
 async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
     """Async implementation of GBIF batch resolution."""
     from echoroo.repositories.taxon import TaxonRepository
@@ -411,6 +432,39 @@ def seed_birdnet_taxa() -> dict[str, object]:
         return result
     except Exception as exc:  # noqa: BLE001
         logger.exception("BirdNET taxa seeding failed: %s", exc)
+        raise
+
+
+@app.task(  # type: ignore[untyped-decorator]
+    name="echoroo.workers.taxon_tasks.load_bundled_vernacular_names",
+    time_limit=300,      # 5 min hard limit
+    soft_time_limit=270,  # 4.5 min soft limit
+)
+def load_bundled_vernacular_names() -> dict[str, object]:
+    """Load the bundled Japanese vernacular names onto the local taxa.
+
+    Reads the versioned IOC World Bird List bundle shipped inside the package
+    (``echoroo.data.vernacular``) and upserts a ``ja`` / ``ioc`` row for every
+    matching taxon, translating BirdNET's eBird/Clements scientific names via
+    the packaged AviList crosswalk.  No network access is involved and the
+    operation is idempotent — only names that actually changed are rewritten.
+
+    ``seed_birdnet_taxa`` already performs this load, so this task exists for
+    re-running after the bundle is regenerated from a newer upstream release.
+
+    Returns:
+        Dict with ``status`` plus the ``matched_taxa`` / ``inserted`` /
+        ``updated`` / ``unchanged`` / ``unmatched_names`` counters.
+    """
+    logger.info("Starting bundled vernacular name load task")
+    try:
+        result: dict[str, object] = asyncio.run(
+            _run_load_bundled_vernacular_names()
+        )
+        logger.info("Bundled vernacular name load complete: %s", result)
+        return result
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Bundled vernacular name load failed: %s", exc)
         raise
 
 

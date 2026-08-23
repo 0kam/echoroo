@@ -1,0 +1,19 @@
+{
+  "birdnet_label_set_version": "2.4",
+  "birdnet_labels": 6522,
+  "citation": "AviList Core Team. 2026. AviList: The Global Avian Checklist, v2025b. https://doi.org/10.2173/avilist.v2025b",
+  "dataset": "AviList: The Global Avian Checklist, v2025b (extended)",
+  "doi": "10.2173/avilist.v2025b",
+  "license": "CC BY 4.0",
+  "match_methods": {
+    "clements_english": 229,
+    "exact": 6151,
+    "override": 4
+  },
+  "resolved": 6384,
+  "retrieved": "2026-08-21",
+  "source": "avilist",
+  "unresolved": 138,
+  "url": "https://www.avilist.org/wp-content/uploads/2026/06/AviList-v2025b-10Jun2026-extended.xlsx",
+  "version": "v2025b"
+}

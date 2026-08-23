@@ -22,16 +22,21 @@ logger = logging.getLogger(__name__)
 
 # Rank of vernacular-name sources within a locale tier (lower = preferred).
 # "authority" is reserved for curated national checklists (e.g. the Check-List
-# of Japanese Birds, 8th ed.); "user" is a manual override entered in-app.
-# iNaturalist ja names skew katakana while GBIF ja names skew kanji, so
-# preferring iNaturalist keeps Japanese lists script-consistent until an
-# authority source is loaded.
+# of Japanese Birds, 8th ed.) loaded by an operator; "user" is a manual
+# override entered in-app; "ioc" is the versioned IOC World Bird List bundle
+# shipped inside the package (see services/vernacular_bundle.py).
+#
+# The bundled IOC names outrank the API-scraped ones because they are
+# versioned, reproducible and taxonomically self-consistent, whereas
+# iNaturalist ja names skew katakana and GBIF ja names skew kanji — mixing
+# them makes a single species list flap between scripts.
 _SOURCE_RANK: dict[str, int] = {
     "authority": 0,
     "user": 1,
-    "inaturalist": 2,
-    "gbif": 3,
-    "birdnet": 4,
+    "ioc": 2,
+    "inaturalist": 3,
+    "gbif": 4,
+    "birdnet": 5,
 }
 _SOURCE_RANK_UNKNOWN = len(_SOURCE_RANK)
 
@@ -57,9 +62,9 @@ async def resolve_vernacular_names(
     4. English (``en``) row (any)
 
     Within each tier, ties between rows from different sources are broken by
-    source rank: ``authority`` > ``user`` > ``inaturalist`` > ``gbif`` >
-    ``birdnet`` > anything else. Without this tiebreak a taxon holding e.g.
-    both a ``ja/gbif`` and a ``ja/inaturalist`` row would resolve to an
+    source rank: ``authority`` > ``user`` > ``ioc`` > ``inaturalist`` >
+    ``gbif`` > ``birdnet`` > anything else. Without this tiebreak a taxon
+    holding e.g. both a ``ja/gbif`` and a ``ja/ioc`` row would resolve to an
     arbitrary one of the two (kanji vs katakana flapping across a list).
 
     When ``locale == "en"`` the chain collapses to the English candidates only.
@@ -108,7 +113,7 @@ async def resolve_vernacular_names(
     #   1: requested-locale any
     #   2: english primary
     #   3: english any
-    # Ties within a tier are broken by source rank (authority > user >
+    # Ties within a tier are broken by source rank (authority > user > ioc >
     # inaturalist > gbif > birdnet > unknown). The trailing (source, name)
     # components only matter between two unknown sources, where they keep the
     # winner deterministic instead of DB-return-order dependent.

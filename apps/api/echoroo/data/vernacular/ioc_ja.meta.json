@@ -1,0 +1,12 @@
+{
+  "citation": "Gill F, D Donsker & P Rasmussen (Eds). 2026. IOC World Bird List (v15.2). doi:10.14344/IOC.ML.15.2",
+  "dataset": "IOC World Bird List v15.2 — Multilingual Version",
+  "doi": "10.14344/IOC.ML.15.2",
+  "license": "CC BY 3.0 Unported",
+  "locale": "ja",
+  "retrieved": "2026-08-21",
+  "rows": 10722,
+  "source": "ioc",
+  "url": "https://worldbirdnames.org/Multiling%20IOC%2015.2.xlsx",
+  "version": "15.2"
+}

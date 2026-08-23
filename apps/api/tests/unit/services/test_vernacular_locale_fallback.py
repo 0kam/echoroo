@@ -226,6 +226,95 @@ async def test_user_beats_inaturalist_and_authority_beats_user(
 
 
 @pytest.mark.asyncio
+async def test_ioc_beats_inaturalist_and_gbif_within_ja_tier(
+    db_session: AsyncSession,
+) -> None:
+    """WS-A v2 slice 2a: the bundled IOC name outranks both scraped sources.
+
+    The bundled list is versioned and taxonomically self-consistent, so it
+    must win over the API-sourced names it is meant to replace.
+    """
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source ioc-vs-scraped {suffix}",
+        [
+            ("ja", "ジービーアイエフメイ", False, "gbif"),
+            ("ja", "イナットメイ", False, "inaturalist"),
+            ("ja", "アイオーシーメイ", False, "ioc"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "アイオーシーメイ"
+
+
+@pytest.mark.asyncio
+async def test_ioc_beats_gbif_when_it_is_the_only_alternative(
+    db_session: AsyncSession,
+) -> None:
+    """Minimal ioc > gbif pair (the common shape on a real install)."""
+    suffix = uuid4().hex[:12]
+    taxon = await _seed_taxon(
+        db_session,
+        f"Source ioc-vs-gbif {suffix}",
+        [
+            ("ja", "ジービーアイエフメイ", False, "gbif"),
+            ("ja", "アイオーシーメイ", False, "ioc"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(db_session, [taxon.id], "ja")
+    assert mapping[taxon.id] == "アイオーシーメイ"
+
+
+@pytest.mark.asyncio
+async def test_authority_and_user_still_outrank_ioc(
+    db_session: AsyncSession,
+) -> None:
+    """Full chain: authority > user > ioc > inaturalist.
+
+    An operator-loaded national checklist and an in-app manual override both
+    stay above the bundle, so slice 2a does not demote curated names.
+    """
+    suffix = uuid4().hex[:12]
+    inat_and_ioc = await _seed_taxon(
+        db_session,
+        f"Source ioc-over-inat {suffix}",
+        [
+            ("ja", "イナットメイ", False, "inaturalist"),
+            ("ja", "アイオーシーメイ", False, "ioc"),
+        ],
+    )
+    user_over_ioc = await _seed_taxon(
+        db_session,
+        f"Source user-over-ioc {suffix}",
+        [
+            ("ja", "アイオーシーメイ", False, "ioc"),
+            ("ja", "ユーザーメイ", False, "user"),
+        ],
+    )
+    authority_over_user = await _seed_taxon(
+        db_session,
+        f"Source authority-over-user {suffix}",
+        [
+            ("ja", "アイオーシーメイ", False, "ioc"),
+            ("ja", "ユーザーメイ", False, "user"),
+            ("ja", "モクロクメイ", False, "authority"),
+        ],
+    )
+
+    mapping = await resolve_vernacular_names(
+        db_session,
+        [inat_and_ioc.id, user_over_ioc.id, authority_over_user.id],
+        "ja",
+    )
+    assert mapping[inat_and_ioc.id] == "アイオーシーメイ"
+    assert mapping[user_over_ioc.id] == "ユーザーメイ"
+    assert mapping[authority_over_user.id] == "モクロクメイ"
+
+
+@pytest.mark.asyncio
 async def test_primary_flag_outranks_source(db_session: AsyncSession) -> None:
     """A primary row wins even against a higher-ranked non-primary source.
 

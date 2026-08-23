@@ -1,0 +1,5 @@
+birdnet_scientific_name,avilist_scientific_name,note
+Parus minor,Parus cinereus,"Japanese Tit is a subspecies group of Cinereous Tit in AviList/IOC; Japanese name シジュウカラ"
+Accipiter gentilis,Astur gentilis,"BirdNET keeps the pre-split Northern Goshawk concept; map to the Palearctic daughter (Eurasian Goshawk, オオタカ)"
+Charadrius mongolus,Anarhynchus mongolus,"BirdNET keeps the broad Lesser Sand-Plover concept; map to the nominate group (Siberian Sand Plover, メダイチドリ) which is the one occurring in Japan"
+Bubulcus ibis,Ardea coromanda,"BirdNET keeps the broad Cattle Egret concept; map to Eastern Cattle Egret (アマサギ), the East Asian daughter. Western birds (Ardea ibis, ニシアマサギ) need a user/authority override"

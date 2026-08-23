@@ -7,6 +7,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.repositories.taxon import TaxonRepository
+from echoroo.services.vernacular_bundle import load_bundled_ja_names
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,11 @@ async def seed_birdnet_taxa(db: AsyncSession) -> int:
     The operation is idempotent — re-running on a populated database safely
     skips existing taxa.
 
+    After the taxa are in place the bundled Japanese vernacular names are
+    loaded in the same transaction (see
+    :func:`echoroo.services.vernacular_bundle.load_bundled_ja_names`) so a
+    fresh install ships with 和名 without a second operator step.
+
     Args:
         db: Async SQLAlchemy session.  The caller is responsible for
             committing the transaction after this function returns.
@@ -161,6 +167,32 @@ async def seed_birdnet_taxa(db: AsyncSession) -> int:
 
     repo = TaxonRepository(db)
     created = await repo.bulk_create(taxa_data)
+
+    # Attach the bundled Japanese names in the same transaction so a fresh
+    # install has 和名 without a second operator step. The load is idempotent
+    # and cheap (two queries), so running it on every seed is fine.
+    #
+    # Only *bundle-read* failures are swallowed (missing / corrupt packaged
+    # CSV): those leave the transaction intact, so the taxa seed is still
+    # worth committing. A database error is deliberately allowed to propagate
+    # — the session would be poisoned and the caller's commit would fail
+    # anyway, so surfacing the real cause is strictly better.
+    try:
+        vernacular_result = await load_bundled_ja_names(db)
+    except (OSError, ModuleNotFoundError, KeyError, ValueError):
+        logger.exception(
+            "Bundled Japanese vernacular load failed after seeding taxa; "
+            "run the load-bundled-vernacular admin action to retry"
+        )
+    else:
+        logger.info(
+            "Bundled Japanese vernacular load: %d taxa matched "
+            "(%d inserted, %d updated, %d unchanged)",
+            vernacular_result.matched_taxa,
+            vernacular_result.inserted,
+            vernacular_result.updated,
+            vernacular_result.unchanged,
+        )
 
     logger.info(
         "BirdNET taxa seeding complete: %d new taxa created out of %d labels",

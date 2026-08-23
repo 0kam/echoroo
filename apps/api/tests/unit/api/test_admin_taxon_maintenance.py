@@ -1,7 +1,9 @@
 """Unit tests for the taxon-catalog maintenance admin endpoints.
 
-Covers ``POST /web-api/v1/admin/taxon/seed-birdnet`` and
-``POST /web-api/v1/admin/taxon/sync-vernacular`` (admin maintenance surface).
+Covers ``POST /web-api/v1/admin/taxon/seed-birdnet``,
+``POST /web-api/v1/admin/taxon/sync-vernacular`` and
+``POST /web-api/v1/admin/taxon/load-bundled-vernacular`` (admin maintenance
+surface).
 
 These mirror the IUCN force-resync endpoint's testing strategy: the handlers
 are invoked directly with mocked dependencies so neither the database, the
@@ -255,3 +257,79 @@ def test_sync_vernacular_defaults() -> None:
     assert req.batch_size == 100
     assert req.locales is None
     assert req.skip_existing is True
+
+
+# ---------------------------------------------------------------------------
+# load-bundled-vernacular (WS-A v2 slice 2a)
+# ---------------------------------------------------------------------------
+
+
+def _patch_bundled_load_task(
+    monkeypatch: pytest.MonkeyPatch, task_id: str
+) -> MagicMock:
+    fake_task = MagicMock()
+    fake_task.delay = MagicMock(return_value=SimpleNamespace(id=task_id))
+    monkeypatch.setattr(
+        "echoroo.workers.taxon_tasks.load_bundled_vernacular_names",
+        fake_task,
+        raising=False,
+    )
+    return fake_task
+
+
+@pytest.mark.asyncio
+async def test_load_bundled_vernacular_superuser_dispatches_and_audits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    audit_service = _patch_audit(monkeypatch)
+    fake_task = _patch_bundled_load_task(monkeypatch, "task-bundle-1")
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    out = await mod.load_bundled_vernacular_names(
+        request=_request(), current_user=_superuser(), db=db
+    )
+
+    assert out.task_id == "task-bundle-1"
+    fake_task.delay.assert_called_once_with()
+    audit_service.write_platform_event.assert_awaited_once()
+    assert (
+        audit_service.write_platform_event.await_args.kwargs["action"]
+        == "platform.taxon.load_bundled_vernacular"
+    )
+
+
+@pytest.mark.asyncio
+async def test_load_bundled_vernacular_non_superuser_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=False)
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await mod.load_bundled_vernacular_names(
+            request=_request(), current_user=_superuser(), db=db
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_load_bundled_vernacular_audit_failure_is_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    _patch_audit(monkeypatch, fail=True)
+    _patch_bundled_load_task(monkeypatch, "task-bundle-2")
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    # Must not raise even though the audit write blows up.
+    out = await mod.load_bundled_vernacular_names(
+        request=_request(), current_user=_superuser(), db=db
+    )
+    assert out.task_id == "task-bundle-2"

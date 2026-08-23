@@ -54,6 +54,7 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.actions import (
     ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+    PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
     PLATFORM_UPLOAD_RECOVER_ACTION,
@@ -925,6 +926,102 @@ async def seed_birdnet_taxa(
         logger.warning(
             "platform.taxon.seed_birdnet audit write failed (FR-089 soft alert): "
             "actor=%s task_id=%s error=%r",
+            current_user.id,
+            async_result.id,
+            exc,
+        )
+
+    return TaskDispatchResponse(
+        task_id=async_result.id,
+        enqueued_at=enqueued_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/taxon/load-bundled-vernacular
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/taxon/load-bundled-vernacular",
+    response_model=TaskDispatchResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Load bundled Japanese vernacular names (Superuser)",
+    description=(
+        "Fire-and-forget Celery dispatch of the idempotent "
+        "``load_bundled_vernacular_names`` task. The task upserts the "
+        "versioned IOC World Bird List Japanese names shipped inside the "
+        "package onto the local ``taxa`` rows (no network access); the "
+        "endpoint only surfaces the queued task id. ``seed-birdnet`` already "
+        "performs this load, so this action is for re-running after the "
+        "bundle is regenerated from a newer upstream release. The action is "
+        "platform-scope (no project_id) and writes a ``platform_audit_log`` "
+        "entry."
+    ),
+)
+async def load_bundled_vernacular_names(
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> TaskDispatchResponse:
+    """Enqueue the bundled vernacular-name load and return the Celery task id."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row.
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Bundled vernacular-name loading is restricted to superusers"
+            ),
+        )
+
+    # Lazy import: see the rationale in :func:`force_iucn_resync` — pulling in
+    # the worker module at import time would force the slim API image to load
+    # the audio + ML worker dependency tree.
+    from echoroo.workers.taxon_tasks import (
+        load_bundled_vernacular_names as load_task,
+    )
+
+    async_result = load_task.delay()
+    enqueued_at = datetime.now(UTC)
+
+    # The request-scoped ``db`` session already issued the superuser probe, so
+    # reuse the IUCN endpoint's fresh-session audit pattern (see its note).
+    await db.commit()
+
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.taxon.load_bundled_vernacular",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "task_id": async_result.id,
+                        "enqueued_at": enqueued_at.isoformat(),
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the dispatch
+        logger.warning(
+            "platform.taxon.load_bundled_vernacular audit write failed "
+            "(FR-089 soft alert): actor=%s task_id=%s error=%r",
             current_user.id,
             async_result.id,
             exc,

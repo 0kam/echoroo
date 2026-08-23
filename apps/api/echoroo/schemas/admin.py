@@ -817,7 +817,8 @@ class TaskDispatchResponse(BaseModel):
     """Generic fire-and-forget Celery dispatch acknowledgement.
 
     Shared by the taxon-catalog maintenance triggers
-    (``POST /admin/taxon/seed-birdnet`` and ``POST /admin/taxon/sync-vernacular``).
+    (``POST /admin/taxon/seed-birdnet``, ``POST /admin/taxon/sync-vernacular``
+    and ``POST /admin/taxon/load-bundled-vernacular``).
     Mirrors :class:`IucnForceResyncResponse`: the endpoint only surfaces the
     queued Celery task id (and the dispatch instant) so the operator can
     correlate the request with the worker's own progress logs / result rows.
