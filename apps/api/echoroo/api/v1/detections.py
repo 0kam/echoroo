@@ -121,35 +121,51 @@ VoteServiceDep = Annotated[AnnotationVoteService, Depends(get_vote_service)]
 ResponseT = TypeVar("ResponseT")
 
 
-def _detection_taxon_key(item: object) -> str | None:
-    """Return the GBIF species key embedded in a DetectionResponse, if any.
+def _detection_taxon_key(item: object) -> UUID | None:
+    """Return the local ``taxa.id`` embedded in a DetectionResponse, if any.
 
     Round 1 review C1 / FR-029 / FR-032 / FR-033: Phase 11's auto-obscure
-    pipeline is keyed on the GBIF species key (a string) — that is the
-    discriminator stored in :class:`TaxonSensitivity.taxon_id` and
-    :class:`ProjectTaxonSensitivityOverride.taxon_id`. The DetectionResponse
-    surface exposes it as ``tag.gbif_taxon_key`` (an ``int``); we coerce to
-    ``str`` so the bulk preloaders see the same shape the maps are keyed by.
-    Detections without a tag (or with a tag that has not been resolved to
-    GBIF yet) return ``None`` and are excluded from the preload set.
+    pipeline is keyed on the taxon identity stored in
+    :class:`TaxonSensitivity.taxon_id` and
+    :class:`ProjectTaxonSensitivityOverride.taxon_id`. Since migration 0034
+    that is the local ``taxa.id`` UUID rather than a stringified GBIF species
+    key: the old key-space was written inconsistently by the IUCN sync (SIS
+    taxonid) and the MoE seeder (GBIF key), and ~6,520 of 6,523 local taxa
+    have no GBIF key at all, so GBIF-keyed masking silently matched nothing.
+
+    ``TagResponse.taxon_id`` carries the value directly (``Tag.taxon`` is
+    eager-loaded), so no extra query is needed. Detections without a tag, or
+    with a tag not yet linked to a global taxon, return ``None`` and are
+    excluded from the preload set — see
+    ``tests/unit/api/test_detection_taxon_key.py`` for the FR-027 default that
+    applies to those.
+
+    Normalisation: ``item`` is typed ``object`` (the helper is shared across
+    several response shapes) so ``getattr`` yields ``Any``. A value that is
+    already a :class:`~uuid.UUID` is returned as-is; anything else (e.g. a
+    stringified UUID coming from a dict/SimpleNamespace shape or a raw DB row)
+    is coerced via ``UUID(str(...))``. A *malformed* value raises
+    :class:`ValueError` rather than degrading to ``None``: returning ``None``
+    would silently fail **open** (unknown taxon => H3_RES_9) and unmask a
+    sensitive species, so masking fails closed and the request errors instead.
     """
     tag = getattr(item, "tag", None)
     if tag is None:
         return None
-    gbif_key = getattr(tag, "gbif_taxon_key", None)
-    if gbif_key is None:
+    taxon_id = getattr(tag, "taxon_id", None)
+    if taxon_id is None:
         return None
-    return str(gbif_key)
+    return taxon_id if isinstance(taxon_id, UUID) else UUID(str(taxon_id))
 
 
 def _detection_filter_resource(item: object) -> object:
     """Wrap a DetectionResponse so the response filter can read ``taxon_id``.
 
     The Stage-2 filter (and ``compute_effective_resolution``) keys off
-    ``resource.taxon_id`` (str). DetectionResponse itself does not surface
-    that key directly, so we expose a SimpleNamespace that mirrors the
-    handful of attributes the filter touches: ``taxon_id`` from the tag's
-    GBIF key, ``h3_index_member`` (currently absent on DetectionResponse —
+    ``resource.taxon_id`` (a ``taxa.id`` UUID). DetectionResponse itself does
+    not surface that key at the top level, so we expose a SimpleNamespace that
+    mirrors the handful of attributes the filter touches: ``taxon_id`` from
+    the tag, ``h3_index_member`` (currently absent on DetectionResponse —
     None falls through cleanly) and ``h3_index_member_resolution`` (defaults
     to :data:`H3_RES_15` so the filter's ``_compute_withheld_reason`` does
     not blow up on a None comparison).
@@ -172,13 +188,13 @@ async def _build_detection_filter_maps(
     db: object,
     project_id: UUID,
     items: list[object],
-) -> tuple[dict[str, int], dict[tuple[UUID, str], object]]:
+) -> tuple[dict[UUID, int], dict[tuple[UUID, UUID], object]]:
     """Bulk-preload sensitivity + override maps for a list of detections.
 
     Round 1 review C1: the Stage-2 filter is only as accurate as the maps
     fed to it — passing the canonical empty dicts shipped pre-Round-1
     silently disabled FR-029 / FR-032 / FR-033 / FR-034 / FR-035 in the
-    live API. This helper collects every GBIF taxon key surfaced by the
+    live API. This helper collects every ``taxa.id`` surfaced by the
     response items, fires ONE sensitivity SELECT and ONE override SELECT
     (NFR-001a), and returns the two maps the filter expects.
 
@@ -200,9 +216,10 @@ async def _build_detection_filter_maps(
         project_id,
         taxon_ids,
     )
-    # ``override_map`` is typed as dict[tuple[UUID, str], ProjectTaxonSensitivityOverride]
+    # ``override_map`` is typed as dict[tuple[UUID, UUID], ProjectTaxonSensitivityOverride]
     # by the loader; the response filter accepts the broader
-    # ``Mapping[tuple[Any, str], Any]`` so the cast below is purely for typing.
+    # ``Mapping[tuple[Any, Any], Any]`` so the ``dict()`` copy below is purely
+    # for typing.
     return sensitivity_map, dict(override_map)
 
 
@@ -213,8 +230,8 @@ async def _apply_detection_response_filter(
     project: object,
     db: object | None = None,
     project_id: UUID | None = None,
-    sensitivity_map: dict[str, int] | None = None,
-    override_map: dict[tuple[UUID, str], object] | None = None,
+    sensitivity_map: dict[UUID, int] | None = None,
+    override_map: dict[tuple[UUID, UUID], object] | None = None,
 ) -> ResponseT:
     """Apply FR-011 response filtering with Phase 11 sensitivity wiring.
 

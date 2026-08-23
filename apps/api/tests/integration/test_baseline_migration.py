@@ -328,6 +328,22 @@ def test_taxon_sensitivity_h3_check_present(upgraded_db: str) -> None:
 
     engine = create_engine(upgraded_db)
     try:
+        # ``taxon_sensitivities.taxon_id`` is an FK to ``taxa.id`` since
+        # migration 0034, so a real taxon must exist before the raw INSERT —
+        # otherwise the FK (not the CHECK) would be what fails and the test
+        # would pass for the wrong reason.
+        with engine.connect() as conn:
+            taxon_id = conn.execute(
+                sa.text(
+                    "INSERT INTO taxa (id, scientific_name, is_non_biological, "
+                    " created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), 'Testus checkus', false, "
+                    " now(), now()) "
+                    "RETURNING id"
+                )
+            ).scalar_one()
+            conn.commit()
+
         with engine.connect() as conn, pytest.raises(IntegrityError):
             # Inserting a forbidden value must fail on the CHECK constraint.
             conn.execute(
@@ -335,9 +351,10 @@ def test_taxon_sensitivity_h3_check_present(upgraded_db: str) -> None:
                     "INSERT INTO taxon_sensitivities "
                     "(id, taxon_id, source, sensitivity_h3_res, "
                     " created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), 'taxon:test', 'manual', 3, "
+                    "VALUES (gen_random_uuid(), :taxon_id, 'manual', 3, "
                     " now(), now())"
-                )
+                ),
+                {"taxon_id": taxon_id},
             )
             conn.commit()
     finally:

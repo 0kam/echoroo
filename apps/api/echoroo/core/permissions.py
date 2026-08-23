@@ -752,8 +752,8 @@ def compute_effective_resolution(
     role: str,
     project: Any,
     effective_permissions: frozenset[Permission] = frozenset(),
-    taxon_sensitivity_map: Mapping[str, int] | None = None,
-    override_map: Mapping[tuple[Any, str], Any] | None = None,
+    taxon_sensitivity_map: Mapping[Any, int] | None = None,
+    override_map: Mapping[tuple[Any, Any], Any] | None = None,
 ) -> int:
     """Stage-2 location resolution (spec §Permission decision algorithm).
 
@@ -771,10 +771,12 @@ def compute_effective_resolution(
         project: Project with ``visibility`` + ``restricted_config``.
         effective_permissions: Output of ``compute_effective_permissions``.
         taxon_sensitivity_map: ``{taxon_id: H3 resolution}`` preloaded via
-            ``WHERE taxon_id IN (...)`` (NFR-001a). Missing keys default to
-            H3_RES_9 (OPEN). Resources without ``taxon_id`` do not get this
-            taxon cap, so Site-only locations can reflect Restricted project
-            precision values above H3_RES_9.
+            ``WHERE taxon_id IN (...)`` (NFR-001a). ``taxon_id`` is the local
+            ``taxa.id`` UUID (migration 0034); the map key type is left open
+            so this pure function stays trivially testable with any hashable
+            key. Missing keys default to H3_RES_9 (OPEN). Resources without
+            ``taxon_id`` do not get this taxon cap, so Site-only locations can
+            reflect Restricted project precision values above H3_RES_9.
         override_map: ``{(project.id, taxon_id): ProjectTaxonSensitivityOverride}``
             preloaded bulk.
 

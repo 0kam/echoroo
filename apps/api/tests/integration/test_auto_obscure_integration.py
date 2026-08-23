@@ -73,6 +73,7 @@ from echoroo.models.recording import Recording
 from echoroo.models.recording_annotation import RecordingAnnotation as Annotation
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
+from echoroo.models.taxon import Taxon
 from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.user import User
 
@@ -130,9 +131,13 @@ _H3_RES_5 = 5
 _H3_RES_9 = 9
 
 
-def _unique_taxon_id(prefix: str) -> str:
-    """Return a taxon_id unique per test run to avoid duplicate-key errors."""
-    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+def _unique_scientific_name(prefix: str) -> str:
+    """Return a scientific name unique per test run.
+
+    ``taxa.scientific_name`` is UNIQUE and ``taxon_sensitivities.taxon_id`` is
+    an FK to ``taxa.id`` (migration 0034), so each run needs its own taxon.
+    """
+    return f"{prefix} {uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
@@ -287,17 +292,27 @@ async def t653_auth_headers(t653_owner: User) -> dict[str, str]:
 
 
 @pytest.fixture
+async def t653_taxon(db_session: AsyncSession) -> Taxon:
+    """Global ``taxa`` row backing the sensitivity fixture (migration 0034)."""
+    taxon = Taxon(scientific_name=_unique_scientific_name("Testus obscurus"))
+    db_session.add(taxon)
+    await db_session.commit()
+    await db_session.refresh(taxon)
+    return taxon
+
+
+@pytest.fixture
 async def t653_taxon_sensitivity_en(
     db_session: AsyncSession,
+    t653_taxon: Taxon,
 ) -> TaxonSensitivity:
     """Global IUCN EN sensitivity row → H3_RES_5.
 
-    Uses a unique taxon_id per run to avoid duplicate-key errors in the
-    (taxon_id, source) unique constraint when the test DB is not cleaned.
+    Uses a fresh ``taxa`` row per run so the (taxon_id, source) unique
+    constraint cannot collide when the test DB is not cleaned.
     """
-    taxon_id = _unique_taxon_id("t653-iucn-en")
     row = TaxonSensitivity(
-        taxon_id=taxon_id,
+        taxon_id=t653_taxon.id,
         source=TaxonSensitivitySource.IUCN,
         sensitivity_h3_res=_H3_RES_5,
         category="EN",

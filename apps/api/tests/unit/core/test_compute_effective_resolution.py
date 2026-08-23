@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -71,6 +72,12 @@ def _override(
     )
 
 
+#: Masking is keyed on the local ``taxa.id`` UUID (migration 0034). The pure
+#: decision function only needs a hashable key, but the tests use a real UUID
+#: so the fixtures match production shapes.
+_DEFAULT_TAXON_ID: UUID = uuid4()
+
+
 def _call(
     *,
     role: str,
@@ -80,7 +87,7 @@ def _call(
     effective_perms: frozenset[Permission] = frozenset(),
     member_resolution: int = H3_RES_15,
     public_location_precision_h3_res: int = H3_RES_7,
-    taxon_id: str = "taxon-001",
+    taxon_id: UUID | None = _DEFAULT_TAXON_ID,
 ) -> int:
     project = _project(
         visibility,
@@ -348,7 +355,7 @@ class TestGuestResolution:
             status="active",
         )
         resource = SimpleNamespace(
-            taxon_id="taxon-001",
+            taxon_id=_DEFAULT_TAXON_ID,
             h3_index_member_resolution=H3_RES_15,
         )
 
@@ -356,7 +363,7 @@ class TestGuestResolution:
             resource=resource,
             role="Guest",
             project=project,
-            taxon_sensitivity_map={"taxon-001": H3_RES_9},
+            taxon_sensitivity_map={_DEFAULT_TAXON_ID: H3_RES_9},
         )
 
         assert res == 3

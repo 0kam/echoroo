@@ -24,6 +24,7 @@ Pydantic response object when possible, and returns it for chaining.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from echoroo.core.permissions import (
@@ -52,8 +53,8 @@ def apply_response_filter(
     normalized_role: str,
     project: Any,
     resource: Any | None = None,
-    taxon_sensitivity_map: dict[str, int] | None = None,
-    override_map: dict[tuple[Any, str], Any] | None = None,
+    taxon_sensitivity_map: Mapping[Any, int] | None = None,
+    override_map: Mapping[tuple[Any, Any], Any] | None = None,
 ) -> Any:
     """Apply stage-2 response filtering to a Recording/Detection/Site object.
 
@@ -66,7 +67,8 @@ def apply_response_filter(
         project: Project row with visibility + restricted_config.
         resource: The underlying ORM row for taxon / h3 lookups. If ``None``,
             falls back to ``obj`` itself.
-        taxon_sensitivity_map: Pre-loaded ``{taxon_id: H3 res}`` (NFR-001a).
+        taxon_sensitivity_map: Pre-loaded ``{taxon_id: H3 res}`` (NFR-001a),
+            keyed by the local ``taxa.id`` UUID (migration 0034).
         override_map: Pre-loaded project taxon overrides.
 
     Returns:
@@ -206,7 +208,7 @@ def _compute_withheld_reason(
     member_resolution: int,
     project: Any,
     normalized_role: str,
-    taxon_sensitivity_map: dict[str, int] | None,
+    taxon_sensitivity_map: Mapping[Any, int] | None,
     resource: Any,
 ) -> str | None:
     """Human-readable reason when data has been obscured (FR-086)."""

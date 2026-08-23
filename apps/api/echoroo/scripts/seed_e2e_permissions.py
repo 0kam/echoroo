@@ -58,6 +58,7 @@ from echoroo.models.enums import (
     ProjectVisibility,
     SearchSessionStatus,
     TagCategory,
+    TaxonSensitivitySource,
 )
 from echoroo.models.project import Project, ProjectInvitation, ProjectMember
 from echoroo.models.project_trusted_user import ProjectTrustedUser
@@ -67,12 +68,14 @@ from echoroo.models.search_session import SearchSession
 from echoroo.models.site import Site
 from echoroo.models.tag import Tag
 from echoroo.models.user import User
+from echoroo.repositories.taxon import TaxonRepository
 from echoroo.services.api_key_verification import hash_api_key_secret
 from echoroo.services.invitation_service import (
     coerce_granted_permissions,
     hash_email,
     hash_token,
 )
+from echoroo.services.taxon_sensitivity_service import upsert_taxon_sensitivity
 from echoroo.services.two_factor_service import (
     TOTP_SECRET_LENGTH,
     _current_dek_version,
@@ -1187,11 +1190,24 @@ async def _upsert_exportable_species_tag(
       * ``name`` — ``"Testus permissionis"`` (the deterministic species name).
       * ``category`` — :data:`TagCategory.SPECIES`.
       * ``scientific_name`` / ``common_name`` — copied from the session config.
-      * ``taxon_id`` — ``None``: the seed does not materialise global taxa.
+      * ``taxon_id`` — the global ``taxa`` row materialised here.
+
+    Taxonomy WS-A v2 slice 4: the helper used to leave ``taxon_id`` NULL. The
+    Phase 11 auto-obscure pipeline is keyed on ``taxa.id`` (migration 0034),
+    so a tag with no taxon can never be masked and the
+    ``phase11-auto-obscure`` Playwright suite needed a hand-seeded
+    ``taxon_sensitivities`` row. We now materialise the taxon, link it, and
+    seed one ``source='manual'`` sensitivity row at ``sensitivity_h3_res=5``
+    so the suite is self-contained.
 
     Idempotent: re-running locates the existing row by its primary key and
     refreshes its mutable fields, following the other ``_upsert_*`` helpers.
     """
+    taxon = await TaxonRepository(session).get_or_create_by_scientific_name(
+        "Testus permissionis",
+        common_name="E2E Seed Species",
+    )
+
     tag_id = UUID(EXPORTABLE_SPECIES_KEY)
     result = await session.execute(
         sa.select(Tag).where(Tag.id == tag_id).limit(1)
@@ -1205,7 +1221,7 @@ async def _upsert_exportable_species_tag(
             category=TagCategory.SPECIES,
             scientific_name="Testus permissionis",
             common_name="E2E Seed Species",
-            taxon_id=None,
+            taxon_id=taxon.id,
         )
         session.add(tag)
     else:
@@ -1214,8 +1230,21 @@ async def _upsert_exportable_species_tag(
         tag.category = TagCategory.SPECIES
         tag.scientific_name = "Testus permissionis"
         tag.common_name = "E2E Seed Species"
-        tag.taxon_id = None
+        tag.taxon_id = taxon.id
 
+    await session.flush()
+
+    # One global sensitivity row so the auto-obscure e2e suite has a
+    # sensitive species out of the box. ``manual`` outranks ``iucn`` /
+    # ``moe_rdb`` for metadata and is never clobbered by the IUCN worker.
+    await upsert_taxon_sensitivity(
+        session,
+        taxon_id=taxon.id,
+        source=TaxonSensitivitySource.MANUAL,
+        sensitivity_h3_res=5,
+        category="EN",
+        notes="Seeded by seed_e2e_permissions for the phase11 auto-obscure suite",
+    )
     await session.flush()
     return tag
 

@@ -62,7 +62,8 @@ class _StubOverride:
     ) -> None:
         self.id = uuid4()
         self.project_id = uuid4()
-        self.taxon_id = "taxon:00001"
+        # ``taxa.id`` UUID since migration 0034 (WS-A v2 slice 4).
+        self.taxon_id = uuid4()
         self.sensitivity_h3_res = 9
         self.direction = direction
         self.approval_status = approval_status

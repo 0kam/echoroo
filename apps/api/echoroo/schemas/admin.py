@@ -212,7 +212,10 @@ class TaxonOverrideResponse(BaseModel):
 
     id: UUID = Field(..., description="Override row identifier")
     project_id: UUID = Field(..., description="Owning project (FR-033)")
-    taxon_id: str = Field(..., description="GBIF species key targeted by the override")
+    taxon_id: UUID = Field(
+        ...,
+        description="Local taxon identity (``taxa.id``) targeted by the override",
+    )
     sensitivity_h3_res: int = Field(
         ...,
         description="H3 resolution applied when masking — must be one of {2, 5, 7, 9, 15}",

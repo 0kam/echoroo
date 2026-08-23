@@ -145,7 +145,8 @@ def test_migration_only_touches_detections_table(
         else:  # pragma: no cover - defensive
             raise AssertionError(f"unexpected op: {name}")
         assert table == "detections", (name, args)
-        # The intentional masking columns live on other tables (see the
-        # migration scope note) and must never be an op target here.
+        # The masking columns live on other tables and are re-keyed by
+        # migration 0034 (see ``tests/unit/test_migration_0034.py``); 0033
+        # must never touch them.
         assert "taxon_sensitivities" not in args
         assert "project_taxon_sensitivity_overrides" not in args

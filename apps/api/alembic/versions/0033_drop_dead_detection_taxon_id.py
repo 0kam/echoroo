@@ -13,8 +13,11 @@ in this same change). The annotation-side ``taxon_id`` columns were already
 retired in migration 0030; this completes the cleanup on the detection side.
 
 Scope note: the masking-pipeline columns ``taxon_sensitivities.taxon_id`` and
-``project_taxon_sensitivity_overrides.taxon_id`` are INTENTIONAL GBIF string
-keys and are deliberately left untouched by this migration.
+``project_taxon_sensitivity_overrides.taxon_id`` are deliberately left
+untouched by this migration. (Historical note: this file originally described
+them as "intentional GBIF string keys". That premise was wrong — the three
+producers wrote three different key-spaces — and migration 0034 re-keys both
+columns onto ``taxa.id``.)
 
 The column's composite index ``ix_detections_project_taxon`` (``project_id``,
 ``taxon_id``) is dropped alongside the column. ``downgrade()`` re-adds the

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -44,7 +44,7 @@ from echoroo.models.enums import (
 # =============================================================================
 
 
-def _resource(taxon_id: str | None, member_res: int = H3_RES_15) -> Any:
+def _resource(taxon_id: UUID | None, member_res: int = H3_RES_15) -> Any:
     """Return a minimal Resource stub."""
     return SimpleNamespace(
         taxon_id=taxon_id,
@@ -77,7 +77,7 @@ def _restricted_project(project_id: Any = None, precision_res: int = H3_RES_5) -
 def _override(
     *,
     project_id: Any,
-    taxon_id: str,
+    taxon_id: UUID,
     resolution: int,
     direction: TaxonOverrideDirection,
     approval_status: TaxonOverrideApprovalStatus = TaxonOverrideApprovalStatus.APPLIED,
@@ -108,7 +108,7 @@ class TestCategoryToResolutionMapping:
 
     def test_iucn_en_resolves_to_h3_res_5_for_non_member(self) -> None:
         """IUCN EN taxon → H3_RES_5 for a non-member on a Public project."""
-        taxon_id = "iucn-en-taxon"
+        taxon_id = uuid4()  # iucn-en-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_5}
@@ -124,7 +124,7 @@ class TestCategoryToResolutionMapping:
 
     def test_moe_cr_resolves_to_h3_res_2_hidden(self) -> None:
         """MOE CR (or IUCN CR) taxon → H3_RES_2 (HIDDEN) regardless of role."""
-        taxon_id = "moe-cr-taxon"
+        taxon_id = uuid4()  # moe-cr-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_2}
@@ -140,7 +140,7 @@ class TestCategoryToResolutionMapping:
 
     def test_unknown_taxon_defaults_to_h3_res_9(self) -> None:
         """Taxon with no TaxonSensitivity row → open (H3_RES_9)."""
-        resource = _resource(taxon_id="unknown-taxon-id")
+        resource = _resource(taxon_id=uuid4())
         project = _public_project()
         # sensitivity_map does NOT contain the taxon_id → treated as absent
         sensitivity_map: dict[str, int] = {}
@@ -170,7 +170,7 @@ class TestCategoryToResolutionMapping:
 
     def test_iucn_vu_resolves_to_h3_res_7_for_non_member(self) -> None:
         """IUCN VU (coarse protection) → H3_RES_7 for non-member."""
-        taxon_id = "iucn-vu-taxon"
+        taxon_id = uuid4()  # iucn-vu-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_7}
@@ -199,7 +199,7 @@ class TestHiddenClamp:
     )
     def test_hidden_taxon_is_returned_for_all_roles(self, role: str) -> None:
         """H3_RES_2 is the final answer regardless of role (FR-035)."""
-        taxon_id = "hidden-taxon"
+        taxon_id = uuid4()  # hidden-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_2}
@@ -217,7 +217,7 @@ class TestHiddenClamp:
 
     def test_hidden_taxon_returned_even_with_view_precise_location_permission(self) -> None:
         """VIEW_PRECISE_LOCATION permission CANNOT override the HIDDEN clamp (FR-035)."""
-        taxon_id = "cr-taxon"
+        taxon_id = uuid4()  # cr-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_2}
@@ -241,7 +241,7 @@ class TestHiddenClamp:
         (i.e. less strict), so the clamp still catches it.
         """
         project_id = uuid4()
-        taxon_id = "hidden-taxon-with-override"
+        taxon_id = uuid4()  # hidden-taxon-with-override
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_2}
@@ -289,7 +289,7 @@ class TestLooserOverride:
     def test_applied_looser_override_replaces_global_for_non_member(self) -> None:
         """Applied LOOSER override: result = override_res (not global)."""
         project_id = uuid4()
-        taxon_id = "en-taxon"
+        taxon_id = uuid4()  # en-taxon
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_5}  # global: very coarse
@@ -324,7 +324,7 @@ class TestLooserOverride:
         FR-034 says looser overrides only take effect once APPLIED.
         """
         project_id = uuid4()
-        taxon_id = "en-taxon-pending"
+        taxon_id = uuid4()  # en-taxon-pending
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_5}
@@ -354,7 +354,7 @@ class TestLooserOverride:
     def test_rejected_looser_override_does_not_replace_global(self) -> None:
         """Rejected LOOSER override must NOT affect the resolution."""
         project_id = uuid4()
-        taxon_id = "en-taxon-rejected"
+        taxon_id = uuid4()  # en-taxon-rejected
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_5}
@@ -392,7 +392,7 @@ class TestStricterOverride:
     def test_stricter_override_takes_min_of_global_and_override(self) -> None:
         """Applied STRICTER override yields min(global_res, override_res)."""
         project_id = uuid4()
-        taxon_id = "vu-taxon"
+        taxon_id = uuid4()  # vu-taxon
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_7}  # global VU = coarse
@@ -422,7 +422,7 @@ class TestStricterOverride:
     def test_stricter_override_to_hidden_works_without_approval(self) -> None:
         """STRICTER override all the way to H3_RES_2 applies immediately."""
         project_id = uuid4()
-        taxon_id = "local-concern-taxon"
+        taxon_id = uuid4()  # local-concern-taxon
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_9}  # globally open
@@ -451,7 +451,7 @@ class TestStricterOverride:
     ) -> None:
         """If stricter override_res > global_res, min() keeps global (no-op)."""
         project_id = uuid4()
-        taxon_id = "en-taxon-with-loose-stricter"
+        taxon_id = uuid4()  # en-taxon-with-loose-stricter
         project = _public_project(project_id=project_id)
         resource = _resource(taxon_id=taxon_id)
         sensitivity_map = {taxon_id: H3_RES_5}  # global very coarse
@@ -492,7 +492,7 @@ class TestPrivilegedRolesBypassCeiling:
         self, role: str
     ) -> None:
         """Roles ≥ Member see the native member resolution, not the public ceiling."""
-        taxon_id = "en-taxon"
+        taxon_id = uuid4()  # en-taxon
         resource = _resource(taxon_id=taxon_id, member_res=H3_RES_15)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_5}
@@ -511,7 +511,7 @@ class TestPrivilegedRolesBypassCeiling:
     @pytest.mark.parametrize("role", ["Member", "Admin", "Owner"])
     def test_privileged_role_still_gets_hidden_for_cr_taxon(self, role: str) -> None:
         """HIDDEN clamp fires even before step C — privileged roles get H3_RES_2."""
-        taxon_id = "cr-taxon"
+        taxon_id = uuid4()  # cr-taxon
         resource = _resource(taxon_id=taxon_id, member_res=H3_RES_15)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_2}
@@ -531,7 +531,7 @@ class TestPrivilegedRolesBypassCeiling:
         self,
     ) -> None:
         """VIEW_PRECISE_LOCATION permission grants member resolution (step D)."""
-        taxon_id = "en-taxon"
+        taxon_id = uuid4()  # en-taxon
         resource = _resource(taxon_id=taxon_id, member_res=H3_RES_15)
         project = _public_project()
         sensitivity_map = {taxon_id: H3_RES_5}
@@ -558,7 +558,7 @@ class TestNonMemberCeiling:
 
     def test_public_project_non_member_capped_at_h3_res_9(self) -> None:
         """Non-member on Public → min(effective_global, H3_RES_9)."""
-        taxon_id = "vu-taxon"
+        taxon_id = uuid4()  # vu-taxon
         resource = _resource(taxon_id=taxon_id)
         project = _public_project()
         # Global sensitivity is H3_RES_7 (coarse) but Public ceiling = 9.
@@ -578,7 +578,7 @@ class TestNonMemberCeiling:
 
     def test_restricted_project_uses_precision_config(self) -> None:
         """Non-member on Restricted project respects public_location_precision_h3_res."""
-        taxon_id = "vu-taxon-restricted"
+        taxon_id = uuid4()  # vu-taxon-restricted
         resource = _resource(taxon_id=taxon_id)
         project = _restricted_project(precision_res=H3_RES_5)
         sensitivity_map = {taxon_id: H3_RES_7}  # global coarse
