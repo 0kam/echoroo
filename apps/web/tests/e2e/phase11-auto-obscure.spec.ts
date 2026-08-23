@@ -35,14 +35,16 @@
  *
  * DB / seed requirement
  * ---------------------
- * The test database must have a ``taxon_sensitivities`` row with
- *   taxon_id = <the taxon_id linked to at least one detection in PROJECT_ID>
- *   source = 'iucn'
- *   sensitivity_h3_res = 5
- *   category = 'EN'
+ * ``echoroo.scripts.seed_e2e_permissions`` now provisions this: it
+ * materialises a ``taxa`` row for the seeded species tag, links
+ * ``tags.taxon_id`` to it, and inserts one ``taxon_sensitivities`` row
+ * (``source='manual'``, ``sensitivity_h3_res=5``, ``category='EN'``). Since
+ * migration 0034 the masking pipeline is keyed on ``taxa.id`` rather than a
+ * GBIF species key, so no manual seeding step is required any more.
  *
- * This can be seeded via the admin CLI or by running the IUCN sync worker
- * once with the correct fixtures.
+ * For a project that was NOT produced by that seeder, the requirement is
+ * still: at least one detection whose tag points at a taxon that has a
+ * ``taxon_sensitivities`` row with ``sensitivity_h3_res = 5``.
  *
  * How to run
  * ----------

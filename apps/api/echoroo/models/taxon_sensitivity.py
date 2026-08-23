@@ -4,6 +4,14 @@ A :class:`TaxonSensitivity` records the *recommended* H3 masking resolution
 for a single taxon as published by an external authority (IUCN, Japanese MoE
 Red Data Book) or as overridden globally by an Echoroo platform operator.
 
+``taxon_id`` is a UUID FK to ``taxa.id`` — the platform's immutable species
+identity (migration 0034, taxonomy WS-A v2 slice 4). It used to be a
+``VARCHAR(64)`` "GBIF species key", but the three writers involved (IUCN sync,
+MoE seeder, detections reader) each populated a different key-space, so
+IUCN-sourced rows never matched a detection. Every writer now resolves its
+incoming rows to a local taxon by scientific name before upserting; see
+:func:`echoroo.services.taxon_resolution.resolve_taxon_ids_by_scientific_name`.
+
 The auto-obscure pipeline (FR-029..032, spec L313-365
 ``compute_effective_resolution``) ranks rows by ``source`` so that ``manual``
 wins over ``moe_rdb`` which wins over ``iucn`` when more than one source
@@ -19,9 +27,12 @@ mutator of rows whose ``source = 'iucn'``.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import (
     CheckConstraint,
     Enum,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -29,6 +40,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from echoroo.models.base import Base, TimestampMixin, UUIDMixin
@@ -53,10 +65,18 @@ class TaxonSensitivity(UUIDMixin, TimestampMixin, Base):
 
     __tablename__ = "taxon_sensitivities"
 
-    taxon_id: Mapped[str] = mapped_column(
-        String(64),
+    taxon_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("taxa.id", ondelete="RESTRICT"),
         nullable=False,
-        doc="GBIF species key. Matches detections.taxon_id / tags.taxon_id.",
+        doc=(
+            "Local taxon identity (``taxa.id``). Matches ``tags.taxon_id``, "
+            "which is what the detections reader feeds into the masking "
+            "pipeline. ON DELETE RESTRICT: this is a masking *guard* table, "
+            "so a taxa delete / re-seed must never silently empty it and "
+            "unmask the protected species. Retire the sensitivity rows "
+            "explicitly first."
+        ),
     )
     source: Mapped[TaxonSensitivitySource] = mapped_column(
         Enum(

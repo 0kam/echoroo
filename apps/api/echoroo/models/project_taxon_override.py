@@ -18,6 +18,14 @@ the legal direction × approval combinations, and the partial unique index
 ``ux_taxon_overrides_applied_unique`` guarantees the masking pipeline never
 sees two competing applied overrides for the same ``(project_id, taxon_id)``
 pair.
+
+``taxon_id`` is a UUID FK to ``taxa.id`` — the platform's immutable species
+identity (migration 0034, taxonomy WS-A v2 slice 4). It used to be a
+``VARCHAR(64)`` "GBIF species key", which never lined up with the key-space
+the IUCN sync wrote nor the one the detections reader compared against. The
+FK is ``ON DELETE RESTRICT`` (not CASCADE) because an override row is
+referenced by the FR-111 superuser approval / audit trail: deleting a taxon
+must never silently erase an audited masking decision.
 """
 
 from __future__ import annotations
@@ -33,7 +41,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    String,
     Text,
     text,
 )
@@ -79,10 +86,16 @@ class ProjectTaxonSensitivityOverride(UUIDMixin, TimestampMixin, Base):
         nullable=False,
         doc="Target project (FR-033).",
     )
-    taxon_id: Mapped[str] = mapped_column(
-        String(64),
+    taxon_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("taxa.id", ondelete="RESTRICT"),
         nullable=False,
-        doc="GBIF species key. Matches detections.taxon_id / tags.taxon_id.",
+        doc=(
+            "Local taxon identity (``taxa.id``). Matches ``tags.taxon_id``, "
+            "which is what the detections reader feeds into the masking "
+            "pipeline. ON DELETE RESTRICT: override rows are referenced by "
+            "the FR-111 approval / audit trail."
+        ),
     )
     sensitivity_h3_res: Mapped[int] = mapped_column(
         Integer,

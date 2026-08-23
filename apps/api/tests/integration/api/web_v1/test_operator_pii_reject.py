@@ -54,6 +54,7 @@ from echoroo.models.enums import (
 from echoroo.models.project import Project
 from echoroo.models.project_taxon_override import ProjectTaxonSensitivityOverride
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
+from echoroo.models.taxon import Taxon
 from echoroo.models.user import User
 from echoroo.services.step_up_token_service import (
     issue_admin_recovery_step_up_token,
@@ -173,10 +174,17 @@ async def _create_pending_looser_override(
     project_id,
     requester_id,
 ) -> ProjectTaxonSensitivityOverride:
-    """Insert a ``pending_superuser_approval`` looser override row."""
+    """Insert a ``pending_superuser_approval`` looser override row.
+
+    ``taxon_id`` is an FK to ``taxa.id`` since migration 0034, so a real
+    ``taxa`` row is materialised first.
+    """
+    taxon = Taxon(scientific_name=f"Testus operatoris {uuid4().hex[:10]}")
+    db.add(taxon)
+    await db.flush()
     override = ProjectTaxonSensitivityOverride(
         project_id=project_id,
-        taxon_id=f"taxon-{uuid4().hex[:10]}",
+        taxon_id=taxon.id,
         sensitivity_h3_res=9,
         direction=TaxonOverrideDirection.LOOSER,
         approval_status=TaxonOverrideApprovalStatus.PENDING_SUPERUSER_APPROVAL,

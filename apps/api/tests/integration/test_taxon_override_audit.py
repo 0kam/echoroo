@@ -163,6 +163,27 @@ def _u(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 
 
+async def _create_taxon(session: AsyncSession) -> uuid.UUID:
+    """Insert a minimal ``taxa`` row and return its id.
+
+    ``project_taxon_sensitivity_overrides.taxon_id`` is an FK to ``taxa.id``
+    (ON DELETE RESTRICT) since migration 0034, so every override the audit
+    tests create needs a real taxon behind it.
+    """
+    taxon_id = uuid.uuid4()
+    await session.execute(
+        sa.text(
+            """
+            INSERT INTO taxa (id, scientific_name, is_non_biological,
+                              created_at, updated_at)
+            VALUES (:id, :scientific_name, false, NOW(), NOW())
+            """
+        ),
+        {"id": taxon_id, "scientific_name": _u("Testus auditus")},
+    )
+    return taxon_id
+
+
 async def _create_user(session: AsyncSession, *, email: str) -> uuid.UUID:
     """Insert a minimal ``users`` row and return its id."""
     user_id = uuid.uuid4()
@@ -260,13 +281,14 @@ async def _create_pending_looser_override(
     *,
     project_id: uuid.UUID,
     requester_id: uuid.UUID,
-) -> tuple[uuid.UUID, str]:
+) -> tuple[uuid.UUID, uuid.UUID]:
     """Insert a pending looser override + matching approval ticket.
 
-    Returns ``(override_id, taxon_id)``.
+    Returns ``(override_id, taxon_id)``. ``taxon_id`` is a ``taxa.id`` UUID
+    (migration 0034), so the helper materialises the taxon first.
     """
     override_id = uuid.uuid4()
-    taxon_id = _u("taxon")
+    taxon_id = await _create_taxon(session)
     await session.execute(
         sa.text(
             """
@@ -287,7 +309,7 @@ async def _create_pending_looser_override(
     detail_json = (
         '{"override_id": "' + str(override_id) + '", '
         '"project_id": "' + str(project_id) + '", '
-        '"taxon_id": "' + taxon_id + '", '
+        '"taxon_id": "' + str(taxon_id) + '", '
         '"sensitivity_h3_res": 9}'
     )
     await session.execute(
@@ -588,6 +610,7 @@ async def test_apply_post_commit_audit_writes_in_fresh_session(
     async with session_factory() as setup:
         owner_id = await _create_user(setup, email=_u("apply_owner") + "@example.com")
         project_id = await _create_project(setup, owner_id=owner_id)
+        apply_taxon_uuid = await _create_taxon(setup)
         await setup.commit()
 
     async with session_factory() as caller_session:
@@ -595,7 +618,7 @@ async def test_apply_post_commit_audit_writes_in_fresh_session(
         outcome: TaxonOverrideApplyOutcome = await apply_taxon_override(
             caller_session,
             project_id=project_id,
-            taxon_id=_u("apply_taxon"),
+            taxon_id=apply_taxon_uuid,
             direction=TaxonOverrideDirection.STRICTER,
             sensitivity_h3_res=5,
             requester_id=owner_id,

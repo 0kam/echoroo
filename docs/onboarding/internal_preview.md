@@ -67,6 +67,29 @@ docker exec echoroo-backend uv run python -m echoroo.scripts.initial_iucn_sync
 docker exec echoroo-backend uv run python -m echoroo.scripts.seed_moe_rdb <csv-path> --confirm
 ```
 
+Seed the `taxa` table **first** (Admin -> Settings -> "Seed BirdNET taxa", see
+below). Both seeders key their rows on `taxa.id` and resolve incoming rows by
+scientific name, so against an empty `taxa` table every row is reported as
+`unresolved` and nothing is written.
+
+The MoE RDB CSV header is:
+
+```csv
+scientific_name,category,sensitivity_h3_res,notes
+Nipponia nippon,CR,5,Endemic to Sado
+```
+
+`sensitivity_h3_res` must be one of {2, 5, 7, 9, 15}. Names with no local
+taxon are warned about, counted in the `unresolved=` summary, and skipped;
+they do not abort the import. If two rows resolve to the same taxon, the
+strictest (lowest) `sensitivity_h3_res` wins regardless of row order.
+
+The seeder exits non-zero when it cannot do its job, so a bootstrap script
+will not march on with an empty masking table: `2` no `--confirm`, `3` file
+not found, `4` rows were processed but none imported (almost always: `taxa`
+is not seeded yet), `5` the CSV header does not match the contract above
+(e.g. a pre-0034 export with a `taxon_id` column).
+
 ### Taxonomy and Japanese vernacular names (和名)
 
 **Admin → Settings → "Seed BirdNET taxa"** populates the `taxa` table from the

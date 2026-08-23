@@ -25,7 +25,9 @@ Pipeline
    up to the request flow (httpx does not expose the peer cert in async
    mode without a custom transport) so we removed it instead of leaving
    dead code that misleads operators about what is actually checked.
-3. For each (taxon_id, category) returned, derive the recommended H3
+3. For each (scientific_name, category) returned, resolve the row onto a
+   local ``taxa.id`` (migration 0034 re-keyed ``taxon_sensitivities`` off the
+   never-matching GBIF/SIS string key), derive the recommended H3
    resolution via :func:`_h3_res_from_iucn_category` and UPSERT through
    :func:`echoroo.services.taxon_sensitivity_service.upsert_taxon_sensitivity`.
    The helper returns ``loosened=True`` when the new value is *higher*
@@ -67,6 +69,11 @@ import sqlalchemy as sa
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.enums import TaxonSensitivitySource
 from echoroo.models.iucn_sync_attempt import IucnSyncAttempt
+from echoroo.services.taxon_resolution import (
+    collapse_strictest,
+    log_unresolved_sample,
+    resolve_taxon_ids_by_scientific_name,
+)
 from echoroo.services.taxon_sensitivity_service import (
     set_iucn_fail_safe,
     upsert_taxon_sensitivity,
@@ -257,6 +264,30 @@ async def _fetch_red_list_snapshot(
 # ---------------------------------------------------------------------------
 
 
+def _log_coverage(*, synced: int, unresolved: int) -> None:
+    """Log the taxon-resolution coverage of a run at INFO.
+
+    Deliberately observational, NOT a gate. The IUCN Red List covers roughly
+    11k bird species globally while the local ``taxa`` table holds ~6.5k
+    BirdNET labels, so an unresolved share well above half is the expected
+    steady state. Operators need the number trended over time (a sudden jump
+    means the bundle or the upstream naming changed); a fixed threshold here
+    would only produce noise.
+    """
+    total = synced + unresolved
+    if total == 0:
+        logger.info("iucn_sync coverage: no candidate rows in snapshot")
+        return
+    logger.info(
+        "iucn_sync coverage: resolved=%d unresolved=%d total=%d "
+        "unresolved_ratio=%.3f",
+        synced,
+        unresolved,
+        total,
+        unresolved / total,
+    )
+
+
 def _exceeds_loosen_threshold(
     *, loosened_count: int, total_changed: int
 ) -> bool:
@@ -363,39 +394,113 @@ async def _try_acquire_lock(session: Any) -> bool:
 
 async def _apply_snapshot(
     snapshot: Iterable[dict[str, Any]],
-) -> tuple[int, int]:
-    """Upsert every row in ``snapshot``; return (synced, loosened) counts.
+) -> tuple[int, int, int]:
+    """Upsert every row in ``snapshot``; return (synced, loosened, unresolved).
 
     The upserts run inside a single transaction so the sanity check at
     the end can roll back atomically. Rows whose category falls outside
     :data:`_CATEGORY_TO_H3_RES` are skipped — they would otherwise
     violate the discrete-enum CHECK constraint.
+
+    Taxon identity (WS-A v2 slice 4, migration 0034): ``taxon_sensitivities``
+    is keyed on the local ``taxa.id`` UUID. The IUCN API's ``taxonid`` is an
+    IUCN SIS id in a completely different key-space, so each snapshot row is
+    resolved through its ``scientific_name`` via
+    :func:`echoroo.services.taxon_resolution.resolve_taxon_ids_by_scientific_name`
+    (exact name, then the bundled BirdNET<->AviList crosswalk in both
+    directions). Rows that do not resolve to a local taxon are **skipped and
+    counted** — they do not count towards ``synced`` and therefore cannot
+    dilute the FR-036 10 % loosen ratio.
+
+    Coverage: the unresolved *ratio* is logged on every run but is NOT
+    thresholded. The IUCN Red List covers ~11k birds globally while the local
+    ``taxa`` table holds ~6.5k BirdNET labels, so a large unresolved share is
+    the normal, expected steady state and a ratio gate would fire constantly.
+    What IS gated is total coverage collapse: if the snapshot contained at
+    least one usable candidate row and **none** of them resolved, we raise so
+    the run is recorded as ``failure`` and the FR-036 stale-data fail-safe
+    stays armed. Returning "success, synced=0" there would clear the fail-safe
+    flag on the strength of a sync that wrote nothing.
+
+    Duplicate collapse: several snapshot rows can resolve to the same
+    ``taxa.id`` (synonyms, or a BirdNET split lumped by the crosswalk). They
+    are collapsed to the STRICTEST ``sensitivity_h3_res`` via
+    :func:`echoroo.services.taxon_resolution.collapse_strictest` BEFORE any
+    upsert, so ``synced`` / ``loosened`` are counted per unique taxon and the
+    last row in the payload can never silently relax masking.
     """
     synced = 0
     loosened = 0
+    unresolved = 0
+    rows = list(snapshot)
     async with AsyncSessionLocal() as session:
         try:
             if not await _try_acquire_lock(session):
                 logger.info("iucn_sync: another worker holds the lock — skipping")
-                return 0, 0
+                return 0, 0, 0
 
-            for row in snapshot:
-                taxon_id = row.get("taxonid")
+            # ONE query for the whole taxa table, not one per snapshot row.
+            name_to_taxon = await resolve_taxon_ids_by_scientific_name(
+                session,
+                (str(row.get("scientific_name") or "") for row in rows),
+            )
+
+            unresolved_names: list[str] = []
+            candidates: list[tuple[UUID, int, str | None, str | None]] = []
+            for row in rows:
                 category = row.get("category")
                 h3_res = _h3_res_from_iucn_category(category)
-                if taxon_id is None or h3_res is None:
+                if h3_res is None:
                     continue
+                scientific_name = str(row.get("scientific_name") or "").strip()
+                if not scientific_name:
+                    continue
+                taxon_uuid = name_to_taxon.get(scientific_name)
+                if taxon_uuid is None:
+                    unresolved += 1
+                    unresolved_names.append(scientific_name)
+                    continue
+                candidates.append(
+                    (
+                        taxon_uuid,
+                        h3_res,
+                        str(category) if category else None,
+                        None,
+                    )
+                )
+
+            collapsed = collapse_strictest(candidates)
+            for taxon_uuid, (h3_res, category_value, notes) in collapsed.items():
                 was_loosened, _previous = await upsert_taxon_sensitivity(
                     session,
-                    taxon_id=str(taxon_id),
+                    taxon_id=taxon_uuid,
                     source=TaxonSensitivitySource.IUCN,
                     sensitivity_h3_res=h3_res,
-                    category=str(category) if category else None,
-                    notes=None,
+                    category=category_value,
+                    notes=notes,
                 )
                 synced += 1
                 if was_loosened:
                     loosened += 1
+
+            log_unresolved_sample(logger, "iucn_sync", unresolved_names)
+            _log_coverage(synced=synced, unresolved=unresolved)
+
+            # Coverage collapse guard — see the docstring. Ordered BEFORE the
+            # loosen check so "nothing matched at all" is reported as its own
+            # distinct failure rather than passing vacuously.
+            if synced == 0 and unresolved > 0:
+                logger.critical(
+                    "iucn_sync: ZERO of %d candidate rows resolved to a local "
+                    "taxon — refusing to record a successful sync (the "
+                    "fail-safe must stay armed)",
+                    unresolved,
+                )
+                await session.rollback()
+                raise RuntimeError(
+                    f"coverage check failed: 0/{unresolved} snapshot rows "
+                    "resolved to a local taxon"
+                )
 
             # Sanity check BEFORE commit so a tripped threshold rolls
             # the entire batch back atomically.
@@ -419,7 +524,7 @@ async def _apply_snapshot(
         except Exception:
             await session.rollback()
             raise
-    return synced, loosened
+    return synced, loosened, unresolved
 
 
 async def _run_sync_async(force: bool = False) -> dict[str, Any]:
@@ -454,6 +559,7 @@ async def _run_sync_async(force: bool = False) -> dict[str, Any]:
 
     synced = 0
     loosened = 0
+    unresolved = 0
     error_detail: str | None = None
     terminal_status = "failure"
 
@@ -462,7 +568,7 @@ async def _run_sync_async(force: bool = False) -> dict[str, Any]:
             snapshot = await _fetch_red_list_snapshot(
                 client, api_token=api_token, base_url=base_url
             )
-        synced, loosened = await _apply_snapshot(snapshot)
+        synced, loosened, unresolved = await _apply_snapshot(snapshot)
         terminal_status = "success"
     except Exception as exc:  # noqa: BLE001 — recorded into the attempt row
         error_detail = repr(exc)
@@ -498,6 +604,10 @@ async def _run_sync_async(force: bool = False) -> dict[str, Any]:
         "status": terminal_status,
         "synced_count": synced,
         "loosened_species_count": loosened,
+        # Snapshot rows whose scientific name has no counterpart in the local
+        # ``taxa`` table (migration 0034). Surfaced so an operator can tell a
+        # "nothing changed" run apart from a "nothing matched" run.
+        "unresolved_count": unresolved,
         "attempt_id": str(attempt_id),
         "error_detail": error_detail,
     }

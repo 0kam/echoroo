@@ -173,7 +173,7 @@ async def apply_taxon_override(
     session: AsyncSession,
     *,
     project_id: UUID,
-    taxon_id: str,
+    taxon_id: UUID,
     direction: TaxonOverrideDirection,
     sensitivity_h3_res: int,
     requester_id: UUID,
@@ -236,7 +236,9 @@ async def apply_taxon_override(
     audit_action: str
     audit_detail: dict[str, Any] = {
         "override_id": str(override.id),
-        "taxon_id": taxon_id,
+        # ``taxon_id`` is a ``taxa.id`` UUID since migration 0034; the audit
+        # detail is JSON-serialised, so stringify explicitly.
+        "taxon_id": str(taxon_id),
         "direction": direction.value,
         "sensitivity_h3_res": sensitivity_h3_res,
     }
@@ -344,13 +346,13 @@ async def approve_taxon_override(
     audit_actor = actor_user_id if actor_user_id is not None else approver_superuser_id
     project_detail: dict[str, Any] = {
         "override_id": str(override.id),
-        "taxon_id": override.taxon_id,
+        "taxon_id": str(override.taxon_id),
         "sensitivity_h3_res": override.sensitivity_h3_res,
     }
     platform_detail: dict[str, Any] = {
         "project_id": str(override.project_id),
         "override_id": str(override.id),
-        "taxon_id": override.taxon_id,
+        "taxon_id": str(override.taxon_id),
         "sensitivity_h3_res": override.sensitivity_h3_res,
     }
     return TaxonOverrideDecisionOutcome(
@@ -430,14 +432,14 @@ async def reject_taxon_override(
     audit_actor = actor_user_id if actor_user_id is not None else approver_superuser_id
     project_detail: dict[str, Any] = {
         "override_id": str(override.id),
-        "taxon_id": override.taxon_id,
+        "taxon_id": str(override.taxon_id),
         "sensitivity_h3_res": override.sensitivity_h3_res,
         "rejected_reason": rejected_reason,
     }
     platform_detail: dict[str, Any] = {
         "project_id": str(override.project_id),
         "override_id": str(override.id),
-        "taxon_id": override.taxon_id,
+        "taxon_id": str(override.taxon_id),
         "sensitivity_h3_res": override.sensitivity_h3_res,
         "rejected_reason": rejected_reason,
     }
@@ -599,7 +601,7 @@ async def _create_approval_request(
     *,
     project_id: UUID,
     override_id: UUID,
-    taxon_id: str,
+    taxon_id: UUID,
     sensitivity_h3_res: int,
     requester_id: UUID,
     now: datetime,
@@ -641,7 +643,7 @@ async def _create_approval_request(
         {
             "project_id": str(project_id),
             "override_id": str(override_id),
-            "taxon_id": taxon_id,
+            "taxon_id": str(taxon_id),
             "sensitivity_h3_res": sensitivity_h3_res,
         },
         sort_keys=True,

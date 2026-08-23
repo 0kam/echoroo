@@ -6,7 +6,9 @@ obscure pipeline. The pure decision function
 two dicts returned here:
 
 * ``sensitivity_map`` — ``{taxon_id: effective sensitivity_h3_res}`` derived
-  from the global :class:`TaxonSensitivity` rows. When more than one source
+  from the global :class:`TaxonSensitivity` rows. ``taxon_id`` is the local
+  ``taxa.id`` UUID throughout (migration 0034) — the same value the reader
+  reads off ``tags.taxon_id``. When more than one source
   (``manual`` / ``moe_rdb`` / ``iucn``) emits an opinion for the same taxon
   we collapse to a single integer per spec L313-365 by taking the
   **strictest** (numerically lowest) recommendation. The source-priority
@@ -30,7 +32,9 @@ This module also exposes helpers used by the IUCN / MoE workers and CLI:
 
 * :func:`upsert_taxon_sensitivity` — single-row UPSERT for the
   ``(taxon_id, source)`` pair, used by :mod:`echoroo.workers.iucn_sync`
-  and :mod:`echoroo.scripts.seed_moe_rdb`.
+  and :mod:`echoroo.scripts.seed_moe_rdb`. Both writers resolve their
+  upstream scientific names to a ``taxa.id`` first via
+  :func:`echoroo.services.taxon_resolution.resolve_taxon_ids_by_scientific_name`.
 * :func:`is_iucn_fail_safe_active` — Redis-backed flag set by the IUCN
   worker when 2 weeks of consecutive sync failures elapse (FR-036). When
   active, *unknown* taxa default to ``H3_RES_7`` instead of the standard
@@ -46,6 +50,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -104,10 +109,10 @@ class _RequestCache:
     __slots__ = ("sensitivity", "overrides")
 
     def __init__(self) -> None:
-        # taxon_id -> effective h3 resolution
-        self.sensitivity: dict[str, int] = {}
-        # (project_id, taxon_id) -> applied ProjectTaxonSensitivityOverride
-        self.overrides: dict[tuple[UUID, str], ProjectTaxonSensitivityOverride] = {}
+        # taxa.id -> effective h3 resolution
+        self.sensitivity: dict[UUID, int] = {}
+        # (project_id, taxa.id) -> applied ProjectTaxonSensitivityOverride
+        self.overrides: dict[tuple[UUID, UUID], ProjectTaxonSensitivityOverride] = {}
 
 
 _REQUEST_CACHE: contextvars.ContextVar[_RequestCache | None] = contextvars.ContextVar(
@@ -156,10 +161,10 @@ def _ensure_request_cache() -> _RequestCache:
 
 async def bulk_load_sensitivity_map(
     session: AsyncSession,
-    taxon_ids: set[str],
+    taxon_ids: set[UUID],
     *,
     iucn_fail_safe_active: bool = False,
-) -> dict[str, int]:
+) -> dict[UUID, int]:
     """Return ``{taxon_id: effective sensitivity_h3_res}`` for the given IDs.
 
     Behaviour:
@@ -181,7 +186,7 @@ async def bulk_load_sensitivity_map(
 
     Args:
         session: Active SQLAlchemy AsyncSession.
-        taxon_ids: De-duplicated set of GBIF species keys.
+        taxon_ids: De-duplicated set of local ``taxa.id`` UUIDs.
         iucn_fail_safe_active: Result of :func:`is_iucn_fail_safe_active`.
             Pass-through so callers can inspect it once per request.
 
@@ -209,7 +214,7 @@ async def bulk_load_sensitivity_map(
         result = await session.execute(stmt)
 
         # Collapse multi-source rows to the strictest h3 resolution.
-        per_taxon: dict[str, int] = {}
+        per_taxon: dict[UUID, int] = {}
         for tid, _source, h3_res in result.all():
             current = per_taxon.get(tid)
             if current is None or h3_res < current:
@@ -235,8 +240,8 @@ async def bulk_load_sensitivity_map(
 async def bulk_load_override_map(
     session: AsyncSession,
     project_id: UUID,
-    taxon_ids: set[str],
-) -> dict[tuple[UUID, str], ProjectTaxonSensitivityOverride]:
+    taxon_ids: set[UUID],
+) -> dict[tuple[UUID, UUID], ProjectTaxonSensitivityOverride]:
     """Return ``{(project_id, taxon_id): override}`` for applied overrides.
 
     Issues at most ONE SELECT against ``project_taxon_sensitivity_overrides``
@@ -247,7 +252,7 @@ async def bulk_load_override_map(
     Args:
         session: Active SQLAlchemy AsyncSession.
         project_id: The project whose overrides are being looked up.
-        taxon_ids: De-duplicated set of GBIF species keys.
+        taxon_ids: De-duplicated set of local ``taxa.id`` UUIDs.
 
     Returns:
         Dict keyed by ``(project_id, taxon_id)``. Pairs without an applied
@@ -303,8 +308,8 @@ def compute_effective_resolution(
     resource: Any,
     role: str,
     effective_permissions: Any = frozenset(),
-    taxon_sensitivity_map: dict[str, int] | None = None,
-    override_map: dict[tuple[UUID, str], ProjectTaxonSensitivityOverride] | None = None,
+    taxon_sensitivity_map: Mapping[Any, int] | None = None,
+    override_map: Mapping[tuple[Any, Any], Any] | None = None,
 ) -> int:
     """Service-layer wrapper around :func:`echoroo.core.permissions.compute_effective_resolution`.
 
@@ -338,13 +343,17 @@ def compute_effective_resolution(
 async def upsert_taxon_sensitivity(
     session: AsyncSession,
     *,
-    taxon_id: str,
+    taxon_id: UUID,
     source: TaxonSensitivitySource,
     sensitivity_h3_res: int,
     category: str | None = None,
     notes: str | None = None,
 ) -> tuple[bool, int | None]:
     """Insert-or-update a single ``(taxon_id, source)`` row.
+
+    ``taxon_id`` is a local ``taxa.id`` UUID (migration 0034); the FK to
+    ``taxa`` means callers MUST resolve their upstream key first — see
+    :func:`echoroo.services.taxon_resolution.resolve_taxon_ids_by_scientific_name`.
 
     Returns ``(loosened, previous_h3_res)`` so the caller can implement
     the FR-036 sanity check ("abort sync if more than 10 % of rows would
