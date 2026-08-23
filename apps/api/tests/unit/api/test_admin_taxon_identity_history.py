@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ _HISTORY_PATH = "/web-api/v1/admin/taxon/{taxon_id}/identity-history"
 _RELATIONS_PATH = "/web-api/v1/admin/taxon/concept-relations"
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def admin_superuser(db_session: AsyncSession) -> User:
     """Create a superuser (users row + active superusers entitlement)."""
     user = User(
@@ -61,14 +62,14 @@ async def admin_superuser(db_session: AsyncSession) -> User:
     return user
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def superuser_headers(
     client: AsyncClient, db_session: AsyncSession, admin_superuser: User
 ) -> dict[str, str]:
     return await bff_session_headers(client, db_session, admin_superuser)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def regular_user_headers(
     client: AsyncClient, db_session: AsyncSession
 ) -> dict[str, str]:
