@@ -54,6 +54,7 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.actions import (
     ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+    PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
     PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
@@ -81,6 +82,8 @@ from echoroo.models.enums import ProjectStatus, UploadSessionStatus
 from echoroo.models.project import ProjectMember
 from echoroo.models.superuser import Superuser
 from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
+from echoroo.models.taxon_concept_relation import TaxonConceptRelation
+from echoroo.models.taxon_identity_history import TaxonIdentityHistory
 from echoroo.models.upload import UploadSession
 from echoroo.models.user import User
 from echoroo.repositories.upload import UploadSessionRepository
@@ -107,6 +110,10 @@ from echoroo.schemas.admin import (
     SuperuserRejectRequest,
     SuperuserSummary,
     TaskDispatchResponse,
+    TaxonConceptRelationEntry,
+    TaxonConceptRelationListResponse,
+    TaxonIdentityHistoryEntry,
+    TaxonIdentityHistoryListResponse,
     TaxonOverrideRejectRequest,
     TaxonOverrideResponse,
     TaxonResolveCOLXRRequest,
@@ -1249,6 +1256,194 @@ async def resolve_taxon_col_xr(
     return TaskDispatchResponse(
         task_id=async_result.id,
         enqueued_at=enqueued_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/taxon/concept-relations
+# GET /admin/taxon/{taxon_id}/identity-history  (WS-A v2 slice 5)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/taxon/concept-relations",
+    response_model=TaxonConceptRelationListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List taxon concept relations (Superuser)",
+    description=(
+        "Return the directed 'where did this concept go' edges derived from "
+        "the Catalogue of Life XR resolution, newest first. A ``synonym_of`` "
+        "edge is seeded automatically whenever a taxon resolves with "
+        "``col_xr_status='SYNONYM'``; its target is keyed by the COL usage "
+        "key (``to_col_xr_id``) because the accepted usage is usually NOT a "
+        "local taxon — ``to_taxon_id`` stays null until that concept is added "
+        "locally. Pass ``unresolved_target=true`` to list exactly those "
+        "dangling edges. Platform-scope (no project_id); writes no audit row "
+        "(read-only)."
+    ),
+)
+async def list_taxon_concept_relations(
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    relation: str | None = Query(
+        None,
+        max_length=32,
+        description=(
+            "Filter by relation kind (``synonym_of`` / ``lumped_into`` / "
+            "``split_into`` / ``renamed_to``)."
+        ),
+    ),
+    from_taxon_id: UUID | None = Query(
+        None, description="Only edges starting at this local taxon."
+    ),
+    release: str | None = Query(
+        None, max_length=32, description="Only edges derived from this COL release."
+    ),
+    unresolved_target: bool | None = Query(
+        None,
+        description=(
+            "``true`` returns only edges whose target is not a local taxon "
+            "(``to_taxon_id IS NULL``); ``false`` returns only resolved ones."
+        ),
+    ),
+    limit: int = Query(100, ge=1, le=500, description="Page size"),
+    offset: int = Query(0, ge=0, description="Rows to skip"),
+) -> TaxonConceptRelationListResponse:
+    """List taxon concept relations for the admin identity surface."""
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row. Read-only, so — like
+    # ``GET /admin/uploads/stuck`` — no ``platform_audit_log`` entry is written.
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Taxon identity provenance is restricted to superusers",
+        )
+
+    stmt = sa.select(TaxonConceptRelation)
+    if relation is not None:
+        stmt = stmt.where(TaxonConceptRelation.relation == relation)
+    if from_taxon_id is not None:
+        stmt = stmt.where(TaxonConceptRelation.from_taxon_id == from_taxon_id)
+    if release is not None:
+        stmt = stmt.where(TaxonConceptRelation.release == release)
+    if unresolved_target is True:
+        stmt = stmt.where(TaxonConceptRelation.to_taxon_id.is_(None))
+    elif unresolved_target is False:
+        stmt = stmt.where(TaxonConceptRelation.to_taxon_id.isnot(None))
+
+    # ``id`` breaks ties so pagination is stable across the bulk-seeded rows,
+    # which all share a ``created_at`` down to the transaction timestamp.
+    stmt = (
+        stmt.order_by(
+            TaxonConceptRelation.created_at.desc(), TaxonConceptRelation.id.desc()
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return TaxonConceptRelationListResponse(
+        items=[TaxonConceptRelationEntry.model_validate(row) for row in rows]
+    )
+
+
+@router.get(
+    "/taxon/{taxon_id}/identity-history",
+    response_model=TaxonIdentityHistoryListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List identity changes for one taxon (Superuser)",
+    description=(
+        "Return the append-only journal of identity-field rewrites for one "
+        "taxon, newest first: which column changed, from what to what, which "
+        "resolver did it, which external release it was pinned to, and who "
+        "or what triggered it.\n\n"
+        "Only IDENTITY fields are journalled (COL usage / accepted keys and "
+        "status, the accepted scientific name, both authorships, the GBIF "
+        "key, the COL release pin). Vernacular (display-name) changes are NOT "
+        "identity changes and never appear here — they are re-derivable from "
+        "the bundled and authority loaders.\n\n"
+        "An unknown taxon id simply yields an empty page. Platform-scope (no "
+        "project_id); writes no audit row (read-only)."
+    ),
+)
+async def list_taxon_identity_history(
+    taxon_id: UUID,
+    request: Request,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+    field: str | None = Query(
+        None,
+        max_length=64,
+        description="Only changes to this identity column (e.g. ``col_xr_status``).",
+    ),
+    source: str | None = Query(
+        None,
+        max_length=32,
+        description="Only changes from this source (``col_xr`` / ``gbif`` / ...).",
+    ),
+    since: datetime | None = Query(
+        None, description="Only changes applied at or after this UTC timestamp."
+    ),
+    limit: int = Query(100, ge=1, le=500, description="Page size"),
+    offset: int = Query(0, ge=0, description="Rows to skip"),
+) -> TaxonIdentityHistoryListResponse:
+    """List the identity-change journal of one taxon."""
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row. Read-only, so — like
+    # ``GET /admin/uploads/stuck`` — no ``platform_audit_log`` entry is written.
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Taxon identity provenance is restricted to superusers",
+        )
+
+    stmt = sa.select(TaxonIdentityHistory).where(
+        TaxonIdentityHistory.taxon_id == taxon_id
+    )
+    if field is not None:
+        stmt = stmt.where(TaxonIdentityHistory.field == field)
+    if source is not None:
+        stmt = stmt.where(TaxonIdentityHistory.source == source)
+    if since is not None:
+        # ``changed_at`` is timezone-aware; a naive bound would be interpreted
+        # in the server's zone and silently shift the window per client.
+        if since.tzinfo is None or since.utcoffset() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="since must be a timezone-aware ISO-8601 timestamp",
+            )
+        stmt = stmt.where(TaxonIdentityHistory.changed_at >= since)
+
+    # One resolver pass stamps every field it rewrote with the SAME
+    # ``changed_at``, so ``id`` breaks the tie and keeps pagination stable.
+    stmt = (
+        stmt.order_by(
+            TaxonIdentityHistory.changed_at.desc(), TaxonIdentityHistory.id.desc()
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    return TaxonIdentityHistoryListResponse(
+        items=[TaxonIdentityHistoryEntry.model_validate(row) for row in rows]
     )
 
 

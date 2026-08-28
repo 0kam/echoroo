@@ -798,6 +798,32 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         taxa_col_xr_col_exists = bool(taxa_col_xr_col_exists_result.scalar())
 
+        # WS-A v2 slice 5 (Alembic 0036): probe the two identity tables. Both
+        # HAVE ORM models, so ``Base.metadata.create_all`` below creates them
+        # for free — but only if we do not take the "schema is current" early
+        # return first. Without these probes a long-lived reused test DB that
+        # pre-dates 0036 would be declared up to date and every test touching
+        # the journal would fail with UndefinedTable.
+        taxon_identity_history_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'taxon_identity_history')"
+            )
+        )
+        taxon_identity_history_exists = bool(
+            taxon_identity_history_exists_result.scalar()
+        )
+
+        taxon_concept_relations_exists_result = await conn.execute(
+            sa.text(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables"
+                " WHERE table_name = 'taxon_concept_relations')"
+            )
+        )
+        taxon_concept_relations_exists = bool(
+            taxon_concept_relations_exists_result.scalar()
+        )
+
         # W1-4 (Alembic 0032): probe the new ``detection_runs.run_type`` column.
         # ``Base.metadata.create_all`` never alters an existing table, so a
         # long-lived reused test DB predating this column would otherwise be
@@ -1145,6 +1171,8 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and token_families_exists
         and taxa_reconciliation_col_exists
         and taxa_col_xr_col_exists
+        and taxon_identity_history_exists
+        and taxon_concept_relations_exists
         and detection_run_type_col_exists
     )
     if non_license_schema_current and not license_schema_current:
@@ -1857,6 +1885,11 @@ async def cleanup_test_data(session: AsyncSession) -> None:
     await session.execute(sa.text(_safe_delete("taxon_sensitivities")))
     # Taxon tables
     await session.execute(sa.text(_safe_delete("taxon_vernacular_names")))
+    # WS-A v2 slice 5: the identity journal and the concept edges FK ``taxa``
+    # with ondelete=RESTRICT (deliberately — provenance must not vanish with a
+    # silent cascade), so they MUST be purged before ``DELETE FROM taxa``.
+    await session.execute(sa.text(_safe_delete("taxon_identity_history")))
+    await session.execute(sa.text(_safe_delete("taxon_concept_relations")))
     await session.execute(sa.text(_safe_delete("taxa")))
     # Phase 12 R1: outbox events (idempotency dedupe + worker queue).
     await session.execute(sa.text(_safe_delete("outbox_events")))

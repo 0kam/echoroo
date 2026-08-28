@@ -71,6 +71,8 @@ from echoroo.models.superuser_approval_request import SuperuserApprovalRequest
 from echoroo.models.system import SystemSetting
 from echoroo.models.tag import Tag
 from echoroo.models.taxon import Taxon
+from echoroo.models.taxon_concept_relation import TaxonConceptRelation
+from echoroo.models.taxon_identity_history import TaxonIdentityHistory
 from echoroo.models.taxon_sensitivity import TaxonSensitivity
 from echoroo.models.taxon_vernacular_name import TaxonVernacularName
 from echoroo.models.trusted_device import TrustedDevice
@@ -121,6 +123,8 @@ __all__ = [
     "TimeRangeAnnotation",
     # Taxon models
     "Taxon",
+    "TaxonConceptRelation",
+    "TaxonIdentityHistory",
     "TaxonSensitivity",
     "TaxonVernacularName",
     # Taxon-driven auto-obscure (Phase 11)

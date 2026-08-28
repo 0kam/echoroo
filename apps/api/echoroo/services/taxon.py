@@ -30,6 +30,14 @@ from echoroo.services.col_xr import (
     decide_match,
 )
 from echoroo.services.gbif import GBIFService
+from echoroo.services.taxon_identity import (
+    SOURCE_COL_XR,
+    SOURCE_GBIF,
+    record_identity_change,
+    record_identity_changes,
+    resolve_actor_kind,
+    seed_concept_relations,
+)
 from echoroo.services.vernacular import resolve_vernacular_names
 
 if TYPE_CHECKING:
@@ -241,6 +249,7 @@ class TaxonService:
         common_name: str | None = None,
         locale: str = "en",
         vernacular_names: list[dict[str, str | None]] | None = None,
+        actor_user_id: UUID | None = None,
     ) -> TaxonSearchResult:
         """Materialise a GBIF search pick into a local taxon (idempotent).
 
@@ -269,6 +278,12 @@ class TaxonService:
         The returned shape mirrors :meth:`search` (``TaxonSearchResult``) so
         the frontend can reuse the same type, including a locale-resolved
         ``common_name`` (requested locale → English fallback).
+
+        Identity journal (WS-A v2 slice 5): assigning ``gbif_taxon_key`` to a
+        taxon that had none is an identity change, so it is recorded in
+        ``taxon_identity_history``. ``actor_user_id`` is the request user when
+        the caller is an API route (the change is then attributed to the human,
+        ``actor_kind='user'``); omitted it degrades to ``actor_kind='system'``.
         """
         # Decouple the legacy/en ``common_name`` seed from the client's
         # locale-resolved display value so a non-English name (e.g. a ja 和名)
@@ -291,6 +306,11 @@ class TaxonService:
         # already owns this key, and defensively catch a concurrent insert
         # that races past the pre-check.
         if gbif_taxon_key is not None and taxon.gbif_taxon_key is None:
+            # Captured BEFORE the savepoint: the assignment below is flushed
+            # inside ``begin_nested``, which clears SQLAlchemy's attribute
+            # history, so the journal compares the pre/post values explicitly
+            # instead of reading that history (see ``record_identity_change``).
+            previous_gbif_taxon_key = taxon.gbif_taxon_key
             owner = await self.taxon_repo.get_by_gbif_taxon_key(gbif_taxon_key)
             if owner is None or owner.id == taxon.id:
                 try:
@@ -314,6 +334,23 @@ class TaxonService:
                     # avoids a synchronous lazy-load (MissingGreenlet) when the
                     # response is built below.
                     await self.taxon_repo.db.refresh(taxon)
+
+            # Journal the POST-savepoint value: a lost race rolled the
+            # assignment back, so nothing changed and nothing is recorded.
+            record_identity_change(
+                self.taxon_repo.db,
+                taxon,
+                field="gbif_taxon_key",
+                old_value=previous_gbif_taxon_key,
+                new_value=taxon.gbif_taxon_key,
+                source=SOURCE_GBIF,
+                resolver="create_from_gbif",
+                actor_kind=resolve_actor_kind(
+                    actor_user_id=actor_user_id, actor_task_id=None
+                ),
+                actor_user_id=actor_user_id,
+                detail={"scientific_name": scientific_name},
+            )
 
         # Persist any language-tagged vernacular names with their real locale
         # (idempotent). This is how a non-English 和名 resolved during the live
@@ -380,7 +417,9 @@ class TaxonService:
         except Exception:  # noqa: BLE001 — backfill is best-effort
             logger.debug("Failed to enqueue ja vernacular fetch", exc_info=True)
 
-    async def resolve_gbif_batch(self, limit: int = 100) -> GBIFBatchResolveResult:
+    async def resolve_gbif_batch(
+        self, limit: int = 100, *, task_id: str | None = None
+    ) -> GBIFBatchResolveResult:
         """Resolve GBIF data for unresolved taxa.
 
         Returns a :class:`GBIFBatchResolveResult` carrying both the number of
@@ -401,7 +440,14 @@ class TaxonService:
         upstream outage rather than a per-taxon miss: it is counted in
         ``errored`` and, once ``_GBIF_OUTAGE_THRESHOLD`` such failures occur
         back-to-back, the batch re-raises so the Celery task ends in FAILURE.
+
+        Identity journal (WS-A v2 slice 5): a GBIF hit that assigns or rewrites
+        ``gbif_taxon_key`` is recorded in ``taxon_identity_history`` on the same
+        session, so the journal row is committed with the value that produced
+        it. Pass ``task_id`` to attribute the change to a Celery task
+        (``actor_kind='task'``); without one it is recorded as ``system``.
         """
+        actor_kind = resolve_actor_kind(actor_user_id=None, actor_task_id=task_id)
         unresolved = await self.taxon_repo.get_unresolved(limit=limit)
         if not unresolved:
             return GBIFBatchResolveResult(resolved=0)
@@ -418,6 +464,17 @@ class TaxonService:
             taxon.rank = result.rank
             taxon.gbif_metadata = result.metadata
             taxon.gbif_resolved_at = datetime.now(UTC)
+            # BEFORE the flush: ``TaxonRepository.update`` is a bare flush and
+            # a flush clears the per-attribute history the journal reads.
+            record_identity_changes(
+                self.taxon_repo.db,
+                taxon,
+                source=SOURCE_GBIF,
+                resolver="resolve_gbif_batch",
+                actor_kind=actor_kind,
+                actor_task_id=task_id,
+                detail={"rank": result.rank},
+            )
             await self.taxon_repo.update(taxon)
             return True
 
@@ -469,6 +526,7 @@ async def resolve_col_xr_batch(
     batch_size: int = COL_XR_DEFAULT_BATCH_SIZE,
     force: bool = False,
     service: COLXRService | None = None,
+    task_id: str | None = None,
 ) -> dict[str, object]:
     """Resolve a batch of taxa against the Catalogue of Life XR checklist.
 
@@ -501,6 +559,19 @@ async def resolve_col_xr_batch(
     (Celery time limit, OOM, redeploy) loses at most one chunk and the next
     dispatch picks up where this one stopped.
 
+    Identity journal + concept relations (WS-A v2 slice 5)
+    ------------------------------------------------------
+    Every identity field this pass rewrites is journalled into
+    ``taxon_identity_history`` on the SAME session, so a chunk commit banks the
+    new identity together with the record of what it replaced — and an
+    identical re-resolution (the common case for a forced pass over an
+    already-current catalogue) writes nothing at all.
+
+    At each chunk boundary the ``synonym_of`` edges implied by the freshly
+    resolved rows are seeded into ``taxon_concept_relations`` (idempotently,
+    ``ON CONFLICT DO NOTHING``), so "where did this concept go" survives the
+    overwrite of ``col_xr_accepted_id``.
+
     Args:
         db: Session to read and write ``taxa`` on. Chunk commits happen on it;
             the caller still commits the trailing partial chunk.
@@ -509,6 +580,9 @@ async def resolve_col_xr_batch(
             time limit (~0.35s/taxon).
         force: Re-resolve taxa not yet stamped with the current release pin.
         service: Injectable :class:`COLXRService` (tests pass a stub).
+        task_id: Celery task id of the dispatch, recorded as the actor on every
+            identity-history row this pass writes. Omitted (a direct service
+            call) the changes are attributed to ``system``.
 
     Returns:
         ``{processed, accepted, review, rejected, unavailable, release,
@@ -542,6 +616,11 @@ async def resolve_col_xr_batch(
     }
     consecutive_errors = 0
     uncommitted = 0
+    # Taxa resolved since the last concept-relation seed. Seeding is scoped to
+    # them (rather than rescanning the catalogue) so a chunk boundary stays
+    # cheap on a full ~6,500-row pass.
+    pending_relation_ids: list[UUID] = []
+    actor_kind = resolve_actor_kind(actor_user_id=None, actor_task_id=task_id)
 
     try:
         # Read the release pin BEFORE any row is written, and refuse to
@@ -587,6 +666,8 @@ async def resolve_col_xr_batch(
                         consecutive_errors,
                     )
                     if uncommitted:
+                        await seed_concept_relations(db, pending_relation_ids)
+                        pending_relation_ids.clear()
                         await db.commit()
                     raise
                 continue
@@ -594,18 +675,43 @@ async def resolve_col_xr_batch(
             consecutive_errors = 0
             decision = decide_match(col_match)
             _apply_col_xr_match(taxon, col_match, decision, index)
+            # BETWEEN the field mapper and the flush: ``repo.update`` is a bare
+            # ``flush()``, and a flush clears the per-attribute history the
+            # journal reads. ``_apply_col_xr_match`` stays a pure field mapper.
+            record_identity_changes(
+                db,
+                taxon,
+                source=SOURCE_COL_XR,
+                resolver="resolve_col_xr_batch",
+                release=index.alias,
+                actor_kind=actor_kind,
+                actor_task_id=task_id,
+                detail={
+                    "decision": decision,
+                    "match_type": taxon.col_xr_match_type,
+                    "clb_dataset_key": index.clb_dataset_key,
+                },
+            )
             await repo.update(taxon)
 
             counts["processed"] += 1
             counts[_COL_XR_DECISION_COUNTER[decision]] += 1
             uncommitted += 1
+            pending_relation_ids.append(taxon.id)
 
             # Durable progress: a kill after this point loses at most the rows
             # since the last chunk boundary.
             if uncommitted >= _COL_XR_COMMIT_CHUNK:
+                await seed_concept_relations(db, pending_relation_ids)
+                pending_relation_ids.clear()
                 await db.commit()
                 uncommitted = 0
                 logger.info("COL XR progress: %d/%d %s", position, total, counts)
+        # Trailing partial chunk: seed its edges too, but leave the commit to
+        # the caller (who owns the transaction boundary for the last rows).
+        if pending_relation_ids:
+            await seed_concept_relations(db, pending_relation_ids)
+            pending_relation_ids.clear()
     finally:
         if owns_service:
             await col_service.aclose()

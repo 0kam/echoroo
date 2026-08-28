@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from echoroo.workers.celery_app import app
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
@@ -72,8 +73,15 @@ async def _run_load_bundled_vernacular_names() -> dict[str, object]:
         await engine.dispose()
 
 
-async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
-    """Async implementation of GBIF batch resolution."""
+async def _run_resolve_gbif_batch(
+    batch_size: int, task_id: str | None = None
+) -> dict[str, object]:
+    """Async implementation of GBIF batch resolution.
+
+    ``task_id`` is the dispatching Celery task id; it is threaded down to the
+    service so identity-history rows written by this run carry
+    ``actor_kind="task"`` instead of the unattributed ``system`` fallback.
+    """
     from echoroo.repositories.taxon import TaxonRepository
     from echoroo.services.taxon import TaxonService
 
@@ -82,7 +90,9 @@ async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
         async with session_factory() as db:
             repo = TaxonRepository(db)
             service = TaxonService(taxon_repo=repo)
-            batch_result = await service.resolve_gbif_batch(limit=batch_size)
+            batch_result = await service.resolve_gbif_batch(
+                limit=batch_size, task_id=task_id
+            )
             await db.commit()
         return {
             "status": "completed",
@@ -94,16 +104,21 @@ async def _run_resolve_gbif_batch(batch_size: int) -> dict[str, object]:
 
 
 async def _run_resolve_col_xr_batch(
-    batch_size: int, force: bool
+    batch_size: int, force: bool, task_id: str | None = None
 ) -> dict[str, object]:
-    """Async implementation of Catalogue of Life XR identity resolution."""
+    """Async implementation of Catalogue of Life XR identity resolution.
+
+    ``task_id`` is the dispatching Celery task id; it is threaded down to the
+    service so every ``taxon_identity_history`` row this pass writes is
+    attributable to the run that wrote it (WS-A v2 slice 5).
+    """
     from echoroo.services.taxon import resolve_col_xr_batch
 
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             result = await resolve_col_xr_batch(
-                db, batch_size=batch_size, force=force
+                db, batch_size=batch_size, force=force, task_id=task_id
             )
             await db.commit()
         return {"status": "completed", **result}
@@ -495,15 +510,20 @@ def load_bundled_vernacular_names() -> dict[str, object]:
 
 @app.task(  # type: ignore[untyped-decorator]
     name="echoroo.workers.taxon_tasks.resolve_gbif_batch",
+    bind=True,
     time_limit=600,      # 10 min hard limit
     soft_time_limit=570,  # 9.5 min soft limit
 )
-def resolve_gbif_batch(batch_size: int = 100) -> dict[str, object]:
+def resolve_gbif_batch(self: Any, batch_size: int = 100) -> dict[str, object]:
     """Resolve GBIF data for unresolved taxa.
 
     Fetches GBIF classification metadata (taxon key, rank, kingdom/phylum/
     class/order/family/genus) for up to ``batch_size`` taxa that have not
     yet been resolved.
+
+    Bound task (``bind=True``): the dispatch's own ``self.request.id`` is
+    recorded as the actor of every identity-history row this run writes
+    (``gbif_taxon_key`` changes), mirroring ``resolve_col_xr_batch``.
 
     Args:
         batch_size: Maximum number of taxa to resolve in this invocation.
@@ -511,9 +531,16 @@ def resolve_gbif_batch(batch_size: int = 100) -> dict[str, object]:
     Returns:
         Dict with ``status`` and ``resolved`` (number of taxa resolved).
     """
-    logger.info("Starting GBIF batch resolution task (batch_size=%d)", batch_size)
+    task_id = getattr(self.request, "id", None) if self is not None else None
+    logger.info(
+        "Starting GBIF batch resolution task (batch_size=%d, task_id=%s)",
+        batch_size,
+        task_id,
+    )
     try:
-        result: dict[str, object] = asyncio.run(_run_resolve_gbif_batch(batch_size))
+        result: dict[str, object] = asyncio.run(
+            _run_resolve_gbif_batch(batch_size, task_id)
+        )
         logger.info("GBIF batch resolution complete: %s", result)
         return result
     except Exception as exc:  # noqa: BLE001
@@ -523,11 +550,14 @@ def resolve_gbif_batch(batch_size: int = 100) -> dict[str, object]:
 
 @app.task(  # type: ignore[untyped-decorator]
     name="echoroo.workers.taxon_tasks.resolve_col_xr_batch",
+    bind=True,
     time_limit=900,       # 15 min hard limit
     soft_time_limit=840,  # 14 min soft limit
 )
 def resolve_col_xr_batch(
-    batch_size: int = _COL_XR_DEFAULT_BATCH_SIZE, force: bool = False
+    self: Any,
+    batch_size: int = _COL_XR_DEFAULT_BATCH_SIZE,
+    force: bool = False,
 ) -> dict[str, object]:
     """Resolve taxa against the Catalogue of Life XR checklist.
 
@@ -557,19 +587,29 @@ def resolve_col_xr_batch(
         force: Re-resolve taxa whose release pin differs from the current COL
             release. Use after a release bump to refresh the catalogue.
 
+    Bound task (``bind=True``): the dispatch's own ``self.request.id`` is
+    threaded into the resolver so every identity change it writes carries the
+    task id as its actor (WS-A v2 slice 5). A direct in-process call has no
+    request id, and those changes are recorded as ``system``.
+
+    Args (continued):
+        self: The bound Celery task (supplies ``request.id``).
+
     Returns:
         Dict with ``status`` plus ``processed`` / ``accepted`` / ``review`` /
         ``rejected`` / ``unavailable`` counters and the pinned ``release``.
     """
     effective_batch_size = min(max(batch_size, 1), _COL_XR_MAX_BATCH_SIZE)
+    task_id = getattr(self.request, "id", None) if self is not None else None
     logger.info(
-        "Starting COL XR resolution task (batch_size=%d, force=%s)",
+        "Starting COL XR resolution task (batch_size=%d, force=%s, task_id=%s)",
         effective_batch_size,
         force,
+        task_id,
     )
     try:
         result: dict[str, object] = asyncio.run(
-            _run_resolve_col_xr_batch(effective_batch_size, force)
+            _run_resolve_col_xr_batch(effective_batch_size, force, task_id)
         )
         logger.info("COL XR resolution complete: %s", result)
         return result
