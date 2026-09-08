@@ -35,6 +35,7 @@ from echoroo.services.taxon_identity import (
     SOURCE_GBIF,
     record_identity_change,
     record_identity_changes,
+    relink_concept_relations,
     resolve_actor_kind,
     seed_concept_relations,
 )
@@ -712,6 +713,13 @@ async def resolve_col_xr_batch(
         if pending_relation_ids:
             await seed_concept_relations(db, pending_relation_ids)
             pending_relation_ids.clear()
+
+        # A batch may have materialised taxa that dangling concept edges were
+        # waiting for (e.g. a bulk-imported accepted species): fill their
+        # to_taxon_id now. Idempotent, one UPDATE, rides the caller's commit.
+        relinked = await relink_concept_relations(db)
+        if relinked:
+            logger.info("COL XR batch relinked %d concept relation(s)", relinked)
     finally:
         if owns_service:
             await col_service.aclose()
@@ -719,6 +727,7 @@ async def resolve_col_xr_batch(
     logger.info("COL XR batch complete (release=%s): %s", index.alias, counts)
     return {
         **counts,
+        "relinked_relations": relinked,
         "release": index.alias,
         "clb_dataset_key": index.clb_dataset_key,
     }

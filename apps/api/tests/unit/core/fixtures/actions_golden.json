@@ -473,6 +473,12 @@
     "is_superuser_only": true,
     "required_permission": null
   },
+  "platform.taxon.bulk_import": {
+    "is_mutating": true,
+    "is_platform_scope": true,
+    "is_superuser_only": true,
+    "required_permission": null
+  },
   "platform.taxon.identity_history.read": {
     "is_mutating": false,
     "is_platform_scope": true,

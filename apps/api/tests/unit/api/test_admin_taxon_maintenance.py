@@ -2,8 +2,9 @@
 
 Covers ``POST /web-api/v1/admin/taxon/seed-birdnet``,
 ``POST /web-api/v1/admin/taxon/sync-vernacular``,
-``POST /web-api/v1/admin/taxon/load-bundled-vernacular`` and
-``POST /web-api/v1/admin/taxon/resolve-col-xr`` (admin maintenance surface).
+``POST /web-api/v1/admin/taxon/load-bundled-vernacular``,
+``POST /web-api/v1/admin/taxon/resolve-col-xr`` and
+``POST /web-api/v1/admin/taxon/bulk-import`` (admin maintenance surface).
 
 These mirror the IUCN force-resync endpoint's testing strategy: the handlers
 are invoked directly with mocked dependencies so neither the database, the
@@ -33,9 +34,12 @@ from pydantic import ValidationError
 
 from echoroo.api.web_v1 import admin as mod
 from echoroo.schemas.admin import (
+    TaxonBulkImportEntryRequest,
+    TaxonBulkImportRequest,
     TaxonResolveCOLXRRequest,
     TaxonSyncVernacularRequest,
 )
+from echoroo.services.taxon_bulk_import import BulkImportRejection, BulkImportResult
 
 
 class _AsyncSessionContext:
@@ -438,3 +442,264 @@ def test_resolve_col_xr_batch_size_capped_at_the_task_time_limit() -> None:
     assert TaxonResolveCOLXRRequest(batch_size=2000).batch_size == 2000
     with pytest.raises(ValidationError):
         TaxonResolveCOLXRRequest(batch_size=2001)
+
+
+# ---------------------------------------------------------------------------
+# bulk-import (WS-A v2 slice 6)
+# ---------------------------------------------------------------------------
+#
+# Unlike its siblings this endpoint is SYNCHRONOUS: the import runs in the
+# request transaction and the counts are returned inline. Only the two
+# follow-up dispatches are fire-and-forget, so the tests assert on both the
+# returned counts and on whether the tasks were queued.
+
+
+def _patch_bulk_import_service(
+    monkeypatch: pytest.MonkeyPatch, result: BulkImportResult
+) -> AsyncMock:
+    service = AsyncMock(return_value=result)
+    monkeypatch.setattr(mod, "run_bulk_import_taxa", service)
+    return service
+
+
+def _patch_follow_up_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[MagicMock, MagicMock]:
+    resolve = MagicMock()
+    resolve.delay = MagicMock(return_value=SimpleNamespace(id="task-import-colxr"))
+    load = MagicMock()
+    load.delay = MagicMock(return_value=SimpleNamespace(id="task-import-bundle"))
+    monkeypatch.setattr(
+        "echoroo.workers.taxon_tasks.resolve_col_xr_batch", resolve, raising=False
+    )
+    monkeypatch.setattr(
+        "echoroo.workers.taxon_tasks.load_bundled_vernacular_names",
+        load,
+        raising=False,
+    )
+    return resolve, load
+
+
+def _bulk_payload(resolve: bool = True) -> TaxonBulkImportRequest:
+    return TaxonBulkImportRequest(
+        entries=[
+            TaxonBulkImportEntryRequest(
+                scientific_name="Cervus nippon", vernacular_name="ニホンジカ"
+            ),
+            TaxonBulkImportEntryRequest(scientific_name="Hyla japonica"),
+        ],
+        resolve=resolve,
+    )
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_superuser_returns_counts_and_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    audit_service = _patch_audit(monkeypatch)
+    service = _patch_bulk_import_service(
+        monkeypatch,
+        BulkImportResult(
+            created=2,
+            existing=1,
+            vernacular_upserts=1,
+            vernacular_unchanged=3,
+            rejected=(BulkImportRejection("Dup name", "duplicate in payload"),),
+        ),
+    )
+    resolve_task, load_task = _patch_follow_up_tasks(monkeypatch)
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    out = await mod.bulk_import_taxa(
+        request=_request(),
+        payload=_bulk_payload(),
+        current_user=_superuser(),
+        db=db,
+    )
+
+    assert (out.created, out.existing) == (2, 1)
+    assert out.vernacular_upserts == 1
+    assert out.vernacular_unchanged == 3
+    assert [(r.scientific_name, r.reason) for r in out.rejected] == [
+        ("Dup name", "duplicate in payload")
+    ]
+    assert out.resolve_task_id == "task-import-colxr"
+    assert out.vernacular_task_id == "task-import-bundle"
+
+    # The import ran with the payload's entries, and the transaction committed
+    # BEFORE the workers were told to look at the rows.
+    service.assert_awaited_once()
+    imported = service.await_args.args[1]
+    assert [entry.scientific_name for entry in imported] == [
+        "Cervus nippon",
+        "Hyla japonica",
+    ]
+    db.commit.assert_awaited_once()
+    resolve_task.delay.assert_called_once_with()
+    load_task.delay.assert_called_once_with()
+
+    audit_service.write_platform_event.assert_awaited_once()
+    audit_kwargs = audit_service.write_platform_event.await_args.kwargs
+    assert audit_kwargs["action"] == "platform.taxon.bulk_import"
+    assert audit_kwargs["detail"]["requested"] == 2
+    assert audit_kwargs["detail"]["created"] == 2
+    assert audit_kwargs["detail"]["rejected"] == 1
+    assert audit_kwargs["detail"]["resolve"] is True
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_without_resolve_skips_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    _patch_audit(monkeypatch)
+    _patch_bulk_import_service(monkeypatch, BulkImportResult(created=2))
+    resolve_task, load_task = _patch_follow_up_tasks(monkeypatch)
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    out = await mod.bulk_import_taxa(
+        request=_request(),
+        payload=_bulk_payload(resolve=False),
+        current_user=_superuser(),
+        db=db,
+    )
+
+    assert out.created == 2
+    assert out.resolve_task_id is None
+    assert out.vernacular_task_id is None
+    resolve_task.delay.assert_not_called()
+    load_task.delay.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_non_superuser_forbidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=False)
+    service = _patch_bulk_import_service(monkeypatch, BulkImportResult())
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await mod.bulk_import_taxa(
+            request=_request(),
+            payload=_bulk_payload(),
+            current_user=_superuser(),
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 403
+    # Nothing was written before the gate rejected the caller.
+    service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_audit_failure_is_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    _patch_audit(monkeypatch, fail=True)
+    _patch_bulk_import_service(monkeypatch, BulkImportResult(created=1))
+    _patch_follow_up_tasks(monkeypatch)
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    # Must not raise even though the audit write blows up — the import already
+    # committed, so failing the response would misreport a successful write.
+    out = await mod.bulk_import_taxa(
+        request=_request(),
+        payload=_bulk_payload(),
+        current_user=_superuser(),
+        db=db,
+    )
+    assert out.created == 1
+    assert out.resolve_task_id == "task-import-colxr"
+
+
+def test_bulk_import_request_defaults_and_bounds() -> None:
+    payload = TaxonBulkImportRequest(
+        entries=[TaxonBulkImportEntryRequest(scientific_name="Cervus nippon")]
+    )
+    assert payload.resolve is True
+    entry = payload.entries[0]
+    assert entry.vernacular_name is None
+    assert entry.locale is None
+    assert entry.rank is None
+
+    # An empty list carries no intent; 500 is the transactional ceiling.
+    with pytest.raises(ValidationError):
+        TaxonBulkImportRequest(entries=[])
+    many = [
+        TaxonBulkImportEntryRequest(scientific_name=f"Genus sp{i}") for i in range(501)
+    ]
+    with pytest.raises(ValidationError):
+        TaxonBulkImportRequest(entries=many)
+    assert len(TaxonBulkImportRequest(entries=many[:500]).entries) == 500
+
+
+def test_bulk_import_entry_rejects_unknown_fields_and_blank_names() -> None:
+    with pytest.raises(ValidationError):
+        TaxonBulkImportEntryRequest(scientific_name="")
+    with pytest.raises(ValidationError):
+        TaxonBulkImportEntryRequest(
+            scientific_name="Cervus nippon",
+            unexpected="x",  # type: ignore[call-arg]
+        )
+
+
+@pytest.mark.asyncio
+async def test_bulk_import_survives_a_dispatch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broker failure after the committed import degrades to a null task id.
+
+    Codex review: the import is already committed at dispatch time, so a 500
+    here would push the operator into re-posting an import that already
+    happened. The response (and audit detail) carry ``None`` for the failed
+    dispatch instead.
+    """
+    _patch_superuser_gate(monkeypatch, allowed=True)
+    audit_service = _patch_audit(monkeypatch)
+    _patch_bulk_import_service(monkeypatch, BulkImportResult(created=1, existing=1))
+    resolve_task, load_task = _patch_follow_up_tasks(monkeypatch)
+    resolve_task.delay = MagicMock(side_effect=RuntimeError("broker down"))
+
+    db = MagicMock()
+    db.commit = AsyncMock()
+
+    out = await mod.bulk_import_taxa(
+        request=_request(),
+        payload=_bulk_payload(),
+        current_user=_superuser(),
+        db=db,
+    )
+
+    assert (out.created, out.existing) == (1, 1)
+    assert out.resolve_task_id is None
+    assert out.vernacular_task_id == "task-import-bundle"
+    db.commit.assert_awaited_once()
+    load_task.delay.assert_called_once_with()
+
+    audit_kwargs = audit_service.write_platform_event.await_args.kwargs
+    assert audit_kwargs["detail"]["resolve_task_id"] is None
+    assert audit_kwargs["detail"]["vernacular_task_id"] == "task-import-bundle"
+
+
+def test_bulk_import_entry_schema_admits_overlong_values_for_service_rejection() -> None:
+    """The schema must not pre-empt the per-entry rejections with a 422.
+
+    Codex round 2: a 301-char name / 51-char rank must reach the service and
+    come back as ``rejected`` entries; only abuse-sized values 422.
+    """
+    entry = TaxonBulkImportEntryRequest(
+        scientific_name="A" * 301, rank="R" * 51
+    )
+    assert len(entry.scientific_name) == 301
+    with pytest.raises(ValidationError):
+        TaxonBulkImportEntryRequest(scientific_name="A" * 2001)

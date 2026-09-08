@@ -79,6 +79,8 @@ BFF_PATHS_DECLARED_BY_SPEC_009: list[str] = [
     "/web-api/v1/admin/taxon/load-bundled-vernacular POST",
     # WS-A v2 slice 3 — resolve taxa against the Catalogue of Life XR checklist
     "/web-api/v1/admin/taxon/resolve-col-xr POST",
+    # WS-A v2 slice 6 — operator bulk-import of taxa BirdNET does not model
+    "/web-api/v1/admin/taxon/bulk-import POST",
     # WS-A v2 slice 5 — read-only identity provenance (journal + concept edges)
     "/web-api/v1/admin/taxon/concept-relations GET",
     "/web-api/v1/admin/taxon/{taxon_id}/identity-history GET",
