@@ -54,6 +54,7 @@ from sqlalchemy.exc import IntegrityError
 from echoroo.core.actions import (
     ADMIN_USER_RESET_PASSWORD_ACTION,
     PLATFORM_IUCN_FORCE_RESYNC_ACTION,
+    PLATFORM_TAXON_BULK_IMPORT_ACTION,
     PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
     PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
@@ -110,6 +111,9 @@ from echoroo.schemas.admin import (
     SuperuserRejectRequest,
     SuperuserSummary,
     TaskDispatchResponse,
+    TaxonBulkImportRejection,
+    TaxonBulkImportRequest,
+    TaxonBulkImportResponse,
     TaxonConceptRelationEntry,
     TaxonConceptRelationListResponse,
     TaxonIdentityHistoryEntry,
@@ -141,6 +145,8 @@ from echoroo.services.superuser_service import (
     NotSuperuserError,
     SuperuserServiceError,
 )
+from echoroo.services.taxon_bulk_import import BulkImportEntry
+from echoroo.services.taxon_bulk_import import bulk_import_taxa as run_bulk_import_taxa
 
 logger = logging.getLogger(__name__)
 
@@ -1257,6 +1263,174 @@ async def resolve_taxon_col_xr(
         task_id=async_result.id,
         enqueued_at=enqueued_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/taxon/bulk-import (WS-A v2 slice 6)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/taxon/bulk-import",
+    response_model=TaxonBulkImportResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Bulk-import taxa the BirdNET seed does not cover (Superuser)",
+    description=(
+        "Create taxa from an operator-supplied list — non-birds (*Cervus "
+        "nippon*, Anura, Orthoptera) and the Japanese endemics/rarities absent "
+        "from BirdNET (メグロ, ノグチゲラ, ヤンバルクイナ, …).\n\n"
+        "Unlike the other taxon maintenance endpoints this one is "
+        "**synchronous**: the import is network-free and runs inside the "
+        "request transaction, so the response carries the per-outcome counts "
+        "(created / existing / vernacular writes / rejected entries) instead "
+        "of only a task id. A scientific name that already exists is counted "
+        "as ``existing`` and never duplicated, but a supplied vernacular name "
+        "is still upserted onto it (``source=\"user\"``, which outranks the "
+        "bundled IOC names). Within one payload the first occurrence of a "
+        "repeated name wins and the later ones are rejected.\n\n"
+        "With ``resolve`` (default true) the endpoint additionally dispatches "
+        "``resolve_col_xr_batch`` and ``load_bundled_vernacular_names`` as two "
+        "independent fire-and-forget tasks after the commit, so Catalogue of "
+        "Life identity, the identity-history journal, the concept relations "
+        "and any bundled 和名 follow asynchronously. Creating a taxon is not "
+        "an identity *change*, so nothing is journalled at import time — the "
+        "first resolution pass writes the initial identity.\n\n"
+        "The action is platform-scope (no project_id) and writes a "
+        "``platform_audit_log`` entry."
+    ),
+)
+async def bulk_import_taxa(
+    request: Request,
+    payload: TaxonBulkImportRequest,
+    current_user: OptionalCurrentUser,
+    db: DbSession,
+) -> TaxonBulkImportResponse:
+    """Import the requested taxa and queue the asynchronous follow-ups."""
+    await _require_authenticated_superuser(current_user, db)
+    assert current_user is not None
+
+    # Platform-scope gate (Step 0a in :func:`is_allowed`): only session
+    # superusers pass; we never load a project row.
+    allowed, _ = is_allowed(
+        action=PLATFORM_TAXON_BULK_IMPORT_ACTION,
+        user=current_user,
+        project=None,
+        request=request,
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Taxon bulk import is restricted to superusers",
+        )
+
+    outcome = await run_bulk_import_taxa(
+        db,
+        [
+            BulkImportEntry(
+                scientific_name=entry.scientific_name,
+                vernacular_name=entry.vernacular_name,
+                locale=entry.locale,
+                rank=entry.rank,
+            )
+            for entry in payload.entries
+        ],
+        actor_user_id=current_user.id,
+    )
+    # Commit BEFORE dispatching: a worker that picks up the COL XR batch reads
+    # a different connection and must be able to see the rows this request
+    # created, otherwise the newly imported taxa would be skipped.
+    await db.commit()
+
+    resolve_task_id: str | None = None
+    vernacular_task_id: str | None = None
+    if payload.resolve:
+        # Two independent dispatches rather than a chain: the bundled-name load
+        # does not depend on COL XR identity (it matches on scientific name),
+        # so serialising them would only delay the 和名 by a full batch.
+        # The import is already committed, so NOTHING past this point may turn
+        # the response into a 500 — the operator would retry an import that
+        # already happened. Both the lazy worker import (see the rationale in
+        # :func:`force_iucn_resync`) and the dispatch itself live inside the
+        # try: a null task id in the response (and the audit detail below) is
+        # the signal to dispatch the resolver manually.
+        try:
+            from echoroo.workers.taxon_tasks import (
+                resolve_col_xr_batch as resolve_task,
+            )
+
+            resolve_task_id = resolve_task.delay().id
+        except Exception as exc:  # noqa: BLE001 — import is committed; degrade
+            logger.warning(
+                "bulk-import: resolve_col_xr_batch dispatch failed "
+                "(import committed, run the resolver manually): %r",
+                exc,
+            )
+        try:
+            from echoroo.workers.taxon_tasks import (
+                load_bundled_vernacular_names as load_task,
+            )
+
+            vernacular_task_id = load_task.delay().id
+        except Exception as exc:  # noqa: BLE001 — import is committed; degrade
+            logger.warning(
+                "bulk-import: load_bundled_vernacular_names dispatch failed "
+                "(import committed, run the loader manually): %r",
+                exc,
+            )
+
+    response = TaxonBulkImportResponse(
+        created=outcome.created,
+        existing=outcome.existing,
+        vernacular_upserts=outcome.vernacular_upserts,
+        vernacular_unchanged=outcome.vernacular_unchanged,
+        rejected=[
+            TaxonBulkImportRejection(
+                scientific_name=item.scientific_name, reason=item.reason
+            )
+            for item in outcome.rejected
+        ],
+        resolve_task_id=resolve_task_id,
+        vernacular_task_id=vernacular_task_id,
+    )
+
+    # Fresh-session audit (see the IUCN endpoint's note): the request session
+    # already committed the import, and the audit chain runs SERIALIZABLE.
+    try:
+        async with AsyncSessionLocal() as platform_audit_session:
+            try:
+                await AuditLogService(
+                    platform_audit_session
+                ).write_platform_event(
+                    actor_user_id=current_user.id,
+                    action="platform.taxon.bulk_import",
+                    request_id=_request_id(request),
+                    ip=_client_ip(request),
+                    user_agent=_user_agent(request),
+                    detail={
+                        "requested": len(payload.entries),
+                        "created": outcome.created,
+                        "existing": outcome.existing,
+                        "rejected": len(outcome.rejected),
+                        "vernacular_upserts": outcome.vernacular_upserts,
+                        "resolve": payload.resolve,
+                        "resolve_task_id": resolve_task_id,
+                        "vernacular_task_id": vernacular_task_id,
+                    },
+                )
+                await platform_audit_session.commit()
+            except Exception:
+                await platform_audit_session.rollback()
+                raise
+    except Exception as exc:  # noqa: BLE001 — soft alert; never blocks the import
+        logger.warning(
+            "platform.taxon.bulk_import audit write failed (FR-089 soft "
+            "alert): actor=%s created=%s error=%r",
+            current_user.id,
+            outcome.created,
+            exc,
+        )
+
+    return response
 
 
 # ---------------------------------------------------------------------------

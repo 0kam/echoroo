@@ -1,12 +1,12 @@
 """Platform-scope gate coverage for the taxon-catalog maintenance actions.
 
-The four admin maintenance triggers (``platform.taxon.seed_birdnet``,
-``platform.taxon.sync_vernacular``, ``platform.taxon.load_bundled_vernacular``
-and ``platform.taxon.resolve_col_xr``) plus the read-only identity-provenance
-action (``platform.taxon.identity_history.read``, WS-A v2 slice 5) are
-platform-scope superuser-only actions. They mirror ``platform.iucn.force_resync``
-and must therefore route through the Step-0a branch of
-:func:`echoroo.core.permissions.is_allowed`:
+The five admin maintenance triggers (``platform.taxon.seed_birdnet``,
+``platform.taxon.sync_vernacular``, ``platform.taxon.load_bundled_vernacular``,
+``platform.taxon.resolve_col_xr`` and ``platform.taxon.bulk_import``) plus the
+read-only identity-provenance action (``platform.taxon.identity_history.read``,
+WS-A v2 slice 5) are platform-scope superuser-only actions. They mirror
+``platform.iucn.force_resync`` and must therefore route through the Step-0a
+branch of :func:`echoroo.core.permissions.is_allowed`:
 
 * session (cookie / JWT) superuser  -> allowed;
 * API-key superuser principal       -> denied (Step -1 universal veto);
@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from echoroo.core.actions import (
+    PLATFORM_TAXON_BULK_IMPORT_ACTION,
     PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
     PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
@@ -30,12 +31,15 @@ from echoroo.core.actions import (
 )
 from echoroo.core.permissions import is_allowed
 
-#: Mutating triggers. All four rewrite global taxonomy tables.
+#: Mutating triggers. All five rewrite global taxonomy tables — the slice 6
+#: bulk import inserts into ``taxa`` synchronously rather than dispatching a
+#: task, but it is gated exactly like the fire-and-forget triggers.
 _TAXON_MAINTENANCE_ACTIONS = (
     PLATFORM_TAXON_SEED_BIRDNET_ACTION,
     PLATFORM_TAXON_SYNC_VERNACULAR_ACTION,
     PLATFORM_TAXON_LOAD_BUNDLED_VERNACULAR_ACTION,
     PLATFORM_TAXON_RESOLVE_COL_XR_ACTION,
+    PLATFORM_TAXON_BULK_IMPORT_ACTION,
 )
 
 #: Read-only identity provenance (WS-A v2 slice 5). Same platform-scope
@@ -102,6 +106,10 @@ class TestTaxonMaintenancePlatformScope:
             PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION.name
             == "platform.taxon.identity_history.read"
         )
+
+    def test_bulk_import_action_name_is_stable(self) -> None:
+        """The audit rows written by slice 6 key on this exact name."""
+        assert PLATFORM_TAXON_BULK_IMPORT_ACTION.name == "platform.taxon.bulk_import"
 
     @pytest.mark.parametrize("action", _ALL_TAXON_PLATFORM_ACTIONS)
     def test_session_superuser_allowed(self, action: object) -> None:

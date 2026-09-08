@@ -338,3 +338,63 @@ async def test_duplicate_local_edges_are_rejected_by_the_partial_unique(
     with pytest.raises(IntegrityError):
         await db_session.execute(insert, params)
     await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_resolver_batch_relinks_dangling_edges(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """resolve_col_xr_batch fills to_taxon_id once the target taxon exists.
+
+    Story: an edge points at a COL usage that had no local taxon (all 302
+    real synonym edges today). The target is later bulk-imported and the
+    next resolver batch — any batch — relinks the edge without operator
+    action.
+    """
+    source = Taxon(scientific_name="Relink Source", rank="SPECIES")
+    target = Taxon(scientific_name="Relink Target", rank="SPECIES", col_xr_id="RLNK1")
+    await _seed(db_session, source, target)
+    db_session.add(
+        TaxonConceptRelation(
+            from_taxon_id=source.id,
+            to_taxon_id=None,
+            to_col_xr_id="RLNK1",
+            to_scientific_name="Relink Target",
+            relation="synonym_of",
+            source="col_xr_auto",
+        )
+    )
+    await db_session.commit()
+
+    class _Index:
+        alias = "COL26.6 XR"
+        clb_dataset_key = 315557
+
+    class _Service:
+        async def get_index_metadata(self) -> object:
+            return _Index()
+
+        async def match(self, *args: object, **kwargs: object) -> None:
+            raise AssertionError("no unresolved taxa should be matched")
+
+        async def aclose(self) -> None:
+            return None
+
+    # No unresolved taxa (both were created without col_xr_resolved_at, so
+    # stamp them to keep the batch loop empty and isolate the relink step).
+    from datetime import UTC, datetime
+
+    source.col_xr_resolved_at = datetime.now(UTC)
+    target.col_xr_resolved_at = datetime.now(UTC)
+    await db_session.commit()
+
+    result = await resolve_col_xr_batch(
+        db_session, batch_size=10, service=_Service()  # type: ignore[arg-type]
+    )
+    await db_session.commit()
+
+    assert result["relinked_relations"] == 1
+    edge = (
+        await db_session.execute(sa.select(TaxonConceptRelation))
+    ).scalars().one()
+    assert edge.to_taxon_id == target.id

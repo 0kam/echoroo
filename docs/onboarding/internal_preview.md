@@ -273,6 +273,81 @@ those taxa exist. Where the checklist and the IOC bundle disagree (a handful
 of species, e.g. *Anthus rubescens* タヒバリ vs アメリカタヒバリ) the
 checklist wins.
 
+#### Bulk-importing taxa BirdNET does not model (WS-A v2 slice 6)
+
+`taxa` is seeded from the BirdNET V2.4 label list, so two groups of species an
+operator actually annotates are missing: **non-birds** (*Cervus nippon*
+ニホンジカ, frogs, crickets) and the ~84 **Japanese endemics/rarities** above,
+whose 和名 are already sitting unused in the loaded checklist waiting for a
+taxon to attach to.
+
+**`POST /web-api/v1/admin/taxon/bulk-import`** (superuser-only) creates them
+from a list:
+
+```json
+{
+  "entries": [
+    {"scientific_name": "Cervus nippon", "vernacular_name": "ニホンジカ"},
+    {"scientific_name": "Hyla japonica", "vernacular_name": "ニホンアマガエル"},
+    {"scientific_name": "Teleogryllus emma", "vernacular_name": "エンマコオロギ"},
+    {"scientific_name": "Apalopteron familiare"},
+    {"scientific_name": "Dendrocopos noguchii", "locale": "ja", "rank": "SPECIES"}
+  ],
+  "resolve": true
+}
+```
+
+Only `scientific_name` is required. `vernacular_name` is optional and stored
+under `locale` (default `ja`, `ja-JP`/`jpn` normalized) with `source="user"`,
+which outranks the bundled IOC names but stays below the loaded national
+checklist — so importing a species the checklist already covers does not
+override 目録第8版. `rank` defaults to `SPECIES` and only applies to a row this
+call creates. Up to 500 entries per call.
+
+Unlike the other taxon endpoints this one is **synchronous** (`200`, not
+`202`): the import is network-free and runs in the request transaction, so the
+response carries per-row outcomes —
+
+```json
+{"created": 4, "existing": 1, "vernacular_upserts": 3, "vernacular_unchanged": 0,
+ "rejected": [], "resolve_task_id": "…", "vernacular_task_id": "…"}
+```
+
+An already-known scientific name is counted as `existing` and never
+duplicated, but a supplied vernacular name is still upserted onto it (that is
+how you repair a missing 和名). Whitespace is normalized, so a name pasted out
+of a spreadsheet cannot create a near-duplicate row; blank names and a name
+repeated inside one payload land in `rejected` (first occurrence wins).
+
+**Everything else follows asynchronously.** With `"resolve": true` (default)
+the endpoint dispatches, after the commit, two independent tasks:
+`resolve_col_xr_batch` — the imported rows have `col_xr_resolved_at IS NULL`,
+which is exactly its selection predicate, so they get their COL XR identity,
+their identity-history journal entries and their `synonym_of` concept edges —
+and `load_bundled_vernacular_names`, which attaches bundled IOC 和名 to any
+imported bird (a harmless no-op for non-birds). Immediately after the call the
+new rows therefore have no `col_xr_id` yet; check progress with the queries in
+the COL XR section above.
+
+Two follow-ups worth knowing:
+
+* Importing a species that some other taxon lists as its accepted concept
+  resolves that dangling `synonym_of` edge (`to_taxon_id IS NULL`, see slice 5
+  above) **automatically**: every `resolve_col_xr_batch` run finishes with an
+  idempotent relink pass (its result dict reports `relinked_relations`), and
+  the bulk-import endpoint dispatches exactly that resolver. Nothing to run by
+  hand — though `relink_concept_relations(db)` remains callable directly if an
+  immediate repair is ever needed outside a resolver run.
+* 和名 from the national checklist are attached by re-running the
+  `load_authority_checklist` loader from the section above — the bulk import
+  only dispatches the *bundled* IOC load, and the checklist CSV lives outside
+  the package.
+* The response carries **two** task ids (`resolve_task_id`,
+  `vernacular_task_id`). They are null when `resolve` was false — or when that
+  dispatch failed after the import had already been committed; in that case
+  the taxa exist and the operator re-runs the resolver from the admin panel
+  instead of re-posting the import.
+
 Role-based test users plus a sample project and dataset come from the seeded-permission E2E fixture. Run `./echoroo.sh seed e2e` to bootstrap the same Viewer / Annotator / Manager users the trial scenarios reference. Its stdout JSON includes credentials and tokens; handle it as sensitive.
 
 ## 6. Invite Trial Users

@@ -954,6 +954,142 @@ class TaxonResolveCOLXRRequest(BaseModel):
     )
 
 
+class TaxonBulkImportEntryRequest(BaseModel):
+    """One requested taxon in ``POST /admin/taxon/bulk-import`` (slice 6).
+
+    ``scientific_name`` is the business key; whitespace is normalized service
+    side, so a name pasted out of a spreadsheet cannot create a near-duplicate
+    row. ``vernacular_name`` is stored with ``source="user"`` (operator-curated
+    names outrank the bundled IOC list but stay below a loaded national
+    checklist). ``rank`` only applies to a newly created row.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    scientific_name: str = Field(
+        ...,
+        min_length=1,
+        # Deliberately far above the column's 300: an over-long name must
+        # surface as a per-entry rejection (REASON_NAME_TOO_LONG) in the
+        # response, not fail the whole request with a 422. The ceiling only
+        # bounds abuse.
+        max_length=2000,
+        description="Canonical scientific name, e.g. ``Cervus nippon``",
+    )
+    vernacular_name: str | None = Field(
+        default=None,
+        max_length=300,
+        description=(
+            "Optional display name to attach, e.g. ``ニホンジカ``. Stored with "
+            "``source=\"user\"``."
+        ),
+    )
+    locale: str | None = Field(
+        default=None,
+        max_length=10,
+        description=(
+            "Locale of ``vernacular_name`` (``ja-JP``/``jpn`` are normalized "
+            "to ``ja``). Defaults to the request-level default locale."
+        ),
+    )
+    rank: str | None = Field(
+        default=None,
+        # Same rationale as scientific_name: >50 becomes a per-entry
+        # rejection (REASON_RANK_TOO_LONG), not a request-level 422.
+        max_length=200,
+        description=(
+            "Taxonomic rank for a newly created taxon (``SPECIES`` when "
+            "omitted). Ignored when the taxon already exists."
+        ),
+    )
+
+
+class TaxonBulkImportRequest(BaseModel):
+    """Body for ``POST /admin/taxon/bulk-import``.
+
+    The import itself is synchronous, network-free and transactional so the
+    operator sees per-row outcomes immediately. ``resolve`` then dispatches the
+    asynchronous follow-ups (COL XR identity + the bundled vernacular reload).
+
+    ``entries`` is capped at 500: the import runs inside the request
+    transaction, and a larger payload would hold it open long enough to matter
+    while offering nothing an operator cannot express as two calls.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    entries: list[TaxonBulkImportEntryRequest] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Taxa to import (1-500).",
+    )
+    resolve: bool = Field(
+        default=True,
+        description=(
+            "When True, dispatch ``resolve_col_xr_batch`` and "
+            "``load_bundled_vernacular_names`` after the import commits so "
+            "external identity, concept relations and bundled names follow."
+        ),
+    )
+
+
+class TaxonBulkImportRejection(BaseModel):
+    """An entry the import skipped, with the reason why."""
+
+    model_config = ConfigDict(frozen=True)
+
+    scientific_name: str = Field(..., description="Entry as supplied (normalized)")
+    reason: str = Field(
+        ...,
+        description=(
+            "``empty scientific name``, ``duplicate in payload`` (the first "
+            "occurrence of a repeated name wins), ``scientific name exceeds "
+            "300 characters`` or ``rank exceeds 50 characters``."
+        ),
+    )
+
+
+class TaxonBulkImportResponse(BaseModel):
+    """Body for ``POST /admin/taxon/bulk-import`` — the per-outcome counts."""
+
+    model_config = ConfigDict(frozen=True)
+
+    created: int = Field(..., description="Taxa inserted by this call")
+    existing: int = Field(
+        ...,
+        description=(
+            "Requested taxa that already had a row (never duplicated; a "
+            "supplied vernacular name is still applied to them)"
+        ),
+    )
+    vernacular_upserts: int = Field(
+        ..., description="Vernacular rows inserted or rewritten"
+    )
+    vernacular_unchanged: int = Field(
+        ..., description="Vernacular rows that already held the same name"
+    )
+    rejected: list[TaxonBulkImportRejection] = Field(
+        ..., description="Entries that were skipped, with their reason"
+    )
+    resolve_task_id: str | None = Field(
+        None,
+        description=(
+            "Celery task id of the queued ``resolve_col_xr_batch`` run; null "
+            "when ``resolve`` was false or when the dispatch failed after the "
+            "import was already committed (re-run the resolver, not the import)"
+        ),
+    )
+    vernacular_task_id: str | None = Field(
+        None,
+        description=(
+            "Celery task id of the queued ``load_bundled_vernacular_names`` "
+            "run; null when ``resolve`` was false or when the dispatch failed "
+            "after the import was already committed"
+        ),
+    )
+
+
 class TaxonIdentityHistoryEntry(BaseModel):
     """One journalled identity change (WS-A v2 slice 5).
 

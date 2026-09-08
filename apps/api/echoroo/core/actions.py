@@ -340,6 +340,17 @@ _ACTION_ROWS: tuple[_Row, ...] = (
         True,
         True,
     ),
+    # WS-A v2 slice 6 — operator bulk-import of taxa the BirdNET seed does not
+    # cover (non-birds, Japanese endemics). Inserts into the global ``taxa``
+    # table, hence mutating and platform-scope like its siblings above.
+    _Row(
+        "PLATFORM_TAXON_BULK_IMPORT_ACTION",
+        "platform.taxon.bulk_import",
+        None,
+        True,
+        True,
+        True,
+    ),
     # WS-A v2 slice 5 — read-only inspection of the taxon identity journal
     # (``taxon_identity_history``) and of the concept relations derived from
     # it (``taxon_concept_relations``). Platform-scope superuser-only like the
@@ -942,6 +953,7 @@ PLATFORM_TAXON_RESOLVE_COL_XR_ACTION: Action = _BUILT[
 PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION: Action = _BUILT[
     "PLATFORM_TAXON_IDENTITY_HISTORY_READ_ACTION"
 ]
+PLATFORM_TAXON_BULK_IMPORT_ACTION: Action = _BUILT["PLATFORM_TAXON_BULK_IMPORT_ACTION"]
 PLATFORM_UPLOAD_RECOVER_ACTION: Action = _BUILT["PLATFORM_UPLOAD_RECOVER_ACTION"]
 
 # Superuser CRUD (Phase 15 Batch 5a)
