@@ -29,6 +29,7 @@ from echoroo.schemas.annotation_set import (
     TimeRangeAnnotationResponse,
     TimeRangeAnnotationUpdate,
 )
+from echoroo.services.annotation_notes import note_to_response
 from echoroo.services.annotation_set import AnnotationSetService
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,10 @@ class TimeRangeAnnotationService:
             select(Taxon).where(Taxon.id == row.taxon_id)
         )
         taxon = taxon_result.scalar_one_or_none()
-        note_count = await self.annotation_repo.count_notes(row.id)
+        notes = [
+            note_to_response(n)
+            for n in await self.annotation_repo.list_notes(row.id)
+        ]
         return TimeRangeAnnotationResponse(
             id=row.id,
             segment_id=row.segment_id,
@@ -92,7 +96,8 @@ class TimeRangeAnnotationService:
             created_by_id=row.created_by_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            note_count=note_count,
+            note_count=len(notes),
+            notes=notes,
         )
 
     # ------------------------------------------------------------------
@@ -196,11 +201,4 @@ class TimeRangeAnnotationService:
         await self._db.flush()
         await self._db.refresh(note)
         await self.annotation_repo.attach_note(annotation_id, note.id)
-        return AnnotationNoteResponse(
-            id=note.id,
-            content=note.content,
-            is_issue=note.is_issue,
-            is_review=note.is_review,
-            created_by_id=note.created_by_id,
-            created_at=note.created_at,
-        )
+        return note_to_response(note)

@@ -331,12 +331,21 @@ class AnnotationSegmentRepository(BaseRepository[AnnotationSegment]):
     async def get_with_annotations_and_notes(
         self, segment_id: UUID
     ) -> AnnotationSegment | None:
-        """Fetch a segment with annotations and attached notes eagerly loaded."""
+        """Fetch a segment with annotations and attached notes eagerly loaded.
+
+        Notes are loaded for the segment itself *and* for every child
+        ``TimeRangeAnnotation``. The nested ``selectinload`` issues a single
+        extra ``IN``-query for all annotations at once, so the segment detail
+        view stays at a constant query count regardless of how many
+        annotations the segment carries (no N+1).
+        """
         stmt = (
             select(AnnotationSegment)
             .where(AnnotationSegment.id == segment_id)
             .options(
-                selectinload(AnnotationSegment.annotations),
+                selectinload(AnnotationSegment.annotations).selectinload(
+                    TimeRangeAnnotation.notes
+                ),
                 selectinload(AnnotationSegment.notes),
             )
         )

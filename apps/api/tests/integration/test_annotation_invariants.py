@@ -84,8 +84,9 @@ def _build_segment_service(
     segment_repo.get_with_annotations_and_notes = AsyncMock(return_value=segment)
 
     annotation_repo = MagicMock()
-    # count_notes returns 0 so response-building doesn't error.
+    # count_notes / list_notes return empty so response-building doesn't error.
     annotation_repo.count_notes = AsyncMock(return_value=0)
+    annotation_repo.list_notes = AsyncMock(return_value=[])
 
     # create returns a mock annotation with the needed fields.
     created_annotation = MagicMock()

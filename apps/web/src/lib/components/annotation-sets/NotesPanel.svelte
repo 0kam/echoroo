@@ -12,12 +12,19 @@
   interface Props {
     title: string;
     notes: AnnotationNote[];
+    /**
+     * Server-reported total note count. Rendered as a badge next to the
+     * title. Defaults to `notes.length` when omitted.
+     */
+    count?: number;
     /** Disable interaction while a mutation is pending. */
     isBusy?: boolean;
     onAddNote: (content: string, isIssue: boolean) => Promise<void> | void;
   }
 
-  let { title, notes, isBusy = false, onAddNote }: Props = $props();
+  let { title, notes, count, isBusy = false, onAddNote }: Props = $props();
+
+  const badgeCount = $derived(count ?? notes.length);
 
   let content = $state('');
   let isIssue = $state(false);
@@ -59,8 +66,17 @@
 </script>
 
 <div class="flex flex-col">
-  <h4 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500">
-    {title}
+  <h4
+    class="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-stone-500"
+  >
+    <span>{title}</span>
+    {#if badgeCount > 0}
+      <span
+        class="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-stone-200 px-1.5 py-0.5 text-[10px] font-medium leading-none text-stone-600 dark:bg-stone-700 dark:text-stone-300"
+      >
+        {badgeCount}
+      </span>
+    {/if}
   </h4>
 
   {#if notes.length === 0}

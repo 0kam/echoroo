@@ -41,6 +41,7 @@ def _make_service(
     ann_repo = MagicMock()
     ann_repo.create = AsyncMock()
     ann_repo.count_notes = AsyncMock(return_value=0)
+    ann_repo.list_notes = AsyncMock(return_value=[])
 
     set_service = MagicMock()
     set_service.recompute_status = AsyncMock(return_value=None)
@@ -295,6 +296,7 @@ async def test_create_annotation_persists_and_flips_is_empty() -> None:
     service = _make_service(db=db, segment=seg)
     service.annotation_repo.create = AsyncMock(return_value=created_annotation)
     service.annotation_repo.count_notes = AsyncMock(return_value=0)
+    service.annotation_repo.list_notes = AsyncMock(return_value=[])
 
     request = TimeRangeAnnotationCreate(
         start_time_sec=0.0,
@@ -321,6 +323,7 @@ async def test_get_detail_with_recording_row_and_annotations() -> None:
     annotation.created_by_id = uuid4()
     annotation.created_at = datetime.now(UTC)
     annotation.updated_at = datetime.now(UTC)
+    annotation.notes = []
 
     note = MagicMock()
     note.id = uuid4()
