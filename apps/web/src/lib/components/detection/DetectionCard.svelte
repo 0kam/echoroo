@@ -32,6 +32,13 @@
     externalIsLoadingAudio?: boolean;
     /** Callback when the play button is clicked (delegates to parent's player) */
     onPlayToggle?: () => void;
+    /**
+     * Callback when the user clicks (or keyboard-activates) the spectrogram
+     * area. Wired to the parent grid's keyboard-navigation `select(index)` so
+     * clicking a card moves the selection highlight, matching the models
+     * review grids.
+     */
+    onClickSelect?: () => void;
     onAgree: (detectionId: string, signalQuality: SignalQuality) => void;
     onVote: (detectionId: string, vote: VoteValue) => void;
     onRemoveVote: (detectionId: string) => void;
@@ -47,6 +54,7 @@
     externalIsPlaying,
     externalIsLoadingAudio,
     onPlayToggle,
+    onClickSelect,
     onAgree,
     onVote,
     onRemoveVote,
@@ -192,6 +200,7 @@
     {externalIsPlaying}
     {externalIsLoadingAudio}
     {onPlayToggle}
+    {onClickSelect}
     onAgree={handleAgree}
     onVote={handleVote}
     onRemoveVote={handleRemoveVote}

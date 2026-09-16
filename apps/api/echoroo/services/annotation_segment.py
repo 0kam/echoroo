@@ -39,6 +39,7 @@ from echoroo.schemas.annotation_set import (
     TimeRangeAnnotationCreate,
     TimeRangeAnnotationResponse,
 )
+from echoroo.services.annotation_notes import note_to_response, notes_to_responses
 from echoroo.services.annotation_set import AnnotationSetService
 
 logger = logging.getLogger(__name__)
@@ -89,16 +90,6 @@ class AnnotationSegmentService:
             )
         return taxon
 
-    async def _note_to_response(self, note: Note) -> AnnotationNoteResponse:
-        return AnnotationNoteResponse(
-            id=note.id,
-            content=note.content,
-            is_issue=note.is_issue,
-            is_review=note.is_review,
-            created_by_id=note.created_by_id,
-            created_at=note.created_at,
-        )
-
     async def _annotation_to_response(
         self, row: TimeRangeAnnotation,
     ) -> TimeRangeAnnotationResponse:
@@ -106,7 +97,9 @@ class AnnotationSegmentService:
             select(Taxon).where(Taxon.id == row.taxon_id)
         )
         taxon = taxon_result.scalar_one_or_none()
-        note_count = await self.annotation_repo.count_notes(row.id)
+        notes = notes_to_responses(
+            await self.annotation_repo.list_notes(row.id)
+        )
         return TimeRangeAnnotationResponse(
             id=row.id,
             segment_id=row.segment_id,
@@ -119,7 +112,8 @@ class AnnotationSegmentService:
             created_by_id=row.created_by_id,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            note_count=note_count,
+            note_count=len(notes),
+            notes=notes,
         )
 
     # ------------------------------------------------------------------
@@ -153,25 +147,32 @@ class AnnotationSegmentService:
             for tid, sci in (await self._db.execute(taxon_stmt)).all():
                 name_map[tid] = sci
 
-        annotations = [
-            TimeRangeAnnotationResponse(
-                id=a.id,
-                segment_id=a.segment_id,
-                start_time_sec=a.start_time_sec,
-                end_time_sec=a.end_time_sec,
-                species_id=a.taxon_id,
-                species_scientific_name=name_map.get(a.taxon_id),
-                species_common_name=None,
-                confidence=a.confidence,
-                created_by_id=a.created_by_id,
-                created_at=a.created_at,
-                updated_at=a.updated_at,
-                note_count=0,
+        # ``segment.annotations`` was loaded with a nested ``selectinload`` of
+        # ``TimeRangeAnnotation.notes`` (single extra IN-query for all
+        # annotations), so building per-annotation note payloads here does not
+        # introduce an N+1.
+        annotations: list[TimeRangeAnnotationResponse] = []
+        for a in sorted(segment.annotations, key=lambda x: x.start_time_sec):
+            annotation_notes = notes_to_responses(a.notes)
+            annotations.append(
+                TimeRangeAnnotationResponse(
+                    id=a.id,
+                    segment_id=a.segment_id,
+                    start_time_sec=a.start_time_sec,
+                    end_time_sec=a.end_time_sec,
+                    species_id=a.taxon_id,
+                    species_scientific_name=name_map.get(a.taxon_id),
+                    species_common_name=None,
+                    confidence=a.confidence,
+                    created_by_id=a.created_by_id,
+                    created_at=a.created_at,
+                    updated_at=a.updated_at,
+                    note_count=len(annotation_notes),
+                    notes=annotation_notes,
+                )
             )
-            for a in sorted(segment.annotations, key=lambda x: x.start_time_sec)
-        ]
 
-        notes = [await self._note_to_response(n) for n in segment.notes]
+        notes = notes_to_responses(segment.notes)
 
         return AnnotationSegmentDetailResponse(
             id=segment.id,
@@ -312,4 +313,4 @@ class AnnotationSegmentService:
         await self._db.flush()
         await self._db.refresh(note)
         await self.segment_repo.attach_note(segment_id, note.id)
-        return await self._note_to_response(note)
+        return note_to_response(note)

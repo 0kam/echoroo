@@ -875,16 +875,19 @@
 
           {#if selectedAnnotation}
             <div class="border-t border-stone-200 pt-3 dark:border-stone-700">
+              <!--
+                Notes for the selected annotation. The segment-detail payload
+                embeds `notes` per annotation (batched server-side), so this
+                reads straight off the already-loaded segment query instead of
+                issuing a per-annotation request.
+              -->
               <NotesPanel
                 title={m.annotation_editor_notes_annotation()}
-                notes={[]}
+                notes={selectedAnnotation.notes ?? []}
+                count={selectedAnnotation.note_count}
                 isBusy={mutations.isCreatingAnnotationNote}
                 onAddNote={addAnnotationNote}
               />
-              <p class="mt-1 text-[10px] text-stone-400">
-                {m.annotation_editor_notes_annotation()} ·
-                {selectedAnnotation.note_count}
-              </p>
             </div>
           {/if}
         </aside>

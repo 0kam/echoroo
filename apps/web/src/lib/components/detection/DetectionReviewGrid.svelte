@@ -444,6 +444,7 @@
             externalIsPlaying={nav.playingIndex === i && nav.isPlaying}
             externalIsLoadingAudio={nav.playingIndex === i && nav.isLoadingAudio}
             onPlayToggle={() => nav.togglePlay(i)}
+            onClickSelect={() => nav.select(i)}
             onAgree={handleAgree}
             onVote={handleVote}
             onRemoveVote={handleRemoveVote}

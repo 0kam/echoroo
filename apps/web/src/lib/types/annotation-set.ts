@@ -197,42 +197,6 @@ export interface ListSegmentsParams {
 }
 
 // ============================================================
-// TimeRangeAnnotation
-// ============================================================
-
-/** A single time-range annotation attached to a segment. */
-export interface TimeRangeAnnotation {
-  id: string;
-  segment_id: string;
-  start_time_sec: number;
-  end_time_sec: number;
-  species_id: string;
-  species_scientific_name: string;
-  species_common_name: string | null;
-  confidence: number | null;
-  created_by_id: string;
-  created_at: string;
-  updated_at: string;
-  note_count: number;
-}
-
-/** Request body for creating a TimeRangeAnnotation. */
-export interface TimeRangeAnnotationCreate {
-  start_time_sec: number;
-  end_time_sec: number;
-  species_id: string;
-  confidence?: number | null;
-}
-
-/** Request body for updating a TimeRangeAnnotation. */
-export interface TimeRangeAnnotationUpdate {
-  start_time_sec?: number;
-  end_time_sec?: number;
-  species_id?: string;
-  confidence?: number | null;
-}
-
-// ============================================================
 // Notes
 // ============================================================
 
@@ -249,6 +213,45 @@ export interface AnnotationNote {
 export interface AnnotationNoteCreate {
   content: string;
   is_issue?: boolean;
+}
+
+// ============================================================
+// TimeRangeAnnotation
+// ============================================================
+
+/** A single time-range annotation attached to a segment. */
+export interface TimeRangeAnnotation {
+  id: string;
+  segment_id: string;
+  start_time_sec: number;
+  end_time_sec: number;
+  species_id: string;
+  species_scientific_name: string;
+  species_common_name: string | null;
+  confidence: number | null;
+  created_by_id: string;
+  created_at: string;
+  updated_at: string;
+  /** Total number of notes attached to this annotation. */
+  note_count: number;
+  /** Notes attached to this annotation, oldest first. */
+  notes: AnnotationNote[];
+}
+
+/** Request body for creating a TimeRangeAnnotation. */
+export interface TimeRangeAnnotationCreate {
+  start_time_sec: number;
+  end_time_sec: number;
+  species_id: string;
+  confidence?: number | null;
+}
+
+/** Request body for updating a TimeRangeAnnotation. */
+export interface TimeRangeAnnotationUpdate {
+  start_time_sec?: number;
+  end_time_sec?: number;
+  species_id?: string;
+  confidence?: number | null;
 }
 
 // ============================================================

@@ -343,31 +343,8 @@ class TimeRangeAnnotationUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
-class TimeRangeAnnotationResponse(BaseModel):
-    """Response schema for a ``TimeRangeAnnotation`` row."""
-
-    id: UUID
-    segment_id: UUID
-    start_time_sec: float
-    end_time_sec: float
-    species_id: UUID = Field(
-        ...,
-        validation_alias=AliasChoices("species_id", "taxon_id"),
-        serialization_alias="species_id",
-    )
-    species_scientific_name: str | None = None
-    species_common_name: str | None = None
-    confidence: float | None = None
-    created_by_id: UUID
-    created_at: datetime
-    updated_at: datetime
-    note_count: int = 0
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-
 # ---------------------------------------------------------------------------
-# Segment detail (with annotations + notes)
+# Notes (shared by segments and time-range annotations)
 # ---------------------------------------------------------------------------
 
 
@@ -392,6 +369,42 @@ class AnnotationNoteResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TimeRangeAnnotationResponse(BaseModel):
+    """Response schema for a ``TimeRangeAnnotation`` row."""
+
+    id: UUID
+    segment_id: UUID
+    start_time_sec: float
+    end_time_sec: float
+    species_id: UUID = Field(
+        ...,
+        validation_alias=AliasChoices("species_id", "taxon_id"),
+        serialization_alias="species_id",
+    )
+    species_scientific_name: str | None = None
+    species_common_name: str | None = None
+    confidence: float | None = None
+    created_by_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    note_count: int = 0
+    notes: list[AnnotationNoteResponse] = Field(
+        default_factory=list,
+        description=(
+            "Notes attached to this annotation, oldest first. Populated by "
+            "endpoints that eager-load the note rows; ``note_count`` always "
+            "reflects the true total."
+        ),
+    )
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# ---------------------------------------------------------------------------
+# Segment detail (with annotations + notes)
+# ---------------------------------------------------------------------------
 
 
 class AnnotationSegmentDetailResponse(BaseModel):
