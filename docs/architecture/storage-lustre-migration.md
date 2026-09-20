@@ -80,6 +80,14 @@ disappears, which frees local disk rather than consuming it.
   search reference janitor filters orphans by age
   (`core/s3.py:334`, `workers/search_tasks.py:806-821`); a preserved mtime
   would make a new copy look like an old orphan.
+- **Callers never hold a storage client (slice 1).** Helpers in `core/s3.py`
+  build one per call (3 ms measured); `core/s3.ensure_configured()` sits where
+  `get_s3_client()` used to be called, so a malformed configuration still
+  aborts a task instead of being swallowed by a per-file `except`. Reversible:
+  the helpers keep an optional `client=` parameter. In slice 4
+  `ensure_configured()` becomes the mount probe.
+- **The FR-028e metadata sanitizer runs inside `core/s3.put_object`**, not at
+  each call site, so no write can bypass it. Reversible.
 
 ## Decisions taken
 
@@ -136,6 +144,10 @@ S3, then cut over once.
 - **Out of scope** — any behaviour change; no Protocol or store class.
 - **Acceptance** — existing suites green; lint fails on a boto3 S3 call outside
   `core/s3.py`.
+- **Status** — done. The lint bans three things outside `core/s3.py`:
+  `client("s3")` / `resource("s3")` on any receiver, the raw-client accessors
+  `get_s3_client` / `get_public_s3_client`, and any AWS SDK import
+  (`core/kms.py` exempt). No allowlist file: there are no exemptions.
 - **Depends on** — nothing. **UX preview needed** — no.
 
 ### 2. Uploads through the backend (still on S3)
@@ -182,3 +194,4 @@ One PR, because any subset leaves a broken state.
 | --- | --- | --- | --- |
 | 2026-09-16 | Codex (gpt-5.5) | Slice order broke browser uploads, audit export and boot check between the old slices 2 and 3-5; `seed_e2e_permissions.py` missing from slice 1; OGG cache hardcoded onto `/data`; `ensure_file_local()` is not the only read path; partial file visibility; janitor mtime; `search_reference/` and `models/` namespaces | All accepted. Slices reordered to "reroute on S3, then cut over once"; the rest folded into Context, Assumptions, Risks and slice scopes |
 | 2026-09-20 | Maintainer | Decisions 1 and 2; local disk is ~200 GB | Audit slice unblocked; OGG cache moved to Lustre, spectrogram cache capped; embeddings-vs-local-disk risk recorded with open decision 4 |
+| 2026-09-20 | Astra (gpt-6-astra), slice 1 code review | Building the client per helper call moved construction errors inside per-item `except` blocks (valid uploads marked INVALID, cleanup marking sessions FAILED, recordings 404, search sources skipped); lint missed `from boto3 import client`; a missing scan root passed as clean | All accepted: `ensure_configured()` at every former `get_s3_client()` site with regression tests; SDK-import rule; missing root exits 2. Not accepted: linting raw operations on passed-in clients — no module can obtain one |
