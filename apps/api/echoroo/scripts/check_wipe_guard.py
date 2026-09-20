@@ -36,7 +36,6 @@ from __future__ import annotations
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Any
 
 logger = logging.getLogger("echoroo.scripts.check_wipe_guard")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -119,21 +118,9 @@ def _check_db(database_url: str) -> tuple[bool, bool]:
 def _check_s3_marker(bucket: str, endpoint_url: str | None) -> bool:
     """Return True if the S3 Object Lock genesis marker exists."""
 
-    import boto3
-    from botocore.exceptions import ClientError
+    from echoroo.core.s3 import object_exists_at_endpoint
 
-    client_kwargs: dict[str, Any] = {}
-    if endpoint_url:
-        client_kwargs["endpoint_url"] = endpoint_url
-    s3 = boto3.client("s3", **client_kwargs)
-    try:
-        s3.head_object(Bucket=bucket, Key=S3_GENESIS_KEY)
-        return True
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code")
-        if code in {"404", "NoSuchKey", "NotFound"}:
-            return False
-        raise
+    return object_exists_at_endpoint(bucket, S3_GENESIS_KEY, endpoint_url)
 
 
 def check(

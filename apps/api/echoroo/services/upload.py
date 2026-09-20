@@ -574,8 +574,7 @@ class UploadService:
         session = await self.session_repo.create(session)
 
         # Build UploadFile records and presigned URLs.
-        # Use the public client so presigned URLs point to the browser-accessible endpoint.
-        s3_client = s3.get_public_s3_client()
+        # Presigned URLs are signed against the browser-accessible endpoint (public=True).
         upload_file_records: list[UploadFile] = []
         presigned_responses: list[UploadFilePresignedResponse] = []
 
@@ -590,7 +589,7 @@ class UploadService:
             upload_url = s3.generate_presigned_upload_url(
                 object_key=object_key,
                 expiry_seconds=settings.S3_PRESIGNED_URL_EXPIRY,
-                client=s3_client,
+                public=True,
             )
 
             upload_file = UploadFile(
@@ -685,7 +684,6 @@ class UploadService:
             )
 
         # 3. Verify each file in S3
-        s3_client = s3.get_s3_client()
         files = await self.file_repo.get_by_session(session_id)
 
         verified_files = 0
@@ -696,7 +694,6 @@ class UploadService:
             result = s3.verify_object_exists(
                 object_key=upload_file.object_key,
                 expected_size=upload_file.file_size,
-                client=s3_client,
             )
 
             if not result["exists"]:
