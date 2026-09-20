@@ -26,7 +26,6 @@ import ast
 import sys
 from pathlib import Path
 
-
 ALLOWLISTED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/s3.py",)
 TARGET_SERVICE = "s3"
 CLIENT_FACTORY_METHODS = frozenset({"client", "resource"})
