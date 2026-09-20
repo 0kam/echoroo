@@ -38,7 +38,7 @@ from typing import Any
 from celery import shared_task
 
 from echoroo.core.kms import compute_audit_chain_hash
-from echoroo.core.s3 import get_s3_client
+from echoroo.core.s3 import put_object
 from echoroo.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -144,25 +144,17 @@ def _upload_with_object_lock(
     ``InvalidRequest`` — the deployment Runbook documents the one-time
     bucket provisioning step.
     """
-    client = get_s3_client()
     retain_until = now + _RETENTION_DELTA
-    # FR-028e: route every PutObject kwargs dict through the GPS-metadata
-    # sanitizer for defense in depth, even when the local caller never sets
-    # user-defined Metadata. This keeps the surface uniform so a later
-    # refactor adding Metadata cannot regress.
-    from echoroo.services.s3_upload_sanitizer import sanitize_put_object_kwargs
-
-    put_kwargs = sanitize_put_object_kwargs(
-        {
-            "Bucket": bucket,
-            "Key": key,
-            "Body": body,
-            "ContentType": "application/x-ndjson",
-            "ObjectLockMode": "GOVERNANCE",
-            "ObjectLockRetainUntilDate": retain_until,
-        }
+    # FR-028e: put_object routes the PutObject kwargs through the GPS-metadata
+    # sanitizer centrally.
+    put_object(
+        key,
+        body,
+        content_type="application/x-ndjson",
+        bucket=bucket,
+        object_lock_mode="GOVERNANCE",
+        object_lock_retain_until=retain_until,
     )
-    client.put_object(**put_kwargs)
     logger.info(
         "audit export uploaded bucket=%s key=%s bytes=%d retain_until=%s",
         bucket,

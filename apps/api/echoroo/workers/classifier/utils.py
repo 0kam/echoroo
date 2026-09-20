@@ -15,8 +15,6 @@ import numpy as np
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.settings import get_settings
-
 logger = logging.getLogger(__name__)
 
 # Maximum number of unlabeled embeddings to fetch for semi-supervised training
@@ -232,19 +230,12 @@ async def _download_model_from_s3(s3_key: str, local_path: Path) -> None:
     """
     import asyncio
 
-    from echoroo.core.s3 import get_s3_client
-
-    settings = get_settings()
-    s3_client = get_s3_client()
+    from echoroo.core.s3 import download_object_to_file
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: s3_client.download_file(
-            settings.S3_BUCKET,
-            s3_key,
-            str(local_path),
-        ),
+        lambda: download_object_to_file(s3_key, local_path),
     )
 
 async def _upload_model_to_s3(local_path: Path, s3_key: str) -> None:
@@ -259,20 +250,13 @@ async def _upload_model_to_s3(local_path: Path, s3_key: str) -> None:
     """
     import asyncio
 
-    from echoroo.core.s3 import get_s3_client
+    from echoroo.core.s3 import upload_file_to_object
 
-    settings = get_settings()
-    s3_client = get_s3_client()
-
-    # boto3 upload_file is blocking — run in a thread pool to avoid blocking the event loop
+    # Upload is blocking — run in a thread pool to avoid blocking the event loop
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: s3_client.upload_file(
-            str(local_path),
-            settings.S3_BUCKET,
-            s3_key,
-        ),
+        lambda: upload_file_to_object(local_path, s3_key),
     )
 
 def _parse_vectors(raw_vectors: list[Any]) -> np.ndarray:
@@ -302,4 +286,3 @@ def _parse_vectors(raw_vectors: list[Any]) -> np.ndarray:
         else:
             raise ValueError(f"Unexpected vector type {type(raw)}")
     return np.array(vectors, dtype=np.float32)
-

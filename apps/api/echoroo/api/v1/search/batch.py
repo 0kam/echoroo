@@ -318,28 +318,14 @@ async def _prepare_batch_job(
     # Upload new files to S3 and set s3_key on each matching source
     s3_prefix = f"search_reference/{project_id}/{job_id}"
     try:
-        from echoroo.core.s3 import get_s3_client
-        from echoroo.core.settings import get_settings as _get_settings
-
-        s3_settings = _get_settings()
-        s3_client = get_s3_client()
-
-        # FR-028e: route every PutObject kwargs dict through the GPS metadata
-        # sanitizer (defense in depth — caller controls Metadata today, but a
-        # later refactor adding it cannot regress).
-        from echoroo.services.s3_upload_sanitizer import sanitize_put_object_kwargs
+        from echoroo.core.s3 import put_object
 
         for field_name, content in uploaded_file_bytes.items():
             suffix = uploaded_file_suffixes[field_name]
             s3_key = f"{s3_prefix}/{field_name}{suffix}"
-            put_kwargs = sanitize_put_object_kwargs(
-                {
-                    "Bucket": s3_settings.S3_BUCKET,
-                    "Key": s3_key,
-                    "Body": content,
-                }
-            )
-            s3_client.put_object(**put_kwargs)
+            # FR-028e: put_object routes the PutObject kwargs through the GPS
+            # metadata sanitizer centrally.
+            put_object(s3_key, content)
 
             # Assign s3_key to all matching sources across species
             for sp in batch_request.species:

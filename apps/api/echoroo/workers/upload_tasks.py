@@ -27,8 +27,9 @@ from celery.exceptions import Ignore
 from echoroo.core.s3 import (
     delete_objects_by_prefix,
     get_object_stream,
-    get_s3_client,
+    head_object,
     move_object,
+    put_object,
     verify_object_exists,
 )
 from echoroo.core.settings import get_settings
@@ -220,7 +221,7 @@ def _build_recording_s3_key(
 def _sanitize_uploaded_object_gps(
     object_key: str,
     local_path: str,
-    s3_client: Any,
+    s3_client: Any = None,
 ) -> tuple[bytes, str] | None:
     """Strip GPS metadata from an uploaded S3 object in-place.
 
@@ -233,6 +234,8 @@ def _sanitize_uploaded_object_gps(
     caller turns into per-file ``INVALID`` status. The previous Round 1
     behaviour returned ``None`` on head_object failure, which let unsanitized
     objects pass through to ``VALID`` — Round 2 closes that gap.
+
+    s3_client is a test seam; production callers omit it.
 
     Returns:
         Tuple of (new_payload_bytes, new_sha256_hex) when the object was
@@ -247,7 +250,7 @@ def _sanitize_uploaded_object_gps(
     # Fail-closed: any head_object failure aborts the sanitize so the file
     # cannot be marked VALID without a sanitization pass.
     try:
-        head = s3_client.head_object(Bucket=bucket, Key=object_key)
+        head = head_object(object_key, client=s3_client, bucket=bucket)
     except Exception as exc:
         logger.error(
             "GPS sanitize: head_object failed for %s: %s; failing closed",
@@ -274,19 +277,16 @@ def _sanitize_uploaded_object_gps(
     if not metadata_dirty and not payload_dirty:
         return None
 
-    # 4. Build sanitized PutObject kwargs and re-upload.
-    put_kwargs: dict[str, Any] = {
-        "Bucket": bucket,
-        "Key": object_key,
-        "Body": sanitized_bytes,
-        "Metadata": current_metadata,
-    }
-    if content_type:
-        put_kwargs["ContentType"] = content_type
-    put_kwargs = sanitize_put_object_kwargs(put_kwargs)
-
+    # 4. Re-upload. put_object applies the S3 user-metadata sanitizer (FR-028e).
     try:
-        s3_client.put_object(**put_kwargs)
+        put_object(
+            object_key,
+            sanitized_bytes,
+            content_type=content_type,
+            metadata=current_metadata,
+            bucket=bucket,
+            client=s3_client,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.error(
             "GPS sanitize: put_object rewrite failed for %s: %s",
@@ -318,7 +318,6 @@ def _sanitize_uploaded_object_gps(
 async def _run_validate(session_id: str) -> dict[str, Any]:
     """Async implementation of upload session validation."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    s3 = get_s3_client()
 
     try:
         async with session_factory() as db:
@@ -361,7 +360,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
 
                 # --- Step 1: Check magic bytes ---
                 try:
-                    stream = get_object_stream(file.object_key, byte_range="bytes=0-65535", client=s3)
+                    stream = get_object_stream(file.object_key, byte_range="bytes=0-65535")
                     header = stream.read(65536)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Failed to read S3 header for %s: %s", file.object_key, exc)
@@ -399,7 +398,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                         # Download full file to temp location for ffprobe.
                         # Read in chunks to enforce a size limit (M4) and compute
                         # SHA-256 for integrity verification (M3 / H4 TOCTOU).
-                        full_stream = get_object_stream(file.object_key, client=s3)
+                        full_stream = get_object_stream(file.object_key)
                         max_bytes = file.file_size + 1024  # small margin for headers
                         bytes_written = 0
                         while True:
@@ -455,7 +454,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                         if probe_data is not None:
                             try:
                                 sanitize_result = _sanitize_uploaded_object_gps(
-                                    file.object_key, tmp_path, s3,
+                                    file.object_key, tmp_path,
                                 )
                             except Exception as exc:  # noqa: BLE001
                                 logger.error(
@@ -575,7 +574,6 @@ async def _run_import(
 ) -> dict[str, Any]:
     """Async implementation of import from upload session."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    s3 = get_s3_client()
 
     try:
         async with session_factory() as db:
@@ -662,7 +660,6 @@ async def _run_import(
                 obj_info = verify_object_exists(
                     file.object_key,
                     expected_size=file.file_size,
-                    client=s3,
                     expected_sha256=file.checksum_sha256,
                 )
                 if not obj_info["exists"] or not obj_info["size_match"]:
@@ -706,7 +703,7 @@ async def _run_import(
                     continue
 
                 # Move S3 object from uploads prefix to recordings prefix
-                moved = move_object(file.object_key, dest_key, client=s3)
+                moved = move_object(file.object_key, dest_key)
                 if not moved:
                     logger.error(
                         "Failed to move S3 object %s -> %s for file %s",
@@ -792,7 +789,6 @@ async def _run_import(
 async def _run_cleanup() -> dict[str, Any]:
     """Async implementation of orphan upload cleanup."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    s3 = get_s3_client()
 
     try:
         async with session_factory() as db:
@@ -807,7 +803,7 @@ async def _run_cleanup() -> dict[str, Any]:
                 dataset = upload_session.dataset
                 prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
                 try:
-                    deleted = delete_objects_by_prefix(prefix, client=s3)
+                    deleted = delete_objects_by_prefix(prefix)
                     logger.info(
                         "Deleted %d S3 objects for expired session %s",
                         deleted,
@@ -837,7 +833,7 @@ async def _run_cleanup() -> dict[str, Any]:
                 dataset = upload_session.dataset
                 prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
                 try:
-                    deleted = delete_objects_by_prefix(prefix, client=s3)
+                    deleted = delete_objects_by_prefix(prefix)
                     logger.info(
                         "Deleted %d S3 objects for stale session %s",
                         deleted,
