@@ -318,8 +318,12 @@ async def _prepare_batch_job(
     # Upload new files to S3 and set s3_key on each matching source
     s3_prefix = f"search_reference/{project_id}/{job_id}"
     try:
-        from echoroo.core.s3 import put_object
+        from echoroo.core.s3 import ensure_configured, put_object
 
+        # Fail with 500 on a broken storage configuration even when this
+        # request carries no new uploads (parent-reference copies above skip
+        # their own failures).
+        ensure_configured()
         for field_name, content in uploaded_file_bytes.items():
             suffix = uploaded_file_suffixes[field_name]
             s3_key = f"{s3_prefix}/{field_name}{suffix}"

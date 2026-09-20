@@ -174,3 +174,12 @@ def test_missing_scan_root_raises(tmp_path: Path) -> None:
     lint = _load_lint()
     with pytest.raises(RuntimeError):
         lint.find_violations(tmp_path / "does-not-exist")
+
+
+def test_flags_sdk_module_reexported_through_wrapper(tmp_path: Path) -> None:
+    lint = _load_lint()
+    _write(tmp_path, "mod.py", "from echoroo.core.kms import boto3\n")
+    findings = lint.find_violations(tmp_path)
+    assert len(findings) == 1, findings
+    assert "boto3" in findings[0]
+

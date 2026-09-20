@@ -635,7 +635,12 @@ def test_search_batch_routes_put_object_through_sanitizer(
     from echoroo.api.v1.search import batch as batch_mod
 
     src = inspect.getsource(batch_mod)
-    assert "from echoroo.core.s3 import put_object" in src
+    assert "from echoroo.core.s3 import ensure_configured, put_object" in src
+    # A broken storage configuration must surface as the 500 below even when
+    # the request has no new uploads, so the probe sits before the loop.
+    assert src.index("ensure_configured()") < src.index(
+        "for field_name, content in uploaded_file_bytes.items()"
+    )
     assert "put_object(s3_key, content)" in src
     assert "get_s3_client" not in src
     assert ".put_object(" not in src, (

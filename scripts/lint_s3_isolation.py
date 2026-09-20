@@ -13,7 +13,12 @@ The two detection rules are:
    ``from boto3 import client`` and aliased imports, which rule 1 cannot see.
    ``core/kms.py`` is exempt from this rule only: it owns the KMS client.
 
-The rules apply outside ``apps/api/echoroo/core/s3.py``. They support slice 1
+The rules apply outside ``apps/api/echoroo/core/s3.py``.
+
+This is a guard against accidental regressions, not a sandbox: like
+``lint_kms_isolation.py`` it does no data-flow analysis, so deliberately
+aliasing a factory (``make = boto3.client``) inside ``core/kms.py`` is left
+to code review. They support slice 1
 of the storage migration described in
 ``docs/architecture/storage-lustre-migration.md``.
 
@@ -78,6 +83,10 @@ class _S3IsolationVisitor(ast.NodeVisitor):
         if node.level == 0:
             self._check_sdk_import(node.lineno, node.module)
         for alias in node.names:
+            if alias.name in SDK_PACKAGES:
+                # e.g. ``from echoroo.core.kms import boto3`` — an SDK module
+                # re-exported through a wrapper.
+                self._check_sdk_import(node.lineno, alias.name)
             if alias.name in RAW_CLIENT_ACCESSORS:
                 self.violations.append(
                     (
