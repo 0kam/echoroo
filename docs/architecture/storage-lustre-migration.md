@@ -1,6 +1,6 @@
 # Storage migration: LocalStack S3 to Lustre POSIX
 
-Status: reviewed (2026-09-20) — slice 3 blocked on open decision 1
+Status: decided (2026-09-20)
 
 ## Decision
 
@@ -48,17 +48,24 @@ Persistent namespaces that must all move: `recordings/`, `uploads/` (staging),
 
 ## Data placement
 
+The VM's local disk is small: about 200 GB in normal use, 500 GB at most,
+operating system included. Lustre is 20 TiB. Anything large goes to Lustre
+unless it needs random I/O.
+
 | Location | Contents |
 | --- | --- |
-| Lustre `/data` | Recording originals, model artifacts, search reference audio |
-| Local disk | PostgreSQL data directory, Redis dump, Docker volumes, spectrogram and OGG playback caches |
+| Lustre `/data` | Recording originals, model artifacts, search reference audio, OGG playback cache |
+| Local disk | PostgreSQL data directory, Redis dump, Docker volumes and images, spectrogram cache (size-capped) |
 
 Lustre is built for large sequential I/O; its metadata server is the bottleneck
 for files under ~256 KiB. PostgreSQL and Redis never go on Lustre.
 
 The OGG playback cache is currently hardcoded to `/data/audio_compressed`
-(`services/audio/service.py:576`), which on the VM is Lustre. It must become a
-setting pointing at local disk (slice 4).
+(`services/audio/service.py:576`). It becomes a setting (slice 4). Its files are
+megabytes each and costly to regenerate, so it stays on Lustre, with an
+age-based sweep. The spectrogram cache holds many small PNGs and stays on local
+disk under a size cap. The `/data/s3_audio_cache` copy of every recording
+disappears, which frees local disk rather than consuming it.
 
 ## Assumptions
 
@@ -74,15 +81,29 @@ setting pointing at local disk (slice 4).
   (`core/s3.py:334`, `workers/search_tasks.py:806-821`); a preserved mtime
   would make a new copy look like an old orphan.
 
+## Decisions taken
+
+| # | Question | Decision (2026-09-20) |
+| --- | --- | --- |
+| 1 | How do audit log archives stay immutable without S3 Object Lock? | Tamper evidence from the existing KMS chain hash; immutability provided operationally by a read-only mount and periodic snapshots. No new infrastructure. |
+| 2 | How much local disk does the VM have? | ~200 GB typical, 500 GB maximum including the OS. See *Data placement* and the embeddings risk below. |
+
 ## Open decisions
 
 | # | Question | Options (recommended first) | Consequence | Blocks |
 | --- | --- | --- | --- | --- |
-| 1 | How must audit log archives stay immutable once S3 Object Lock is gone? | (a) KMS chain hash for tamper evidence + read-only mount and snapshots for immutability; (b) ship archives to an external append-only store | (a) no new infrastructure, immutability is operational rather than enforced; (b) enforced WORM, one more system to run | slice 3, therefore slice 4 |
-| 2 | How much local (non-Lustre) disk does the VM have? | — (fact needed) | Sizes PostgreSQL, Docker volumes and the caches; if small, caches need an eviction policy | slice 4 sizing |
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
+| 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
 
 ## Risks
+
+- **PostgreSQL fills before Lustre does.** Embeddings live in PostgreSQL as
+  `Vector(1536)` (`models/embedding.py:42`): about 4.5 MB of row data per
+  recorded hour at one vector per 5 s, roughly 10 MB with the index. With
+  ~100 GB of local disk left for PostgreSQL that is on the order of 10,000
+  hours, while 20 TiB of Lustre holds about 60,000 hours of WAV. Not in scope
+  here. First lever when it approaches: `halfvec` (halves it). Second: move
+  embeddings out of PostgreSQL. Watch `pg_database_size` against local disk.
 
 - **Partial files become visible.** S3 objects appear atomically; POSIX files do
   not. Upload rows are created with `object_key` first and verified for
@@ -131,7 +152,14 @@ S3, then cut over once.
 
 ### 3. Audit log immutability without Object Lock
 
-- **Depends on** — open decision 1. **UX preview needed** — no.
+- **Scope** — audit export writes through `core/s3.py` without Object Lock
+  parameters; archives land under a directory that operations mounts read-only
+  and snapshots; the wipe guard's genesis-marker check reads the same path;
+  runbook entry for the mount and snapshot schedule.
+- **Out of scope** — the chain hash itself, which already exists.
+- **Acceptance** — export then verify the chain end to end; wipe guard still
+  refuses when the marker is present.
+- **Depends on** — slice 1. **UX preview needed** — no.
 
 ### 4. Cutover
 
@@ -140,16 +168,17 @@ One PR, because any subset leaves a broken state.
 - **Scope** — POSIX implementation behind `core/s3.py` (temp + rename on every
   write, fresh mtime on copy); `ensure_file_local()` and `get_absolute_path()`
   collapse to `AUDIO_ROOT`; remove the hardcoded `/data/s3_audio_cache` in the
-  ML workers; `COMPRESSED_CACHE_DIR` becomes a setting on local disk; boot
+  ML workers; `COMPRESSED_CACHE_DIR` becomes a setting (Lustre, age-based sweep) and the spectrogram cache gets a size cap; boot
   check probes the mount for existence and writability instead of
   `head_bucket`; `/data/audio` mounted read-write; LocalStack reduced to
   `SERVICES=kms`; `CONFIGURATION.md`.
 - **Acceptance** — Playwright spec: upload → detection run → playback →
   search by reference audio → model train, with LocalStack S3 disabled.
-- **Depends on** — slices 1, 2, 3 and open decision 2. **UX preview needed** — no.
+- **Depends on** — slices 1, 2, 3. **UX preview needed** — no.
 
 ## Review log
 
 | Date | Reviewer | Findings | Resolution |
 | --- | --- | --- | --- |
 | 2026-09-16 | Codex (gpt-5.5) | Slice order broke browser uploads, audit export and boot check between the old slices 2 and 3-5; `seed_e2e_permissions.py` missing from slice 1; OGG cache hardcoded onto `/data`; `ensure_file_local()` is not the only read path; partial file visibility; janitor mtime; `search_reference/` and `models/` namespaces | All accepted. Slices reordered to "reroute on S3, then cut over once"; the rest folded into Context, Assumptions, Risks and slice scopes |
+| 2026-09-20 | Maintainer | Decisions 1 and 2; local disk is ~200 GB | Audit slice unblocked; OGG cache moved to Lustre, spectrogram cache capped; embeddings-vs-local-disk risk recorded with open decision 4 |
