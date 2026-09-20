@@ -26,6 +26,7 @@ from celery.exceptions import Ignore
 
 from echoroo.core.s3 import (
     delete_objects_by_prefix,
+    ensure_configured,
     get_object_stream,
     head_object,
     move_object,
@@ -318,6 +319,7 @@ def _sanitize_uploaded_object_gps(
 async def _run_validate(session_id: str) -> dict[str, Any]:
     """Async implementation of upload session validation."""
     engine, session_factory = get_worker_engine_and_session_factory()
+    ensure_configured()
 
     try:
         async with session_factory() as db:
@@ -574,6 +576,7 @@ async def _run_import(
 ) -> dict[str, Any]:
     """Async implementation of import from upload session."""
     engine, session_factory = get_worker_engine_and_session_factory()
+    ensure_configured()
 
     try:
         async with session_factory() as db:
@@ -789,6 +792,7 @@ async def _run_import(
 async def _run_cleanup() -> dict[str, Any]:
     """Async implementation of orphan upload cleanup."""
     engine, session_factory = get_worker_engine_and_session_factory()
+    ensure_configured()
 
     try:
         async with session_factory() as db:

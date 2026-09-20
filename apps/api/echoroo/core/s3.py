@@ -81,6 +81,16 @@ def get_public_s3_client() -> Any:
     )
 
 
+def ensure_configured() -> None:
+    """Raise if the storage settings cannot produce a client.
+
+    Call this before a loop whose per-item ``except`` would otherwise swallow
+    a configuration error (malformed endpoint, ...) and turn it into a
+    per-item failure. It does no I/O.
+    """
+    get_s3_client()
+
+
 def ensure_bucket_exists(client: Any = None) -> None:
     """Create the bucket if it doesn't exist."""
     settings = get_settings()

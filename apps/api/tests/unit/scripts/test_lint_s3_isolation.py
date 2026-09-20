@@ -31,16 +31,16 @@ def _write(root: Path, rel: str, source: str) -> Path:
 
 def test_flags_boto3_client_s3_positional(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'import boto3\nc = boto3.client("s3")\n')
+    _write(tmp_path, "module.py", 'c = boto3.client("s3")\n')
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 1
     assert "client('s3', ...)" in findings[0]
-    assert ":2:" in findings[0]
+    assert ":1:" in findings[0]
 
 
 def test_flags_service_name_keyword(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'import boto3\nc = boto3.client(service_name="s3")\n')
+    _write(tmp_path, "module.py", 'c = boto3.client(service_name="s3")\n')
     assert len(lint.find_violations(tmp_path)) == 1
 
 
@@ -49,14 +49,14 @@ def test_flags_resource_and_session_receiver(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "module.py",
-        'import boto3\nboto3.resource("s3")\nboto3.Session().client("s3")\n',
+        'boto3.resource("s3")\nboto3.Session().client("s3")\n',
     )
     assert len(lint.find_violations(tmp_path)) == 2
 
 
 def test_ignores_other_services(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'import boto3\nboto3.client("kms")\n')
+    _write(tmp_path, "module.py", 'boto3.client("kms")\n')
     assert lint.find_violations(tmp_path) == []
 
 
@@ -102,7 +102,8 @@ def test_core_s3_is_allowlisted(tmp_path: Path) -> None:
     assert lint.find_violations(tmp_path) == []
 
     _write(tmp_path, "apps/api/echoroo/core/other.py", source)
-    assert len(lint.find_violations(tmp_path)) == 1
+    # import line + client construction
+    assert len(lint.find_violations(tmp_path)) == 2
 
 
 def test_syntax_error_raises_runtime_error(tmp_path: Path) -> None:
@@ -128,3 +129,48 @@ def test_repository_is_clean() -> None:
         pytest.skip("repository echoroo source root not found")
     findings = lint.find_violations(root)
     assert findings == [], "\n".join(findings)
+
+
+def test_flags_sdk_import_forms(tmp_path: Path) -> None:
+    lint = _load_lint()
+    _write(
+        tmp_path,
+        "mod.py",
+        """\
+        from boto3 import client as make
+        import botocore.exceptions
+        c = make("s3")
+        """,
+    )
+    findings = lint.find_violations(tmp_path)
+    assert len(findings) == 2, findings
+    assert ":1:" in findings[0] and "boto3" in findings[0]
+    assert ":2:" in findings[1] and "botocore.exceptions" in findings[1]
+
+
+def test_core_kms_may_import_sdk_but_not_build_s3_client(tmp_path: Path) -> None:
+    lint = _load_lint()
+    _write(
+        tmp_path,
+        "apps/api/echoroo/core/kms.py",
+        """\
+        import boto3
+        k = boto3.client("kms")
+        """,
+    )
+    assert lint.find_violations(tmp_path) == []
+    _write(
+        tmp_path,
+        "apps/api/echoroo/core/kms.py",
+        """\
+        import boto3
+        k = boto3.client("s3")
+        """,
+    )
+    assert len(lint.find_violations(tmp_path)) == 1
+
+
+def test_missing_scan_root_raises(tmp_path: Path) -> None:
+    lint = _load_lint()
+    with pytest.raises(RuntimeError):
+        lint.find_violations(tmp_path / "does-not-exist")

@@ -342,8 +342,9 @@ async def _run_batch_search_with_progress(
             if source.s3_key and (
                 source.file_key is None or source.file_key not in audio_files
             ):
-                from echoroo.core.s3 import download_object_to_file
+                from echoroo.core.s3 import download_object_to_file, ensure_configured
 
+                ensure_configured()
                 _s3_tmp_dir = Path(f"/data/search_tmp/{job_id}") if job_id else Path("/tmp")
                 _local_path = _s3_tmp_dir / Path(source.s3_key).name
                 try:
