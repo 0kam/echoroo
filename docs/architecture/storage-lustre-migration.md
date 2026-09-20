@@ -1,134 +1,155 @@
 # Storage migration: LocalStack S3 to Lustre POSIX
 
-Status: planned (2026-09-16)
+Status: reviewed (2026-09-20) — slice 3 blocked on open decision 1
 
 ## Decision
 
-Drop the S3 object-storage layer entirely and read/write recordings directly on
-the Lustre parallel filesystem mounted at `/data`.
+Drop the S3 object-storage layer and read/write recordings, model artifacts and
+search reference audio directly on the Lustre filesystem mounted at `/data`.
+Replace the implementation behind `core/s3.py` in place; do not introduce a
+storage abstraction with two backends.
 
-Rationale:
+## Context
 
 - The only S3 implementation in use is LocalStack, pinned to
-  `localstack/localstack:community-archive` (the final token-free build, no
-  further updates). There is no production compose file. Running this in
-  production is not an option, so *some* migration is mandatory.
-- The usual drop-in replacement is gone: MinIO removed the community admin UI in
-  2025 and archived its repository in April 2026. Adopting Garage, SeaweedFS or
-  Ceph RGW would mean operating a distributed object store for a benefit Lustre
+  `localstack/localstack:community-archive` — the final token-free build, no
+  further updates (`compose.dev.yaml:69-76`). There is no production compose
+  file, so some migration is mandatory before launch.
+- The usual drop-in replacement is gone: MinIO removed the community admin UI
+  in 2025 and archived its repository in April 2026. Garage, SeaweedFS or Ceph
+  RGW would mean operating a distributed object store for a benefit Lustre
   already provides.
-- Lustre is mounted POSIX at `/data` and is reachable from several VMs in the
-  project. Shared multi-node access — the main reason to run an object store —
-  is satisfied by the filesystem.
+- The VM has a 20 TiB Lustre filesystem at `/data`: POSIX, writable, reachable
+  from several VMs in the project, GPU available. The mount options cannot be
+  changed by us.
 - Echoroo has not launched. There is no data to migrate and no compatibility
-  window, so we replace the implementation in place rather than running two
-  backends behind an abstraction.
+  window.
+- `Recording.path` is written as the S3 key and is also interpreted relative to
+  `AUDIO_ROOT` (`workers/upload_tasks.py:215`, `:739`). The data model needs no
+  change.
+- Reads resolve local paths in two places, not one:
+  `AudioService.ensure_file_local()` (`services/audio/service.py:138`, the S3
+  download gate) and `get_absolute_path()` (`:103`), which `read_audio()`
+  (`:296`) and `load_clip_bytes()` (`:691`) call directly. Both look under
+  `AUDIO_ROOT` first, so both resolve once Lustre is `AUDIO_ROOT`.
+- The API and the Celery workers already share a POSIX volume
+  (`backend-data:/data`).
+- No multipart upload is used anywhere. Spectrograms and export artifacts never
+  touch S3.
+- S3 server-side encryption is not used. LocalStack KMS backs TOTP envelope
+  encryption, PII HMAC, the audit chain hash and invitation token signing —
+  unrelated to object storage.
 
-## What already points this way
-
-- `Recording.path` is written as the S3 key (`workers/upload_tasks.py`) and is
-  simultaneously interpreted as a path relative to `AUDIO_ROOT`. The data model
-  needs no change: `recordings/{project_id}/{dataset_id}/{recording_id}.wav`
-  becomes a real directory tree.
-- Every API-side read goes through the single gate
-  `AudioService.ensure_file_local()` (`services/audio/service.py`), which
-  already returns early when the file exists under `AUDIO_ROOT`. Once Lustre is
-  `AUDIO_ROOT`, the S3 download branch becomes dead code.
-- The API and the Celery workers already share a POSIX volume (`backend-data:/data`).
-- No multipart upload is used anywhere, so no multipart state machine has to be
-  reimplemented.
-- Spectrograms and export artifacts never touch S3 — they are generated on
-  demand and streamed in the response.
-
-Two operations get faster: `move_object` (copy + delete) becomes an atomic
-`os.rename` on the same filesystem, and the TOCTOU SHA-256 re-read of every
-uploaded file (1 GB read twice) disappears once uploads no longer land through a
-presigned URL.
+Persistent namespaces that must all move: `recordings/`, `uploads/` (staging),
+`search_reference/{project}/{job}` (`api/v1/search/batch.py:226`, `:342`,
+`models/search_session.py:124`), `models/{project}/{model}/model.joblib`
+(`workers/classifier/training.py:360`, `workers/classifier/utils.py:243`),
+`audit-log/`.
 
 ## Data placement
 
 | Location | Contents |
 | --- | --- |
 | Lustre `/data` | Recording originals, model artifacts, search reference audio |
-| Local NVMe | PostgreSQL data directory, Redis dump, Docker volumes, `AUDIO_CACHE_DIR` (spectrogram PNG / OGG playback cache) |
+| Local disk | PostgreSQL data directory, Redis dump, Docker volumes, spectrogram and OGG playback caches |
 
-Lustre is optimised for large sequential I/O. Its metadata server becomes the
-bottleneck for files under ~256 KiB, so the derived-image cache stays on local
-disk. PostgreSQL and Redis are never placed on Lustre.
+Lustre is built for large sequential I/O; its metadata server is the bottleneck
+for files under ~256 KiB. PostgreSQL and Redis never go on Lustre.
 
-The application does not use `flock`, and PostgreSQL does not live on Lustre, so
-no cluster-wide locking guarantees are required from the mount.
+The OGG playback cache is currently hardcoded to `/data/audio_compressed`
+(`services/audio/service.py:576`), which on the VM is Lustre. It must become a
+setting pointing at local disk (slice 4).
 
-## The three hard parts
+## Assumptions
 
-### 1. Browser uploads via presigned PUT
+- **No cluster-wide locking is needed from the mount.** The application never
+  calls `flock`, and PostgreSQL is not on Lustre. Reversible: would surface as
+  lock errors in worker logs.
+- **Default Lustre striping is adequate for 30-minute WAV files.** Reversible:
+  `lfs setstripe` on the recordings directory if throughput disappoints.
+- **One VM first.** Splitting the GPU worker onto a second VM later needs only
+  the same `/data` mount; nothing in this design depends on it.
+- **POSIX copies take a fresh mtime** (`shutil.copyfile`, not `copy2`). The
+  search reference janitor filters orphans by age
+  (`core/s3.py:334`, `workers/search_tasks.py:806-821`); a preserved mtime
+  would make a new copy look like an old orphan.
 
-POSIX has no equivalent of "a URL the browser may write to". Presigned URLs are
-generated in exactly one place (`services/upload.py`), consumed by
-`apps/web/src/lib/api/uploads.ts`.
+## Open decisions
 
-Replacement: upload through the backend, authorised by an `upload`-scoped media
-token. The HMAC token machinery already exists (`issue_media_token` /
-`verify_media_token` in `core/auth.py`, introduced in W2-4) and is currently
-read-only; adding a write scope needs its own security review.
+| # | Question | Options (recommended first) | Consequence | Blocks |
+| --- | --- | --- | --- | --- |
+| 1 | How must audit log archives stay immutable once S3 Object Lock is gone? | (a) KMS chain hash for tamper evidence + read-only mount and snapshots for immutability; (b) ship archives to an external append-only store | (a) no new infrastructure, immutability is operational rather than enforced; (b) enforced WORM, one more system to run | slice 3, therefore slice 4 |
+| 2 | How much local (non-Lustre) disk does the VM have? | — (fact needed) | Sizes PostgreSQL, Docker volumes and the caches; if small, caches need an eviction policy | slice 4 sizing |
+| 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 
-This also removes the Vite `/s3-proxy` reverse proxy, the LocalStack CORS
-configuration and the `toRelativeUrl()` workaround, and it is the natural point
-to add resumable uploads (today a dropped 1 GB upload must be redone inside the
-15-minute presigned window).
+## Risks
 
-### 2. S3 Object Lock (audit log WORM)
+- **Partial files become visible.** S3 objects appear atomically; POSIX files do
+  not. Upload rows are created with `object_key` first and verified for
+  existence and size later (`services/upload.py:585`, `:696`), so a worker can
+  observe a half-written file. Every write — first write included — goes to a
+  temp name and is renamed into place.
+- **Audit export loses Object Lock at cutover**
+  (`workers/audit_log_export.py:161-165`), and the wipe guard loses one of its
+  three checks (`scripts/check_wipe_guard.py:118-136`). Slice 3 lands first.
+- **Janitor age filter** — see the mtime assumption above.
+- **Stale cache reads.** `workers/ml/detection.py:154` and
+  `workers/ml/embedding.py:129` hardcode `/data/s3_audio_cache`; left in place
+  they would keep serving old copies instead of the Lustre originals.
 
-`workers/audit_log_export.py` writes weekly NDJSON with
-`ObjectLockMode=GOVERNANCE`, and `scripts/check_wipe_guard.py` treats the
-presence of an Object Lock genesis marker as one of three database-wipe guards.
-Lustre offers no equivalent.
+## Slices
 
-This is a compliance question rather than a technical one. Options:
+Ordered so that every intermediate state runs: change the paths while still on
+S3, then cut over once.
 
-- keep the audit archive on an external append-only store (hybrid), or
-- rely on the existing KMS chain hash for tamper evidence and provide
-  immutability operationally (read-only mount plus periodic snapshots).
+### 1. Funnel boto3 through `core/s3.py`
 
-Pending a decision.
+- **Scope** — route every direct boto3 S3 call through the helper module and
+  add `scripts/lint_s3_isolation.py`, mirroring `lint_kms_isolation.py`.
+  Callers: `services/audio/service.py`, `services/custom_model.py`,
+  `api/v1/search/sessions/media.py`, `api/v1/search/batch.py`,
+  `workers/upload_tasks.py`, `workers/search_tasks.py`,
+  `workers/classifier/utils.py`, `workers/audit_log_export.py`,
+  `core/boot_checks.py`, `scripts/check_wipe_guard.py`,
+  `scripts/seed_e2e_permissions.py` (`:391`, `:429`).
+- **Out of scope** — any behaviour change; no Protocol or store class.
+- **Acceptance** — existing suites green; lint fails on a boto3 S3 call outside
+  `core/s3.py`.
+- **Depends on** — nothing. **UX preview needed** — no.
 
-### 3. In-place overwrite atomicity
+### 2. Uploads through the backend (still on S3)
 
-GPS stripping overwrites the uploaded object in place (`put_object` in
-`workers/upload_tasks.py`). S3 replaces atomically; a POSIX `open(w)` exposes
-intermediate state. Must become write-to-temp plus `os.rename`.
+- **Scope** — `upload`-scoped media token (`core/auth.py`), streaming write
+  endpoint that stores via `core/s3.py`, resumable transfer, atomic GPS
+  rewrite, removal of the TOCTOU SHA-256 re-read, the Vite `/s3-proxy`, the
+  LocalStack CORS setup and `toRelativeUrl()`.
+- **Out of scope** — the storage backend itself.
+- **Acceptance** — Playwright spec: upload, interrupt, resume, complete; no
+  request leaves the app origin. Security review of the write scope.
+- **Depends on** — slice 1. **UX preview needed** — yes (resume and stall
+  states in `FileUpload`).
 
-## KMS is a separate problem
+### 3. Audit log immutability without Object Lock
 
-S3 server-side encryption is not used anywhere — recordings, model artifacts and
-audit archives are stored in plaintext. LocalStack KMS instead backs four
-application concerns: TOTP secret envelope encryption, PII HMAC, the audit log
-chain hash and invitation token signing.
+- **Depends on** — open decision 1. **UX preview needed** — no.
 
-Removing S3 therefore does not remove LocalStack. The authentication
-infrastructure would still depend on an unmaintained build. Choosing a real KMS
-backend is tracked separately and is arguably more urgent than this migration.
+### 4. Cutover
 
-## PR slices
+One PR, because any subset leaves a broken state.
 
-1. **Funnel boto3 through `core/s3.py`.** Eight modules call boto3 directly
-   (`services/audio/service.py`, `services/custom_model.py`,
-   `api/v1/search/sessions/media.py`, `api/v1/search/batch.py`,
-   `workers/upload_tasks.py`, `workers/search_tasks.py`,
-   `workers/classifier/utils.py`, `workers/audit_log_export.py`, plus
-   `core/boot_checks.py` and `scripts/check_wipe_guard.py`). Route them through
-   the helper module and add `scripts/lint_s3_isolation.py`, mirroring the
-   existing `lint_kms_isolation.py`. Behaviour unchanged.
-2. **Replace `core/s3.py` with a POSIX implementation** and switch reads to
-   Lustre: collapse `ensure_file_local()`, drop the hardcoded
-   `/data/s3_audio_cache` in `workers/ml/detection.py` and
-   `workers/ml/embedding.py`, mount `/data/audio` read-write.
-3. **Move uploads through the backend**: `upload` scope on the media token,
-   streaming write endpoint, resumable transfer, atomic GPS rewrite, and removal
-   of the now-unnecessary TOCTOU re-read.
-4. **Audit log WORM replacement** (blocked on the compliance decision above).
-5. **Retire S3 from the stack**: LocalStack down to `SERVICES=kms`, boot check
-   probes the mount instead of the bucket, compose and `CONFIGURATION.md`
-   updated.
+- **Scope** — POSIX implementation behind `core/s3.py` (temp + rename on every
+  write, fresh mtime on copy); `ensure_file_local()` and `get_absolute_path()`
+  collapse to `AUDIO_ROOT`; remove the hardcoded `/data/s3_audio_cache` in the
+  ML workers; `COMPRESSED_CACHE_DIR` becomes a setting on local disk; boot
+  check probes the mount for existence and writability instead of
+  `head_bucket`; `/data/audio` mounted read-write; LocalStack reduced to
+  `SERVICES=kms`; `CONFIGURATION.md`.
+- **Acceptance** — Playwright spec: upload → detection run → playback →
+  search by reference audio → model train, with LocalStack S3 disabled.
+- **Depends on** — slices 1, 2, 3 and open decision 2. **UX preview needed** — no.
 
-Estimated blast radius: roughly 20 production files and 20 test files.
+## Review log
+
+| Date | Reviewer | Findings | Resolution |
+| --- | --- | --- | --- |
+| 2026-09-16 | Codex (gpt-5.5) | Slice order broke browser uploads, audit export and boot check between the old slices 2 and 3-5; `seed_e2e_permissions.py` missing from slice 1; OGG cache hardcoded onto `/data`; `ensure_file_local()` is not the only read path; partial file visibility; janitor mtime; `search_reference/` and `models/` namespaces | All accepted. Slices reordered to "reroute on S3, then cut over once"; the rest folded into Context, Assumptions, Risks and slice scopes |
