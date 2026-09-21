@@ -91,7 +91,9 @@ window opens.
   write-once archives under the `audit-log/` prefix of the same bucket.
   Object Lock is not used; immutability is operational — see
   [audit_log_archive.md](audit_log_archive.md).
-- IAM role: PutObject / GetObject / DeleteObject on the bucket.
+- IAM role: PutObject / GetObject / DeleteObject on the objects and
+  ListBucket on the bucket (without it a HEAD on a missing key returns 403
+  instead of 404 and the audit export cannot tell "absent" from "denied").
 - Wire via `S3_BUCKET`, `S3_PUBLIC_ENDPOINT_URL` (presigned URL base).
 
 ### 5. Email — removed (spec/011 zero-email deployment)

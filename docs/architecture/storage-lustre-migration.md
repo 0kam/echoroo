@@ -180,6 +180,10 @@ S3, then cut over once.
   is read back and re-verified after writing, and an 8-week look-back catches
   up missed runs. The wipe guard reads the genesis marker through `core/s3`
   from the same bucket. Runbook: `docs/runbook/audit_log_archive.md`.
+- **Follow-up, not in this slice** — a signed manifest per archive (row count
+  and digest recorded as a MAC-chained `platform_audit_log` event) would make
+  tail truncation detectable from the archive alone after the 8-week window.
+  Today that needs the live table, the next archive or a snapshot.
 - **Not changed, flagged** — `check_wipe_guard.py` contradicts itself: the
   docstring and `all_clear_for_wipe` expect the genesis marker to be *absent*
   before a wipe, `main()` refuses when it is absent (exit 12). Behaviour left
@@ -210,3 +214,4 @@ One PR, because any subset leaves a broken state.
 | 2026-09-20 | Maintainer | Decisions 1 and 2; local disk is ~200 GB | Audit slice unblocked; OGG cache moved to Lustre, spectrogram cache capped; embeddings-vs-local-disk risk recorded with open decision 4 |
 | 2026-09-20 | Astra (gpt-6-astra), slice 1 code review | Building the client per helper call moved construction errors inside per-item `except` blocks (valid uploads marked INVALID, cleanup marking sessions FAILED, recordings 404, search sources skipped); lint missed `from boto3 import client`; a missing scan root passed as clean | All accepted: `ensure_configured()` at every former `get_s3_client()` site with regression tests; SDK-import rule; missing root exits 2. Not accepted: linting raw operations on passed-in clients — no module can obtain one |
 | 2026-09-20 | Astra, slice 1 re-review | `search/batch.py` lost its fail-fast when a rerun carries no new uploads (empty search job instead of HTTP 500); the lint missed an SDK module re-exported through `core/kms.py` | Accepted: `ensure_configured()` before the upload loop, pinned by the wiring test; re-export rule added. Not accepted: alias/data-flow tracking inside `core/kms.py` — the lint guards against accidents, same stated limit as `lint_kms_isolation.py` |
+| 2026-09-21 | Astra, slice 3 code review | Task routed to a queue no worker consumes; HEAD-then-PUT is not write-once under concurrency; `verify_archive` authenticated rows but not order or completeness; a row committed into an already archived week was silently skipped; one read-back failure blocked the clean weeks; naive `now_iso`; tests faked the SQL window and signed fixtures with the verifier's own canonicaliser; bootstrap `genesis` rows (zero hashes by design) would block the first production week; IAM `ListBucket` | All accepted: default queue; PostgreSQL advisory lock; chain-link check plus empty/malformed detection; every archive in the window is byte-compared with the live table on every run; failures aggregate per week; naive = UTC; fixtures signed with `audit_service._build_canonical_row`, real query asserted; bootstrap actions accepted without a MAC. Deferred: signed manifest (above). Not accepted: a persisted write cutoff in the audit writer — detection is enough before launch |

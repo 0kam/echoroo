@@ -4,10 +4,12 @@ import io
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 from botocore.exceptions import ClientError
 
+from echoroo.services.audit_service import _build_canonical_row
 from echoroo.workers import audit_log_export as mod
 
 _KEY = b"unit-test-chain-key"
@@ -39,8 +41,34 @@ def _row(
     }
     if project:
         row["project_id"] = "11111111-1111-1111-1111-111111111111"
-    row["row_hash"] = _fake_mac(prev_hash, mod._canonical_row(row, include_project_id=project))
+    # Signed with the WRITER's canonicaliser (audit_service), not the
+    # verifier's, so a drift between the two breaks these tests.
+    canonical = _build_canonical_row(
+        created_at=created_at,
+        actor_user_id_hash=row["actor_user_id_hash"],
+        action=action,
+        project_id=UUID(row["project_id"]) if project else None,
+        request_id=row["request_id"],
+        ip_hash=row["ip_hash"],
+        user_agent_hash=row["user_agent_hash"],
+        detail=row["detail"],
+        before=row["before"],
+        after=row["after"],
+    )
+    row["row_hash"] = _fake_mac(prev_hash, canonical)
     return row
+
+
+def _chain(*specs: tuple[datetime, str], project: bool = True) -> list[dict[str, Any]]:
+    """Build linked rows: each row's prev_hash is the previous row's row_hash."""
+    rows: list[dict[str, Any]] = []
+    prev = "0" * 64
+    for index, (created_at, action) in enumerate(specs):
+        row = _row(created_at, prev_hash=prev, project=project, action=action)
+        row["id"] = f"00000000-0000-0000-0000-{index:012d}"
+        rows.append(row)
+        prev = row["row_hash"]
+    return rows
 
 
 class _FakeS3:
@@ -111,7 +139,15 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
         )
 
     monkeypatch.setattr(mod, "_afetch_rows", fake_afetch_rows)
-    return SimpleNamespace(s3=s3, rows_by_table=rows_by_table)
+
+    lock = SimpleNamespace(available=True)
+
+    async def fake_try_export_lock(session: Any) -> bool:
+        del session
+        return lock.available
+
+    monkeypatch.setattr(mod, "_try_export_lock", fake_try_export_lock)
+    return SimpleNamespace(s3=s3, rows_by_table=rows_by_table, lock=lock)
 
 
 NOW = "2026-09-21T03:00:00+00:00"
@@ -176,14 +212,138 @@ def test_export_is_write_once(env: Any) -> None:
     key = "audit-log/project_audit_log/2026/38.ndjson"
     first_body = env.s3.objects[key]
 
+    summary = mod.export_weekly(now_iso=NOW)
+
+    assert summary["archives"] == []
+    assert len(env.s3.put_calls) == 1
+    assert env.s3.objects[key] == first_body
+
+
+def test_late_row_in_archived_week_fails_visibly_and_never_overwrites(env: Any) -> None:
+    rows = _chain((datetime(2026, 9, 15, tzinfo=UTC), "x.y"), (datetime(2026, 9, 16, tzinfo=UTC), "x.z"))
+    env.rows_by_table["project_audit_log"] = rows[:1]
     mod.export_weekly(now_iso=NOW)
-    env.rows_by_table["project_audit_log"].append(
-        _row(datetime(2026, 9, 16, tzinfo=UTC), action="x.z")
-    )
-    mod.export_weekly(now_iso=NOW)
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    first_body = env.s3.objects[key]
+
+    env.rows_by_table["project_audit_log"] = rows  # a row commits after the export
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
+        mod.export_weekly(now_iso=NOW)
 
     assert len(env.s3.put_calls) == 1
     assert env.s3.objects[key] == first_body
+
+
+def test_replaced_archive_is_detected_on_next_run(env: Any) -> None:
+    env.rows_by_table["project_audit_log"] = [_row(datetime(2026, 9, 15, tzinfo=UTC))]
+    mod.export_weekly(now_iso=NOW)
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    env.s3.objects[key] = b""
+
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert len(env.s3.put_calls) == 1
+
+
+def test_archive_without_live_rows_fails(env: Any) -> None:
+    env.s3.objects["audit-log/project_audit_log/2026/38.ndjson"] = b"{}\n"
+
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert env.s3.put_calls == []
+
+
+def test_concurrent_run_is_skipped(env: Any) -> None:
+    env.rows_by_table["project_audit_log"] = [_row(datetime(2026, 9, 15, tzinfo=UTC))]
+    env.lock.available = False
+
+    summary = mod.export_weekly(now_iso=NOW)
+
+    assert "skipped" in summary
+    assert env.s3.put_calls == []
+
+
+def test_naive_now_is_utc(env: Any) -> None:
+    env.rows_by_table["project_audit_log"] = [_row(datetime(2026, 9, 15, tzinfo=UTC))]
+
+    mod.export_weekly(now_iso="2026-09-21T03:00:00")
+
+    assert [call["Key"] for call in env.s3.put_calls] == [
+        "audit-log/project_audit_log/2026/38.ndjson"
+    ]
+
+
+def test_bootstrap_rows_are_archived_without_a_mac(env: Any) -> None:
+    genesis = _row(datetime(2026, 9, 14, 1, tzinfo=UTC), action="genesis")
+    genesis["row_hash"] = "0" * 64
+    follower = _row(datetime(2026, 9, 14, 2, tzinfo=UTC), prev_hash="0" * 64)
+    follower["id"] = "00000000-0000-0000-0000-000000000002"
+    env.rows_by_table["project_audit_log"] = [genesis, follower]
+
+    mod.export_weekly(now_iso=NOW)
+
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    assert mod.verify_archive(key, include_project_id=True) == 2
+
+
+def test_zero_hash_is_not_accepted_for_ordinary_actions(env: Any) -> None:
+    forged = _row(datetime(2026, 9, 15, tzinfo=UTC), action="x.y")
+    forged["row_hash"] = "0" * 64
+    env.rows_by_table["project_audit_log"] = [forged]
+
+    with pytest.raises(mod.AuditChainMismatchError):
+        mod.export_weekly(now_iso=NOW)
+
+    assert env.s3.put_calls == []
+
+
+@pytest.mark.parametrize("damage", ["drop_interior", "reorder", "empty", "malformed"])
+def test_verify_archive_detects_structural_damage(env: Any, damage: str) -> None:
+    env.rows_by_table["project_audit_log"] = _chain(
+        (datetime(2026, 9, 15, tzinfo=UTC), "a.a"),
+        (datetime(2026, 9, 16, tzinfo=UTC), "b.b"),
+        (datetime(2026, 9, 17, tzinfo=UTC), "c.c"),
+    )
+    mod.export_weekly(now_iso=NOW)
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    assert mod.verify_archive(key, include_project_id=True) == 3
+    lines = env.s3.objects[key].splitlines(keepends=True)
+    env.s3.objects[key] = {
+        "drop_interior": lines[0] + lines[2],
+        "reorder": lines[1] + lines[0] + lines[2],
+        "empty": b"",
+        "malformed": b"not json\n",
+    }[damage]
+
+    with pytest.raises(mod.AuditArchiveMismatchError):
+        mod.verify_archive(key, include_project_id=True)
+
+
+def test_afetch_rows_uses_a_half_open_window() -> None:
+    """The real query: inclusive start, exclusive end, deterministic order."""
+    import asyncio
+
+    captured: dict[str, Any] = {}
+
+    class _Result:
+        def mappings(self) -> Any:
+            return SimpleNamespace(all=lambda: [])
+
+    class _Session:
+        async def execute(self, stmt: Any, params: dict[str, Any]) -> _Result:
+            captured["sql"] = " ".join(str(stmt).split())
+            captured["params"] = params
+            return _Result()
+
+    start, end = mod._week_bounds(2026, 38)
+    asyncio.run(mod._afetch_rows(_Session(), "platform_audit_log", start=start, end=end))
+
+    assert "created_at >= :start AND created_at < :end" in captured["sql"]
+    assert "ORDER BY created_at ASC, id ASC" in captured["sql"]
+    assert "project_id" not in captured["sql"]
+    assert captured["params"] == {"start": start, "end": end}
 
 
 def test_export_catches_up_missed_week(env: Any) -> None:
