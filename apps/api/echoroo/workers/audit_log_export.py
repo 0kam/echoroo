@@ -1,30 +1,13 @@
-"""Weekly audit log export worker (FR-095).
+"""Weekly audit log archive worker (FR-095).
 
-Each week this task:
-
-1. Reads every row inserted since the previous successful export from
-   ``project_audit_log`` and ``platform_audit_log``.
-2. Re-computes ``row_hash`` locally for each row (using the KMS-backed
-   ``compute_audit_chain_hash``) and asserts it matches the stored value.
-   A mismatch aborts the export and raises ``AuditChainMismatchError`` so
-   a human can investigate before any compromised data is archived.
-3. Serialises the verified rows as NDJSON (one JSON object per line,
-   UTF-8, newline-terminated).
-4. Uploads the NDJSON document to the configured S3 Object Lock bucket in
-   ``GOVERNANCE`` mode with a 3-year retention (``RetainUntilDate = now +
-   3 years``). GOVERNANCE mode is chosen (not COMPLIANCE) so that the
-   creator_founder override pathway can still remove the last audit copy
-   during the emergency wipe flow (FR-114); production rollout may later
-   flip to COMPLIANCE if operations agree.
-5. Writes a completion event to ``platform_audit_log`` so the next
-   weekly run knows where to resume.
-
-The task is defined using :func:`celery.shared_task` so it does not
-require the ``celery_app`` module at import time (the workers package
-includes this module via ``include =`` in ``celery_app.py``). It is
-idempotent: re-running against the same cursor produces the same S3
-object key (``audit-log/<table>/<YYYY>/<WW>.ndjson``), and S3's
-``PutObject`` with Object Lock will keep the first version immutable.
+Each run considers the most recent closed ISO weeks in
+``project_audit_log`` and ``platform_audit_log``. Every archive contains
+exactly one closed week, is written once by skipping an existing key, and is
+read back from storage so the stored bytes' KMS-MAC chain is re-verified.
+The catch-up window lets a later run export a missed week. Immutability of
+stored files is operational (read-only mount plus snapshots; see
+``docs/runbook/audit_log_archive.md``), while tamper evidence comes from the
+KMS MAC chain in every row.
 """
 
 from __future__ import annotations
@@ -38,15 +21,14 @@ from typing import Any
 from celery import shared_task
 
 from echoroo.core.kms import compute_audit_chain_hash
-from echoroo.core.s3 import put_object
-from echoroo.core.settings import get_settings
+from echoroo.core.s3 import get_object_stream, object_exists, put_object
 
 logger = logging.getLogger(__name__)
 
 
-# Retention window for exported NDJSON batches (FR-095).
-_RETENTION_YEARS = 3
-_RETENTION_DELTA = timedelta(days=365 * _RETENTION_YEARS)
+# How many closed ISO weeks each run looks back over, so a missed or failed
+# run is caught up by a later one.
+_CATCH_UP_WEEKS = 8
 
 
 class AuditChainMismatchError(RuntimeError):
@@ -56,6 +38,10 @@ class AuditChainMismatchError(RuntimeError):
     investigate. The mismatch itself is logged via ``platform_audit_log``
     before the exception propagates.
     """
+
+
+class AuditArchiveMismatchError(RuntimeError):
+    """Raised when an archive read back from storage fails chain verification."""
 
 
 def _canonical_row(row: dict[str, Any], *, include_project_id: bool) -> bytes:
@@ -120,75 +106,57 @@ def _json_safe(value: Any) -> bool:
     return isinstance(value, (str, int, float, bool, type(None), list, dict))
 
 
-def _week_object_key(table: str, *, at: datetime) -> str:
-    """Return the stable S3 key for a weekly export batch.
-
-    Uses ISO week number so the key is deterministic across time zones:
-    ``audit-log/<table>/<ISO year>/<ISO week zero-padded>.ndjson``.
-    """
-    iso_year, iso_week, _ = at.isocalendar()
+def _week_object_key(table: str, iso_year: int, iso_week: int) -> str:
+    """Return the archive key for one ISO week of one table."""
     return f"audit-log/{table}/{iso_year:04d}/{iso_week:02d}.ndjson"
 
 
-def _upload_with_object_lock(
-    *,
-    bucket: str,
-    key: str,
-    body: bytes,
-    now: datetime,
-) -> None:
-    """Upload ``body`` to S3 with GOVERNANCE-mode Object Lock retention.
+def _week_bounds(iso_year: int, iso_week: int) -> tuple[datetime, datetime]:
+    """Return ``[start, end)`` of an ISO week as tz-aware UTC datetimes."""
+    start = datetime.fromisocalendar(iso_year, iso_week, 1).replace(tzinfo=UTC)
+    return start, start + timedelta(days=7)
 
-    The bucket must have Object Lock configured at creation time. Putting
-    Retention parameters on a non-Object-Lock bucket raises
-    ``InvalidRequest`` — the deployment Runbook documents the one-time
-    bucket provisioning step.
-    """
-    retain_until = now + _RETENTION_DELTA
+
+def _closed_weeks(now: datetime, count: int) -> list[tuple[int, int]]:
+    """Return the ``count`` most recent ISO weeks that ended before ``now``, oldest first."""
+    this_week_start, _ = _week_bounds(*now.astimezone(UTC).isocalendar()[:2])
+    weeks: list[tuple[int, int]] = []
+    for back in range(count, 0, -1):
+        iso = (this_week_start - timedelta(days=7 * back)).isocalendar()
+        weeks.append((iso[0], iso[1]))
+    return weeks
+
+
+def _write_archive(key: str, body: bytes) -> None:
+    """Write one archive. Callers check :func:`object_exists` first (write-once)."""
     # FR-028e: put_object routes the PutObject kwargs through the GPS-metadata
     # sanitizer centrally.
-    put_object(
-        key,
-        body,
-        content_type="application/x-ndjson",
-        bucket=bucket,
-        object_lock_mode="GOVERNANCE",
-        object_lock_retain_until=retain_until,
-    )
-    logger.info(
-        "audit export uploaded bucket=%s key=%s bytes=%d retain_until=%s",
-        bucket,
-        key,
-        len(body),
-        retain_until.isoformat(),
-    )
+    put_object(key, body, content_type="application/x-ndjson")
+    logger.info("audit export archived key=%s bytes=%d", key, len(body))
 
 
-def _fetch_rows(session: Any, table: str, *, since: datetime | None) -> list[dict[str, Any]]:
-    """Fetch rows since the given cursor, sorted by (created_at, id).
+def verify_archive(key: str, *, include_project_id: bool) -> int:
+    """Read an archive back from storage and re-verify every row's MAC.
 
-    Uses a raw SQL query so the worker can run without importing the ORM
-    models (which would couple the export job to the full application
-    start-up sequence).
+    Returns:
+        Number of rows verified.
+
+    Raises:
+        AuditArchiveMismatchError: If any stored row fails verification.
     """
-    import sqlalchemy as sa
-
-    where = "WHERE created_at > :since" if since is not None else ""
-    stmt = sa.text(
-        f"SELECT id, created_at, actor_user_id_hash, "
-        f"{'project_id, ' if table == 'project_audit_log' else ''}"
-        f"action, detail, request_id, ip_hash, user_agent_hash, "
-        f"before, after, prev_hash, row_hash "
-        f"FROM {table} {where} ORDER BY created_at ASC, id ASC"
-    )
-    params: dict[str, Any] = {}
-    if since is not None:
-        params["since"] = since
-    result = session.execute(stmt, params)
+    body: bytes = get_object_stream(key).read()
     rows: list[dict[str, Any]] = []
-    for row in result.mappings().all():
-        rows.append(dict(row))
-    return rows
+    for line in body.decode("utf-8").splitlines():
+        if not line:
+            continue
+        row = json.loads(line)
+        row["created_at"] = datetime.fromisoformat(row["created_at"])
+        rows.append(row)
+    try:
+        _verify_chain(rows, include_project_id=include_project_id)
+    except AuditChainMismatchError as exc:
+        raise AuditArchiveMismatchError(f"archive {key}: {exc}") from exc
+    return len(rows)
 
 
 @shared_task(  # type: ignore[untyped-decorator]
@@ -196,21 +164,17 @@ def _fetch_rows(session: Any, table: str, *, since: datetime | None) -> list[dic
     queue="worker-cpu",
     max_retries=3,
 )
-def export_weekly(since_iso: str | None = None) -> dict[str, Any]:
-    """Export last-week's audit rows to S3 Object Lock archive (FR-095).
+def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
+    """Archive every closed ISO week of the last `_CATCH_UP_WEEKS` that has rows and no archive yet (FR-095).
 
     Args:
-        since_iso: ISO-8601 timestamp of the last successful export. If
-            None, defaults to ``now - 7 days``.
+        now_iso: ISO-8601 timestamp to use as the current time. If None,
+            defaults to the current UTC time.
 
     Returns:
-        Summary dict with per-table row counts and S3 keys.
+        Summary dict with the export timestamp and newly written archives.
     """
-    settings = get_settings()
-    now = datetime.now(UTC)
-    cursor = datetime.fromisoformat(since_iso) if since_iso else now - timedelta(days=7)
-
-    bucket = getattr(settings, "AUDIT_LOG_ARCHIVE_BUCKET", None) or settings.S3_BUCKET
+    now = datetime.fromisoformat(now_iso) if now_iso else datetime.now(UTC)
 
     # Local import: the worker may not have the app engine available at
     # module load time, and the session factory carries its own lifetime
@@ -219,7 +183,7 @@ def export_weekly(since_iso: str | None = None) -> dict[str, Any]:
 
     _, session_factory = get_worker_engine_and_session_factory()
 
-    summary: dict[str, Any] = {"exported_at": now.isoformat(), "tables": {}}
+    summary: dict[str, Any] = {"exported_at": now.isoformat(), "archives": []}
 
     # NOTE: session_factory yields an AsyncSession by default; the weekly
     # export is a simple read-then-upload job so we wrap a synchronous
@@ -230,25 +194,42 @@ def export_weekly(since_iso: str | None = None) -> dict[str, Any]:
     async def _run() -> None:
         async with session_factory() as session:
             for table in ("project_audit_log", "platform_audit_log"):
-                rows = await _afetch_rows(session, table, since=cursor)
-                _verify_chain(rows, include_project_id=(table == "project_audit_log"))
-                body = _serialize_ndjson(rows)
-                key = _week_object_key(table, at=now)
-                if rows:
-                    _upload_with_object_lock(
-                        bucket=bucket, key=key, body=body, now=now
+                include_project_id = table == "project_audit_log"
+                for iso_year, iso_week in _closed_weeks(now, _CATCH_UP_WEEKS):
+                    key = _week_object_key(table, iso_year, iso_week)
+                    if object_exists(key):
+                        continue
+                    start, end = _week_bounds(iso_year, iso_week)
+                    rows = await _afetch_rows(session, table, start=start, end=end)
+                    if not rows:
+                        continue
+                    _verify_chain(rows, include_project_id=include_project_id)
+                    _write_archive(key, _serialize_ndjson(rows))
+                    verified = verify_archive(key, include_project_id=include_project_id)
+                    summary["archives"].append(
+                        {"table": table, "key": key, "row_count": verified}
                     )
-                summary["tables"][table] = {"row_count": len(rows), "s3_key": key}
 
     asyncio.run(_run())
     return summary
 
 
-async def _afetch_rows(session: Any, table: str, *, since: datetime | None) -> list[dict[str, Any]]:
-    """Async variant of :func:`_fetch_rows` for use with AsyncSession."""
+async def _afetch_rows(
+    session: Any,
+    table: str,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch rows with ``start <= created_at < end``, sorted by (created_at, id)."""
     import sqlalchemy as sa
 
-    where = "WHERE created_at > :since" if since is not None else ""
+    where_parts: list[str] = []
+    if start is not None:
+        where_parts.append("created_at >= :start")
+    if end is not None:
+        where_parts.append("created_at < :end")
+    where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     project_col = "project_id, " if table == "project_audit_log" else ""
     stmt = sa.text(
         f"SELECT id, created_at, actor_user_id_hash, {project_col}"
@@ -257,14 +238,18 @@ async def _afetch_rows(session: Any, table: str, *, since: datetime | None) -> l
         f"FROM {table} {where} ORDER BY created_at ASC, id ASC"
     )
     params: dict[str, Any] = {}
-    if since is not None:
-        params["since"] = since
+    if start is not None:
+        params["start"] = start
+    if end is not None:
+        params["end"] = end
     result = await session.execute(stmt, params)
     mapped = result.mappings().all()
     return [dict(row) for row in mapped]
 
 
 __all__ = [
+    "AuditArchiveMismatchError",
     "AuditChainMismatchError",
     "export_weekly",
+    "verify_archive",
 ]

@@ -481,7 +481,7 @@ async def verify_audit_chain(
         _canonical_row,
     )
 
-    rows = await _afetch_rows(db, table, since=None)
+    rows = await _afetch_rows(db, table)
     first_mismatch: UUID | None = None
     for row in rows:
         recomputed = compute_audit_chain_hash(

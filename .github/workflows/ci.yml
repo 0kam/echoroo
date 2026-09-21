@@ -1427,14 +1427,16 @@ jobs:
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
       ENVIRONMENT: development
-      # LocalStack S3 endpoint — check_wipe_guard reads S3_PUBLIC_ENDPOINT_URL
-      # from app settings to locate the audit bucket genesis marker.
+      # LocalStack S3 — check_wipe_guard looks up the genesis marker through core/s3 (S3_* settings).
       AWS_ENDPOINT_URL: http://localhost:4566
       S3_PUBLIC_ENDPOINT_URL: http://localhost:4566
+      S3_ENDPOINT_URL: http://localhost:4566
+      S3_ACCESS_KEY: test
+      S3_SECRET_KEY: test
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
-      # Bucket used by check_wipe_guard (AUDIT_LOG_BUCKET falls back to S3_BUCKET).
+      # Bucket holding the audit-log archive and its genesis marker.
       S3_BUCKET: echoroo-audit
     services:
       postgres:

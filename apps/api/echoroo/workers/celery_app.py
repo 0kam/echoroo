@@ -158,6 +158,7 @@ app.conf.include = [
     # ``sync_iucn_red_list`` in every worker so the beat entry below can
     # dispatch it by name (and the admin force-resync ``.delay()`` resolves).
     "echoroo.workers.iucn_sync",
+    "echoroo.workers.audit_log_export",
 ]
 
 # Periodic tasks (beat schedule)
@@ -189,6 +190,13 @@ app.conf.beat_schedule = {
     "sync-iucn-red-list-weekly": {
         "task": "echoroo.workers.iucn_sync.sync_iucn_red_list",
         "schedule": crontab(hour=4, minute=0, day_of_week=0),  # Every Sunday at 04:00 UTC
+    },
+    # FR-095: archive closed ISO weeks of both audit tables. Write-once and
+    # idempotent (existing archives are skipped), with an 8-week catch-up
+    # window, so a missed Monday is recovered by the next run.
+    "audit-log-weekly-export": {
+        "task": "echoroo.workers.audit_log_export.export_weekly",
+        "schedule": crontab(hour=3, minute=0, day_of_week=1),  # Every Monday at 03:00 UTC
     },
     # Drain the transactional outbox at 1Hz-ish (every 30s — the
     # spec's SLO is p95 ≤ 10s end-to-end which is set by the worker

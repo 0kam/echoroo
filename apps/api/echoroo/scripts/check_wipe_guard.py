@@ -7,8 +7,8 @@ three are in the expected state before the wipe is permitted:
 1. **Database**: a row in the ``wipe_guard`` table means a wipe already ran.
 2. **Alembic**: the ``alembic_version`` table pinning must equal the baseline
    revision ``0001``. Any other state means the DB has drifted.
-3. **S3 Object Lock**: a genesis marker file in the audit-log export bucket
-   (Object Lock COMPLIANCE mode) is the cryptographic anchor for the
+3. **Audit-log genesis marker in object storage**: a genesis marker file in
+   the audit-log export bucket is the cryptographic anchor for the
    append-only audit log. If absent, the platform has not been bootstrapped.
 
 Exit codes:
@@ -16,7 +16,7 @@ Exit codes:
 - ``0`` — all three markers are in the expected state; wipe is safe.
 - ``10`` — ``wipe_guard`` row exists (wipe already happened).
 - ``11`` — alembic version is not ``0001``.
-- ``12`` — S3 Object Lock genesis marker is missing or incorrect.
+- ``12`` — audit-log genesis marker in object storage is missing or incorrect.
 - ``20`` — infrastructure error (DB/S3 unreachable).
 
 The checker is invoked twice during the wipe ritual:
@@ -115,21 +115,19 @@ def _check_db(database_url: str) -> tuple[bool, bool]:
         engine.dispose()
 
 
-def _check_s3_marker(bucket: str, endpoint_url: str | None) -> bool:
-    """Return True if the S3 Object Lock genesis marker exists."""
+def _check_s3_marker() -> bool:
+    """Return True if the audit-log genesis marker exists in object storage."""
 
-    from echoroo.core.s3 import object_exists_at_endpoint
+    from echoroo.core.s3 import object_exists
 
-    return object_exists_at_endpoint(bucket, S3_GENESIS_KEY, endpoint_url)
+    return object_exists(S3_GENESIS_KEY)
 
 
-def check(
-    database_url: str, audit_bucket: str, s3_endpoint_url: str | None = None
-) -> WipeGuardStatus:
+def check(database_url: str) -> WipeGuardStatus:
     """Run the full three-point check and return a :class:`WipeGuardStatus`."""
 
     db_guard_row_present, alembic_version_is_baseline = _check_db(database_url)
-    s3_marker_present = _check_s3_marker(audit_bucket, s3_endpoint_url)
+    s3_marker_present = _check_s3_marker()
     return WipeGuardStatus(
         db_guard_row_present=db_guard_row_present,
         alembic_version_is_baseline=alembic_version_is_baseline,
@@ -137,21 +135,13 @@ def check(
     )
 
 
-def _load_settings() -> tuple[str, str, str | None]:
-    """Pull (database_url, audit_bucket, s3_endpoint_url) from app settings."""
+def _load_settings() -> str:
+    """Pull the database URL from app settings."""
 
     from echoroo.core.settings import get_settings
 
     settings = get_settings()
-    database_url = settings.DATABASE_URL
-    # Prefer a dedicated audit bucket setting; fall back to the generic bucket.
-    audit_bucket = getattr(settings, "AUDIT_LOG_BUCKET", None) or getattr(
-        settings, "S3_BUCKET", "echoroo-audit"
-    )
-    s3_endpoint_url = getattr(settings, "S3_PUBLIC_ENDPOINT_URL", None) or getattr(
-        settings, "AWS_ENDPOINT_URL", None
-    )
-    return str(database_url), str(audit_bucket), s3_endpoint_url
+    return str(settings.DATABASE_URL)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,13 +149,13 @@ def main(argv: list[str] | None = None) -> int:
 
     _ = argv  # argv reserved for future flags (e.g. --post-wipe)
     try:
-        database_url, audit_bucket, s3_endpoint_url = _load_settings()
+        database_url = _load_settings()
     except Exception as exc:  # pragma: no cover — bootstrap safety
         logger.error("Failed to load settings: %s", exc)
         return 20
 
     try:
-        status = check(database_url, audit_bucket, s3_endpoint_url)
+        status = check(database_url)
     except Exception as exc:
         logger.error("Wipe guard check raised an error: %s", exc)
         return 20
@@ -188,9 +178,7 @@ def main(argv: list[str] | None = None) -> int:
         return 11
     if not status.s3_genesis_marker_present:
         logger.error(
-            "Refusing wipe: S3 Object Lock genesis marker not found "
-            "at s3://%s/%s (FR-114 point c).",
-            audit_bucket,
+            "Refusing wipe: audit-log genesis marker not found at %s (FR-114 point c).",
             S3_GENESIS_KEY,
         )
         return 12
