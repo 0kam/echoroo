@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,6 +43,8 @@ _ZERO_HASH = "0" * 64
 # the keyed hashers exist. They carry all-zero hashes by design and are the only
 # rows accepted without a MAC.
 _BOOTSTRAP_ACTIONS = frozenset({"genesis", "platform.wipe_executed"})
+
+_ARCHIVE_KEY_RE = re.compile(r"/(\d{4})/(\d{2})\.ndjson$")
 
 
 class AuditChainMismatchError(RuntimeError):
@@ -97,13 +100,30 @@ def _is_bootstrap_row(row: dict[str, Any]) -> bool:
     )
 
 
-def _verify_chain(rows: list[dict[str, Any]], *, include_project_id: bool) -> None:
+def _verify_chain(
+    rows: list[dict[str, Any]],
+    *,
+    include_project_id: bool,
+    expected_prev_hash: str | None = None,
+) -> None:
     """Assert every row's MAC and that consecutive rows are linked.
 
     Rows must be in ``(created_at, id)`` order. The link check
     (``prev_hash == previous row_hash``) is what detects a removed or reordered
     row; the MAC alone only authenticates each row in isolation.
+
+    ``expected_prev_hash`` is the ``row_hash`` of the row that precedes
+    ``rows[0]`` in the table (all zeros when nothing precedes it). Checking it
+    ties the batch to the rest of the chain, and it is what confines the
+    unauthenticated bootstrap rows to the very start of the chain: a zero-hash
+    row further along can only link to another zero-hash row.
     """
+    if rows and expected_prev_hash is not None and rows[0]["prev_hash"] != expected_prev_hash:
+        raise AuditChainMismatchError(
+            f"chain link broken before id={rows[0].get('id')!r}: "
+            f"prev_hash={rows[0]['prev_hash']!r} but the preceding row_hash is "
+            f"{expected_prev_hash!r}"
+        )
     previous: dict[str, Any] | None = None
     for row in rows:
         if previous is not None and row["prev_hash"] != previous["row_hash"]:
@@ -179,13 +199,21 @@ def _read_archive(key: str) -> bytes | None:
     return body
 
 
-def verify_archive(key: str, *, include_project_id: bool) -> int:
+def verify_archive(
+    key: str,
+    *,
+    include_project_id: bool,
+    expected_prev_hash: str | None = None,
+) -> int:
     """Read an archive back from storage and verify it on its own.
 
-    Proves that every row is authentic (MAC) and that no row inside the archive
-    was removed or reordered (chain links). It cannot prove that the *tail* was
-    not cut off: that needs the next week's archive, the live table or a
-    snapshot (see docs/runbook/audit_log_archive.md).
+    Proves that every row is authentic (MAC), belongs to the ISO week named by
+    the key, and that no row *inside* the archive was removed or reordered
+    (chain links). On its own it cannot prove that rows were not cut off either
+    end, nor that a zero-hash bootstrap row is genuine: pass
+    ``expected_prev_hash`` (the last ``row_hash`` of the preceding archive) to
+    anchor the start, and check the next archive the same way to anchor the
+    end (see docs/runbook/audit_log_archive.md).
 
     Returns:
         Number of rows verified.
@@ -197,23 +225,35 @@ def verify_archive(key: str, *, include_project_id: bool) -> int:
     body = _read_archive(key)
     if body is None:
         raise AuditArchiveMismatchError(f"archive {key}: not found")
-    rows: list[dict[str, Any]] = []
     try:
+        rows: list[dict[str, Any]] = []
         for line in body.decode("utf-8").splitlines():
             if not line:
                 continue
             row = json.loads(line)
             row["created_at"] = datetime.fromisoformat(row["created_at"])
             rows.append(row)
-    except (ValueError, KeyError, TypeError) as exc:
-        raise AuditArchiveMismatchError(f"archive {key}: malformed NDJSON: {exc}") from exc
-    if not rows:
-        # The export never writes an empty archive.
-        raise AuditArchiveMismatchError(f"archive {key}: contains no rows")
-    try:
-        _verify_chain(rows, include_project_id=include_project_id)
-    except (AuditChainMismatchError, KeyError) as exc:
+        if not rows:
+            # The export never writes an empty archive.
+            raise ValueError("contains no rows")
+        match = _ARCHIVE_KEY_RE.search(key)
+        if match:
+            start, end = _week_bounds(int(match.group(1)), int(match.group(2)))
+            for row in rows:
+                if not start <= row["created_at"] < end:
+                    raise ValueError(
+                        f"row id={row.get('id')!r} at {row['created_at'].isoformat()} "
+                        "is outside the ISO week named by the key"
+                    )
+        _verify_chain(
+            rows,
+            include_project_id=include_project_id,
+            expected_prev_hash=expected_prev_hash,
+        )
+    except AuditChainMismatchError as exc:
         raise AuditArchiveMismatchError(f"archive {key}: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - any malformed shape is a failed verification
+        raise AuditArchiveMismatchError(f"archive {key}: malformed: {exc}") from exc
     return len(rows)
 
 
@@ -225,6 +265,39 @@ async def _try_export_lock(session: Any) -> bool:
         sa.text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": _EXPORT_LOCK_KEY}
     )
     return bool(result.scalar())
+
+
+def _export_week(
+    key: str,
+    rows: list[dict[str, Any]],
+    *,
+    include_project_id: bool,
+    prev_hash: str,
+) -> bool:
+    """Archive or re-audit one closed week. Returns True if an archive was written.
+
+    Raises on anything that makes the week untrustworthy; the caller records it
+    and moves on. Never overwrites an existing archive.
+    """
+    stored = _read_archive(key)
+    if not rows:
+        if stored is not None:
+            raise AuditArchiveMismatchError(
+                "archive exists but the live table has no rows for that week"
+            )
+        return False
+    _verify_chain(rows, include_project_id=include_project_id, expected_prev_hash=prev_hash)
+    expected = _serialize_ndjson(rows)
+    written = stored is None
+    if written:
+        _write_archive(key, expected)
+        stored = _read_archive(key)
+    if stored != expected:
+        raise AuditArchiveMismatchError(
+            "archive differs from the live table "
+            f"(stored {len(stored or b'')} bytes, live {len(expected)} bytes, {len(rows)} live rows)"
+        )
+    return written
 
 
 @shared_task(  # type: ignore[untyped-decorator]
@@ -283,29 +356,13 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
                     key = _week_object_key(table, iso_year, iso_week)
                     start, end = _week_bounds(iso_year, iso_week)
                     rows = await _afetch_rows(session, table, start=start, end=end)
-                    stored = _read_archive(key)
-                    if not rows:
-                        if stored is not None:
-                            _fail(table, key, "archive exists but the live table has no rows for that week")
-                        continue
+                    prev_hash = await _afetch_prev_hash(session, table, before=start)
                     try:
-                        _verify_chain(rows, include_project_id=include_project_id)
-                    except AuditChainMismatchError as exc:
-                        _fail(table, key, f"live table: {exc}")
-                        continue
-                    expected = _serialize_ndjson(rows)
-                    written = stored is None
-                    if written:
-                        _write_archive(key, expected)
-                        stored = _read_archive(key)
-                    if stored != expected:
-                        _fail(
-                            table,
-                            key,
-                            "archive differs from the live table "
-                            f"(stored {len(stored or b'')} bytes, live {len(expected)} bytes, "
-                            f"{len(rows)} live rows)",
+                        written = _export_week(
+                            key, rows, include_project_id=include_project_id, prev_hash=prev_hash
                         )
+                    except Exception as exc:  # noqa: BLE001 - one week never blocks the others
+                        _fail(table, key, f"{exc.__class__.__name__}: {exc}")
                         continue
                     if written:
                         summary["archives"].append(
@@ -321,6 +378,21 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
             f"{len(summary['failed'])} week(s) failed the audit export: {failed_keys}"
         )
     return summary
+
+
+async def _afetch_prev_hash(session: Any, table: str, *, before: datetime) -> str:
+    """Return the ``row_hash`` of the last row before ``before`` (zeros if none)."""
+    import sqlalchemy as sa
+
+    result = await session.execute(
+        sa.text(
+            f"SELECT row_hash FROM {table} WHERE created_at < :before "
+            "ORDER BY created_at DESC, id DESC LIMIT 1"
+        ),
+        {"before": before},
+    )
+    value = result.scalar()
+    return str(value) if value is not None else _ZERO_HASH
 
 
 async def _afetch_rows(

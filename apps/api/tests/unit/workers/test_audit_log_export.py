@@ -140,6 +140,16 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(mod, "_afetch_rows", fake_afetch_rows)
 
+    async def fake_afetch_prev_hash(session: Any, table: str, *, before: datetime) -> str:
+        del session
+        earlier = sorted(
+            (row for row in rows_by_table[table] if row["created_at"] < before),
+            key=lambda row: row["created_at"],
+        )
+        return earlier[-1]["row_hash"] if earlier else "0" * 64
+
+    monkeypatch.setattr(mod, "_afetch_prev_hash", fake_afetch_prev_hash)
+
     lock = SimpleNamespace(available=True)
 
     async def fake_try_export_lock(session: Any) -> bool:
@@ -182,10 +192,10 @@ def test_week_object_key() -> None:
 
 
 def test_export_archives_closed_week_and_skips_current(env: Any) -> None:
-    env.rows_by_table["project_audit_log"] = [
-        _row(datetime(2026, 9, 15, 12, tzinfo=UTC)),
-        _row(datetime(2026, 9, 21, 1, tzinfo=UTC)),
-    ]
+    env.rows_by_table["project_audit_log"] = _chain(
+        (datetime(2026, 9, 15, 12, tzinfo=UTC), "x.y"),
+        (datetime(2026, 9, 21, 1, tzinfo=UTC), "x.y"),
+    )
 
     summary = mod.export_weekly(now_iso=NOW)
 
@@ -347,10 +357,10 @@ def test_afetch_rows_uses_a_half_open_window() -> None:
 
 
 def test_export_catches_up_missed_week(env: Any) -> None:
-    env.rows_by_table["project_audit_log"] = [
-        _row(datetime(2026, 9, 1, tzinfo=UTC)),
-        _row(datetime(2026, 9, 15, tzinfo=UTC)),
-    ]
+    env.rows_by_table["project_audit_log"] = _chain(
+        (datetime(2026, 9, 1, tzinfo=UTC), "x.y"),
+        (datetime(2026, 9, 15, tzinfo=UTC), "x.y"),
+    )
 
     mod.export_weekly(now_iso=NOW)
 
@@ -383,9 +393,9 @@ def test_db_chain_mismatch_is_never_archived(env: Any) -> None:
 
 def test_broken_week_does_not_block_clean_weeks(env: Any) -> None:
     """One bad week fails the task, but every clean week is still archived."""
-    bad = _row(datetime(2026, 9, 8, tzinfo=UTC))  # W37
-    bad["row_hash"] = "f" * 64
-    env.rows_by_table["project_audit_log"] = [bad, _row(datetime(2026, 9, 15, tzinfo=UTC))]  # + W38
+    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    rows[0]["action"] = "x.edited"  # W37 fails its MAC; links to W38 stay intact
+    env.rows_by_table["project_audit_log"] = rows
     env.rows_by_table["platform_audit_log"] = [
         _row(datetime(2026, 9, 15, tzinfo=UTC), project=False)
     ]
@@ -431,3 +441,74 @@ def test_object_exists_propagates_non_404() -> None:
 
     with pytest.raises(ClientError):
         object_exists("k", client=_DeniedClient())
+
+
+def test_forged_bootstrap_row_cannot_replace_a_week(env: Any) -> None:
+    """Zero-hash rows are only reachable at the start of the chain."""
+    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    forged = _row(datetime(2026, 9, 15, tzinfo=UTC), action="platform.wipe_executed")
+    forged["row_hash"] = "0" * 64
+    env.rows_by_table["project_audit_log"] = [rows[0], forged]  # W38 replaced wholesale
+
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert [call["Key"] for call in env.s3.put_calls] == [
+        "audit-log/project_audit_log/2026/37.ndjson"
+    ]
+
+
+def test_storage_failure_on_one_week_does_not_block_the_others(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.rows_by_table["project_audit_log"] = _chain(
+        (datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y")
+    )
+    real_read = mod._read_archive
+
+    def flaky_read(key: str) -> bytes | None:
+        if key.endswith("/37.ndjson"):
+            raise ClientError({"Error": {"Code": "AccessDenied", "Message": "no"}}, "GetObject")
+        return real_read(key)
+
+    monkeypatch.setattr(mod, "_read_archive", flaky_read)
+
+    with pytest.raises(mod.AuditChainMismatchError, match="37.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert [call["Key"] for call in env.s3.put_calls] == [
+        "audit-log/project_audit_log/2026/38.ndjson"
+    ]
+
+
+def test_verify_archive_rejects_rows_outside_the_keys_week(env: Any) -> None:
+    env.rows_by_table["project_audit_log"] = [_row(datetime(2026, 9, 15, tzinfo=UTC))]
+    mod.export_weekly(now_iso=NOW)
+    good = "audit-log/project_audit_log/2026/38.ndjson"
+    copied = "audit-log/project_audit_log/2026/37.ndjson"
+    env.s3.objects[copied] = env.s3.objects[good]
+
+    with pytest.raises(mod.AuditArchiveMismatchError, match="outside the ISO week"):
+        mod.verify_archive(copied, include_project_id=True)
+
+
+def test_verify_archive_anchors_to_the_preceding_archive(env: Any) -> None:
+    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    env.rows_by_table["project_audit_log"] = rows
+    mod.export_weekly(now_iso=NOW)
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+
+    assert mod.verify_archive(key, include_project_id=True, expected_prev_hash=rows[0]["row_hash"]) == 1
+    with pytest.raises(mod.AuditArchiveMismatchError, match="chain link broken"):
+        mod.verify_archive(key, include_project_id=True, expected_prev_hash="f" * 64)
+
+
+def test_verify_archive_normalises_malformed_field_types(env: Any) -> None:
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    env.s3.objects[key] = (
+        b'{"action":[],"created_at":"2026-09-15T00:00:00+00:00","row_hash":"x","prev_hash":"y"}\n'
+    )
+
+    with pytest.raises(mod.AuditArchiveMismatchError):
+        mod.verify_archive(key, include_project_id=True)
+

@@ -34,11 +34,14 @@ replacing or deleting an archive. What is detectable, and how:
 
 | Change to an archive | Detected by |
 | --- | --- |
-| Row edited, row removed from the middle, rows reordered, file emptied or garbled | `verify_archive` on the file alone |
+| Row edited, row removed from the middle, rows reordered, file emptied or garbled, archive copied to another week's key | `verify_archive` on the file alone |
 | Any change at all, while the week is within 8 weeks | the weekly run (byte comparison with the live table) |
-| Rows cut off the **end**, or the whole file deleted, after 8 weeks | only against the live table, the next week's archive (its first `prev_hash`) or a snapshot — `verify_archive` alone cannot see it |
+| Rows cut off the **start** of the file, or the file replaced by a forged zero-hash bootstrap row | `verify_archive(..., expected_prev_hash=<last row_hash of the preceding archive>)` |
+| Rows cut off the **end** of the file | the same check run on the *next* week's archive |
+| Whole file deleted | within 8 weeks it is silently **recreated** from the live table (identical bytes); after that, only a snapshot or a gap in the key listing shows it |
 
-The last row is why snapshots matter. Immutability is therefore an
+In short: a single archive proves its rows are genuine; only the sequence of
+archives (or a snapshot) proves nothing is missing. That is why snapshots matter. Immutability is therefore an
 operational control — the next section.
 
 ## Operations: keeping archives immutable — **ops**
@@ -105,6 +108,8 @@ worker log has one `audit export failed key=… : <reason>` line per week:
   changed in storage. Compare the two before deciding which one is right.
 - `archive exists but the live table has no rows` — rows were deleted from the
   database.
+- `ClientError: …` or another exception name — storage was unreachable or
+  denied for that key; the week is retried by the next run.
 
 Every other week in the run is still processed; nothing is ever overwritten. A week that stays
 broken for more than 8 weeks falls out of the catch-up window and must be
@@ -129,7 +134,9 @@ the dev database with the test KMS key. Production has neither.
 Bootstrap rows are not failures: the baseline migration's `genesis` rows and
 the `platform.wipe_executed` row are inserted before the keyed hashers exist,
 with all-zero hashes by design. The export accepts exactly those two actions
-without a MAC. The `chain-verify` endpoint does not know this exception and
+without a MAC, and only at the start of the chain (every week's first row must
+link to the row before it, so a zero-hash row further along cannot link). Their
+*contents* are not authenticated — that is inherent to bootstrap rows. The `chain-verify` endpoint does not know this exception and
 reports them as mismatches.
 
 ## Wipe guard
