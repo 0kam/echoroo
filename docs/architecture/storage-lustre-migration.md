@@ -94,6 +94,8 @@ disappears, which frees local disk rather than consuming it.
 | # | Question | Decision (2026-09-20) |
 | --- | --- | --- |
 | 1 | How do audit log archives stay immutable without S3 Object Lock? | Tamper evidence from the existing KMS chain hash; immutability provided operationally by a read-only mount and periodic snapshots. No new infrastructure. |
+| 3 | After a reload, can an unfinished upload be resumed? (2026-09-21) | Yes. The dataset page offers to continue the caller's unfinished session; re-selecting the same files sends only what is missing. |
+| 4 | May an upload be imported without the files that failed to transfer? (2026-09-21) | Yes. "Import without the N failed files" is offered next to "Retry". |
 | 2 | How much local disk does the VM have? | ~200 GB typical, 500 GB maximum including the OS. See *Data placement* and the embeddings risk below. |
 
 ## Open decisions
@@ -153,15 +155,61 @@ S3, then cut over once.
 
 ### 2. Uploads through the backend (still on S3)
 
-- **Scope** — `upload`-scoped media token (`core/auth.py`), streaming write
-  endpoint that stores via `core/s3.py`, resumable transfer, atomic GPS
-  rewrite, removal of the TOCTOU SHA-256 re-read, the Vite `/s3-proxy`, the
-  LocalStack CORS setup and `toRelativeUrl()`.
+**Why it is more than a transport swap.** Today the browser PUTs each file to a
+presigned URL that signs only bucket and key, so for 15 minutes anyone holding
+the URL can write any bytes of any size. Everything downstream exists to
+compensate: the worker downloads, strips GPS and re-uploads (a non-atomic
+rewrite of a client-writable object) and re-hashes the whole object again at
+import. In the browser, SHA-256 loads each file fully into memory and hashes
+all files before the first byte is sent; one failed PUT fails the whole batch;
+nothing retries or resumes; there is no upload e2e test.
+
+**Design.**
+
+- *Transport* — the browser sends each file in 8 MiB chunks:
+  `PUT /web-api/v1/projects/{p}/datasets/{d}/upload-sessions/{s}/files/{f}/chunks?offset=N`
+  with the raw bytes as the body and an optional `X-Chunk-SHA256`. The server
+  accepts a chunk only at `offset == bytes already staged` and answers 409 with
+  the current offset otherwise, which is the whole resume protocol. Three files
+  in flight; each chunk retried up to 5 times with backoff; offline pauses and
+  resumes; a failure is confined to its file.
+- *Auth* — the ordinary BFF session: Bearer + CSRF + `gate_action(UPLOAD_CREATE)`
+  + "session created by the caller". **No `upload`-scoped media token**
+  (deviation from the earlier scope): media tokens exist because `<audio>` and
+  `<img>` cannot send headers, which XHR can; chunk requests are short, so the
+  15-minute access token and its refresh are enough; and a write-capable JWT
+  scope signed with the same key as read tokens would widen the blast radius
+  for nothing.
+- *Staging* — chunks are appended to
+  `UPLOAD_STAGING_DIR/{session}/{file}.part` on the POSIX volume the API and the
+  workers already share (`/data`). The object store is written exactly once per
+  file, by the import worker, from the staged file after validation and GPS
+  stripping — straight to the `recordings/` key. The `uploads/` prefix, the GPS
+  read-modify-write and the import-time SHA-256 re-read disappear. After slice 4
+  the same code stages on Lustre and the final write is a rename.
+- *Integrity* — the server hashes what it receives (per chunk against
+  `X-Chunk-SHA256` when the browser can compute it, whole file during
+  validation). The browser no longer hashes whole files up front.
+- *Limits* — the chunk endpoint caps the body at the chunk size (413 beyond),
+  rejects chunks for files that are complete or sessions that are not `issued`,
+  and never lets a file exceed its declared size.
+- *Resume after reload* — `GET …/upload-sessions/active` returns the caller's
+  unfinished session with per-file `received_bytes`; files are matched by name
+  and size.
+- *Partial import* — `complete` takes `skip_missing`; missing files are marked
+  skipped and the rest proceed.
+- *Removed* — presigned URLs (`generate_presigned_upload_url`,
+  `get_public_s3_client`, `S3_PUBLIC_ENDPOINT_URL`, `S3_PRESIGNED_URL_EXPIRY`),
+  the Vite `/s3-proxy` and its `hooks.server.ts` exception, the LocalStack
+  bucket CORS and gateway CORS settings, `toRelativeUrl()`.
+
 - **Out of scope** — the storage backend itself.
-- **Acceptance** — Playwright spec: upload, interrupt, resume, complete; no
-  request leaves the app origin. Security review of the write scope.
-- **Depends on** — slice 1. **UX preview needed** — yes (resume and stall
-  states in `FileUpload`).
+- **Acceptance** — Playwright spec that stays in CI: upload, interrupt, resume,
+  complete; partial import; no request leaves the app origin. Security review
+  of the write endpoint.
+- **Depends on** — slice 1. **UX preview needed** — yes; shown 2026-09-21
+  (sending / connection lost / some failed / unfinished upload after reload),
+  decisions 3 and 4 above.
 
 ### 3. Audit log immutability without Object Lock
 
