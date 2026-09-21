@@ -346,6 +346,8 @@ class UploadFileRepository(BaseRepository[UploadFile]):
             # operate on the sanitized payload.
             "file_size",
             "checksum_sha256",
+            "received_bytes",
+            "chunk_digests",
         }
         values: dict[str, object] = {
             "status": status,

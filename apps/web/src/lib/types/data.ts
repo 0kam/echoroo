@@ -260,7 +260,7 @@ export type UploadSessionStatus =
   | 'imported'
   | 'failed';
 
-export type UploadFileStatus = 'pending' | 'uploaded' | 'valid' | 'invalid' | 'imported';
+export type UploadFileStatus = 'pending' | 'uploaded' | 'valid' | 'invalid' | 'imported' | 'skipped';
 
 export interface UploadFileRequest {
   filename: string;

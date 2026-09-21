@@ -130,6 +130,9 @@ secrets marked **prod-guarded** below.
 | `UPLOAD_MAX_SESSION_FILES` | `500` | optional | Max files per upload session. |
 | `UPLOAD_SESSION_TTL` | `3600` | optional | TTL (seconds) for ISSUED upload sessions. |
 | `UPLOAD_ALLOWED_EXTENSIONS` | `.wav,.flac,.mp3,.ogg,.opus` | optional | Allowed audio extensions (JSON list). |
+| `UPLOAD_STAGING_DIR` | `/data/upload_staging` | optional | Directory for staged upload chunks. |
+| `UPLOAD_CHUNK_SIZE` | `8388608` | optional | Maximum upload chunk request size (bytes). |
+| `UPLOAD_RETENTION_SECONDS` | `86400` | optional | Inactivity window before unfinished uploads are removed (seconds). |
 | `DEFAULT_STORAGE_QUOTA` | `107374182400` (100 GB) | optional | Default per-project storage quota (bytes). |
 | `JANITOR_DRY_RUN` | `true` | optional | Orphan-S3 cleanup dry-run switch; flip to `false` after prod monitoring. |
 | `JANITOR_AGE_HOURS` | `24` | optional | Orphan age threshold (hours). |

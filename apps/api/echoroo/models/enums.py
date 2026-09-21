@@ -263,6 +263,7 @@ class UploadFileStatus(StrEnum):
     VALID = "valid"        # Passed ffprobe validation
     INVALID = "invalid"    # Failed validation
     IMPORTED = "imported"  # Recording record created
+    SKIPPED = "skipped"    # Left out of a partial import by the uploader
 
 
 class SearchSessionStatus(StrEnum):

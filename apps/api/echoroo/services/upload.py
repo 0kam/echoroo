@@ -598,6 +598,7 @@ class UploadService:
                 original_filename=file_req.filename,
                 object_key=object_key,
                 file_size=file_req.size,
+                declared_size=file_req.size,
                 checksum_sha256=file_req.checksum_sha256,
                 status=UploadFileStatus.PENDING,
             )
