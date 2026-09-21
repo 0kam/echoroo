@@ -3,6 +3,14 @@
 Callers serialise operations per file with a database row lock; this module
 does not use ``fcntl`` or ``flock`` because the production mount may not
 support them.
+
+The database column ``upload_files.received_bytes`` is the authority, the
+staged file follows it. Bytes are written before the caller commits, so after a
+crash or a rolled-back transaction the file can be *longer* than
+``received_bytes``. Under the row lock, before appending, the caller compares
+:func:`staged_size` with ``received_bytes`` and calls :func:`truncate_to` to cut
+the excess. A file *shorter* than ``received_bytes`` means staged data was lost
+and the upload of that file must restart from zero.
 """
 
 from __future__ import annotations
@@ -78,8 +86,10 @@ def append_chunk(
         raise StagingSizeError
 
     directory = session_dir(session_id)
+    new_directory = not directory.exists()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     path = part_path(session_id, file_id)
+    new_file = not path.exists()
     descriptor = os.open(
         path,
         os.O_WRONLY | os.O_CREAT | os.O_APPEND,
@@ -96,7 +106,21 @@ def append_chunk(
     finally:
         os.close(descriptor)
 
+    # fsync of the file does not persist a directory entry created just now.
+    if new_file:
+        _fsync_directory(directory)
+    if new_directory:
+        _fsync_directory(directory.parent)
+
     return offset + len(data)
+
+
+def _fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def truncate_to(session_id: UUID, file_id: UUID, size: int) -> None:

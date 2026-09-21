@@ -472,7 +472,8 @@ class UploadService:
                 detail="Dataset not found",
             )
 
-        # 2. Check for existing active session
+        # 2. Check for existing active session (serialised per dataset)
+        await self.session_repo.lock_dataset_for_session_change(dataset_id)
         active_session = await self.session_repo.get_active_by_dataset(dataset_id)
         if active_session is not None:
             processing_statuses = (
