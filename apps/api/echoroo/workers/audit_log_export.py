@@ -44,6 +44,14 @@ _ZERO_HASH = "0" * 64
 # rows accepted without a MAC.
 _BOOTSTRAP_ACTIONS = frozenset({"genesis", "platform.wipe_executed"})
 
+# Every archived row carries these (project rows add ``project_id``).
+_ARCHIVE_ROW_FIELDS = frozenset(
+    {
+        "id", "created_at", "actor_user_id_hash", "action", "detail", "request_id",
+        "ip_hash", "user_agent_hash", "before", "after", "prev_hash", "row_hash",
+    }
+)
+
 _ARCHIVE_KEY_RE = re.compile(r"/(\d{4})/(\d{2})\.ndjson$")
 
 
@@ -231,20 +239,27 @@ def verify_archive(
             if not line:
                 continue
             row = json.loads(line)
+            missing = _ARCHIVE_ROW_FIELDS - set(row) if isinstance(row, dict) else _ARCHIVE_ROW_FIELDS
+            if missing:
+                raise ValueError(f"row is missing fields: {sorted(missing)}")
+            for field in ("id", "action", "request_id", "prev_hash", "row_hash"):
+                if not isinstance(row[field], str):
+                    raise ValueError(f"field {field!r} is not a string")
             row["created_at"] = datetime.fromisoformat(row["created_at"])
             rows.append(row)
         if not rows:
             # The export never writes an empty archive.
             raise ValueError("contains no rows")
         match = _ARCHIVE_KEY_RE.search(key)
-        if match:
-            start, end = _week_bounds(int(match.group(1)), int(match.group(2)))
-            for row in rows:
-                if not start <= row["created_at"] < end:
-                    raise ValueError(
-                        f"row id={row.get('id')!r} at {row['created_at'].isoformat()} "
-                        "is outside the ISO week named by the key"
-                    )
+        if match is None:
+            raise ValueError("key is not of the form .../<ISO year>/<ISO week>.ndjson")
+        start, end = _week_bounds(int(match.group(1)), int(match.group(2)))
+        for row in rows:
+            if not start <= row["created_at"] < end:
+                raise ValueError(
+                    f"row id={row['id']!r} at {row['created_at'].isoformat()} "
+                    "is outside the ISO week named by the key"
+                )
         _verify_chain(
             rows,
             include_project_id=include_project_id,
@@ -357,6 +372,18 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
                     start, end = _week_bounds(iso_year, iso_week)
                     rows = await _afetch_rows(session, table, start=start, end=end)
                     prev_hash = await _afetch_prev_hash(session, table, before=start)
+                    # Bootstrap rows are only genuine at the start of the table. The
+                    # link checks cover everything from ``start`` on; this covers the
+                    # history before it, including weeks outside the catch-up window.
+                    if any(_is_bootstrap_row(row) for row in rows) and await _ahas_signed_row_before(
+                        session, table, before=start
+                    ):
+                        _fail(
+                            table,
+                            key,
+                            "AuditChainMismatchError: zero-hash bootstrap row after signed rows",
+                        )
+                        continue
                     try:
                         written = _export_week(
                             key, rows, include_project_id=include_project_id, prev_hash=prev_hash
@@ -378,6 +405,20 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
             f"{len(summary['failed'])} week(s) failed the audit export: {failed_keys}"
         )
     return summary
+
+
+async def _ahas_signed_row_before(session: Any, table: str, *, before: datetime) -> bool:
+    """True if any row with a real (non-zero) ``row_hash`` exists before ``before``."""
+    import sqlalchemy as sa
+
+    result = await session.execute(
+        sa.text(
+            f"SELECT EXISTS (SELECT 1 FROM {table} "
+            "WHERE created_at < :before AND row_hash <> :zero)"
+        ),
+        {"before": before, "zero": _ZERO_HASH},
+    )
+    return bool(result.scalar())
 
 
 async def _afetch_prev_hash(session: Any, table: str, *, before: datetime) -> str:

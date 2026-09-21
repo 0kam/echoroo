@@ -36,12 +36,17 @@ replacing or deleting an archive. What is detectable, and how:
 | --- | --- |
 | Row edited, row removed from the middle, rows reordered, file emptied or garbled, archive copied to another week's key | `verify_archive` on the file alone |
 | Any change at all, while the week is within 8 weeks | the weekly run (byte comparison with the live table) |
-| Rows cut off the **start** of the file, or the file replaced by a forged zero-hash bootstrap row | `verify_archive(..., expected_prev_hash=<last row_hash of the preceding archive>)` |
-| Rows cut off the **end** of the file | the same check run on the *next* week's archive |
-| Whole file deleted | within 8 weeks it is silently **recreated** from the live table (identical bytes); after that, only a snapshot or a gap in the key listing shows it |
+| Rows cut off the **start** of the file, or the file replaced by a forged zero-hash bootstrap row | `verify_archive(..., expected_prev_hash=<last row_hash of the preceding non-empty archive>)` |
+| Rows cut off the **end** of the file | the same check run on the *following* non-empty archive |
+| Whole file deleted | within 8 weeks it is silently **recreated** from the live table (identical bytes). Later: the following archive no longer links to the preceding one, or compare with the live table or a snapshot. A gap in the key listing proves nothing by itself — a week without events has no archive |
 
-In short: a single archive proves its rows are genuine; only the sequence of
-archives (or a snapshot) proves nothing is missing. That is why snapshots matter. Immutability is therefore an
+Not detectable from archives alone, by construction: removal of the zero-hash
+bootstrap rows at the very start of a table (the next row links to zero either
+way), edits to their contents, and the tail of the newest archive. Those need
+an independent reference — the live table or a snapshot.
+
+In short: a single archive proves its rows are genuine; the sequence of
+archives proves nothing is missing between them. That is why snapshots matter. Immutability is therefore an
 operational control — the next section.
 
 ## Operations: keeping archives immutable — **ops**
@@ -101,15 +106,20 @@ Safe to repeat: existing archives are skipped.
 `AuditChainMismatchError: N week(s) failed the audit export: <keys>` — the
 worker log has one `audit export failed key=… : <reason>` line per week:
 
-- `live table: …` — the live rows of that week fail verification. The week is
-  not archived.
-- `archive differs from the live table` — the archive exists but no longer
-  matches: a row was added to that week after archiving, or the archive was
-  changed in storage. Compare the two before deciding which one is right.
-- `archive exists but the live table has no rows` — rows were deleted from the
-  database.
-- `ClientError: …` or another exception name — storage was unreachable or
-  denied for that key; the week is retried by the next run.
+- `AuditChainMismatchError: …` — the **live rows** of that week fail
+  verification (bad MAC, broken link, or a zero-hash bootstrap row after signed
+  history). The week is not archived.
+- `AuditArchiveMismatchError: archive differs from the live table` — the
+  archive exists but no longer matches: a row was added to that week after
+  archiving, or the archive was changed in storage. Compare the two before
+  deciding which one is right.
+- `AuditArchiveMismatchError: archive exists but the live table has no rows` —
+  rows were deleted from the database.
+- `ClientError: …`, `EndpointConnectionError: …` and similar — storage was
+  unreachable or denied for that key; the next run retries the week.
+
+A database error aborts the whole run instead (nothing can be trusted without
+it); the next run starts over.
 
 Every other week in the run is still processed; nothing is ever overwritten. A week that stays
 broken for more than 8 weeks falls out of the catch-up window and must be

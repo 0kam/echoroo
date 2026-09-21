@@ -150,6 +150,15 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(mod, "_afetch_prev_hash", fake_afetch_prev_hash)
 
+    async def fake_ahas_signed_row_before(session: Any, table: str, *, before: datetime) -> bool:
+        del session
+        return any(
+            row["created_at"] < before and row["row_hash"] != "0" * 64
+            for row in rows_by_table[table]
+        )
+
+    monkeypatch.setattr(mod, "_ahas_signed_row_before", fake_ahas_signed_row_before)
+
     lock = SimpleNamespace(available=True)
 
     async def fake_try_export_lock(session: Any) -> bool:
@@ -511,4 +520,36 @@ def test_verify_archive_normalises_malformed_field_types(env: Any) -> None:
 
     with pytest.raises(mod.AuditArchiveMismatchError):
         mod.verify_archive(key, include_project_id=True)
+
+
+def test_bootstrap_week_is_refused_when_signed_history_precedes_it(env: Any) -> None:
+    """Even if the link to the predecessor is zero: e.g. a forged zero row outside the window."""
+    signed_old = _row(datetime(2026, 6, 1, tzinfo=UTC))  # outside the catch-up window
+    forged_old = _row(datetime(2026, 6, 2, tzinfo=UTC), action="genesis")
+    forged_old["row_hash"] = "0" * 64
+    forged_week = _row(datetime(2026, 9, 15, tzinfo=UTC), action="platform.wipe_executed")
+    forged_week["row_hash"] = "0" * 64
+    env.rows_by_table["project_audit_log"] = [signed_old, forged_old, forged_week]
+
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert env.s3.put_calls == []
+
+
+def test_verify_archive_requires_every_field_and_a_week_key(env: Any) -> None:
+    env.rows_by_table["project_audit_log"] = [_row(datetime(2026, 9, 15, tzinfo=UTC))]
+    mod.export_weekly(now_iso=NOW)
+    key = "audit-log/project_audit_log/2026/38.ndjson"
+    import json as _json
+
+    row = _json.loads(env.s3.objects[key])
+    del row["id"]
+    env.s3.objects[key] = _json.dumps(row).encode() + b"\n"
+    with pytest.raises(mod.AuditArchiveMismatchError, match="missing fields"):
+        mod.verify_archive(key, include_project_id=True)
+
+    env.s3.objects["audit-log/misc/archive.ndjson"] = b"{}\n"
+    with pytest.raises(mod.AuditArchiveMismatchError):
+        mod.verify_archive("audit-log/misc/archive.ndjson", include_project_id=True)
 
