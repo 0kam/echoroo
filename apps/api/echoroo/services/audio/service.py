@@ -171,17 +171,13 @@ class AudioService:
             return cached
 
         # Download from S3 to local cache
-        from echoroo.core.s3 import get_s3_client
-        from echoroo.core.settings import get_settings as _get_settings
+        from echoroo.core.s3 import ensure_configured, get_object_stream
 
-        _settings = _get_settings()
-        client = get_s3_client()
-
+        ensure_configured()
         cached.parent.mkdir(parents=True, exist_ok=True)
         try:
-            response = client.get_object(Bucket=_settings.S3_BUCKET, Key=relative_path)
+            body = get_object_stream(relative_path)
             with open(cached, "wb") as f:
-                body = response["Body"]
                 while True:
                     chunk = body.read(65536)
                     if not chunk:

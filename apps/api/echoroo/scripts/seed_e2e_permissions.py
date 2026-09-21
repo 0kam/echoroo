@@ -374,26 +374,22 @@ def _ensure_recording_media_fixture(path: str) -> str:
     """
     payload = _fixture_wav_bytes()
     expected_sha256 = hashlib.sha256(payload).hexdigest()
-    settings = get_settings()
 
     try:
-        client = s3.get_s3_client()
-        s3.ensure_bucket_exists(client)
+        s3.ensure_bucket_exists()
         existing = s3.verify_object_exists(
             path,
             expected_size=len(payload),
             expected_sha256=expected_sha256,
-            client=client,
         )
         if existing["exists"] and existing["size_match"] and existing["sha256_match"]:
             return "s3"
 
-        client.put_object(
-            Bucket=settings.S3_BUCKET,
-            Key=path,
-            Body=payload,
-            ContentType="audio/wav",
-            Metadata={
+        s3.put_object(
+            path,
+            payload,
+            content_type="audio/wav",
+            metadata={
                 "source": "seed_e2e_permissions",
                 "sha256": expected_sha256,
             },
@@ -413,25 +409,21 @@ def _ensure_reference_audio_fixture(path: str) -> None:
     """Ensure an exportable search session reference audio object exists in S3."""
     payload = _fixture_wav_bytes()
     expected_sha256 = hashlib.sha256(payload).hexdigest()
-    settings = get_settings()
-    client = s3.get_s3_client()
-    s3.ensure_bucket_exists(client)
+    s3.ensure_bucket_exists()
 
     existing = s3.verify_object_exists(
         path,
         expected_size=len(payload),
         expected_sha256=expected_sha256,
-        client=client,
     )
     if existing["exists"] and existing["size_match"] and existing["sha256_match"]:
         return
 
-    client.put_object(
-        Bucket=settings.S3_BUCKET,
-        Key=path,
-        Body=payload,
-        ContentType="audio/wav",
-        Metadata={
+    s3.put_object(
+        path,
+        payload,
+        content_type="audio/wav",
+        metadata={
             "source": "seed_e2e_permissions",
             "sha256": expected_sha256,
         },

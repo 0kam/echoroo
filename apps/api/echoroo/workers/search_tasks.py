@@ -342,16 +342,13 @@ async def _run_batch_search_with_progress(
             if source.s3_key and (
                 source.file_key is None or source.file_key not in audio_files
             ):
-                from echoroo.core.s3 import get_s3_client as _get_s3_client
+                from echoroo.core.s3 import download_object_to_file, ensure_configured
 
-                _s3_client = _get_s3_client()
-                _s3_settings = get_settings()
+                ensure_configured()
                 _s3_tmp_dir = Path(f"/data/search_tmp/{job_id}") if job_id else Path("/tmp")
                 _local_path = _s3_tmp_dir / Path(source.s3_key).name
                 try:
-                    _s3_client.download_file(
-                        _s3_settings.S3_BUCKET, source.s3_key, str(_local_path)
-                    )
+                    download_object_to_file(source.s3_key, _local_path)
                     src_path = str(_local_path)
                 except Exception:
                     logger.exception(

@@ -43,7 +43,7 @@ import logging
 from typing import Final
 
 from echoroo.core.redis import get_redis_connection
-from echoroo.core.s3 import get_s3_client
+from echoroo.core.s3 import head_bucket
 from echoroo.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -94,9 +94,7 @@ def _head_bucket_sync() -> None:
     boto3 is blocking, so this runs in a worker thread via
     :func:`asyncio.to_thread` inside :func:`_probe_s3`.
     """
-    settings = get_settings()
-    client = get_s3_client()
-    client.head_bucket(Bucket=settings.S3_BUCKET)
+    head_bucket()
 
 
 async def _probe_s3() -> None:
@@ -125,7 +123,7 @@ async def _probe_s3() -> None:
             "and that the object store is reachable."
         )
         cause: Exception = exc
-    except Exception as exc:  # noqa: BLE001 — any boto3 / connection error
+    except Exception as exc:  # noqa: BLE001 — any storage / connection error
         message = (
             f"S3 bucket {settings.S3_BUCKET!r} is not reachable at boot. "
             "Check S3_ENDPOINT_URL, S3_BUCKET, and the S3 credentials. "

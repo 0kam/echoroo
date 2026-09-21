@@ -211,14 +211,14 @@ class CustomModelService:
             model: CustomModel instance to delete
         """
         if model.model_artifact_key:
+            deleted = False
             try:
-                from echoroo.core.s3 import get_s3_client  # noqa: PLC0415
-                from echoroo.core.settings import get_settings  # noqa: PLC0415
+                from echoroo.core.s3 import delete_object  # noqa: PLC0415
 
-                settings = get_settings()
-                s3 = get_s3_client()
-                s3.delete_object(Bucket=settings.S3_BUCKET, Key=model.model_artifact_key)
+                deleted = delete_object(model.model_artifact_key)
             except Exception:
+                deleted = False
+            if not deleted:
                 logger.warning(
                     "Failed to delete S3 artifact for custom model %s (key=%s)",
                     model.id,

@@ -12,7 +12,6 @@ from __future__ import annotations
 import collections.abc
 import logging
 from pathlib import Path
-from typing import Any
 from uuid import UUID
 
 from fastapi import Header, HTTPException, Request, status
@@ -88,18 +87,9 @@ async def stream_reference_audio(
     s3_key = session.reference_audio_keys[source_index]
 
     try:
-        from echoroo.core.s3 import get_s3_client as _get_s3_stream_client
-        from echoroo.core.settings import get_settings as _get_stream_settings
+        from echoroo.core.s3 import get_object_response
 
-        _stream_settings = _get_stream_settings()
-        _stream_client = _get_s3_stream_client()
-        s3_params: dict[str, Any] = {
-            "Bucket": _stream_settings.S3_BUCKET,
-            "Key": s3_key,
-        }
-        if range:
-            s3_params["Range"] = range
-        s3_response = _stream_client.get_object(**s3_params)
+        s3_response = get_object_response(s3_key, byte_range=range)
     except Exception as exc:
         logger.exception("Failed to stream reference audio key=%s", s3_key)
         raise HTTPException(

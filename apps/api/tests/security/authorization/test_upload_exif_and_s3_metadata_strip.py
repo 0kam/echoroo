@@ -486,7 +486,7 @@ def test_audit_log_export_routes_put_object_through_sanitizer(
         def put_object(self, **kwargs: Any) -> None:
             captured_kwargs.update(kwargs)
 
-    monkeypatch.setattr(audit_log_export, "get_s3_client", lambda: _StubClient())
+    monkeypatch.setattr("echoroo.core.s3.get_s3_client", lambda: _StubClient())
 
     sanitizer_called: list[dict[str, Any]] = []
     original = audit_log_export.__dict__.get("sanitize_put_object_kwargs")
@@ -623,28 +623,69 @@ def test_worker_sanitize_returns_none_when_clean(
 def test_search_batch_routes_put_object_through_sanitizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """search/batch.py PutObject path must funnel through sanitize_put_object_kwargs.
+    """search/batch.py must write reference audio via core/s3.put_object.
 
-    We exercise the import path directly by re-importing the module after
-    monkey-patching the sanitizer. A real end-to-end trip would require a
-    full request fixture; here we pin the call site by inspecting the
-    module source for the import + call shape (regression guard).
+    The sanitizer is applied centrally inside ``core/s3.put_object``
+    (pinned by ``test_core_s3_put_object_routes_through_sanitizer``), so the
+    regression guard here is that batch.py uses the helper and never touches
+    a raw S3 client.
     """
     import inspect
 
     from echoroo.api.v1.search import batch as batch_mod
 
     src = inspect.getsource(batch_mod)
-    assert "sanitize_put_object_kwargs" in src, (
-        "search/batch.py must import sanitize_put_object_kwargs"
+    assert "from echoroo.core.s3 import ensure_configured, put_object" in src
+    # A broken storage configuration must surface as the 500 below even when
+    # the request has no new uploads, so the probe sits before the loop.
+    assert src.index("ensure_configured()") < src.index(
+        "for field_name, content in uploaded_file_bytes.items()"
     )
-    # Ensure the helper is invoked before the put_object call (textually).
-    helper_idx = src.find("sanitize_put_object_kwargs(")
-    put_idx = src.find("s3_client.put_object(")
-    assert helper_idx != -1 and put_idx != -1
-    assert helper_idx < put_idx, (
-        "sanitize_put_object_kwargs must be called before s3_client.put_object"
+    assert "put_object(s3_key, content)" in src
+    assert "get_s3_client" not in src
+    assert ".put_object(" not in src, (
+        "batch.py must not call put_object on a raw S3 client"
     )
+
+
+def test_core_s3_put_object_routes_through_sanitizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """core/s3.put_object must strip GPS user-metadata on every write (FR-028e)."""
+    from echoroo.core import s3 as s3_mod
+    from echoroo.services import s3_upload_sanitizer as sanitizer_mod
+
+    captured_kwargs: dict[str, Any] = {}
+
+    class _StubClient:
+        def put_object(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+
+    sanitizer_called: list[dict[str, Any]] = []
+    real_sanitizer = sanitizer_mod.sanitize_put_object_kwargs
+
+    def _spy(kwargs: dict[str, Any]) -> dict[str, Any]:
+        sanitizer_called.append(kwargs)
+        return real_sanitizer(kwargs)
+
+    monkeypatch.setattr(sanitizer_mod, "sanitize_put_object_kwargs", _spy)
+
+    s3_mod.put_object(
+        "recordings/x.wav",
+        b"payload",
+        content_type="audio/wav",
+        metadata={"lat": "35.6", "user": "alice"},
+        bucket="b",
+        client=_StubClient(),
+    )
+
+    assert sanitizer_called, "sanitize_put_object_kwargs was not invoked"
+    assert captured_kwargs["Bucket"] == "b"
+    assert captured_kwargs["Key"] == "recordings/x.wav"
+    assert captured_kwargs["Body"] == b"payload"
+    assert captured_kwargs["ContentType"] == "audio/wav"
+    assert "lat" not in captured_kwargs["Metadata"]
+    assert captured_kwargs["Metadata"].get("user") == "alice"
 
 
 # ---------------------------------------------------------------------------

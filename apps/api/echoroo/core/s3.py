@@ -1,4 +1,11 @@
-"""S3-compatible storage client utility for file upload management."""
+"""S3-compatible object storage helpers.
+
+This module is the only place allowed to construct a boto3 S3 client or to
+call one. Every other module goes through the helpers below;
+``scripts/lint_s3_isolation.py`` enforces it. Keeping the surface here lets
+the storage backend be replaced in place
+(docs/architecture/storage-lustre-migration.md).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,7 @@ import hmac
 import logging
 from collections.abc import Iterator
 from datetime import datetime
+from pathlib import Path
 from typing import Any, NamedTuple
 
 import boto3
@@ -73,6 +81,16 @@ def get_public_s3_client() -> Any:
     )
 
 
+def ensure_configured() -> None:
+    """Raise if the storage settings cannot produce a client.
+
+    Call this before a loop whose per-item ``except`` would otherwise swallow
+    a configuration error (malformed endpoint, ...) and turn it into a
+    per-item failure. It does no I/O.
+    """
+    get_s3_client()
+
+
 def ensure_bucket_exists(client: Any = None) -> None:
     """Create the bucket if it doesn't exist."""
     settings = get_settings()
@@ -83,10 +101,46 @@ def ensure_bucket_exists(client: Any = None) -> None:
         client.create_bucket(Bucket=settings.S3_BUCKET)
 
 
+def head_bucket(client: Any = None) -> None:
+    """Probe the configured bucket; raise if it is not reachable."""
+    settings = get_settings()
+    client = client or get_s3_client()
+    client.head_bucket(Bucket=settings.S3_BUCKET)
+
+
+def object_exists_at_endpoint(
+    bucket: str,
+    object_key: str,
+    endpoint_url: str | None = None,
+) -> bool:
+    """Return True if ``object_key`` exists in ``bucket`` at ``endpoint_url``.
+
+    Unlike the other helpers this uses the ambient AWS credential chain, not
+    ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``: the wipe guard runs standalone
+    against the audit bucket.
+
+    Raises:
+        ClientError: On any failure other than "not found".
+    """
+    client_kwargs: dict[str, Any] = {}
+    if endpoint_url:
+        client_kwargs["endpoint_url"] = endpoint_url
+    client = boto3.client("s3", **client_kwargs)
+    try:
+        client.head_object(Bucket=bucket, Key=object_key)
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+
+
 def generate_presigned_upload_url(
     object_key: str,
     expiry_seconds: int | None = None,
     client: Any = None,
+    public: bool = False,
 ) -> str:
     """Generate a presigned PUT URL for browser-direct upload.
 
@@ -94,12 +148,14 @@ def generate_presigned_upload_url(
         object_key: S3 object key (must start with allowed prefix)
         expiry_seconds: URL expiry in seconds (default from settings)
         client: Optional S3 client instance
+        public: Sign against the browser-reachable endpoint
+            (``get_public_s3_client``). Ignored when ``client`` is given.
 
     Returns:
         Presigned URL string
     """
     settings = get_settings()
-    client = client or get_s3_client()
+    client = client or (get_public_s3_client() if public else get_s3_client())
     expiry = expiry_seconds or settings.S3_PRESIGNED_URL_EXPIRY
 
     # Only include Bucket and Key in presigned URL params.
@@ -212,6 +268,93 @@ def verify_object_exists(
     return result
 
 
+def head_object(
+    object_key: str,
+    client: Any = None,
+    bucket: str | None = None,
+) -> dict[str, Any]:
+    """Return the raw ``head_object`` response (``Metadata``, ``ContentType``, ...).
+
+    Raises:
+        ClientError: If the object does not exist or the call fails.
+    """
+    settings = get_settings()
+    client = client or get_s3_client()
+    response: dict[str, Any] = client.head_object(
+        Bucket=bucket or settings.S3_BUCKET, Key=object_key
+    )
+    return response
+
+
+def put_object(
+    object_key: str,
+    body: bytes,
+    *,
+    content_type: str | None = None,
+    metadata: dict[str, str] | None = None,
+    bucket: str | None = None,
+    object_lock_mode: str | None = None,
+    object_lock_retain_until: datetime | None = None,
+    client: Any = None,
+) -> None:
+    """Write ``body`` to ``object_key``.
+
+    FR-028e: the PutObject kwargs always pass through
+    ``sanitize_put_object_kwargs`` here, so no caller can write GPS-bearing
+    user metadata. ``Metadata`` is sent whenever ``metadata`` is not None
+    (an empty dict included); ``ContentType`` only when non-empty.
+
+    Raises:
+        ClientError: If the write fails.
+    """
+    # Imported at call time: core must not import the services package at
+    # module load.
+    from echoroo.services.s3_upload_sanitizer import sanitize_put_object_kwargs
+
+    settings = get_settings()
+    client = client or get_s3_client()
+    put_kwargs: dict[str, Any] = {
+        "Bucket": bucket or settings.S3_BUCKET,
+        "Key": object_key,
+        "Body": body,
+    }
+    if metadata is not None:
+        put_kwargs["Metadata"] = metadata
+    if content_type:
+        put_kwargs["ContentType"] = content_type
+    if object_lock_mode:
+        put_kwargs["ObjectLockMode"] = object_lock_mode
+    if object_lock_retain_until is not None:
+        put_kwargs["ObjectLockRetainUntilDate"] = object_lock_retain_until
+    client.put_object(**sanitize_put_object_kwargs(put_kwargs))
+
+
+def download_object_to_file(
+    object_key: str,
+    local_path: Path | str,
+    client: Any = None,
+) -> None:
+    """Download ``object_key`` to ``local_path`` (blocking).
+
+    Raises:
+        ClientError: If the object does not exist or the download fails.
+    """
+    settings = get_settings()
+    client = client or get_s3_client()
+    client.download_file(settings.S3_BUCKET, object_key, str(local_path))
+
+
+def upload_file_to_object(
+    local_path: Path | str,
+    object_key: str,
+    client: Any = None,
+) -> None:
+    """Upload the file at ``local_path`` to ``object_key`` (blocking)."""
+    settings = get_settings()
+    client = client or get_s3_client()
+    client.upload_file(str(local_path), settings.S3_BUCKET, object_key)
+
+
 def delete_object(object_key: str, client: Any = None) -> bool:
     """Delete an object from S3."""
     settings = get_settings()
@@ -282,6 +425,30 @@ def move_object(source_key: str, dest_key: str, client: Any = None) -> bool:
         return False
 
 
+def get_object_response(
+    object_key: str,
+    byte_range: str | None = None,
+    client: Any = None,
+) -> dict[str, Any]:
+    """Return the raw ``get_object`` response for an S3 object.
+
+    Callers that need ``ContentLength`` / ``ContentRange`` next to the body
+    use this; everything else uses :func:`get_object_stream`.
+
+    Args:
+        object_key: S3 object key
+        byte_range: Optional byte range (e.g., "bytes=0-65535")
+        client: Optional S3 client instance
+    """
+    settings = get_settings()
+    client = client or get_s3_client()
+    params: dict[str, Any] = {"Bucket": settings.S3_BUCKET, "Key": object_key}
+    if byte_range:
+        params["Range"] = byte_range
+    response: dict[str, Any] = client.get_object(**params)
+    return response
+
+
 def get_object_stream(
     object_key: str,
     byte_range: str | None = None,
@@ -297,13 +464,7 @@ def get_object_stream(
     Returns:
         StreamingBody object
     """
-    settings = get_settings()
-    client = client or get_s3_client()
-    params: dict[str, Any] = {"Bucket": settings.S3_BUCKET, "Key": object_key}
-    if byte_range:
-        params["Range"] = byte_range
-    response = client.get_object(**params)
-    return response["Body"]
+    return get_object_response(object_key, byte_range=byte_range, client=client)["Body"]
 
 
 def list_objects_paginated(prefix: str, client: Any = None) -> Iterator[S3ObjectMeta]:
