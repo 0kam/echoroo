@@ -102,6 +102,7 @@ disappears, which frees local disk rather than consuming it.
 | --- | --- | --- | --- | --- |
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
+| 5 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
 
 ## Risks
 
@@ -169,8 +170,21 @@ S3, then cut over once.
   and snapshots; the wipe guard's genesis-marker check reads the same path;
   runbook entry for the mount and snapshot schedule.
 - **Out of scope** — the chain hash itself, which already exists.
-- **Acceptance** — export then verify the chain end to end; wipe guard still
-  refuses when the marker is present.
+- **Acceptance** — export then verify the chain end to end; wipe guard exit
+  codes unchanged.
+- **Status** — done. Found while slicing: the export task was never registered
+  with Celery (no `include`, no beat entry), so it had never run; it is now
+  scheduled Mondays 03:00 UTC. Without Object Lock the code itself has to be
+  write-once, so each archive is one *closed* ISO week (deterministic
+  contents), an existing key is skipped rather than overwritten, the archive
+  is read back and re-verified after writing, and an 8-week look-back catches
+  up missed runs. The wipe guard reads the genesis marker through `core/s3`
+  from the same bucket. Runbook: `docs/runbook/audit_log_archive.md`.
+- **Not changed, flagged** — `check_wipe_guard.py` contradicts itself: the
+  docstring and `all_clear_for_wipe` expect the genesis marker to be *absent*
+  before a wipe, `main()` refuses when it is absent (exit 12). Behaviour left
+  as is; which one is intended is a release-ritual question for the
+  maintainer.
 - **Depends on** — slice 1. **UX preview needed** — no.
 
 ### 4. Cutover

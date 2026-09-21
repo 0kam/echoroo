@@ -87,13 +87,12 @@ window opens.
 - One bucket for audio uploads. CORS configured for the production
   origin. Object lifecycle policy aligned with the project / dataset
   retention contract.
-- One bucket (or prefix) with **Object Lock** enabled in
-  governance/compliance mode for the audit log export
-  (`workers/audit_log_export.py`).
-- IAM role: PutObject / GetObject / DeleteObject on the upload
-  bucket; PutObject (with Object Lock) on the audit bucket.
-- Wire via `S3_BUCKET`, `S3_PUBLIC_ENDPOINT_URL` (presigned URL
-  base), `S3_AUDIT_BUCKET`.
+- The weekly audit log export (`workers/audit_log_export.py`) writes
+  write-once archives under the `audit-log/` prefix of the same bucket.
+  Object Lock is not used; immutability is operational — see
+  [audit_log_archive.md](audit_log_archive.md).
+- IAM role: PutObject / GetObject / DeleteObject on the bucket.
+- Wire via `S3_BUCKET`, `S3_PUBLIC_ENDPOINT_URL` (presigned URL base).
 
 ### 5. Email — removed (spec/011 zero-email deployment)
 
