@@ -86,6 +86,21 @@ print(export_weekly())
 
 Safe to repeat: existing archives are skipped.
 
+## When the export task fails
+
+`AuditChainMismatchError: refused to archive N week(s) with a broken chain: <keys>`
+means the **live table** failed verification for those weeks. The export never
+archives such a week, and still archives every clean week in the same run.
+Verify the live table (above) to find the first bad row. A week that stays
+broken for more than 8 weeks falls out of the catch-up window and must be
+exported by hand once resolved (`export_weekly(now_iso=...)` with a `now`
+inside the window).
+
+Known benign cause in **development only**: rows written while the KMS key
+differed — LocalStack key regeneration before 2026-07-07 (PR #246), or a
+pytest run inside the dev container whose fresh-session audit writers reach
+the dev database with the test KMS key. Production has neither.
+
 ## When verification fails
 
 1. Do not delete or "fix" the archive. Copy it aside.

@@ -183,7 +183,7 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
 
     _, session_factory = get_worker_engine_and_session_factory()
 
-    summary: dict[str, Any] = {"exported_at": now.isoformat(), "archives": []}
+    summary: dict[str, Any] = {"exported_at": now.isoformat(), "archives": [], "failed": []}
 
     # NOTE: session_factory yields an AsyncSession by default; the weekly
     # export is a simple read-then-upload job so we wrap a synchronous
@@ -203,7 +203,14 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
                     rows = await _afetch_rows(session, table, start=start, end=end)
                     if not rows:
                         continue
-                    _verify_chain(rows, include_project_id=include_project_id)
+                    try:
+                        _verify_chain(rows, include_project_id=include_project_id)
+                    except AuditChainMismatchError as exc:
+                        # Never archive a week that fails verification, but do
+                        # not let it block the clean weeks either.
+                        logger.error("audit export refused key=%s: %s", key, exc)
+                        summary["failed"].append({"table": table, "key": key, "error": str(exc)})
+                        continue
                     _write_archive(key, _serialize_ndjson(rows))
                     verified = verify_archive(key, include_project_id=include_project_id)
                     summary["archives"].append(
@@ -211,6 +218,13 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
                     )
 
     asyncio.run(_run())
+    if summary["failed"]:
+        # Fail the task so the broken weeks reach an operator; the clean weeks
+        # above are already archived and will be skipped on the retry.
+        failed_keys = ", ".join(item["key"] for item in summary["failed"])
+        raise AuditChainMismatchError(
+            f"refused to archive {len(summary['failed'])} week(s) with a broken chain: {failed_keys}"
+        )
     return summary
 
 

@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import io
-import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -211,15 +210,33 @@ def test_export_ignores_weeks_outside_catch_up_window(env: Any) -> None:
     assert env.s3.put_calls == []
 
 
-def test_db_chain_mismatch_aborts_before_any_write(env: Any) -> None:
+def test_db_chain_mismatch_is_never_archived(env: Any) -> None:
     row = _row(datetime(2026, 9, 15, tzinfo=UTC))
     row["row_hash"] = "f" * 64
     env.rows_by_table["project_audit_log"] = [row]
 
-    with pytest.raises(mod.AuditChainMismatchError):
+    with pytest.raises(mod.AuditChainMismatchError, match="38.ndjson"):
         mod.export_weekly(now_iso=NOW)
 
     assert env.s3.put_calls == []
+
+
+def test_broken_week_does_not_block_clean_weeks(env: Any) -> None:
+    """One bad week fails the task, but every clean week is still archived."""
+    bad = _row(datetime(2026, 9, 8, tzinfo=UTC))  # W37
+    bad["row_hash"] = "f" * 64
+    env.rows_by_table["project_audit_log"] = [bad, _row(datetime(2026, 9, 15, tzinfo=UTC))]  # + W38
+    env.rows_by_table["platform_audit_log"] = [
+        _row(datetime(2026, 9, 15, tzinfo=UTC), project=False)
+    ]
+
+    with pytest.raises(mod.AuditChainMismatchError, match="37.ndjson"):
+        mod.export_weekly(now_iso=NOW)
+
+    assert sorted(call["Key"] for call in env.s3.put_calls) == [
+        "audit-log/platform_audit_log/2026/38.ndjson",
+        "audit-log/project_audit_log/2026/38.ndjson",
+    ]
 
 
 def test_verify_archive_detects_tampering(env: Any) -> None:
