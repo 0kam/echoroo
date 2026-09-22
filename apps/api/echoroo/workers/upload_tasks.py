@@ -871,6 +871,14 @@ async def _run_import(
                 owner = await session_repo.get_for_update(upload_session.id)
                 if owner is None or owner.status != UploadSessionStatus.IMPORTING:
                     await db.rollback()
+                    # The objects of this batch were published after the
+                    # session was taken from us; the reaper may already have
+                    # run and will not come back, so this worker deletes them.
+                    for rec in pending_recordings:
+                        with contextlib.suppress(Exception):
+                            delete_object(rec.path)
+                    pending_recordings.clear()
+                    pending_file_ids.clear()
                     raise UploadSessionStateError(
                         f"Session {session_id} left IMPORTING during import",
                         mark_failed=False,
