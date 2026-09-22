@@ -454,8 +454,8 @@ async def test_active_session_is_owner_scoped(
         f"{_session_url(test_project_id, test_dataset.id)}/active",
         headers=member_headers,
     )
-    assert member_response.status_code == 200
-    assert member_response.json()["session"] is None
+    # Decision 5: members cannot upload at all, so the resume lookup is 403 for them.
+    assert member_response.status_code == 403
     assert test_member
     assert session_id
 
