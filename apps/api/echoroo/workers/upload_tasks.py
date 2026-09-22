@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from celery.exceptions import Ignore
+from sqlalchemy import select
 
 from echoroo.core import upload_staging
 from echoroo.core.s3 import (
@@ -38,6 +39,7 @@ from echoroo.core.s3 import (
     verify_object_exists,
 )
 from echoroo.core.settings import get_settings
+from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
     DatetimeParseStatus,
@@ -872,6 +874,13 @@ async def _run_import(
                 # Lock the session and confirm it is still ours: a force-fail
                 # or reaper claim between publish and here must leave no
                 # Recording behind (the reaper deletes unlinked objects).
+                # Dataset before session (the same order as session creation):
+                # inserting Recording rows takes a KEY SHARE lock on the dataset
+                # through the foreign key, so take it explicitly first or a
+                # concurrent create (dataset FOR UPDATE, then session) deadlocks.
+                await db.execute(
+                    select(Dataset.id).where(Dataset.id == dataset_id).with_for_update(key_share=True)
+                )
                 owner = await session_repo.get_for_update(session_uuid)
                 if owner is None or owner.status != UploadSessionStatus.IMPORTING:
                     await db.rollback()

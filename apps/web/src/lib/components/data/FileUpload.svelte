@@ -492,6 +492,15 @@
       step = 'partial';
       return;
     }
+    // A server file that was "not selected" earlier may since have been added
+    // as a plan (and finished) or acknowledged complete: drop those before
+    // deciding the run is still partial.
+    const planIds = new Set(uploadPlans.map((plan) => plan.fileId));
+    resumeUnmatched = resumeUnmatched.filter(
+      (file) =>
+        !planIds.has(file.file_id) &&
+        (ackReceived[file.file_id] ?? file.received_bytes) < file.declared_size,
+    );
     if (resumeUnmatched.length > 0) {
       step = 'partial';
       return;

@@ -770,9 +770,13 @@ class UploadService:
                     session_id, file_id
                 )
             if received != 0:
+                # Transient: other requests for this file keep re-growing it.
+                # 429 + Retry-After makes the browser retry the same chunk
+                # instead of treating the session as lost.
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                     detail="Restart keeps being overtaken by other requests for this file; retry",
+                    headers={"Retry-After": "1"},
                 )
 
         if received >= upload_file.declared_size:
