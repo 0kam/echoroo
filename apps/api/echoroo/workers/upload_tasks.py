@@ -874,9 +874,19 @@ async def _run_import(
                     # The objects of this batch were published after the
                     # session was taken from us; the reaper may already have
                     # run and will not come back, so this worker deletes them.
+                    leftover = False
                     for rec in pending_recordings:
-                        with contextlib.suppress(Exception):
-                            delete_object(rec.path)
+                        try:
+                            leftover |= not delete_object(rec.path)
+                        except Exception:  # noqa: BLE001
+                            leftover = True
+                    if leftover:
+                        # Re-create the staging directory so the reaper's sweep
+                        # revisits this session and retries the deletion.
+                        with contextlib.suppress(OSError):
+                            upload_staging.session_dir(upload_session.id).mkdir(
+                                mode=0o700, parents=True, exist_ok=True
+                            )
                     pending_recordings.clear()
                     pending_file_ids.clear()
                     raise UploadSessionStateError(
