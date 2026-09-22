@@ -424,6 +424,8 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
             upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
             if upload_session is None:
                 raise ValueError(f"Upload session not found: {session_id}")
+            # Plain UUID for everything below: a rollback expires the ORM row.
+            session_uuid = UUID(session_id)
 
             # Guard: only transition from UPLOADED state
             if upload_session.status != UploadSessionStatus.UPLOADED:
@@ -437,7 +439,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
 
             # CAS transition: UPLOADED -> VALIDATING
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.VALIDATING,
                 expected_status=UploadSessionStatus.UPLOADED,
             )
@@ -495,7 +497,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             continue
 
                         actual_hash = await _with_heartbeat(
-                            session_factory, upload_session.id, _sha256_of_path, source
+                            session_factory, session_uuid, _sha256_of_path, source
                         )
                         if (
                             file.checksum_sha256 is not None
@@ -534,7 +536,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                         try:
                             clean_size, clean_sha = await _with_heartbeat(
                                 session_factory,
-                                upload_session.id,
+                                session_uuid,
                                 _sanitize_to_clean,
                                 source,
                                 clean_path,
@@ -765,13 +767,13 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                     valid_count += 1
                 finally:
                     await session_repo.update_progress(
-                        upload_session.id, validated_files=valid_count + invalid_count,
+                        session_uuid, validated_files=valid_count + invalid_count,
                     )
                     await db.commit()
 
             # Mark session as validated only if it is still being validated.
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.VALIDATED,
                 expected_status=UploadSessionStatus.VALIDATING,
             )
@@ -822,6 +824,8 @@ async def _run_import(
             upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
             if upload_session is None:
                 raise ValueError(f"Upload session not found: {session_id}")
+            # Plain UUID for everything below: a rollback expires the ORM row.
+            session_uuid = UUID(session_id)
 
             if upload_session.status != UploadSessionStatus.VALIDATED:
                 # Same rule as validation: only a dead IMPORTING run is failed.
@@ -833,7 +837,7 @@ async def _run_import(
 
             # CAS transition: VALIDATED -> IMPORTING
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.IMPORTING,
                 expected_status=UploadSessionStatus.VALIDATED,
             )
@@ -868,7 +872,7 @@ async def _run_import(
                 # Lock the session and confirm it is still ours: a force-fail
                 # or reaper claim between publish and here must leave no
                 # Recording behind (the reaper deletes unlinked objects).
-                owner = await session_repo.get_for_update(upload_session.id)
+                owner = await session_repo.get_for_update(session_uuid)
                 if owner is None or owner.status != UploadSessionStatus.IMPORTING:
                     await db.rollback()
                     # The objects of this batch were published after the
@@ -884,7 +888,7 @@ async def _run_import(
                         # Re-create the staging directory so the reaper's sweep
                         # revisits this session and retries the deletion.
                         with contextlib.suppress(OSError):
-                            # UUID(session_id), not upload_session.id: the
+                            # UUID(session_id), not session_uuid: the
                             # rollback above expired the ORM object.
                             upload_staging.session_dir(UUID(session_id)).mkdir(
                                 mode=0o700, parents=True, exist_ok=True
@@ -903,12 +907,12 @@ async def _run_import(
                         recording_id=rec.id,
                     )
                 imported_count += len(created)
-                await session_repo.update_progress(upload_session.id, imported_files=imported_count)
+                await session_repo.update_progress(session_uuid, imported_files=imported_count)
                 await db.commit()
                 pending_recordings.clear()
                 pending_file_ids.clear()
 
-            valid_files: list[UploadFile] = await file_repo.get_valid_files(upload_session.id)
+            valid_files: list[UploadFile] = await file_repo.get_valid_files(session_uuid)
 
             async def _process_file(file: UploadFile) -> None:
                 """Publish one valid upload file and queue its Recording row."""
@@ -937,7 +941,7 @@ async def _run_import(
                         return
 
                     actual_hash = await _with_heartbeat(
-                        session_factory, upload_session.id, _sha256_of_path, clean
+                        session_factory, session_uuid, _sha256_of_path, clean
                     )
                     if (
                         file.checksum_sha256 is None
@@ -953,7 +957,7 @@ async def _run_import(
                         return
 
                     await _with_heartbeat(
-                        session_factory, upload_session.id, upload_file_to_object, clean, dest_key
+                        session_factory, session_uuid, upload_file_to_object, clean, dest_key
                     )
                     try:
                         stored_size = head_object(dest_key)["ContentLength"]
@@ -1077,20 +1081,25 @@ async def _run_import(
                     await _flush_batch()
 
             for file in valid_files:
+                ownership_lost = False
                 try:
                     await _process_file(file)
+                except UploadSessionStateError:
+                    ownership_lost = True  # the row is no longer ours: no progress tick
+                    raise
                 finally:
-                    await session_repo.update_progress(
-                        upload_session.id, imported_files=imported_count,
-                    )
-                    await db.commit()
+                    if not ownership_lost:
+                        await session_repo.update_progress(
+                            session_uuid, imported_files=imported_count,
+                        )
+                        await db.commit()
 
             # Flush any remaining recordings
             await _flush_batch()
 
             # Mark the session as imported only if it is still being imported.
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.IMPORTED,
                 expected_status=UploadSessionStatus.IMPORTING,
             )
@@ -1114,13 +1123,13 @@ async def _run_import(
             )
             await db.commit()
 
-            if await _delete_unlinked_publications(db, upload_session.id, project_id, dataset_id):
+            if await _delete_unlinked_publications(db, session_uuid, project_id, dataset_id):
                 try:
-                    upload_staging.remove_session(upload_session.id)
+                    upload_staging.remove_session(session_uuid)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "Failed to remove staging directory for imported session %s: %s",
-                        upload_session.id,
+                        session_uuid,
                         exc,
                     )
 
