@@ -27,6 +27,7 @@ from celery.exceptions import Ignore
 
 from echoroo.core import upload_staging
 from echoroo.core.s3 import (
+    delete_object,
     delete_objects_by_prefix,
     ensure_configured,
     get_object_stream,
@@ -87,6 +88,41 @@ _BATCH_SIZE = 100  # Number of recordings to insert per batch
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
+
+
+_HEARTBEAT_INTERVAL_S = 60.0
+
+
+async def _with_heartbeat(
+    session_factory: Any, session_id: UUID, fn: Any, *args: Any, **kwargs: Any
+) -> Any:
+    """Run blocking ``fn`` in a thread and keep the session's heartbeat fresh meanwhile.
+
+    A 1 GiB hash, sanitise or upload can outlast the 15-minute stale window on
+    its own; the reaper (or the API's self-heal) would then fail live work. The
+    heartbeat uses its own database session so it never touches the worker's
+    open transaction.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        while True:
+            done, _ = await asyncio.wait({work}, timeout=_HEARTBEAT_INTERVAL_S)
+            if done:
+                return work.result()
+            try:
+                async with session_factory() as beat_db:
+                    await UploadSessionRepository(beat_db).touch(session_id)
+                    await beat_db.commit()
+            except Exception as exc:  # noqa: BLE001 - a missed beat is not fatal
+                logger.warning("Heartbeat for session %s failed: %s", session_id, exc)
+    finally:
+        if not work.done():
+            await asyncio.wait({work})
+
+
+def _strip_gps_from_file(path: Path) -> bytes:
+    """Return the GPS-stripped bytes of an audio file (whole file in memory, by design)."""
+    return strip_audio_gps_metadata(io.BytesIO(path.read_bytes())).read()
 
 
 def _staged_source(file: UploadFile) -> Path | None:
@@ -364,8 +400,12 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
 
             # Guard: only transition from UPLOADED state
             if upload_session.status != UploadSessionStatus.UPLOADED:
+                # A dead earlier run (VALIDATING) is failed so the uploader
+                # can start over (#250); any later stage means the work was
+                # already done and this delivery is simply dropped.
                 raise UploadSessionStateError(
-                    f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED"
+                    f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED",
+                    mark_failed=upload_session.status == UploadSessionStatus.VALIDATING,
                 )
 
             # CAS transition: UPLOADED -> VALIDATING
@@ -427,7 +467,9 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             invalid_count += 1
                             continue
 
-                        actual_hash = _sha256_of_path(source)
+                        actual_hash = await _with_heartbeat(
+                            session_factory, upload_session.id, _sha256_of_path, source
+                        )
                         if (
                             file.checksum_sha256 is not None
                             and not hmac.compare_digest(actual_hash, file.checksum_sha256)
@@ -464,9 +506,12 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                         clean_path = _clean_path(file)
                         temp_clean_path: Path | None = None
                         try:
-                            sanitized = strip_audio_gps_metadata(
-                                io.BytesIO(source.read_bytes())
-                            ).read()
+                            sanitized = await _with_heartbeat(
+                                session_factory,
+                                upload_session.id,
+                                _strip_gps_from_file,
+                                source,
+                            )
                             with tempfile.NamedTemporaryFile(
                                 dir=clean_path.parent,
                                 prefix=f".{file.id}.clean.",
@@ -774,9 +819,11 @@ async def _run_import(
                 raise ValueError(f"Upload session not found: {session_id}")
 
             if upload_session.status != UploadSessionStatus.VALIDATED:
+                # Same rule as validation: only a dead IMPORTING run is failed.
                 raise UploadSessionStateError(
                     f"Session {session_id} is in status {upload_session.status.value}, "
-                    "expected VALIDATED"
+                    "expected VALIDATED",
+                    mark_failed=upload_session.status == UploadSessionStatus.IMPORTING,
                 )
 
             # CAS transition: VALIDATED -> IMPORTING
@@ -854,11 +901,9 @@ async def _run_import(
                         failed_count += 1
                         return
 
-                    # Heartbeat before the two long steps (hash, upload) so a
-                    # big file cannot look dead to the reaper mid-file.
-                    await session_repo.touch(upload_session.id)
-                    await db.commit()
-                    actual_hash = _sha256_of_path(clean)
+                    actual_hash = await _with_heartbeat(
+                        session_factory, upload_session.id, _sha256_of_path, clean
+                    )
                     if (
                         file.checksum_sha256 is None
                         or not hmac.compare_digest(actual_hash, file.checksum_sha256)
@@ -872,14 +917,17 @@ async def _run_import(
                         failed_count += 1
                         return
 
-                    await session_repo.touch(upload_session.id)
-                    await db.commit()
-                    upload_file_to_object(clean, dest_key)
+                    await _with_heartbeat(
+                        session_factory, upload_session.id, upload_file_to_object, clean, dest_key
+                    )
                     try:
                         stored_size = head_object(dest_key)["ContentLength"]
                     except Exception:  # noqa: BLE001
                         stored_size = None
                     if stored_size != file.file_size:
+                        # Never leave an unlinked object behind.
+                        with contextlib.suppress(Exception):
+                            delete_object(dest_key)
                         await file_repo.update_status(
                             file.id,
                             UploadFileStatus.INVALID,
@@ -1083,7 +1131,12 @@ async def _run_cleanup() -> dict[str, Any]:
             orphaned_dirs = 0
 
             async def _claim_and_purge(
-                upload_session: UploadSession, *, reason: str, still_dead: Any
+                candidate_id: UUID,
+                project_id: UUID,
+                dataset_id: UUID,
+                *,
+                reason: str,
+                still_dead: Any,
             ) -> bool:
                 """Fail a dead session and only then delete its bytes.
 
@@ -1091,14 +1144,15 @@ async def _run_cleanup() -> dict[str, Any]:
                 session may have accepted a chunk (extended retention), started
                 processing, or finished. Re-read under the row lock, re-check
                 with ``still_dead``, claim it FAILED with a CAS, commit, and
-                delete only after the claim is durable.
+                delete only after the claim is durable. Only scalars are used
+                after the lock: a rollback expires every loaded ORM object.
                 """
-                locked = await session_repo.get_for_update(upload_session.id)
+                locked = await session_repo.get_for_update(candidate_id)
                 if locked is None or not still_dead(locked):
                     await db.rollback()
                     return False
                 claimed = await session_repo.update_status(
-                    locked.id,
+                    candidate_id,
                     UploadSessionStatus.FAILED,
                     error=reason,
                     expected_status=locked.status,
@@ -1108,31 +1162,57 @@ async def _run_cleanup() -> dict[str, Any]:
                     return False
                 await db.commit()
 
-                dataset = upload_session.dataset
-                prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
+                prefix = f"uploads/{project_id}/{dataset_id}/{candidate_id}/"
                 try:
                     deleted = delete_objects_by_prefix(prefix)
                     logger.info(
                         "Deleted %d S3 objects for %s session %s",
                         deleted,
                         reason.lower(),
-                        upload_session.id,
+                        candidate_id,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("S3 cleanup failed for session %s: %s", upload_session.id, exc)
+                    logger.warning("S3 cleanup failed for session %s: %s", candidate_id, exc)
+                await _delete_unlinked_publications(candidate_id, project_id, dataset_id)
                 try:
-                    upload_staging.remove_session(upload_session.id)
+                    upload_staging.remove_session(candidate_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Staging cleanup failed for session %s: %s", upload_session.id, exc)
+                    logger.warning("Staging cleanup failed for session %s: %s", candidate_id, exc)
                 return True
+
+            async def _delete_unlinked_publications(
+                candidate_id: UUID, project_id: UUID, dataset_id: UUID
+            ) -> None:
+                """Remove staged files' deterministic destinations that never got a Recording.
+
+                A crash between ``upload_file_to_object`` and the batch commit
+                leaves the object under ``recordings/…/{file_id}`` with the
+                file still VALID; the session is FAILED by then, so this is the
+                only place that can reclaim it.
+                """
+                file_repo = UploadFileRepository(db)
+                for file in await file_repo.get_by_session(candidate_id):
+                    if file.received_bytes <= 0 or file.recording_id is not None:
+                        continue
+                    file_ext = splitext(file.original_filename)[1].lower() or ""
+                    key = _build_recording_s3_key(project_id, dataset_id, file.id, file_ext)
+                    with contextlib.suppress(Exception):
+                        delete_object(key)
 
             now = datetime.now(UTC)
 
             # --- Cleanup expired ISSUED sessions ---
-            expired_sessions: list[UploadSession] = await session_repo.get_expired_sessions()
-            for upload_session in expired_sessions:
+            # Capture scalars first: candidates are ORM rows and a later
+            # rollback would expire them.
+            expired_candidates = [
+                (s.id, s.dataset.project_id, s.dataset.id)
+                for s in await session_repo.get_expired_sessions()
+            ]
+            for candidate_id, project_id, dataset_id in expired_candidates:
                 if await _claim_and_purge(
-                    upload_session,
+                    candidate_id,
+                    project_id,
+                    dataset_id,
                     reason="Session expired",
                     still_dead=lambda s: s.status == UploadSessionStatus.ISSUED
                     and s.expires_at <= now,
@@ -1146,12 +1226,15 @@ async def _run_cleanup() -> dict[str, Any]:
             # but alive imports.
             stale_timeout_seconds = get_settings().UPLOAD_STALE_TIMEOUT_SECONDS
             stale_cutoff = now - timedelta(seconds=stale_timeout_seconds)
-            stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(
-                max_age_seconds=stale_timeout_seconds
-            )
-            for upload_session in stale_sessions:
+            stale_candidates = [
+                (s.id, s.dataset.project_id, s.dataset.id)
+                for s in await session_repo.get_stale_sessions(max_age_seconds=stale_timeout_seconds)
+            ]
+            for candidate_id, project_id, dataset_id in stale_candidates:
                 if await _claim_and_purge(
-                    upload_session,
+                    candidate_id,
+                    project_id,
+                    dataset_id,
                     reason="Session timed out",
                     still_dead=lambda s: s.status in _STALE_STATUSES_FOR_REAPER
                     and s.updated_at <= stale_cutoff,
@@ -1165,6 +1248,15 @@ async def _run_cleanup() -> dict[str, Any]:
                     UploadSessionStatus.FAILED,
                     UploadSessionStatus.IMPORTED,
                 ):
+                    if staged_session is not None and staged_session.status == UploadSessionStatus.FAILED:
+                        # A session failed by someone other than this reaper
+                        # (cancel, admin force-fail, task failure) may also
+                        # have published an object it never linked.
+                        await _delete_unlinked_publications(
+                            staged_session_id,
+                            staged_session.dataset.project_id,
+                            staged_session.dataset.id,
+                        )
                     try:
                         upload_staging.remove_session(staged_session_id)
                         orphaned_dirs += 1
@@ -1241,12 +1333,16 @@ async def _mark_import_failed(session_id: str, error: str) -> None:
                     session.status.value if session is not None else "missing",
                 )
                 return
-            await session_repo.update_status(
+            claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
                 error=error,
                 expected_status=session.status,
             )
+            if not claimed:
+                logger.info("Session %s changed state before it could be failed; leaving it", session_id)
+                await db.rollback()
+                return
             if session is not None:
                 dataset_repo = DatasetRepository(db)
                 await dataset_repo.update_import_status(

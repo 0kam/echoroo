@@ -530,3 +530,52 @@ async def test_cleanup_does_not_reap_a_session_that_came_back_to_life(
     assert result.scalar_one() == UploadSessionStatus.VALIDATING
     assert upload_staging.session_dir(session_id).exists()
 
+
+@pytest.mark.asyncio
+async def test_duplicate_validate_after_validated_is_harmless(
+    db_session: AsyncSession,
+    test_project: Project,
+    staged_dataset: Dataset,
+    staged_worker_env: _FakeS3,
+) -> None:
+    raw = _build_wav_with_fake_gps_chunk()
+    session_id, _file_id = await _create_staged_upload(
+        db_session, staged_dataset, test_project.owner_id, raw
+    )
+    await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
+    await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
+
+    result = await db_session.execute(
+        select(UploadSession.status, UploadSession.error).where(UploadSession.id == session_id)
+    )
+    status_after, error_after = result.one()
+    assert status_after == UploadSessionStatus.VALIDATED
+    assert error_after is None
+
+
+@pytest.mark.asyncio
+async def test_import_deletes_object_when_stored_size_mismatches(
+    db_session: AsyncSession,
+    test_project: Project,
+    staged_dataset: Dataset,
+    staged_worker_env: _FakeS3,
+) -> None:
+    raw = _build_wav_with_fake_gps_chunk()
+    session_id, file_id = await _create_staged_upload(
+        db_session, staged_dataset, test_project.owner_id, raw
+    )
+    await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
+
+    real_head = staged_worker_env.head_object
+
+    def short_head(**kwargs: Any) -> dict[str, Any]:
+        response = real_head(**kwargs)
+        return {**response, "ContentLength": response["ContentLength"] - 1}
+
+    staged_worker_env.head_object = short_head  # type: ignore[method-assign]
+    await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
+
+    file_row = await _get_file_row(db_session, file_id)
+    assert file_row[0] == UploadFileStatus.INVALID
+    assert not any(key.startswith("recordings/") for key in staged_worker_env.objects)
+
