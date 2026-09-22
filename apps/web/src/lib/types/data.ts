@@ -293,11 +293,15 @@ export interface CompleteUploadResponse {
   verified_files: number;
   missing_files: number;
   mismatched_files: number;
+  skipped_files: number;
 }
 
 export interface UploadFileStatusResponse {
   file_id: string;
   original_filename: string;
+  declared_size: number;
+  received_bytes: number;
+  chunk_digests: string[];
   status: UploadFileStatus;
   file_size: number;
   duration: number | null;
@@ -319,6 +323,20 @@ export interface UploadSessionStatusResponse {
   files: UploadFileStatusResponse[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ChunkAcceptedResponse {
+  file_id: string;
+  received_bytes: number;
+  complete: boolean;
+}
+
+export interface ActiveUploadSessionResponse {
+  session: UploadSessionStatusResponse | null;
+}
+
+export interface CompleteUploadRequest {
+  skip_missing: boolean;
 }
 
 // ============================================

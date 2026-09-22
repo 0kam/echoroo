@@ -59,17 +59,15 @@
 
   // Phase 2B.3: canonical permission gates.
   //   - `manage_dataset_admin` (admin/owner) for Edit/Delete dataset
-  //   - `manage_dataset` (admin/owner) for content actions
-  //     (file upload, datetime config, export). Note: member-tier
-  //     content mutate access goes through narrower permissions
-  //     (`upload`, `annotate`, `run_inference`); coarse-grained
-  //     "manage dataset" stays admin-tier per the canonical matrix.
+  //   - uploads are admin/owner-only (decision 5)
+  //   - `manage_dataset` (admin/owner) for datetime config and export.
   const canManageDatasetAdmin = $derived(
     can('manage_dataset_admin', $permissionContext),
   );
   const canManageDatasetContent = $derived(
     can('manage_dataset', $permissionContext),
   );
+  const canUpload = $derived(can('upload', $permissionContext));
 
   let showEditModal = $state(false);
   let showDeleteConfirm = $state(false);
@@ -276,7 +274,7 @@
     {/if}
 
     <!-- File Upload (available when dataset is pending or completed) -->
-    {#if (dataset.status === 'pending' || dataset.status === 'completed') && canManageDatasetContent}
+    {#if (dataset.status === 'pending' || dataset.status === 'completed') && canUpload}
       <FileUpload
         {projectId}
         {datasetId}

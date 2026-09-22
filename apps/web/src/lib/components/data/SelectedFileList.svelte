@@ -3,7 +3,9 @@
    * SelectedFileList - Scrollable list of selected audio files with remove buttons.
    *
    * Shows file name and size for each file. Provides clear-all and per-file removal.
-   */
+  */
+
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     files: File[];
@@ -27,14 +29,13 @@
 <div class="mb-4">
   <div class="mb-2 flex items-center justify-between">
     <span class="text-sm font-medium text-stone-700">
-      {files.length} file{files.length !== 1 ? 's' : ''} selected
-      <span class="font-normal text-stone-400">({formatBytes(totalBytes)})</span>
+      {m.file_upload_selected_count({ count: files.length, size: formatBytes(totalBytes) })}
     </span>
     <button
       onclick={onClearAll}
       class="text-xs text-stone-400 underline hover:text-stone-600"
     >
-      Clear all
+      {m.file_upload_clear_all()}
     </button>
   </div>
 
@@ -60,7 +61,7 @@
         <button
           onclick={() => onRemove(i)}
           class="flex-shrink-0 rounded p-0.5 text-stone-300 hover:bg-stone-100 hover:text-stone-500"
-          aria-label="Remove {file.name}"
+          aria-label={m.file_upload_remove_file({ name: file.name })}
         >
           <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
             <line x1="18" y1="6" x2="6" y2="18" stroke-width="2.5" />
@@ -77,6 +78,6 @@
     onclick={onUpload}
     class="rounded-md bg-primary-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
   >
-    Upload {files.length} File{files.length !== 1 ? 's' : ''}
+    {m.file_upload_start({ count: files.length })}
   </button>
 </div>

@@ -2,29 +2,40 @@
   /**
    * FileUpload - Multi-step audio file upload workflow.
    *
-   * Steps: select → hashing → creating → uploading → completing → polling → done | error
-   *
-   * Sub-components:
-   * - FileDropZone: drag-and-drop area
-   * - SelectedFileList: list of queued files
-   * - UploadProgressPanel: per-file upload progress
+   * Chunk transport and retry policy live outside Svelte so that the upload
+   * state can be resumed and tested independently of the UI.
    */
 
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import * as m from '$lib/paraglide/messages';
+  import { ApiError, apiClient } from '$lib/api/client';
   import {
-    createUploadSession,
+    cancelUploadSession,
+    chunkUrl,
     completeUploadSession,
+    createUploadSession,
+    fetchActiveUploadSession,
     fetchUploadSessionStatus,
-    computeFileSHA256,
-    uploadFileToPresignedUrl,
+    putChunk,
+    sha256Hex,
+    UPLOAD_CHUNK_SIZE,
   } from '$lib/api/uploads';
   import { startImport } from '$lib/api/datasets';
+  import { authStore } from '$lib/stores/auth.svelte';
   import type {
     UploadSessionStatus,
-    UploadFilePresignedResponse,
+    UploadSessionStatusResponse,
     CreateUploadSessionResponse,
   } from '$lib/types/data';
+  import { planResume, type ResumePlan } from '$lib/upload/resume';
+  import {
+    DEFAULT_CONCURRENCY,
+    SchedulerAbortedError,
+    UploadScheduler,
+    type FileUiState,
+    type PlannedFile,
+  } from '$lib/upload/scheduler';
+  import { getLocale } from '$lib/paraglide/runtime';
   import {
     getUploadSessionStatusLabel,
     getUploadSessionStatusClass,
@@ -40,61 +51,52 @@
   }
 
   let { projectId, datasetId, onComplete }: Props = $props();
-
   const queryClient = useQueryClient();
 
-  // ── Constants ──────────────────────────────────────────────────────────────
   const ACCEPTED_EXTENSIONS = ['.wav', '.flac', '.mp3', '.ogg', '.opus'];
   const ACCEPTED_MIME_TYPES = [
     'audio/wav', 'audio/x-wav', 'audio/flac', 'audio/x-flac',
     'audio/mpeg', 'audio/mp3', 'audio/ogg', 'audio/opus',
   ];
-  const MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB
+  const MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024 * 1024;
   const MAX_FILE_COUNT = 500;
-  const UPLOAD_CONCURRENCY = 3;
 
-  // ── Workflow step ──────────────────────────────────────────────────────────
   type WorkflowStep =
-    | 'select'      // Selecting files
-    | 'hashing'     // Computing SHA-256 checksums
-    | 'creating'    // Creating the upload session
-    | 'uploading'   // Uploading files to presigned URLs
-    | 'completing'  // Calling complete endpoint
-    | 'polling'     // Polling session status (validating/importing)
-    | 'stalled'     // Polling gave up after the hard cap without a terminal state
-    | 'done'        // All done (imported)
-    | 'error';      // Terminal error
+    | 'select'
+    | 'resume'
+    | 'creating'
+    | 'uploading'
+    | 'paused'
+    | 'partial'
+    | 'completing'
+    | 'polling'
+    | 'stalled'
+    | 'done'
+    | 'error';
 
-  // ── Stall / timeout thresholds ───────────────────────────────────────────────
-  // The backend can leave an upload session sitting in a transient state
-  // (validating / validated / importing / uploaded) if a worker dies. Rather
-  // than spinning forever, we surface a soft hint after `STALL_HINT_MS` and,
-  // after `STALL_HARD_CAP_MS` with no terminal transition, stop polling and
-  // move to a distinct "stalled" UI that offers retry / start-over actions.
-  const STALL_HINT_MS = 30 * 1000; // 30s → soft "taking longer than usual" hint
-  const STALL_HARD_CAP_MS = 5 * 60 * 1000; // 5min → give up and show stalled UI
+  const STALL_HINT_MS = 30 * 1000;
+  const STALL_HARD_CAP_MS = 20 * 60 * 1000;
 
-  // ── State ──────────────────────────────────────────────────────────────────
   let step = $state<WorkflowStep>('select');
   let isDragOver = $state(false);
   let selectedFiles = $state<File[]>([]);
   let errorMessage = $state<string | null>(null);
-
-  let hashingProgress = $state(0);
-  let fileUploadProgress = $state<Record<number, number>>({});
+  let resumeError = $state<string | null>(null);
+  let activeSessionChecked = $state(false);
 
   let sessionId = $state<string | null>(null);
-  let _sessionData = $state<CreateUploadSessionResponse | null>(null);
+  let uploadPlans = $state<PlannedFile[]>([]);
+  let fileStates = $state<Record<string, FileUiState>>({});
+  let lastReceived = $state<Record<string, number>>({});
+  let resumeSession = $state<UploadSessionStatusResponse | null>(null);
+  let resumePlan = $state<ResumePlan | null>(null);
+  let resumeUnmatched = $state<UploadSessionStatusResponse['files']>([]);
+  let resumeExtra = $state<File[]>([]);
+  let restartFileIds = new Set<string>();
+  let currentScheduler: UploadScheduler | null = null;
+  const onlineWaiters = new Set<() => void>();
 
-  // ── Derived values ─────────────────────────────────────────────────────────
-  const totalBytes = $derived(selectedFiles.reduce((sum, f) => sum + f.size, 0));
-
-  const overallUploadPercent = $derived(() => {
-    if (selectedFiles.length === 0) return 0;
-    const total = Object.values(fileUploadProgress).reduce((a, b) => a + b, 0);
-    return Math.round(total / selectedFiles.length);
-  });
-
+  const totalBytes = $derived(selectedFiles.reduce((sum, file) => sum + file.size, 0));
   const isPolling = $derived(step === 'polling');
 
   const statusQuery = $derived(
@@ -103,15 +105,10 @@
       queryFn: () => fetchUploadSessionStatus(projectId, datasetId, sessionId!),
       refetchInterval: isPolling ? 2000 : false,
       enabled: isPolling && sessionId !== null,
-    })
+    }),
   );
 
   let importTriggered = $state(false);
-
-  // ── Stall tracking ───────────────────────────────────────────────────────────
-  // `pollStartedAt` marks when we entered the polling step (or last re-checked).
-  // A 1s ticker advances `nowMs` while polling so the elapsed-time derivations
-  // stay live without leaking a timer once we leave the polling state.
   let pollStartedAt = $state<number | null>(null);
   let nowMs = $state(Date.now());
 
@@ -124,20 +121,28 @@
   });
 
   const pollElapsedMs = $derived(
-    isPolling && pollStartedAt !== null ? nowMs - pollStartedAt : 0
+    isPolling && pollStartedAt !== null ? nowMs - pollStartedAt : 0,
   );
-
-  // Soft, non-blocking hint (Gold/warning): the session is still working but is
-  // taking longer than a healthy import usually does.
   const showStallHint = $derived(isPolling && pollElapsedMs > STALL_HINT_MS);
 
-  // Watch polling results: trigger import when validated, finish when imported
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    const notifyOnline = () => {
+      for (const resolve of onlineWaiters) resolve();
+      onlineWaiters.clear();
+    };
+    window.addEventListener('online', notifyOnline);
+    return () => window.removeEventListener('online', notifyOnline);
+  });
+
+  $effect(() => {
+    if (activeSessionChecked || authStore.isLoading || !apiClient.getAccessToken()) return;
+    activeSessionChecked = true;
+    void loadActiveSession();
+  });
+
   $effect(() => {
     if (!isPolling) return;
-
-    // Hard cap: if we have been polling past the ceiling without reaching a
-    // terminal state (imported / failed), stop and surface the stalled UI.
-    // Leaving the polling step flips `isPolling` false, which halts refetching.
     if (pollElapsedMs > STALL_HARD_CAP_MS) {
       step = 'stalled';
       return;
@@ -148,11 +153,9 @@
 
     if (data.status === 'validated' && !importTriggered && sessionId) {
       importTriggered = true;
-      startImport(projectId, datasetId, {
-        source: `upload-session://${sessionId}`,
-      }).catch((err) => {
+      startImport(projectId, datasetId, { source: `upload-session://${sessionId}` }).catch((error) => {
         step = 'error';
-        errorMessage = err instanceof Error ? err.message : m.file_upload_import_start_failed();
+        errorMessage = error instanceof Error ? error.message : m.file_upload_import_start_failed();
       });
     } else if (data.status === 'imported') {
       step = 'done';
@@ -165,11 +168,9 @@
     }
   });
 
-  // ── File validation ────────────────────────────────────────────────────────
-
   function isAcceptedFile(file: File): boolean {
     const lowerName = file.name.toLowerCase();
-    const hasValidExt = ACCEPTED_EXTENSIONS.some((ext) => lowerName.endsWith(ext));
+    const hasValidExt = ACCEPTED_EXTENSIONS.some((extension) => lowerName.endsWith(extension));
     const hasValidMime =
       ACCEPTED_MIME_TYPES.includes(file.type) || file.type === '' || file.type.startsWith('audio/');
     return hasValidExt || hasValidMime;
@@ -178,31 +179,23 @@
   function validateFiles(files: File[]): { valid: File[]; errors: string[] } {
     const errors: string[] = [];
     const valid: File[] = [];
-
     for (const file of files) {
       if (!isAcceptedFile(file)) {
         errors.push(m.file_upload_invalid_format({ name: file.name }));
-        continue;
-      }
-      if (file.size > MAX_FILE_SIZE_BYTES) {
+      } else if (file.size > MAX_FILE_SIZE_BYTES) {
         errors.push(m.file_upload_exceeds_size({ name: file.name }));
-        continue;
+      } else {
+        valid.push(file);
       }
-      valid.push(file);
     }
-
     return { valid, errors };
   }
 
   function addFiles(incoming: File[]) {
     const { valid, errors } = validateFiles(incoming);
-
     errorMessage = errors.length > 0 ? errors.join('\n') : null;
-
-    const existingNames = new Set(selectedFiles.map((f) => f.name));
-    const newFiles = valid.filter((f) => !existingNames.has(f.name));
-    const combined = [...selectedFiles, ...newFiles];
-
+    const existingNames = new Set(selectedFiles.map((file) => file.name));
+    const combined = [...selectedFiles, ...valid.filter((file) => !existingNames.has(file.name))];
     if (combined.length > MAX_FILE_COUNT) {
       errorMessage = m.file_upload_max_count_exceeded({ max: MAX_FILE_COUNT });
       selectedFiles = combined.slice(0, MAX_FILE_COUNT);
@@ -212,100 +205,264 @@
   }
 
   function removeFile(index: number) {
-    selectedFiles = selectedFiles.filter((_, i) => i !== index);
+    selectedFiles = selectedFiles.filter((_file, fileIndex) => fileIndex !== index);
   }
 
-  // ── Upload workflow ────────────────────────────────────────────────────────
+  async function loadActiveSession() {
+    try {
+      const active = await fetchActiveUploadSession(projectId, datasetId);
+      if (active.session?.status === 'issued') {
+        resumeSession = active.session;
+        step = 'resume';
+      }
+    } catch (error) {
+      step = 'select';
+      errorMessage = error instanceof Error ? error.message : m.file_upload_unexpected_error();
+    }
+  }
+
+  async function chooseResumeFiles(incoming: File[]) {
+    if (!resumeSession) return;
+    const { valid, errors } = validateFiles(incoming);
+    resumeError = errors.length > 0 ? errors.join('\n') : null;
+    try {
+      const planned = await planResume(resumeSession, valid, {
+        chunkSize: UPLOAD_CHUNK_SIZE,
+        hash: sha256Hex,
+      });
+      resumePlan = planned;
+      resumeUnmatched = planned.unmatched;
+      resumeExtra = planned.extra;
+      selectedFiles = planned.matched.map((item) => item.file);
+      restartFileIds = new Set(planned.needsRestart);
+      if (planned.extra.length > 0) {
+        resumeError = planned.extra.map((file) => m.file_upload_resume_extra({ name: file.name })).join('\n');
+      }
+      if (planned.matched.length > 0) {
+        await runUpload(planned.matched);
+      }
+    } catch (error) {
+      resumeError = error instanceof Error ? error.message : m.file_upload_unexpected_error();
+    }
+  }
 
   async function startUpload() {
     if (selectedFiles.length === 0) return;
-
     errorMessage = null;
-    step = 'hashing';
-    hashingProgress = 0;
-
+    step = 'creating';
     try {
-      // Phase 1: Compute checksums
-      const fileRequests = [];
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        if (!file) continue;
-        const checksum = await computeFileSHA256(file);
-        fileRequests.push({
-          filename: file.name,
-          size: file.size,
-          checksum_sha256: checksum,
-        });
-        hashingProgress = Math.round(((i + 1) / selectedFiles.length) * 100);
-      }
-
-      // Phase 2: Create upload session
-      step = 'creating';
-      const session = await createUploadSession(projectId, datasetId, { files: fileRequests });
+      const session = await createUploadSession(projectId, datasetId, {
+        files: selectedFiles.map((file) => ({ filename: file.name, size: file.size })),
+      });
       sessionId = session.session_id;
-      _sessionData = session;
-
-      const presignedMap = new Map<string, UploadFilePresignedResponse>(
-        session.files.map((f) => [f.original_filename, f])
-      );
-
-      // Phase 3: Upload files to presigned URLs
-      step = 'uploading';
-      fileUploadProgress = {};
-      await uploadFilesConcurrently(selectedFiles, presignedMap);
-
-      // Phase 4: Signal completion
-      step = 'completing';
-      await completeUploadSession(projectId, datasetId, session.session_id);
-
-      // Phase 5: Poll for validation + import
-      pollStartedAt = Date.now();
-      nowMs = Date.now();
-      step = 'polling';
-    } catch (e) {
-      step = 'error';
-      errorMessage = e instanceof Error ? e.message : m.file_upload_unexpected_error();
+      const plans = buildFreshPlans(session);
+      restartFileIds = new Set();
+      await runUpload(plans);
+    } catch (error) {
+      handleUploadError(error);
     }
   }
 
-  async function uploadFilesConcurrently(
-    files: File[],
-    presignedMap: Map<string, UploadFilePresignedResponse>
-  ): Promise<void> {
-    const queue = [...files.entries()];
-    const inFlight: Set<Promise<void>> = new Set();
+  function buildFreshPlans(session: CreateUploadSessionResponse): PlannedFile[] {
+    return selectedFiles.map((file, index) => {
+      const byName = session.files.filter((response) => response.original_filename === file.name);
+      if (byName.length > 1) throw new Error(m.file_upload_unexpected_error());
+      const response = byName[0] ?? session.files[index];
+      if (!response) throw new Error(m.file_upload_unexpected_error());
+      return {
+        fileId: response.file_id,
+        file,
+        declaredSize: file.size,
+        startOffset: 0,
+      };
+    });
+  }
 
-    function startNext(): Promise<void> | null {
-      const entry = queue.shift();
-      if (!entry) return null;
-      const [index, file] = entry;
+  async function runUpload(plans: PlannedFile[]) {
+    if (!sessionId || plans.length === 0) return;
+    uploadPlans = uploadPlans.length === 0 ? plans : uploadPlans;
+    const activePlans = plans;
+    const initialStates = { ...fileStates };
+    const initialReceived = { ...lastReceived };
+    for (const plan of activePlans) {
+      initialReceived[plan.fileId] = plan.startOffset;
+      initialStates[plan.fileId] = {
+        sent: plan.startOffset,
+        total: plan.declaredSize,
+        state: 'queued',
+      };
+    }
+    lastReceived = initialReceived;
+    fileStates = initialStates;
+    step = 'uploading';
 
-      const presigned = presignedMap.get(file.name);
-      if (!presigned) {
-        fileUploadProgress[index] = 100;
-        return Promise.resolve();
+    const scheduler = new UploadScheduler(activePlans, {
+      concurrency: DEFAULT_CONCURRENCY,
+      maxAttempts: 5,
+      chunkSize: UPLOAD_CHUNK_SIZE,
+      backoffMs: (attempt) => Math.min(1000 * 2 ** Math.max(0, attempt - 1), 16000),
+      transport: putChunk,
+      refresh: () => apiClient.refreshToken(),
+      urlFor: (fileId, offset, restart) =>
+        chunkUrl(projectId, datasetId, sessionId!, fileId, offset, restart || (offset === 0 && restartFileIds.has(fileId))),
+      hash: sha256Hex,
+      isOnline: () => typeof navigator === 'undefined' || navigator.onLine,
+      waitOnline: waitOnline,
+      sleep: sleep,
+    }, {
+      onFileProgress: (fileId, sentBytes) => {
+        const previous = lastReceived[fileId] ?? 0;
+        const next = Math.max(previous, sentBytes);
+        lastReceived = { ...lastReceived, [fileId]: next };
+        const state = fileStates[fileId];
+        if (state && state.state !== 'failed' && state.state !== 'done') {
+          fileStates = { ...fileStates, [fileId]: { ...state, sent: next, state: 'sending' } };
+        }
+      },
+      onFileDone: (fileId) => {
+        const state = fileStates[fileId];
+        if (!state) return;
+        lastReceived = { ...lastReceived, [fileId]: state.total };
+        fileStates = { ...fileStates, [fileId]: { ...state, sent: state.total, state: 'done' } };
+      },
+      onFileFailed: (fileId, message) => {
+        const state = fileStates[fileId];
+        if (!state) return;
+        const displayMessage = message === 'retries exhausted'
+          ? m.file_upload_reason_retries({ max: 5 })
+          : message === 'file unreadable'
+            ? m.file_upload_reason_unreadable()
+            : message;
+        fileStates = { ...fileStates, [fileId]: { ...state, state: 'failed', message: displayMessage } };
+      },
+      onFileRetrying: (fileId, attempt, maxAttempts) => {
+        const state = fileStates[fileId];
+        if (!state) return;
+        fileStates = { ...fileStates, [fileId]: { ...state, state: 'retrying', attempt, maxAttempts } };
+      },
+      onPaused: () => {
+        step = 'paused';
+        const nextStates = { ...fileStates };
+        for (const plan of activePlans) {
+          const state = nextStates[plan.fileId];
+          if (state && state.state !== 'done' && state.state !== 'failed') {
+            nextStates[plan.fileId] = { ...state, state: 'paused' };
+          }
+        }
+        fileStates = nextStates;
+      },
+      onResumed: () => {
+        step = 'uploading';
+        const nextStates = { ...fileStates };
+        for (const plan of activePlans) {
+          const state = nextStates[plan.fileId];
+          if (state?.state === 'paused') nextStates[plan.fileId] = { ...state, state: 'sending' };
+        }
+        fileStates = nextStates;
+      },
+    });
+
+    currentScheduler = scheduler;
+    try {
+      await scheduler.run();
+    } catch (error) {
+      if (currentScheduler !== scheduler) return;
+      currentScheduler = null;
+      if (error instanceof SchedulerAbortedError) {
+        step = 'error';
+        errorMessage = error.reason === 'session' ? m.file_upload_session_lost() : m.file_upload_auth_lost();
+      } else {
+        handleUploadError(error);
       }
-
-      const promise = uploadFileToPresignedUrl(presigned.upload_url, file, (percent) => {
-        fileUploadProgress = { ...fileUploadProgress, [index]: percent };
-      }).finally(() => {
-        inFlight.delete(promise);
-      });
-
-      inFlight.add(promise);
-      return promise;
+      return;
     }
-
-    for (let i = 0; i < UPLOAD_CONCURRENCY && queue.length > 0; i++) {
-      startNext();
+    if (currentScheduler !== scheduler) return;
+    currentScheduler = null;
+    const failed = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
+    if (failed.length > 0) {
+      step = 'partial';
+      return;
     }
+    await completeAndPoll(resumeUnmatched.length > 0);
+  }
 
-    while (inFlight.size > 0) {
-      await Promise.race(inFlight);
-      while (inFlight.size < UPLOAD_CONCURRENCY && queue.length > 0) {
-        startNext();
+  async function retryFailed() {
+    const plans = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
+    const retryPlans = plans.map((plan) => ({
+      ...plan,
+      startOffset: lastReceived[plan.fileId] ?? 0,
+    }));
+    restartFileIds = new Set();
+    await runUpload(retryPlans);
+  }
+
+  async function importWithoutFailed() {
+    await completeAndPoll(true);
+  }
+
+  async function completeAndPoll(skipMissing: boolean) {
+    if (!sessionId) return;
+    step = 'completing';
+    try {
+      await completeUploadSession(projectId, datasetId, sessionId, { skip_missing: skipMissing });
+      pollStartedAt = Date.now();
+      nowMs = Date.now();
+      importTriggered = false;
+      step = 'polling';
+    } catch (error) {
+      handleUploadError(error);
+    }
+  }
+
+  function handleUploadError(error: unknown) {
+    step = 'error';
+    if (error instanceof ApiError && error.status === 409) {
+      errorMessage = m.file_upload_another_user();
+    } else if (error instanceof ApiError && (error.status === 403 || error.status === 419)) {
+      errorMessage = m.file_upload_auth_lost();
+    } else {
+      errorMessage = error instanceof Error ? error.message : m.file_upload_unexpected_error();
+    }
+  }
+
+  function waitOnline(signal: AbortSignal): Promise<void> {
+    if (typeof navigator === 'undefined' || navigator.onLine) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const resolveWaiter = () => {
+        signal.removeEventListener('abort', abortWaiter);
+        resolve();
+      };
+      const abortWaiter = () => {
+        onlineWaiters.delete(resolveWaiter);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      onlineWaiters.add(resolveWaiter);
+      signal.addEventListener('abort', abortWaiter, { once: true });
+      if (signal.aborted) abortWaiter();
+    });
+  }
+
+  function retryNow() {
+    for (const resolve of onlineWaiters) resolve();
+    onlineWaiters.clear();
+  }
+
+  function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
       }
-    }
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', abortSleep);
+        resolve();
+      }, milliseconds);
+      const abortSleep = () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', abortSleep, { once: true });
+    });
   }
 
   function getSessionStatusLabel(status: UploadSessionStatus): string {
@@ -324,24 +481,45 @@
     return getUploadSessionStatusClass(status);
   }
 
-  function resetToSelect() {
+  function overallUploadPercent(): number {
+    const total = uploadPlans.reduce((sum, plan) => sum + plan.declaredSize, 0);
+    if (total === 0) return uploadPlans.length === 0 ? 0 : 100;
+    const sent = uploadPlans.reduce((sum, plan) => sum + (lastReceived[plan.fileId] ?? 0), 0);
+    return Math.round((sent / total) * 100);
+  }
+
+  async function resetToSelect() {
+    currentScheduler?.abort();
+    currentScheduler = null;
+    const shouldCancel = sessionId !== null && !['completing', 'polling', 'done'].includes(step);
+    const oldSessionId = sessionId;
+    if (shouldCancel && oldSessionId) {
+      try {
+        await cancelUploadSession(projectId, datasetId, oldSessionId);
+      } catch {
+        // Resetting the local workflow remains useful when cancellation races with expiry.
+      }
+    }
     step = 'select';
     selectedFiles = [];
     errorMessage = null;
-    hashingProgress = 0;
-    fileUploadProgress = {};
+    resumeError = null;
+    resumeSession = null;
+    resumePlan = null;
+    resumeUnmatched = [];
+    resumeExtra = [];
     sessionId = null;
-    _sessionData = null;
+    uploadPlans = [];
+    fileStates = {};
+    lastReceived = {};
+    restartFileIds = new Set();
     importTriggered = false;
     pollStartedAt = null;
   }
 
-  // Retry from the stalled state: restart the poll clock and re-check the
-  // session status once. If the import has since progressed this recovers to
-  // the normal polling flow; otherwise it will hit the hard cap again.
   function retryPolling() {
     if (!sessionId) {
-      resetToSelect();
+      void resetToSelect();
       return;
     }
     pollStartedAt = Date.now();
@@ -356,7 +534,6 @@
 <div class="rounded-lg border border-card bg-surface-card p-6">
   <h3 class="mb-4 text-base font-semibold text-stone-900">{m.file_upload_heading()}</h3>
 
-  <!-- ── Step: File Selection ─────────────────────────────────────────────── -->
   {#if step === 'select'}
     <FileDropZone
       {isDragOver}
@@ -364,20 +541,11 @@
       onDragOver={() => { isDragOver = true; }}
       onDragLeave={() => { isDragOver = false; }}
     />
-
-    <!-- Validation error banner -->
     {#if errorMessage}
       <div class="mb-4 rounded-md border border-danger/20 bg-danger-light p-3">
-        <div class="flex items-start gap-2">
-          <svg class="mt-0.5 h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <p class="whitespace-pre-wrap text-sm text-danger">{errorMessage}</p>
-        </div>
+        <p class="whitespace-pre-wrap text-sm text-danger">{errorMessage}</p>
       </div>
     {/if}
-
     {#if selectedFiles.length > 0}
       <SelectedFileList
         files={selectedFiles}
@@ -389,27 +557,53 @@
     {/if}
   {/if}
 
-  <!-- ── Step: Hashing ────────────────────────────────────────────────────── -->
-  {#if step === 'hashing'}
-    <div class="space-y-3">
-      <div class="flex items-center gap-3">
-        <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
-        <span class="text-sm font-medium text-stone-700">{m.file_upload_hashing()}</span>
-        <span class="ml-auto text-sm text-stone-500">{hashingProgress}%</span>
-      </div>
-      <div class="h-2 overflow-hidden rounded-full bg-stone-200">
-        <div class="h-full bg-primary-600 transition-all duration-200" style="width: {hashingProgress}%"></div>
-      </div>
-      <p class="text-xs text-stone-400">
-        {m.file_upload_hashing_hint({ count: selectedFiles.length })}
-      </p>
+  {#if step === 'resume'}
+    {@const sentCount = resumeSession?.files.filter((file) => file.received_bytes === file.declared_size).length ?? 0}
+    {@const totalCount = resumeSession?.files.length ?? 0}
+    {@const remainingCount = totalCount - sentCount}
+    <div class="mb-4 rounded-md border border-warning/20 bg-warning-light p-4">
+      <p class="font-medium text-warning">{m.file_upload_resume_title()}</p>
+      {#if resumeSession}
+        <p class="mt-1 text-sm text-warning">
+          {m.file_upload_resume_desc({
+            started: new Date(resumeSession.created_at).toLocaleString(getLocale()),
+            sent: sentCount,
+            total: totalCount,
+            remaining: remainingCount,
+          })}
+        </p>
+      {/if}
+      <button
+        onclick={() => void resetToSelect()}
+        class="mt-3 rounded-md border border-warning/30 bg-surface-card px-3 py-2 text-sm font-medium text-warning transition-colors hover:bg-warning-light"
+      >
+        {m.file_upload_resume_discard()}
+      </button>
     </div>
+    <FileDropZone
+      {isDragOver}
+      prompt={m.file_upload_resume_drop()}
+      onFilesAdded={(files) => void chooseResumeFiles(files)}
+      onDragOver={() => { isDragOver = true; }}
+      onDragLeave={() => { isDragOver = false; }}
+    />
+    {#if resumeError}
+      <p class="mb-3 whitespace-pre-wrap text-sm text-warning">{resumeError}</p>
+    {/if}
+    {#if resumeExtra.length > 0}
+      <ul class="mb-3 space-y-1 text-sm text-warning">
+        {#each resumeExtra as extra (extra.name)}
+          <li>{m.file_upload_resume_extra({ name: extra.name })}</li>
+        {/each}
+      </ul>
+    {/if}
+    {#if resumePlan && resumeUnmatched.length > 0}
+      <p class="text-sm text-warning">
+        {m.file_upload_resume_unmatched({ count: resumeUnmatched.length })}
+      </p>
+    {/if}
   {/if}
 
-  <!-- ── Step: Creating session ───────────────────────────────────────────── -->
   {#if step === 'creating'}
     <div class="flex items-center gap-3">
       <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -420,16 +614,72 @@
     </div>
   {/if}
 
-  <!-- ── Step: Uploading files ────────────────────────────────────────────── -->
-  {#if step === 'uploading'}
+  {#if step === 'uploading' || step === 'paused'}
     <UploadProgressPanel
-      files={selectedFiles}
-      {fileUploadProgress}
+      files={uploadPlans}
+      {fileStates}
       overallPercent={overallUploadPercent()}
+      paused={step === 'paused'}
     />
+    {#if resumeExtra.length > 0}
+      <ul class="mt-3 space-y-1 text-sm text-warning">
+        {#each resumeExtra as extra (extra.name)}
+          <li>{m.file_upload_resume_extra({ name: extra.name })}</li>
+        {/each}
+      </ul>
+    {/if}
+    {#if resumeUnmatched.length > 0}
+      <p class="mt-3 text-sm text-warning">
+        {m.file_upload_resume_unmatched({ count: resumeUnmatched.length })}
+      </p>
+    {/if}
+    {#if step === 'paused'}
+      <div class="mt-4 rounded-md border border-warning/20 bg-warning-light p-4">
+        <p class="font-medium text-warning">{m.file_upload_paused_title()}</p>
+        <p class="mt-1 text-sm text-warning">{m.file_upload_paused_desc()}</p>
+        <button
+          onclick={retryNow}
+          class="mt-3 rounded-md bg-warning px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
+        >
+          {m.file_upload_retry_now()}
+        </button>
+      </div>
+    {/if}
   {/if}
 
-  <!-- ── Step: Completing ─────────────────────────────────────────────────── -->
+  {#if step === 'partial'}
+    {@const failedPlans = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed')}
+    {@const sentCount = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'done').length}
+    <div class="space-y-4">
+      <div class="rounded-md border border-warning/20 bg-warning-light p-4">
+        <p class="font-medium text-warning">{m.file_upload_partial_title({ failed: failedPlans.length })}</p>
+        <p class="mt-1 text-sm text-warning">{m.file_upload_partial_desc({ sent: sentCount })}</p>
+      </div>
+      <ul class="divide-y divide-stone-100 rounded-md border border-stone-200">
+        {#each failedPlans as plan (plan.fileId)}
+          <li class="px-3 py-2 text-sm">
+            <p class="font-medium text-stone-700">{plan.file.name}</p>
+            <p class="text-xs text-danger">{fileStates[plan.fileId]?.message}</p>
+          </li>
+        {/each}
+      </ul>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button
+          onclick={() => void retryFailed()}
+          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+        >
+          {m.file_upload_retry_failed({ count: failedPlans.length })}
+        </button>
+        <button
+          onclick={() => void importWithoutFailed()}
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+        >
+          {m.file_upload_import_without_failed({ count: failedPlans.length })}
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if step === 'completing'}
     <div class="flex items-center gap-3">
       <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -440,7 +690,6 @@
     </div>
   {/if}
 
-  <!-- ── Step: Polling (validating / importing) ───────────────────────────── -->
   {#if step === 'polling'}
     {@const status = $statusQuery.data}
     <div class="space-y-4">
@@ -472,72 +721,60 @@
             <span>{status.progress_percent.toFixed(1)}%</span>
           </div>
           <div class="h-2 overflow-hidden rounded-full bg-stone-200">
-            <div
-              class="h-full bg-primary-600 transition-all duration-300"
-              style="width: {status.progress_percent}%"
-            ></div>
+            <div class="h-full bg-primary-600 transition-all duration-300" style="width: {status.progress_percent}%"></div>
           </div>
         </div>
 
-        <!-- Invalid files warning -->
-        {#if status.files.some((f) => f.status === 'invalid')}
+        {#if status.files.some((file) => file.status === 'invalid')}
           <div class="rounded-md border border-warning/20 bg-warning-light p-3">
             <p class="mb-1.5 text-xs font-medium text-warning">{m.file_upload_validation_warning()}</p>
             <ul class="space-y-1">
-              {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
+              {#each status.files.filter((file) => file.status === 'invalid') as invalidFile}
                 <li class="text-xs text-warning">
                   <span class="font-medium">{invalidFile.original_filename}</span>
-                  {#if invalidFile.validation_error}
-                    &mdash; {invalidFile.validation_error}
-                  {/if}
+                  {#if invalidFile.validation_error}&mdash; {invalidFile.validation_error}{/if}
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
+        {#if status.files.some((file) => file.status === 'skipped')}
+          <div class="rounded-md border border-stone-200 bg-stone-50 p-3">
+            <p class="mb-1.5 text-xs font-medium text-stone-600">{m.file_upload_skipped_files()}</p>
+            <ul class="space-y-1">
+              {#each status.files.filter((file) => file.status === 'skipped') as skippedFile}
+                <li class="text-xs text-stone-600">
+                  <span class="font-medium">{skippedFile.original_filename}</span>
+                  <span> ({m.file_upload_skipped_label()})</span>
                 </li>
               {/each}
             </ul>
           </div>
         {/if}
       {/if}
-
-      <!-- Soft stall hint: still working, just slower than usual -->
-      {#if showStallHint}
-        <p class="text-xs text-warning">{m.file_upload_stall_hint()}</p>
-      {/if}
+      {#if showStallHint}<p class="text-xs text-warning">{m.file_upload_stall_hint()}</p>{/if}
     </div>
   {/if}
 
-  <!-- ── Step: Stalled (hard cap reached) ─────────────────────────────────── -->
   {#if step === 'stalled'}
     <div class="space-y-4">
       <div class="rounded-md border border-danger/20 bg-danger-light p-4">
-        <div class="mb-2 flex items-center gap-2">
-          <svg class="h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <span class="text-sm font-semibold text-danger">{m.file_upload_stalled_title()}</span>
-        </div>
-        <p class="text-sm text-danger">
+        <p class="text-sm font-semibold text-danger">{m.file_upload_stalled_title()}</p>
+        <p class="mt-2 text-sm text-danger">
           {m.file_upload_stalled_desc({ minutes: Math.round(STALL_HARD_CAP_MS / 60000) })}
         </p>
       </div>
-
       <div class="flex justify-end gap-2">
-        <button
-          onclick={resetToSelect}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-        >
+        <button onclick={() => void resetToSelect()} class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50">
           {m.file_upload_start_over()}
         </button>
-        <button
-          onclick={retryPolling}
-          class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
-        >
+        <button onclick={retryPolling} class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700">
           {m.file_upload_recheck()}
         </button>
       </div>
     </div>
   {/if}
 
-  <!-- ── Step: Done ───────────────────────────────────────────────────────── -->
   {#if step === 'done'}
     {@const status = $statusQuery.data}
     <div class="space-y-4">
@@ -549,64 +786,47 @@
         </div>
         <div>
           <p class="font-medium text-success">{m.file_upload_complete()}</p>
-          {#if status}
-            <p class="text-sm text-success">
-              {m.file_upload_success({ count: status.imported_files })}
-            </p>
-          {/if}
+          {#if status}<p class="text-sm text-success">{m.file_upload_success({ count: status.imported_files })}</p>{/if}
         </div>
       </div>
-
-      {#if status?.files.some((f) => f.status === 'invalid')}
+      {#if status?.files.some((file) => file.status === 'invalid')}
         <div class="rounded-md border border-warning/20 bg-warning-light p-3">
           <p class="mb-1.5 text-xs font-medium text-warning">
-            {m.file_upload_import_warning({ count: status.files.filter((f) => f.status === 'invalid').length })}
+            {m.file_upload_import_warning({ count: status.files.filter((file) => file.status === 'invalid').length })}
           </p>
           <ul class="space-y-1">
-            {#each status.files.filter((f) => f.status === 'invalid') as invalidFile}
-              <li class="text-xs text-warning">
-                <span class="font-medium">{invalidFile.original_filename}</span>
-                {#if invalidFile.validation_error}
-                  &mdash; {invalidFile.validation_error}
-                {/if}
-              </li>
+            {#each status.files.filter((file) => file.status === 'invalid') as invalidFile}
+              <li class="text-xs text-warning"><span class="font-medium">{invalidFile.original_filename}</span>{#if invalidFile.validation_error}&mdash; {invalidFile.validation_error}{/if}</li>
             {/each}
           </ul>
         </div>
       {/if}
-
+      {#if status?.files.some((file) => file.status === 'skipped')}
+        <div class="rounded-md border border-stone-200 bg-stone-50 p-3">
+          <p class="mb-1.5 text-xs font-medium text-stone-600">{m.file_upload_skipped_files()}</p>
+          <ul class="space-y-1">
+            {#each status.files.filter((file) => file.status === 'skipped') as skippedFile}
+              <li class="text-xs text-stone-600"><span class="font-medium">{skippedFile.original_filename}</span> ({m.file_upload_skipped_label()})</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
       <div class="flex justify-end">
-        <button
-          onclick={resetToSelect}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-        >
+        <button onclick={() => void resetToSelect()} class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50">
           {m.file_upload_more()}
         </button>
       </div>
     </div>
   {/if}
 
-  <!-- ── Step: Error ──────────────────────────────────────────────────────── -->
   {#if step === 'error'}
     <div class="space-y-4">
       <div class="rounded-md border border-danger/20 bg-danger-light p-4">
-        <div class="mb-2 flex items-center gap-2">
-          <svg class="h-4 w-4 flex-shrink-0 text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <span class="text-sm font-semibold text-danger">{m.file_upload_error()}</span>
-        </div>
-        <p class="whitespace-pre-wrap break-words font-mono text-sm text-danger">
-          {errorMessage ?? m.file_upload_unknown_error()}
-        </p>
+        <p class="text-sm font-semibold text-danger">{m.file_upload_error()}</p>
+        <p class="mt-2 whitespace-pre-wrap break-words font-mono text-sm text-danger">{errorMessage ?? m.file_upload_unknown_error()}</p>
       </div>
-
       <div class="flex justify-end">
-        <button
-          onclick={resetToSelect}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
-        >
+        <button onclick={() => void resetToSelect()} class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50">
           {m.file_upload_try_again()}
         </button>
       </div>
