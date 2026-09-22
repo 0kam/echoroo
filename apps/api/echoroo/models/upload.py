@@ -6,7 +6,20 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, Enum, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -117,6 +130,14 @@ class UploadSession(UUIDMixin, TimestampMixin, Base):
         Index("ix_upload_sessions_status", "status"),
         Index("ix_upload_sessions_expires_at", "expires_at"),
         Index("ix_upload_sessions_dataset_id_status", "dataset_id", "status"),
+        Index(
+            "ux_upload_sessions_active_dataset",
+            "dataset_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('issued', 'uploaded', 'validating', 'validated', 'importing')"
+            ),
+        ),
     )
 
     def __repr__(self) -> str:
@@ -131,7 +152,10 @@ class UploadFile(UUIDMixin, TimestampMixin, Base):
         session_id: Foreign key to parent upload session
         original_filename: Original filename as provided by the client
         object_key: S3 object key for this file
-        file_size: Expected file size in bytes
+        file_size: File size in bytes; becomes the sanitised size after validation
+        declared_size: Size announced by the client at session creation; never changes
+        received_bytes: Bytes staged so far; the next chunk must start at this offset
+        chunk_digests: SHA-256 hex digest of every staged chunk, in order
         checksum_sha256: SHA-256 checksum for integrity verification
         status: Current file status
         content_type: Detected MIME type
@@ -167,7 +191,26 @@ class UploadFile(UUIDMixin, TimestampMixin, Base):
     file_size: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
-        doc="Expected file size in bytes",
+        doc="File size in bytes; becomes the sanitised size after validation",
+    )
+    declared_size: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        doc="Size announced by the client at session creation; never changes",
+    )
+    received_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        default=0,
+        server_default="0",
+        nullable=False,
+        doc="Bytes staged so far; the next chunk must start at this offset",
+    )
+    chunk_digests: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+        nullable=False,
+        doc="SHA-256 hex digest of every staged chunk, in order",
     )
     checksum_sha256: Mapped[str | None] = mapped_column(
         String(64),
@@ -237,6 +280,18 @@ class UploadFile(UUIDMixin, TimestampMixin, Base):
         Index("ix_upload_files_object_key", "object_key", unique=True),
         Index("ix_upload_files_status", "status"),
         Index("ix_upload_files_recording_id", "recording_id"),
+        CheckConstraint(
+            "received_bytes >= 0",
+            name="ck_upload_files_received_bytes_nonnegative",
+        ),
+        CheckConstraint(
+            "received_bytes <= declared_size",
+            name="ck_upload_files_received_within_declared",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(chunk_digests) = 'array'",
+            name="ck_upload_files_chunk_digests_array",
+        ),
     )
 
     def __repr__(self) -> str:

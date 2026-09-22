@@ -839,6 +839,29 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             detection_run_type_col_exists_result.scalar()
         )
 
+        # Alembic 0038: probe the first resumable-upload column. The ORM
+        # ``create_all`` call below never alters an existing ``upload_files``
+        # table, so reused test databases need the idempotent heal below.
+        upload_resumable_cols_exist_result = await conn.execute(
+            sa.text(
+                # Every piece the heal below installs, so a run interrupted
+                # half-way is healed again instead of being taken as current.
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
+                " WHERE table_name = 'upload_files'"
+                " AND column_name = 'chunk_digests')"
+                " AND EXISTS (SELECT 1 FROM pg_constraint"
+                " WHERE conname = 'ck_upload_files_chunk_digests_array')"
+                " AND EXISTS (SELECT 1 FROM pg_indexes"
+                " WHERE indexname = 'ux_upload_sessions_active_dataset')"
+                " AND EXISTS (SELECT 1 FROM pg_enum e"
+                " JOIN pg_type t ON t.oid = e.enumtypid"
+                " WHERE t.typname = 'uploadfilestatus' AND e.enumlabel = 'skipped')"
+            )
+        )
+        upload_resumable_cols_exist = bool(
+            upload_resumable_cols_exist_result.scalar()
+        )
+
         # Existing test DBs may still carry the pre-0017 project_id FK. We
         # drop it below before any early return so hard-deleted projects do
         # not require rewriting append-only audit rows during cleanup.
@@ -1174,6 +1197,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         and taxon_identity_history_exists
         and taxon_concept_relations_exists
         and detection_run_type_col_exists
+        and upload_resumable_cols_exist
     )
     if non_license_schema_current and not license_schema_current:
         await _sync_0023_license_schema(engine)
@@ -1379,7 +1403,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 "uploadsessionstatus",
                 ["issued", "uploaded", "validating", "validated", "importing", "imported", "failed"],
             ),
-            ("uploadfilestatus", ["pending", "uploaded", "valid", "invalid", "imported"]),
+            ("uploadfilestatus", ["pending", "uploaded", "valid", "invalid", "imported", "skipped"]),
             ("searchsessionstatus", ["pending", "running", "completed", "failed"]),
             ("votetype", ["agree", "disagree", "unsure"]),
             (
@@ -1466,6 +1490,73 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             sa.text(
                 "CREATE INDEX IF NOT EXISTS ix_detection_runs_project_id_run_type "
                 "ON detection_runs (project_id, run_type)"
+            )
+        )
+
+        # Alembic 0038: heal resumable-upload columns and the active-session
+        # uniqueness rule in reused test databases. Each statement is
+        # idempotent so this is also harmless after ``create_all`` on a fresh
+        # database.
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS received_bytes "
+                "BIGINT NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS declared_size "
+                "BIGINT"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "UPDATE upload_files SET declared_size = file_size "
+                "WHERE declared_size IS NULL"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE upload_files ALTER COLUMN declared_size SET NOT NULL"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS chunk_digests "
+                "JSONB NOT NULL DEFAULT '[]'::jsonb"
+            )
+        )
+        for _ck_name, _ck_cond in (
+            ("ck_upload_files_received_bytes_nonnegative", "received_bytes >= 0"),
+            ("ck_upload_files_received_within_declared", "received_bytes <= declared_size"),
+            ("ck_upload_files_chunk_digests_array", "jsonb_typeof(chunk_digests) = 'array'"),
+        ):
+            await conn.execute(
+                sa.text(
+                    "DO $$ BEGIN "
+                    f"IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{_ck_name}') THEN "
+                    f"ALTER TABLE upload_files ADD CONSTRAINT {_ck_name} CHECK ({_ck_cond}); "
+                    "END IF; END $$"
+                )
+            )
+        # Same deterministic dedup as migration 0038, or the unique index
+        # cannot be built on a reused database with leftover active sessions.
+        await conn.execute(
+            sa.text(
+                "UPDATE upload_sessions AS s SET status = 'failed', "
+                "error = 'Superseded: more than one active upload session for the dataset' "
+                "FROM (SELECT id, row_number() OVER ("
+                "PARTITION BY dataset_id ORDER BY updated_at DESC, id DESC) AS rn "
+                "FROM upload_sessions WHERE status IN "
+                "('issued', 'uploaded', 'validating', 'validated', 'importing')) AS ranked "
+                "WHERE s.id = ranked.id AND ranked.rn > 1"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_upload_sessions_active_dataset "
+                "ON upload_sessions (dataset_id) "
+                "WHERE status IN ('issued', 'uploaded', 'validating', 'validated', 'importing')"
             )
         )
 
@@ -1806,6 +1897,17 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                     END IF;
                 END $$
                 """
+            )
+        )
+
+    # PostgreSQL cannot add an enum label in the transaction that creates or
+    # uses it. Run this on AUTOCOMMIT for both fresh and reused databases.
+    async with engine.connect() as conn:
+        await (
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+        ).execute(
+            sa.text(
+                "ALTER TYPE uploadfilestatus ADD VALUE IF NOT EXISTS 'skipped'"
             )
         )
 

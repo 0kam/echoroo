@@ -241,6 +241,23 @@ class Settings(BaseSettings):
     UPLOAD_MAX_SESSION_FILES: int = 500  # max files per upload session
     UPLOAD_SESSION_TTL: int = 3600  # 1 hour TTL for ISSUED sessions
     UPLOAD_ALLOWED_EXTENSIONS: list[str] = [".wav", ".flac", ".mp3", ".ogg", ".opus"]
+    UPLOAD_STAGING_DIR: str = Field(
+        default="/data/upload_staging",
+        description=(
+            "Directory where upload chunks are staged. Must be writable by the API and the "
+            "workers and must not be under the read-only AUDIO_ROOT mount."
+        ),
+    )
+    UPLOAD_CHUNK_SIZE: int = Field(
+        default=8 * 1024 * 1024,
+        description="Maximum size in bytes of one upload chunk request body.",
+    )
+    UPLOAD_RETENTION_SECONDS: int = Field(
+        default=86400,
+        description=(
+            "Inactivity window after which an unfinished upload and its staged bytes are removed."
+        ),
+    )
 
     # Upload session self-heal / reaper tuning.
     #

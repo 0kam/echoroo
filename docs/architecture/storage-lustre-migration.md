@@ -94,6 +94,9 @@ disappears, which frees local disk rather than consuming it.
 | # | Question | Decision (2026-09-20) |
 | --- | --- | --- |
 | 1 | How do audit log archives stay immutable without S3 Object Lock? | Tamper evidence from the existing KMS chain hash; immutability provided operationally by a read-only mount and periodic snapshots. No new infrastructure. |
+| 5 | Who may upload recordings? (2026-09-22) | **Admin and Owner only.** Overrides spec/006 §Role × Permission (Member ✅ UPLOAD): a Member's upload could never be imported (import needs `MANAGE_DATASET_ADMIN` + session ownership) and the screen starts the import automatically. Member loses `Permission.UPLOAD`; landed in 2d together with the new upload screen. |
+| 3 | After a reload, can an unfinished upload be resumed? (2026-09-21) | Yes. The dataset page offers to continue the caller's unfinished session; re-selecting the same files sends only what is missing. |
+| 4 | May an upload be imported without the files that failed to transfer? (2026-09-21) | Yes. "Import without the N failed files" is offered next to "Retry". |
 | 2 | How much local disk does the VM have? | ~200 GB typical, 500 GB maximum including the OS. See *Data placement* and the embeddings risk below. |
 
 ## Open decisions
@@ -102,7 +105,7 @@ disappears, which frees local disk rather than consuming it.
 | --- | --- | --- | --- | --- |
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
-| 5 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
+| 7 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
 
 ## Risks
 
@@ -153,15 +156,111 @@ S3, then cut over once.
 
 ### 2. Uploads through the backend (still on S3)
 
-- **Scope** — `upload`-scoped media token (`core/auth.py`), streaming write
-  endpoint that stores via `core/s3.py`, resumable transfer, atomic GPS
-  rewrite, removal of the TOCTOU SHA-256 re-read, the Vite `/s3-proxy`, the
-  LocalStack CORS setup and `toRelativeUrl()`.
+**Why it is more than a transport swap.** Today the browser PUTs each file to a
+presigned URL that signs only bucket and key, so for 15 minutes anyone holding
+the URL can write any bytes of any size. Everything downstream exists to
+compensate: the worker downloads, strips GPS and re-uploads (a non-atomic
+rewrite of a client-writable object) and re-hashes the whole object again at
+import. In the browser, SHA-256 loads each file fully into memory and hashes
+all files before the first byte is sent; one failed PUT fails the whole batch;
+nothing retries or resumes; there is no upload e2e test.
+
+**Design.**
+
+- *Transport* — the browser sends each file in 8 MiB chunks:
+  `PUT /web-api/v1/projects/{p}/datasets/{d}/upload-sessions/{s}/files/{f}/chunks?offset=N`
+  with the raw bytes as the body and an optional `X-Chunk-SHA256`. The server
+  accepts a chunk only at `offset == bytes already staged` and answers 409 with
+  the current offset otherwise, which is the whole resume protocol. Three files
+  in flight; each chunk retried up to 5 times with backoff; offline pauses and
+  resumes; a failure is confined to its file.
+- *Auth* — the ordinary BFF session: Bearer + CSRF + `gate_action(UPLOAD_CREATE)`
+  + "session created by the caller". **No `upload`-scoped media token**
+  (deviation from the earlier scope): media tokens exist because `<audio>` and
+  `<img>` cannot send headers, which XHR can; chunk requests are short, so the
+  15-minute access token and its refresh are enough; and a write-capable JWT
+  scope signed with the same key as read tokens would widen the blast radius
+  for nothing.
+- *Staging* — chunks are appended to
+  `UPLOAD_STAGING_DIR/{session}/{file}.part` on the POSIX volume the API and the
+  workers already share (`/data`). The object store is written exactly once per
+  file, by the import worker, from the staged file after validation and GPS
+  stripping — straight to the `recordings/` key. The `uploads/` prefix, the GPS
+  read-modify-write and the import-time SHA-256 re-read disappear. After slice 4
+  the same code stages on Lustre and the final write is a rename.
+- *Integrity* — the server hashes what it receives (per chunk against
+  `X-Chunk-SHA256` when the browser can compute it, whole file during
+  validation). The browser no longer hashes whole files up front.
+- *Limits* — the chunk endpoint caps the body at the chunk size (413 beyond),
+  rejects chunks for files that are complete or sessions that are not `issued`,
+  and never lets a file exceed its declared size.
+- *Resume after reload* — `GET …/upload-sessions/active` returns the caller's
+  unfinished session with per-file `received_bytes`; files are matched by name
+  and size.
+- *Partial import* — `complete` takes `skip_missing`; missing files are marked
+  skipped and the rest proceed.
+- *Removed* — presigned URLs (`generate_presigned_upload_url`,
+  `get_public_s3_client`, `S3_PUBLIC_ENDPOINT_URL`, `S3_PRESIGNED_URL_EXPIRY`),
+  the Vite `/s3-proxy` and its `hooks.server.ts` exception, the LocalStack
+  bucket CORS and gateway CORS settings, `toRelativeUrl()`.
+
+**Refinements from the design review (Astra, 2026-09-21).**
+
+- *Data model* (migration after `0036`): `upload_files.received_bytes`;
+  `declared_size` kept apart from the post-sanitisation `file_size`; status
+  `skipped`; `object_key` becomes the reserved final `recordings/` key (no
+  filesystem paths in the database); per-chunk server digests, so a resumed
+  file can be checked against the prefix already staged; at most one active
+  session per dataset, enforced by a constraint.
+- *Resume needs more than name + size.* The same name and size do not prove the
+  same content; appending to a staged prefix from a different file would splice
+  two recordings. On resume the browser re-hashes the chunks the server already
+  holds and the server compares digests before accepting new bytes.
+- *Sessions are no longer silently superseded.* Today `create_session()` fails
+  any `issued`/`uploaded` session of the dataset, whoever created it; with
+  resumable uploads that would destroy someone's staged data. Creation returns
+  the conflict instead; the owner resumes or cancels explicitly.
+- *Expiry becomes inactivity retention*: 24 hours, extended by every accepted
+  chunk and by an explicit resume, not by polling. The 1-hour `expires_at` and
+  the 15-minute presign clock go away.
+- *Auth in the browser*: an XHR wrapper that reuses the client's
+  `getAccessToken()` / `refreshToken()`, re-reads the CSRF cookie per attempt,
+  ignores a late 401 when the token has already been refreshed, and stops on
+  419. The session cookie is required in addition to Bearer + CSRF.
+- *Server admission*: three files in flight is a browser courtesy, not a limit.
+  The chunk route caps concurrent staging per user and reserves quota under a
+  lock at session creation.
+- *Workers*: validate the staged file locally, sanitise into a new local file,
+  always hash the final bytes, publish once to the reserved key, link the
+  recording in the same transaction; duplicate delivery must be harmless;
+  processing heartbeats so long batches are not reaped; the janitor removes
+  staging directories of terminal and orphaned sessions, including those whose
+  rows were cascaded away.
+- *Staging location*: its own directory on the shared `backend-data` volume
+  (`/data/upload_staging`), never under the read-only `/data/audio`. The
+  "final write becomes a rename" claim holds only if staging and recordings end
+  up on the same filesystem — a slice 4 placement constraint.
+- *Known amplification, accepted for now*: the GPS sanitiser still reads a whole
+  file into memory; staging uses local disk until slice 4.
+
+**Sub-slices** (one PR each; the transport switches only in 2d, so every
+intermediate state runs):
+
+| # | Content | Can ship alone because |
+| --- | --- | --- |
+| 2a | Migration, models, enums, schemas, settings, staging utility | additive; nothing uses it yet |
+| 2b | Chunk / active / cancel routes, `complete(skip_missing)`, admission limits, tests against real middleware | new routes next to the old flow |
+| 2c | Workers and janitor accept staged files as well as `uploads/` objects; heartbeats; idempotent publish; every worker status transition conditional on the expected status (a validator finishing after its session was force-failed and replaced must stop, not resurrect it into the unique index) | old sessions keep working |
+| 2d | Browser scheduler, resume UI, i18n for the four upload components; `Permission.UPLOAD` removed from Member (decision 5) with matrix tests, `can()` matrix and the upload entry point hidden for Members | flips the transport; old routes still exist |
+| 2e | Remove presign, `/s3-proxy`, CORS, `toRelativeUrl()`, the `uploads/` code paths; Playwright upload spec with a real worker in CI | nothing references them after 2d |
+
 - **Out of scope** — the storage backend itself.
-- **Acceptance** — Playwright spec: upload, interrupt, resume, complete; no
-  request leaves the app origin. Security review of the write scope.
-- **Depends on** — slice 1. **UX preview needed** — yes (resume and stall
-  states in `FileUpload`).
+- **Acceptance** — Playwright spec that stays in CI: upload, interrupt, resume,
+  complete; partial import; no request leaves the app origin. Security review
+  of the write endpoint.
+- **Depends on** — slice 1. **UX preview needed** — yes; shown 2026-09-21
+  (sending / connection lost / some failed / unfinished upload after reload),
+  decisions 3 and 4 above.
 
 ### 3. Audit log immutability without Object Lock
 
@@ -217,3 +316,5 @@ One PR, because any subset leaves a broken state.
 | 2026-09-21 | Astra, slice 3 code review | Task routed to a queue no worker consumes; HEAD-then-PUT is not write-once under concurrency; `verify_archive` authenticated rows but not order or completeness; a row committed into an already archived week was silently skipped; one read-back failure blocked the clean weeks; naive `now_iso`; tests faked the SQL window and signed fixtures with the verifier's own canonicaliser; bootstrap `genesis` rows (zero hashes by design) would block the first production week; IAM `ListBucket` | All accepted: default queue; PostgreSQL advisory lock; chain-link check plus empty/malformed detection; every archive in the window is byte-compared with the live table on every run; failures aggregate per week; naive = UTC; fixtures signed with `audit_service._build_canonical_row`, real query asserted; bootstrap actions accepted without a MAC. Deferred: signed manifest (above). Not accepted: a persisted write cutoff in the audit writer — detection is enough before launch |
 | 2026-09-21 | Astra, slice 3 re-review | The bootstrap exception allowed a whole week to be replaced by a forged zero-hash row (links restarted each week); a storage error on one key still aborted the run; `verify_archive` ignored week membership and leaked raw exceptions; runbook omitted prefix truncation and silent recreation | All accepted: each week's first row must link to the row before it (confines bootstrap rows to the chain start), `verify_archive(expected_prev_hash=…)`, per-week isolation of any exception, week-membership check, normalised errors, runbook matrix corrected |
 | 2026-09-21 | Astra, slice 3 third pass | A forged zero-hash row outside the catch-up window could make a later forged bootstrap week link correctly; archive rows were not shape-checked; a non-week key skipped the week check; runbook wording | Accepted: a bootstrap week is refused when any signed row precedes it (whole table, not just the window); required-field and type checks; non-week keys rejected; runbook corrected. Not accepted, recorded: (a) rows sharing one microsecond timestamp are ordered by random UUID, so a legitimate week could fail verification — 0 of 1,012 real rows tie, the failure is a visible false alarm, and the fix belongs in the audit writer (a monotonic sequence column), not here; (b) isolating database read failures per week with savepoints — if the database fails, aborting the run is the right outcome |
+| 2026-09-21 | Astra, slice 2 design review | The shared volume and middleware claims hold; missing: data model and migration, wrong-file resume splicing recordings, silent superseding of another user's session, expiry vs. resume, token refresh races in the browser, no server-side admission limit, duplicate task delivery, staging cleanup on cascade deletes, rename only works on one filesystem, Member-upload vs Admin-import permission gap, no production same-origin proxy | Folded into the slice 2 section as refinements and sub-slices 2a–2e; permission gap raised as open decision 6 |
+| 2026-09-21 | Astra, slice 2a code review | The new unique index turned concurrent session creation into an IntegrityError (500); fsync of the part file does not persist new directory entries; the test-DB heal skipped the CHECK constraints, the dedup and, after an interrupted run, the enum label; an unconditional worker transition can now collide with a replacement session | Accepted: creation serialised with a dataset row lock (also serialises the quota check); directory fsync; heal probes and installs every piece; reconciliation contract documented in `core/upload_staging.py`. The worker transition moves to 2c |

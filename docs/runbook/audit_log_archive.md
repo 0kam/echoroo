@@ -51,7 +51,7 @@ operational control — the next section.
 
 ## Operations: keeping archives immutable — **ops**
 
-> **Open — needs facts about the Lustre service** (design doc, open decision 5).
+> **Open — needs facts about the Lustre service** (design doc, open decision 7).
 > The two controls below are the agreed direction (decision 1, 2026-09-20);
 > the concrete mechanism and schedule are filled in once we know what the
 > filesystem offers.

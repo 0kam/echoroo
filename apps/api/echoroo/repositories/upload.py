@@ -36,6 +36,18 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
 
     model = UploadSession
 
+    async def lock_dataset_for_session_change(self, dataset_id: UUID) -> None:
+        """Serialise session creation per dataset for the rest of the transaction.
+
+        "Look up the active session, fail it, insert a new one" must not run
+        twice at once: the partial unique index
+        ``ux_upload_sessions_active_dataset`` would turn the loser into an
+        IntegrityError (HTTP 500). The row lock also serialises the quota check.
+        """
+        await self.db.execute(
+            select(Dataset.id).where(Dataset.id == dataset_id).with_for_update()
+        )
+
     async def create(self, session: UploadSession) -> UploadSession:
         """Persist a new upload session (with its files pre-attached).
 
@@ -346,6 +358,8 @@ class UploadFileRepository(BaseRepository[UploadFile]):
             # operate on the sanitized payload.
             "file_size",
             "checksum_sha256",
+            "received_bytes",
+            "chunk_digests",
         }
         values: dict[str, object] = {
             "status": status,
