@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 @pytest.fixture
 async def test_site(
     db_session: AsyncSession,
-    test_project: "Project",
+    test_project: Project,
 ) -> Site:
     """Create a site for the upload dataset."""
     site = Site(
@@ -48,7 +48,7 @@ async def test_site(
 @pytest.fixture
 async def test_dataset(
     db_session: AsyncSession,
-    test_project: "Project",
+    test_project: Project,
     test_site: Site,
 ) -> Dataset:
     """Create a completed dataset for upload-session tests."""
@@ -206,13 +206,19 @@ async def test_chunk_conflicts_limits_and_authentication(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     client: AsyncClient,
-    csrf_headers: dict[str, str],
-    csrf_headers_other: dict[str, str],
+    db_session: AsyncSession,
+    test_user: User,
+    other_user: User,
     auth_headers: dict[str, str],
     test_project_id: str,
     test_dataset: Dataset,
 ) -> None:
-    """Wrong offsets, checksums, size limits, and BFF auth failures are explicit."""
+    """Wrong offsets, checksums, size limits, and BFF auth failures are explicit.
+
+    Sessions are built inline: the client has one cookie jar, so two users'
+    sessions cannot coexist as fixtures (the second would 419 the first).
+    """
+    csrf_headers = await bff_session_headers(client, db_session, test_user)
     _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
@@ -268,13 +274,17 @@ async def test_chunk_conflicts_limits_and_authentication(
     )
     assert declared_overflow.status_code == 413
 
+    csrf_headers_other = await bff_session_headers(client, db_session, other_user)
     forbidden = await client.put(
         f"{url}?offset=3", headers=csrf_headers_other, content=b"abc"
     )
     assert forbidden.status_code == 403
+    client.cookies.clear()
     assert (await client.put(f"{url}?offset=3", content=b"abc")).status_code == 401
-    csrf_missing = {key: value for key, value in auth_headers.items()}
+    csrf_headers = await bff_session_headers(client, db_session, test_user)
+    csrf_missing = {key: value for key, value in csrf_headers.items() if key != "X-CSRF-Token"}
     assert (await client.put(f"{url}?offset=3", headers=csrf_missing, content=b"abc")).status_code == 403
+    assert auth_headers
 
 
 @pytest.mark.asyncio
@@ -327,16 +337,17 @@ async def test_active_session_cancel_and_status_progress(
 async def test_active_session_is_owner_scoped(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,
-    csrf_headers: dict[str, str],
-    csrf_headers_other: dict[str, str],
     db_session: AsyncSession,
-    member_user: "User",
+    test_user: User,
+    other_user: User,
+    member_user: User,
     test_member: object,
     test_project_id: str,
     test_dataset: Dataset,
 ) -> None:
     """The active-session lookup never exposes another caller's session."""
     _mock_storage(monkeypatch)
+    csrf_headers = await bff_session_headers(client, db_session, test_user)
     session_id, _ = await _create_session(
         client,
         csrf_headers,
@@ -344,6 +355,7 @@ async def test_active_session_is_owner_scoped(
         test_dataset.id,
         [{"filename": "owner.wav", "size": 4}],
     )
+    csrf_headers_other = await bff_session_headers(client, db_session, other_user)
     response = await client.get(
         f"{_session_url(test_project_id, test_dataset.id)}/active",
         headers=csrf_headers_other,

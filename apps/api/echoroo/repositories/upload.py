@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
@@ -362,8 +362,13 @@ class UploadFileRepository(BaseRepository[UploadFile]):
 
     async def get_for_update(self, file_id: UUID) -> UploadFile | None:
         """Load one upload file while holding its database row lock."""
+        # ``recording`` is lazy="joined" (an outer join); PostgreSQL refuses
+        # FOR UPDATE on the nullable side, so lock only the upload_files row.
         result = await self.db.execute(
-            select(UploadFile).where(UploadFile.id == file_id).with_for_update()
+            select(UploadFile)
+            .where(UploadFile.id == file_id)
+            .options(noload(UploadFile.recording))
+            .with_for_update(of=UploadFile)
         )
         return result.scalar_one_or_none()
 

@@ -32,6 +32,7 @@ from echoroo.middleware.rate_limit import (
     upload_session_create_rate_limiter,
 )
 from echoroo.models.enums import UploadSessionStatus
+from echoroo.models.upload import UploadSession
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository

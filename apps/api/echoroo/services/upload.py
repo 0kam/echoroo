@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -15,8 +16,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
-from echoroo.core import s3
-from echoroo.core import upload_staging
+from echoroo.core import s3, upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
@@ -718,10 +718,12 @@ class UploadService:
                     detail="Chunk checksum mismatch",
                 )
 
-        staged = upload_staging.staged_size(session_id, file_id)
+        # Filesystem calls (fsync included) run in a worker thread so an 8 MiB
+        # write does not stall the event loop for every other request.
+        staged = await asyncio.to_thread(upload_staging.staged_size, session_id, file_id)
         if staged > upload_file.received_bytes:
-            upload_staging.truncate_to(
-                session_id, file_id, upload_file.received_bytes
+            await asyncio.to_thread(
+                upload_staging.truncate_to, session_id, file_id, upload_file.received_bytes
             )
         elif staged < upload_file.received_bytes:
             logger.warning(
@@ -748,7 +750,8 @@ class UploadService:
             )
 
         try:
-            new_offset = upload_staging.append_chunk(
+            new_offset = await asyncio.to_thread(
+                upload_staging.append_chunk,
                 session_id,
                 file_id,
                 offset=offset,
@@ -829,7 +832,7 @@ class UploadService:
             error="Cancelled by the uploader",
             expected_status=session.status,
         )
-        upload_staging.remove_session(session_id)
+        await asyncio.to_thread(upload_staging.remove_session, session_id)
 
     async def complete_upload(
         self,
