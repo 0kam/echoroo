@@ -184,14 +184,11 @@ class TestCreateUploadSession:
     ) -> None:
         """Test POST upload-sessions denies Authenticated non-members.
 
-        Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 9 /
-        T280 spec gave MEMBER role ``Permission.UPLOAD`` (see
-        ``apps/api/echoroo/core/permissions.py::_MEMBER_PERMS``) so the
-        legacy "member -> 403" expectation no longer holds. The
-        canonical 403 path is now Authenticated non-member
+        Only Admin and Owner project roles have ``Permission.UPLOAD``.
+        The canonical 403 path here is Authenticated non-member
         (``csrf_headers_other``); that identity has zero project
-        permissions. The "viewer cannot upload" path is covered by
-        the dedicated viewer-permission-boundary suite.
+        permissions. The member-permission boundary is covered by the
+        adjacent member test.
         """
         mock_get_s3_client.return_value = MagicMock()
         mock_presigned_url.return_value = "https://minio:9000/fake-url"
@@ -214,6 +211,40 @@ class TestCreateUploadSession:
         )
 
         assert response.status_code == 403
+
+    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
+    @patch("echoroo.core.s3.generate_presigned_upload_url")
+    @patch("echoroo.core.s3.get_s3_client")
+    async def test_create_upload_session_forbidden_project_member(
+        self,
+        mock_get_s3_client: MagicMock,
+        mock_presigned_url: MagicMock,
+        mock_ensure_bucket: MagicMock,
+        client: AsyncClient,
+        db_session: AsyncSession,
+        member_user: User,
+        test_member: "ProjectMember",
+        test_project_id: str,
+        test_dataset: Dataset,
+    ) -> None:
+        """Test POST upload-sessions denies a project member."""
+        member_headers = await bff_session_headers(client, db_session, member_user)
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=member_headers,
+            json={
+                "files": [
+                    {
+                        "filename": "test.wav",
+                        "size": 1024000,
+                        "checksum_sha256": "a" * 64,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 403
+        assert test_member
 
     @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
     @patch("echoroo.core.s3.generate_presigned_upload_url")

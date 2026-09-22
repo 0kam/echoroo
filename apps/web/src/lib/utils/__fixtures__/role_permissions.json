@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-05-12T02:02:27+00:00",
+  "generated_at_utc": "2026-09-22T20:26:14+00:00",
   "generated_from_commit": null,
   "permissions": [
     "annotate",
@@ -117,7 +117,6 @@
       "run_inference",
       "search_cross_project",
       "search_within_project",
-      "upload",
       "view_dataset_list",
       "view_detection",
       "view_media",

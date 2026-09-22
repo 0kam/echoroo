@@ -485,10 +485,7 @@ class UploadService:
         Note:
             Permission enforcement is performed by the API layer via the
             Stage-1 ``is_allowed`` gate (``UPLOAD_CREATE_ACTION`` /
-            ``Permission.UPLOAD``). The legacy admin-only check has been
-            removed here so that any caller satisfying the matrix-defined
-            ``UPLOAD`` permission (Member or higher) can create a session
-            without a redundant admin gate that contradicted the spec.
+            ``Permission.UPLOAD``).
         """
         settings = get_settings()
 
@@ -513,13 +510,19 @@ class UploadService:
                 UploadSessionStatus.ISSUED,
                 UploadSessionStatus.UPLOADED,
             ):
+                if active_session.created_by_id != user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Another user has an unfinished upload for this dataset",
+                    )
                 # Not-yet-processing session (user retried after a failure) —
-                # always safe to supersede.
+                # always safe for the same user to supersede.
                 await self.session_repo.update_status(
                     active_session.id,
                     UploadSessionStatus.FAILED,
                     error="Superseded by new upload session",
                 )
+                await _run_blocking(upload_staging.remove_session, active_session.id)
             elif active_session.status in processing_statuses:
                 # Session claims to be actively processing
                 # (VALIDATING/VALIDATED/IMPORTING). A live worker bumps
@@ -690,12 +693,15 @@ class UploadService:
         offset: int,
         data: bytes,
         chunk_sha256: str | None,
+        restart: bool = False,
     ) -> dict[str, Any]:
         """Append one chunk to a staged upload file.
 
         The caller (route) does no locking; the row lock from
         ``get_for_update`` is what serialises chunks of one file, and the
         reconcile in step 5 is the staging module's documented contract.
+        The browser uses ``restart`` when the re-selected file does not match
+        the staged prefix (digest mismatch).
         """
         await self._load_owned_session(user_id, project_id, dataset_id, session_id)
 
@@ -721,6 +727,16 @@ class UploadService:
 
         # Session lock, file lock, reconciled offset — all held from here on.
         _session, upload_file, received, _ = await self._lock_and_reconcile(session_id, file_id)
+
+        if restart:
+            if offset != 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="restart requires offset=0",
+                )
+            await _run_blocking(upload_staging.truncate_to, session_id, file_id, 0)
+            await self.file_repo.reset_transfer(file_id)
+            received = 0
 
         if received >= upload_file.declared_size:
             raise HTTPException(

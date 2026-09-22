@@ -121,6 +121,7 @@ def build_session_status_response(session: UploadSession) -> UploadSessionStatus
             file_size=upload_file.file_size,
             declared_size=upload_file.declared_size,
             received_bytes=upload_file.received_bytes,
+            chunk_digests=list(upload_file.chunk_digests or []),
             duration=upload_file.duration,
             samplerate=upload_file.samplerate,
             channels=upload_file.channels,

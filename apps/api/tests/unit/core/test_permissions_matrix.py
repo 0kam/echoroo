@@ -107,7 +107,6 @@ EXPECTED_ROLE_BASE_PERMS: dict[ComputedRole, set[str]] = {
         "comment",
         "create_tag",
         "annotate",
-        "upload",
         "manage_dataset",  # spec/007 Phase 2A.6 hotfix (Codex Option A 2026-05-12)
         "manage_site",
         "run_inference",

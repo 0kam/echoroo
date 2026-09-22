@@ -294,7 +294,7 @@ _MEMBER_PERMS: frozenset[Permission] = frozenset(
         Permission.COMMENT,
         Permission.CREATE_TAG,
         Permission.ANNOTATE,
-        Permission.UPLOAD,
+        # Storage migration decision 5 (2026-09-22): UPLOAD moved to admin/owner.
         # spec/007 Phase 2A.6 hotfix (Codex consultation 2026-05-12, Option A):
         # Member retains MANAGE_DATASET for dataset-CONTENT operations (clip
         # CRUD, generate, etc.) per spec/007 Rev.5.1 § 4A glossary +
@@ -315,6 +315,7 @@ _ADMIN_PERMS: frozenset[Permission] = _MEMBER_PERMS | frozenset(
     {
         Permission.VIEW_AUDIT_LOG,
         # MANAGE_DATASET now inherited from _MEMBER_PERMS (admin gets it implicitly).
+        Permission.UPLOAD,
         Permission.MANAGE_DATASET_ADMIN,  # AD-1B Option A: admin-only dataset-resource ops
         Permission.TRAIN_MODEL,
         Permission.MANAGE_MEMBERS,
