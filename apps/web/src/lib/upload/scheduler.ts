@@ -20,6 +20,7 @@ export interface FileUiState {
 
 export interface SchedulerCallbacks {
   onFileProgress(fileId: string, sentBytes: number): void;
+  onFileAcknowledged(fileId: string, received: number): void;
   onFileDone(fileId: string): void;
   onFileFailed(fileId: string, message: string): void;
   onFileRetrying(fileId: string, attempt: number, maxAttempts: number): void;
@@ -34,6 +35,7 @@ export interface SchedulerOptions {
   backoffMs: (attempt: number) => number;
   transport: (url: string, body: Blob, opts: PutChunkOptions) => Promise<ChunkResult>;
   refresh: () => Promise<void>;
+  currentToken: () => string | null;
   urlFor: (fileId: string, offset: number, restart: boolean) => string;
   hash: (data: ArrayBuffer) => Promise<string | null>;
   isOnline: () => boolean;
@@ -187,6 +189,7 @@ export class UploadScheduler {
 
         if (result.kind === 'ok') {
           item.offset = result.received;
+          this.cb.onFileAcknowledged(plan.fileId, result.received);
           this.reportProgress(item, item.offset);
           if (result.complete || item.offset >= plan.declaredSize) {
             this.markDone(item);
@@ -197,6 +200,7 @@ export class UploadScheduler {
 
         if (result.kind === 'offset') {
           item.offset = result.received;
+          this.cb.onFileAcknowledged(plan.fileId, result.received);
           this.reportProgress(item, item.offset);
           break;
         }
@@ -211,6 +215,9 @@ export class UploadScheduler {
         }
 
         if (result.kind === 'unauthorized') {
+          if (result.tokenUsed !== this.opts.currentToken()) {
+            continue;
+          }
           if (refreshed) {
             this.abortForFatal('auth', 'Token refresh did not restore the upload session.');
             return;

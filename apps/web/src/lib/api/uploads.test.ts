@@ -119,7 +119,7 @@ describe('putChunk', () => {
 
   it('maps auth, file, and network failures', async () => {
     FakeXMLHttpRequest.next = { status: 401, responseText: '', headers: {} };
-    await expect(callChunk()).resolves.toEqual({ kind: 'unauthorized' });
+    await expect(callChunk()).resolves.toEqual({ kind: 'unauthorized', tokenUsed: 'access-token' });
 
     FakeXMLHttpRequest.next = { status: 403, responseText: '{"detail":"csrf"}', headers: {} };
     await expect(callChunk()).resolves.toEqual({ kind: 'fatal', reason: 'auth', message: 'csrf' });
@@ -131,6 +131,11 @@ describe('putChunk', () => {
     const promise = callChunk();
     FakeXMLHttpRequest.last?.emit('error');
     await expect(promise).resolves.toEqual({ kind: 'network' });
+  });
+
+  it.each([500, 502, 503, 504])('maps HTTP %i to a retryable network result', async (status) => {
+    FakeXMLHttpRequest.next = { status, responseText: '{"detail":"temporary"}', headers: {} };
+    await expect(callChunk()).resolves.toEqual({ kind: 'network' });
   });
 
   it('rejects with AbortError when the signal aborts', async () => {

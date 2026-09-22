@@ -16,6 +16,7 @@ function planned(fileId: string, size = 3, startOffset = 0): PlannedFile {
 function callbacks(overrides: Partial<SchedulerCallbacks> = {}): SchedulerCallbacks {
   return {
     onFileProgress: vi.fn(),
+    onFileAcknowledged: vi.fn(),
     onFileDone: vi.fn(),
     onFileFailed: vi.fn(),
     onFileRetrying: vi.fn(),
@@ -33,6 +34,7 @@ function options(transport: SchedulerOptions['transport'], overrides: Partial<Sc
     backoffMs: vi.fn((attempt) => attempt * 10),
     transport,
     refresh: vi.fn(async () => undefined),
+    currentToken: () => 'A',
     urlFor: vi.fn((fileId, offset, restart) => `${fileId}:${offset}:${restart}`),
     hash: vi.fn(async () => null),
     isOnline: () => true,
@@ -94,6 +96,24 @@ describe('UploadScheduler', () => {
     expect(bodies).toEqual([1, 1]);
   });
 
+  it('acknowledges server offsets for accepted and offset-conflict results', async () => {
+    const acknowledged = vi.fn();
+    const transport = scriptedTransport({
+      a: [
+        { kind: 'ok', received: 1, complete: false },
+        { kind: 'offset', received: 2 },
+        { kind: 'ok', received: 3, complete: true },
+      ],
+    });
+    const cb = callbacks({ onFileAcknowledged: acknowledged });
+
+    await new UploadScheduler([planned('a')], options(transport), cb).run();
+
+    expect(acknowledged).toHaveBeenNthCalledWith(1, 'a', 1);
+    expect(acknowledged).toHaveBeenNthCalledWith(2, 'a', 2);
+    expect(acknowledged).toHaveBeenNthCalledWith(3, 'a', 3);
+  });
+
   it('retries network errors and lets another file finish after one file gives up', async () => {
     const retrying = vi.fn();
     const transport = scriptedTransport({
@@ -135,7 +155,7 @@ describe('UploadScheduler', () => {
       const count = (counts.get(id) ?? 0) + 1;
       counts.set(id, count);
       return count === 1
-        ? { kind: 'unauthorized' } as const
+        ? { kind: 'unauthorized', tokenUsed: 'A' } as const
         : { kind: 'ok', received: 1, complete: true } as const;
     });
     const run = new UploadScheduler(
@@ -149,6 +169,34 @@ describe('UploadScheduler', () => {
     await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2));
     expect(refresh).toHaveBeenCalledTimes(1);
     refreshRelease();
+    await expect(run).resolves.toEqual({ done: ['a', 'b'], failed: [] });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh again for a late 401 sent with an old token', async () => {
+    let currentToken = 'A';
+    let releaseLate401: () => void = () => undefined;
+    const late401 = new Promise<void>((resolve) => { releaseLate401 = resolve; });
+    const refresh = vi.fn(async () => {
+      currentToken = 'B';
+      releaseLate401();
+    });
+    const counts = new Map<string, number>();
+    const transport = vi.fn(async (url) => {
+      const id = url.split(':')[0] ?? '';
+      const count = (counts.get(id) ?? 0) + 1;
+      counts.set(id, count);
+      if (count === 1 && id === 'b') await late401;
+      return count === 1
+        ? { kind: 'unauthorized', tokenUsed: 'A' } as const
+        : { kind: 'ok', received: 1, complete: true } as const;
+    });
+    const run = new UploadScheduler(
+      [planned('a', 1), planned('b', 1)],
+      options(transport, { concurrency: 2, refresh, currentToken: () => currentToken }),
+      callbacks(),
+    ).run();
+
     await expect(run).resolves.toEqual({ done: ['a', 'b'], failed: [] });
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -192,6 +240,19 @@ describe('UploadScheduler', () => {
     const scheduler = new UploadScheduler([planned('a')], options(transport), callbacks());
     const run = scheduler.run();
     await new Promise((resolve) => setTimeout(resolve, 0));
+    scheduler.abort();
+    await expect(run).resolves.toEqual({ done: [], failed: [] });
+  });
+
+  it('resolves promptly when aborted during backoff', async () => {
+    const sleep = vi.fn((_milliseconds: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    }));
+    const transport = scriptedTransport({ a: [{ kind: 'network' }] });
+    const scheduler = new UploadScheduler([planned('a', 1)], options(transport, { sleep }), callbacks());
+    const run = scheduler.run();
+
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(1));
     scheduler.abort();
     await expect(run).resolves.toEqual({ done: [], failed: [] });
   });

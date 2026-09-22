@@ -64,6 +64,7 @@
   type WorkflowStep =
     | 'select'
     | 'resume'
+    | 'verifying'
     | 'creating'
     | 'uploading'
     | 'paused'
@@ -88,16 +89,22 @@
   let uploadPlans = $state<PlannedFile[]>([]);
   let fileStates = $state<Record<string, FileUiState>>({});
   let lastReceived = $state<Record<string, number>>({});
+  let ackReceived = $state<Record<string, number>>({});
   let resumeSession = $state<UploadSessionStatusResponse | null>(null);
   let resumePlan = $state<ResumePlan | null>(null);
   let resumeUnmatched = $state<UploadSessionStatusResponse['files']>([]);
   let resumeExtra = $state<File[]>([]);
   let restartFileIds = new Set<string>();
   let currentScheduler: UploadScheduler | null = null;
+  let resumeGeneration = 0;
   const onlineWaiters = new Set<() => void>();
 
   const totalBytes = $derived(selectedFiles.reduce((sum, file) => sum + file.size, 0));
   const isPolling = $derived(step === 'polling');
+  const canImportWithoutFailed = $derived(
+    uploadPlans.some((plan) => ackReceived[plan.fileId] === plan.declaredSize) ||
+      (resumeSession?.files.some((file) => file.received_bytes === file.declared_size) ?? false),
+  );
 
   const statusQuery = $derived(
     createQuery({
@@ -109,7 +116,8 @@
   );
 
   let importTriggered = $state(false);
-  let pollStartedAt = $state<number | null>(null);
+  let lastStatusChangeAt = $state<number | null>(null);
+  let lastStatusSignature = $state<string | null>(null);
   let nowMs = $state(Date.now());
 
   $effect(() => {
@@ -121,7 +129,7 @@
   });
 
   const pollElapsedMs = $derived(
-    isPolling && pollStartedAt !== null ? nowMs - pollStartedAt : 0,
+    isPolling && lastStatusChangeAt !== null ? nowMs - lastStatusChangeAt : 0,
   );
   const showStallHint = $derived(isPolling && pollElapsedMs > STALL_HINT_MS);
 
@@ -143,29 +151,45 @@
 
   $effect(() => {
     if (!isPolling) return;
+    const data = $statusQuery.data;
+    if (data) {
+      const signature = `${data.status}:${data.validated_files}:${data.imported_files}`;
+      if (signature !== lastStatusSignature) {
+        lastStatusSignature = signature;
+        lastStatusChangeAt = Date.now();
+        nowMs = Date.now();
+      }
+
+      if (data.status === 'validated' && !importTriggered && sessionId) {
+        importTriggered = true;
+        startImport(projectId, datasetId, { source: `upload-session://${sessionId}` }).catch((error) => {
+          step = 'error';
+          errorMessage = error instanceof Error ? error.message : m.file_upload_import_start_failed();
+        });
+        return;
+      } else if (data.status === 'imported') {
+        step = 'done';
+        queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
+        queryClient.invalidateQueries({ queryKey: ['import-status', projectId, datasetId] });
+        onComplete?.();
+        return;
+      } else if (data.status === 'failed') {
+        step = 'error';
+        errorMessage = data.error ?? m.file_upload_import_server_failed();
+        return;
+      }
+    }
+
     if (pollElapsedMs > STALL_HARD_CAP_MS) {
       step = 'stalled';
-      return;
     }
+  });
 
-    const data = $statusQuery.data;
-    if (!data) return;
-
-    if (data.status === 'validated' && !importTriggered && sessionId) {
-      importTriggered = true;
-      startImport(projectId, datasetId, { source: `upload-session://${sessionId}` }).catch((error) => {
-        step = 'error';
-        errorMessage = error instanceof Error ? error.message : m.file_upload_import_start_failed();
-      });
-    } else if (data.status === 'imported') {
-      step = 'done';
-      queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
-      queryClient.invalidateQueries({ queryKey: ['import-status', projectId, datasetId] });
-      onComplete?.();
-    } else if (data.status === 'failed') {
-      step = 'error';
-      errorMessage = data.error ?? m.file_upload_import_server_failed();
-    }
+  $effect(() => {
+    return () => {
+      currentScheduler?.abort();
+      resumeGeneration += 1;
+    };
   });
 
   function isAcceptedFile(file: File): boolean {
@@ -219,7 +243,8 @@
         // importing): pick the session up where the previous page left it.
         // The polling effect starts the import once it is validated.
         sessionId = active.session.session_id;
-        pollStartedAt = Date.now();
+        lastStatusChangeAt = Date.now();
+        lastStatusSignature = null;
         nowMs = Date.now();
         step = 'polling';
       }
@@ -230,7 +255,11 @@
   }
 
   async function chooseResumeFiles(incoming: File[]) {
+    const generation = ++resumeGeneration;
     if (!resumeSession) return;
+    currentScheduler?.abort();
+    currentScheduler = null;
+    step = 'verifying';
     const { valid, errors } = validateFiles(incoming);
     resumeError = errors.length > 0 ? errors.join('\n') : null;
     try {
@@ -238,21 +267,50 @@
         chunkSize: UPLOAD_CHUNK_SIZE,
         hash: sha256Hex,
       });
+      if (generation !== resumeGeneration) return;
       resumePlan = planned;
       resumeUnmatched = planned.unmatched;
       resumeExtra = planned.extra;
       selectedFiles = planned.matched.map((item) => item.file);
       restartFileIds = new Set(planned.needsRestart);
+      sessionId = resumeSession.session_id;
       if (planned.extra.length > 0) {
         resumeError = planned.extra.map((file) => m.file_upload_resume_extra({ name: file.name })).join('\n');
       }
       if (planned.matched.length > 0) {
         // The scheduler sends into the session being resumed, not a new one.
-        sessionId = resumeSession.session_id;
-        await runUpload(planned.matched);
+        await runUpload(planned.matched, generation);
+      } else if (planned.unmatched.length > 0) {
+        step = 'partial';
+      } else {
+        step = 'resume';
       }
     } catch (error) {
+      if (generation !== resumeGeneration) return;
       resumeError = error instanceof Error ? error.message : m.file_upload_unexpected_error();
+      step = 'resume';
+    }
+  }
+
+  async function addMissingFiles() {
+    try {
+      const active = await fetchActiveUploadSession(projectId, datasetId);
+      if (!active.session) {
+        step = 'error';
+        errorMessage = m.file_upload_unexpected_error();
+        return;
+      }
+      resumeGeneration += 1;
+      resumeSession = active.session;
+      sessionId = active.session.session_id;
+      selectedFiles = [];
+      resumePlan = null;
+      resumeUnmatched = [];
+      resumeExtra = [];
+      resumeError = null;
+      step = 'resume';
+    } catch (error) {
+      handleUploadError(error);
     }
   }
 
@@ -260,10 +318,16 @@
     if (selectedFiles.length === 0) return;
     errorMessage = null;
     step = 'creating';
+    let session: CreateUploadSessionResponse;
     try {
-      const session = await createUploadSession(projectId, datasetId, {
+      session = await createUploadSession(projectId, datasetId, {
         files: selectedFiles.map((file) => ({ filename: file.name, size: file.size })),
       });
+    } catch (error) {
+      handleUploadError(error, true);
+      return;
+    }
+    try {
       sessionId = session.session_id;
       const plans = buildFreshPlans(session);
       restartFileIds = new Set();
@@ -288,14 +352,19 @@
     });
   }
 
-  async function runUpload(plans: PlannedFile[]) {
+  async function runUpload(plans: PlannedFile[], generation?: number) {
     if (!sessionId || plans.length === 0) return;
-    uploadPlans = uploadPlans.length === 0 ? plans : uploadPlans;
+    if (generation !== undefined && generation !== resumeGeneration) return;
+    const planById = new Map(uploadPlans.map((plan) => [plan.fileId, plan]));
+    for (const plan of plans) planById.set(plan.fileId, plan);
+    uploadPlans = [...planById.values()];
     const activePlans = plans;
     const initialStates = { ...fileStates };
     const initialReceived = { ...lastReceived };
+    const initialAcknowledged = { ...ackReceived };
     for (const plan of activePlans) {
-      initialReceived[plan.fileId] = plan.startOffset;
+      initialReceived[plan.fileId] = Math.max(initialReceived[plan.fileId] ?? 0, plan.startOffset);
+      initialAcknowledged[plan.fileId] = plan.startOffset;
       initialStates[plan.fileId] = {
         sent: plan.startOffset,
         total: plan.declaredSize,
@@ -303,6 +372,7 @@
       };
     }
     lastReceived = initialReceived;
+    ackReceived = initialAcknowledged;
     fileStates = initialStates;
     step = 'uploading';
 
@@ -313,6 +383,7 @@
       backoffMs: (attempt) => Math.min(1000 * 2 ** Math.max(0, attempt - 1), 16000),
       transport: putChunk,
       refresh: () => apiClient.refreshToken(),
+      currentToken: () => apiClient.getAccessToken(),
       urlFor: (fileId, offset, restart) =>
         chunkUrl(projectId, datasetId, sessionId!, fileId, offset, restart || (offset === 0 && restartFileIds.has(fileId))),
       hash: sha256Hex,
@@ -327,6 +398,14 @@
         const state = fileStates[fileId];
         if (state && state.state !== 'failed' && state.state !== 'done') {
           fileStates = { ...fileStates, [fileId]: { ...state, sent: next, state: 'sending' } };
+        }
+      },
+      onFileAcknowledged: (fileId, received) => {
+        ackReceived = { ...ackReceived, [fileId]: received };
+        if (received > 0 && restartFileIds.has(fileId)) {
+          const next = new Set(restartFileIds);
+          next.delete(fileId);
+          restartFileIds = next;
         }
       },
       onFileDone: (fileId) => {
@@ -388,21 +467,25 @@
     }
     if (currentScheduler !== scheduler) return;
     currentScheduler = null;
+    if (generation !== undefined && generation !== resumeGeneration) return;
     const failed = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
     if (failed.length > 0) {
       step = 'partial';
       return;
     }
-    await completeAndPoll(resumeUnmatched.length > 0);
+    if (resumeUnmatched.length > 0) {
+      step = 'partial';
+      return;
+    }
+    await completeAndPoll(false);
   }
 
   async function retryFailed() {
     const plans = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
     const retryPlans = plans.map((plan) => ({
       ...plan,
-      startOffset: lastReceived[plan.fileId] ?? 0,
+      startOffset: ackReceived[plan.fileId] ?? plan.startOffset,
     }));
-    restartFileIds = new Set();
     await runUpload(retryPlans);
   }
 
@@ -414,19 +497,48 @@
     if (!sessionId) return;
     step = 'completing';
     try {
-      await completeUploadSession(projectId, datasetId, sessionId, { skip_missing: skipMissing });
-      pollStartedAt = Date.now();
+      const response = await completeUploadSession(projectId, datasetId, sessionId, { skip_missing: skipMissing });
+      if (response.status === 'issued') {
+        const nextStates = { ...fileStates };
+        for (const plan of uploadPlans) {
+          const received = ackReceived[plan.fileId] ?? 0;
+          if (received < plan.declaredSize) {
+            const state = nextStates[plan.fileId];
+            if (state) {
+              nextStates[plan.fileId] = {
+                ...state,
+                state: 'failed',
+                message: m.file_upload_reason_incomplete(),
+              };
+            }
+          }
+        }
+        fileStates = nextStates;
+        step = 'partial';
+        return;
+      }
+      lastStatusChangeAt = Date.now();
+      lastStatusSignature = null;
       nowMs = Date.now();
       importTriggered = false;
       step = 'polling';
     } catch (error) {
-      handleUploadError(error);
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        (error.detail ?? error.message).includes('No files were uploaded')
+      ) {
+        step = 'error';
+        errorMessage = m.file_upload_nothing_uploaded();
+      } else {
+        handleUploadError(error);
+      }
     }
   }
 
-  function handleUploadError(error: unknown) {
+  function handleUploadError(error: unknown, fromCreate = false) {
     step = 'error';
-    if (error instanceof ApiError && error.status === 409) {
+    if (fromCreate && error instanceof ApiError && error.status === 409) {
       errorMessage = m.file_upload_another_user();
     } else if (error instanceof ApiError && (error.status === 403 || error.status === 419)) {
       errorMessage = m.file_upload_auth_lost();
@@ -499,10 +611,11 @@
   }
 
   async function resetToSelect() {
+    resumeGeneration += 1;
     currentScheduler?.abort();
     currentScheduler = null;
-    const shouldCancel = sessionId !== null && !['completing', 'polling', 'done'].includes(step);
-    const oldSessionId = sessionId;
+    const oldSessionId = sessionId ?? resumeSession?.session_id ?? null;
+    const shouldCancel = oldSessionId !== null && !['completing', 'polling', 'done'].includes(step);
     if (shouldCancel && oldSessionId) {
       try {
         await cancelUploadSession(projectId, datasetId, oldSessionId);
@@ -522,9 +635,11 @@
     uploadPlans = [];
     fileStates = {};
     lastReceived = {};
+    ackReceived = {};
     restartFileIds = new Set();
     importTriggered = false;
-    pollStartedAt = null;
+    lastStatusChangeAt = null;
+    lastStatusSignature = null;
   }
 
   function retryPolling() {
@@ -532,7 +647,8 @@
       void resetToSelect();
       return;
     }
-    pollStartedAt = Date.now();
+    lastStatusChangeAt = Date.now();
+    lastStatusSignature = null;
     nowMs = Date.now();
     step = 'polling';
     queryClient.invalidateQueries({
@@ -614,6 +730,16 @@
     {/if}
   {/if}
 
+  {#if step === 'verifying'}
+    <div class="flex items-center gap-3">
+      <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <span class="text-sm font-medium text-stone-700">{m.file_upload_verifying()}</span>
+    </div>
+  {/if}
+
   {#if step === 'creating'}
     <div class="flex items-center gap-3">
       <svg class="h-5 w-5 animate-spin text-primary-600" fill="none" viewBox="0 0 24 24" aria-hidden="true">
@@ -671,8 +797,14 @@
             <p class="font-medium text-stone-700">{plan.file.name}</p>
             <p class="text-xs text-danger">{fileStates[plan.fileId]?.message}</p>
           </li>
-        {/each}
-      </ul>
+          {/each}
+          {#each resumeUnmatched as unmatched (unmatched.file_id)}
+            <li class="px-3 py-2 text-sm">
+              <p class="font-medium text-stone-700">{unmatched.original_filename}</p>
+              <p class="text-xs text-warning">{m.file_upload_reason_not_selected()}</p>
+            </li>
+          {/each}
+        </ul>
       <div class="flex flex-wrap justify-end gap-2">
         <button
           onclick={() => void retryFailed()}
@@ -682,10 +814,19 @@
         </button>
         <button
           onclick={() => void importWithoutFailed()}
-          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+          disabled={!canImportWithoutFailed}
+          class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
         >
           {m.file_upload_import_without_failed({ count: failedPlans.length })}
         </button>
+        {#if resumeUnmatched.length > 0}
+          <button
+            onclick={() => void addMissingFiles()}
+            class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700"
+          >
+            {m.file_upload_add_missing()}
+          </button>
+        {/if}
       </div>
     </div>
   {/if}

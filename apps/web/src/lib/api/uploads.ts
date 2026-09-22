@@ -119,7 +119,7 @@ export type ChunkResult =
   | { kind: 'ok'; received: number; complete: boolean }
   | { kind: 'offset'; received: number }
   | { kind: 'retry'; after: number }
-  | { kind: 'unauthorized' }
+  | { kind: 'unauthorized'; tokenUsed: string | null }
   | { kind: 'fatal'; reason: 'session' | 'auth' | 'file'; message: string }
   | { kind: 'network' };
 
@@ -238,11 +238,13 @@ export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promis
         const retryAfter = Number(xhr.getResponseHeader('Retry-After') ?? '');
         resolveOnce({ kind: 'retry', after: Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 1 });
       } else if (xhr.status === 401) {
-        resolveOnce({ kind: 'unauthorized' });
+        resolveOnce({ kind: 'unauthorized', tokenUsed: accessToken });
       } else if (xhr.status === 403 || xhr.status === 419) {
         resolveOnce({ kind: 'fatal', reason: 'auth', message: responseDetail(xhr.responseText ?? '') });
       } else if (xhr.status === 413 || xhr.status === 422) {
         resolveOnce({ kind: 'fatal', reason: 'file', message: responseDetail(xhr.responseText ?? '') });
+      } else if (xhr.status === 500 || xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
+        resolveOnce({ kind: 'network' });
       } else if (xhr.status >= 400) {
         resolveOnce({ kind: 'fatal', reason: 'file', message: responseDetail(xhr.responseText ?? '') });
       } else {
