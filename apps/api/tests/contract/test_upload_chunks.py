@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest
@@ -580,4 +580,69 @@ async def test_concurrent_same_offset_chunks_never_truncate_committed_bytes(
     assert part.read_bytes() == b"abcd"
     tail = await client.put(f"{url}?offset=4", headers=csrf_headers, content=b"efgh")
     assert tail.status_code == 200 and tail.json()["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_chunk_body_caps_announced_and_streamed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    csrf_headers: dict[str, str],
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """413 from the Content-Length pre-check, and from the streaming cap when no length is announced."""
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "UPLOAD_CHUNK_SIZE", 4)
+    session_id, files = await _create_session(
+        client, csrf_headers, test_project_id, test_dataset.id,
+        [{"filename": "cap.wav", "size": 40}],
+    )
+    url = _upload_url(test_project_id, test_dataset.id, session_id, files[0]["file_id"])
+
+    announced = await client.put(f"{url}?offset=0", headers=csrf_headers, content=b"12345")
+    assert announced.status_code == 413
+
+    async def _stream() -> Any:
+        yield b"123"
+        yield b"45"
+
+    streamed = await client.put(f"{url}?offset=0", headers=csrf_headers, content=_stream())
+    assert streamed.status_code == 413
+
+    ok = await client.put(f"{url}?offset=0", headers=csrf_headers, content=b"1234")
+    assert ok.status_code == 200 and ok.json()["received_bytes"] == 4
+
+
+@pytest.mark.asyncio
+async def test_chunk_admission_limit_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    csrf_headers: dict[str, str],
+    test_user: User,
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """With the caller's in-flight count already at the limit, the next chunk is 429."""
+    from echoroo.api.web_v1.projects import _uploads
+
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER", 1)
+    session_id, files = await _create_session(
+        client, csrf_headers, test_project_id, test_dataset.id,
+        [{"filename": "busy.wav", "size": 4}],
+    )
+    url = _upload_url(test_project_id, test_dataset.id, session_id, files[0]["file_id"])
+    monkeypatch.setitem(_uploads._chunk_in_flight, test_user.id, 1)
+
+    busy = await client.put(f"{url}?offset=0", headers=csrf_headers, content=b"ab")
+    assert busy.status_code == 429
+    assert busy.headers.get("Retry-After") == "1"
+    # The rejected request must not have touched the counter.
+    assert _uploads._chunk_in_flight[test_user.id] == 1
 

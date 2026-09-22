@@ -224,6 +224,11 @@ markers = [
 # module measurement (PR-005, SC-013).
 source = ["echoroo"]
 branch = true
+# SQLAlchemy's asyncio driver runs the DB call in a greenlet. Without this,
+# coverage loses its trace function in a coroutine frame after such an await
+# until the next real suspension, and the lines in between are reported as
+# never executed (seen on the upload chunk route, storage slice 2b).
+concurrency = ["greenlet", "thread"]
 omit = [
     "*/tests/*",
     "*/__init__.py",
