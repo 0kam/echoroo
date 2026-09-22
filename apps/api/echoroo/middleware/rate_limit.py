@@ -139,3 +139,15 @@ def upload_session_complete_rate_limiter() -> Any:
         times=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS,
         seconds=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS,
     )
+
+
+def upload_chunk_rate_limiter() -> Any:
+    """Rate limiter for upload chunk requests.
+
+    Returns:
+        Rate limiter dependency (600 attempts per minute)
+    """
+    return RateLimiterDependency(
+        times=settings.RATE_LIMIT_UPLOAD_CHUNK_ATTEMPTS,
+        seconds=settings.RATE_LIMIT_UPLOAD_CHUNK_WINDOW_SECONDS,
+    )

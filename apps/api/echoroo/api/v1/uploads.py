@@ -36,6 +36,7 @@ from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
 from echoroo.schemas.upload import (
+    CompleteUploadRequest,
     CompleteUploadResponse,
     CreateUploadSessionRequest,
     CreateUploadSessionResponse,
@@ -100,6 +101,49 @@ def _compute_progress_percent(
     if session_status == UploadSessionStatus.IMPORTING and total_files > 0:
         return round(50.0 + imported_files / total_files * 50.0, 1)
     return 0.0
+
+
+def build_session_status_response(session: UploadSession) -> UploadSessionStatusResponse:
+    """Build the public status response for an eagerly loaded session."""
+    progress_percent = _compute_progress_percent(
+        session_status=session.status,
+        total_files=session.total_files,
+        validated_files=session.validated_files,
+        imported_files=session.imported_files,
+    )
+
+    file_responses = [
+        UploadFileStatusResponse(
+            file_id=str(upload_file.id),
+            original_filename=upload_file.original_filename,
+            status=upload_file.status.value,
+            file_size=upload_file.file_size,
+            declared_size=upload_file.declared_size,
+            received_bytes=upload_file.received_bytes,
+            duration=upload_file.duration,
+            samplerate=upload_file.samplerate,
+            channels=upload_file.channels,
+            validation_error=upload_file.validation_error,
+            recording_id=(
+                str(upload_file.recording_id) if upload_file.recording_id else None
+            ),
+        )
+        for upload_file in session.files
+    ]
+
+    return UploadSessionStatusResponse(
+        session_id=str(session.id),
+        status=session.status.value,
+        total_files=session.total_files,
+        total_bytes=session.total_bytes,
+        validated_files=session.validated_files,
+        imported_files=session.imported_files,
+        progress_percent=progress_percent,
+        error=session.error,
+        files=file_responses,
+        created_at=session.created_at,
+        updated_at=session.updated_at,
+    )
 
 
 # W2-3 PR-10: the browser-facing ``/api/v1/projects/{project_id}/datasets/
@@ -189,6 +233,7 @@ async def complete_upload_session(
     service: UploadServiceDep,
     db: DbSession,
     _rate_limit: None = Depends(upload_session_complete_rate_limiter()),
+    request_body: CompleteUploadRequest | None = None,
 ) -> CompleteUploadResponse:
     """Complete an upload session after files have been uploaded to S3.
 
@@ -230,6 +275,7 @@ async def complete_upload_session(
         project_id=project_id,
         dataset_id=dataset_id,
         session_id=session_id,
+        skip_missing=bool(request_body and request_body.skip_missing),
     )
     await db.commit()
 
@@ -253,6 +299,7 @@ async def complete_upload_session(
         verified_files=result["verified_files"],
         missing_files=result["missing_files"],
         mismatched_files=result["mismatched_files"],
+        skipped_files=result["skipped_files"],
     )
 
 
@@ -291,38 +338,4 @@ async def get_upload_session_status(
         session_id=session_id,
     )
 
-    progress_percent = _compute_progress_percent(
-        session_status=session.status,
-        total_files=session.total_files,
-        validated_files=session.validated_files,
-        imported_files=session.imported_files,
-    )
-
-    file_responses = [
-        UploadFileStatusResponse(
-            file_id=str(f.id),
-            original_filename=f.original_filename,
-            status=f.status.value,
-            file_size=f.file_size,
-            duration=f.duration,
-            samplerate=f.samplerate,
-            channels=f.channels,
-            validation_error=f.validation_error,
-            recording_id=str(f.recording_id) if f.recording_id else None,
-        )
-        for f in session.files
-    ]
-
-    return UploadSessionStatusResponse(
-        session_id=str(session.id),
-        status=session.status.value,
-        total_files=session.total_files,
-        total_bytes=session.total_bytes,
-        validated_files=session.validated_files,
-        imported_files=session.imported_files,
-        progress_percent=progress_percent,
-        error=session.error,
-        files=file_responses,
-        created_at=session.created_at,
-        updated_at=session.updated_at,
-    )
+    return build_session_status_response(session)

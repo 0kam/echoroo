@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
+from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
@@ -104,6 +105,36 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_active_for_user(
+        self,
+        dataset_id: UUID,
+        user_id: UUID,
+    ) -> UploadSession | None:
+        """Find the caller's unfinished ISSUED session for a dataset."""
+        result = await self.db.execute(
+            select(UploadSession)
+            .where(
+                UploadSession.dataset_id == dataset_id,
+                UploadSession.created_by_id == user_id,
+                UploadSession.status == UploadSessionStatus.ISSUED,
+            )
+            .options(selectinload(UploadSession.files))
+            .order_by(UploadSession.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def touch(self, session_id: UUID) -> None:
+        """Extend inactivity retention after accepting a chunk."""
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=get_settings().UPLOAD_RETENTION_SECONDS)
+        await self.db.execute(
+            update(UploadSession)
+            .where(UploadSession.id == session_id)
+            .values(updated_at=now, expires_at=expires_at)
+        )
+        await self.db.flush()
 
     async def update_status(
         self,
@@ -328,6 +359,47 @@ class UploadFileRepository(BaseRepository[UploadFile]):
             .order_by(UploadFile.original_filename)
         )
         return list(result.scalars().all())
+
+    async def get_for_update(self, file_id: UUID) -> UploadFile | None:
+        """Load one upload file while holding its database row lock."""
+        result = await self.db.execute(
+            select(UploadFile).where(UploadFile.id == file_id).with_for_update()
+        )
+        return result.scalar_one_or_none()
+
+    async def record_chunk(
+        self,
+        file_id: UUID,
+        *,
+        received_bytes: int,
+        digest: str,
+    ) -> None:
+        """Persist one staged chunk offset and append its digest atomically."""
+        await self.db.execute(
+            update(UploadFile)
+            .where(UploadFile.id == file_id)
+            .values(
+                received_bytes=received_bytes,
+                chunk_digests=UploadFile.chunk_digests.op("||")(
+                    func.jsonb_build_array(digest)
+                ),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.flush()
+
+    async def reset_transfer(self, file_id: UUID) -> None:
+        """Reset staged-transfer bookkeeping after staged bytes were lost."""
+        await self.db.execute(
+            update(UploadFile)
+            .where(UploadFile.id == file_id)
+            .values(
+                received_bytes=0,
+                chunk_digests=[],
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.flush()
 
     async def update_status(
         self,

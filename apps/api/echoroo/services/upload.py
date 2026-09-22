@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import os
+import re
 import struct
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -14,6 +16,7 @@ from uuid import UUID
 from fastapi import HTTPException, status
 
 from echoroo.core import s3
+from echoroo.core import upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
@@ -29,6 +32,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class AudioGpsStripError(RuntimeError):
@@ -617,12 +622,223 @@ class UploadService:
 
         return session, presigned_responses
 
+    async def _load_owned_session(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        dataset_id: UUID,
+        session_id: UUID,
+    ) -> UploadSession:
+        """Load a session and enforce its project, dataset, and owner."""
+        session = await self.session_repo.get_by_id(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Upload session not found",
+            )
+
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        if dataset is None or dataset.project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+
+        if session.dataset_id != dataset_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Upload session not found",
+            )
+        if session.created_by_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not own this upload session",
+            )
+        return session
+
+    async def append_chunk(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        dataset_id: UUID,
+        session_id: UUID,
+        file_id: UUID,
+        *,
+        offset: int,
+        data: bytes,
+        chunk_sha256: str | None,
+    ) -> dict[str, Any]:
+        """Append one chunk to a staged upload file.
+
+        The caller (route) does no locking; the row lock from
+        ``get_for_update`` is what serialises chunks of one file, and the
+        reconcile in step 5 is the staging module's documented contract.
+        """
+        session = await self._load_owned_session(
+            user_id, project_id, dataset_id, session_id
+        )
+        if session.status != UploadSessionStatus.ISSUED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload session is not accepting chunks",
+            )
+
+        upload_file = await self.file_repo.get_for_update(file_id)
+        if upload_file is None or upload_file.session_id != session_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Upload file not found",
+            )
+        if upload_file.received_bytes >= upload_file.declared_size:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": "File already complete",
+                    "received_bytes": upload_file.received_bytes,
+                },
+            )
+
+        settings = get_settings()
+        if len(data) > settings.UPLOAD_CHUNK_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Chunk exceeds maximum size",
+            )
+
+        digest = hashlib.sha256(data).hexdigest()
+        if chunk_sha256 is not None:
+            if _SHA256_HEX.fullmatch(chunk_sha256) is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Invalid chunk checksum",
+                )
+            if chunk_sha256 != digest:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Chunk checksum mismatch",
+                )
+
+        staged = upload_staging.staged_size(session_id, file_id)
+        if staged > upload_file.received_bytes:
+            upload_staging.truncate_to(
+                session_id, file_id, upload_file.received_bytes
+            )
+        elif staged < upload_file.received_bytes:
+            logger.warning(
+                "staged_upload_bytes_lost session_id=%s file_id=%s received_bytes=%s "
+                "staged_bytes=%s",
+                session_id,
+                file_id,
+                upload_file.received_bytes,
+                staged,
+            )
+            await self.file_repo.reset_transfer(file_id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"detail": "Chunk offset mismatch", "received_bytes": 0},
+            )
+
+        if offset != upload_file.received_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": "Chunk offset mismatch",
+                    "received_bytes": upload_file.received_bytes,
+                },
+            )
+
+        try:
+            new_offset = upload_staging.append_chunk(
+                session_id,
+                file_id,
+                offset=offset,
+                data=data,
+                declared_size=upload_file.declared_size,
+            )
+        except upload_staging.StagingSizeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Chunk exceeds declared file size",
+            ) from exc
+        except upload_staging.StagingOffsetError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": "Chunk offset mismatch",
+                    "received_bytes": exc.expected_offset,
+                },
+            ) from exc
+
+        await self.file_repo.record_chunk(
+            file_id,
+            received_bytes=new_offset,
+            digest=digest,
+        )
+        if new_offset == upload_file.declared_size:
+            await self.file_repo.update_status(file_id, UploadFileStatus.UPLOADED)
+        await self.session_repo.touch(session_id)
+
+        return {
+            "file_id": str(file_id),
+            "received_bytes": new_offset,
+            "complete": new_offset == upload_file.declared_size,
+        }
+
+    async def get_active_session(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        dataset_id: UUID,
+    ) -> UploadSession | None:
+        """Return the caller's unfinished session when it has not expired."""
+        dataset = await self.dataset_repo.get_by_id(dataset_id)
+        if dataset is None or dataset.project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Dataset not found",
+            )
+
+        session = await self.session_repo.get_active_for_user(dataset_id, user_id)
+        if session is None or session.expires_at < datetime.now(UTC):
+            return None
+        return session
+
+    async def cancel_session(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        dataset_id: UUID,
+        session_id: UUID,
+    ) -> None:
+        """Cancel an upload session and remove its staged bytes."""
+        session = await self._load_owned_session(
+            user_id, project_id, dataset_id, session_id
+        )
+        if session.status not in (
+            UploadSessionStatus.ISSUED,
+            UploadSessionStatus.UPLOADED,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload session can no longer be cancelled",
+            )
+
+        await self.session_repo.update_status(
+            session_id,
+            UploadSessionStatus.FAILED,
+            error="Cancelled by the uploader",
+            expected_status=session.status,
+        )
+        upload_staging.remove_session(session_id)
+
     async def complete_upload(
         self,
         user_id: UUID,
         project_id: UUID,
         dataset_id: UUID,
         session_id: UUID,
+        *,
+        skip_missing: bool = False,
     ) -> dict[str, Any]:
         """Verify uploaded files and transition session to UPLOADED state.
 
@@ -636,7 +852,8 @@ class UploadService:
             session_id: Upload session UUID to complete
 
         Returns:
-            Dict with keys: session_id, status, verified_files, missing_files, mismatched_files
+            Dict with keys: session_id, status, verified_files, missing_files,
+            mismatched_files, and skipped_files.
 
         Raises:
             HTTPException 403: Caller does not own this upload session
@@ -691,8 +908,20 @@ class UploadService:
         verified_files = 0
         missing_files = 0
         mismatched_files = 0
+        missing_file_ids: list[UUID] = []
 
         for upload_file in files:
+            if upload_file.received_bytes > 0:
+                if upload_file.received_bytes == upload_file.declared_size:
+                    verified_files += 1
+                    await self.file_repo.update_status(
+                        upload_file.id, UploadFileStatus.UPLOADED
+                    )
+                else:
+                    missing_files += 1
+                    missing_file_ids.append(upload_file.id)
+                continue
+
             result = s3.verify_object_exists(
                 object_key=upload_file.object_key,
                 expected_size=upload_file.file_size,
@@ -700,6 +929,7 @@ class UploadService:
 
             if not result["exists"]:
                 missing_files += 1
+                missing_file_ids.append(upload_file.id)
                 # Leave file status as PENDING (not uploaded yet)
             elif not result["size_match"]:
                 mismatched_files += 1
@@ -710,7 +940,21 @@ class UploadService:
                 verified_files += 1
                 await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
 
-        # 4. If all files are verified, transition session to UPLOADED (CAS guard)
+        skipped_files = 0
+        if missing_files > 0 and skip_missing:
+            for file_id in missing_file_ids:
+                await self.file_repo.update_status(file_id, UploadFileStatus.SKIPPED)
+            skipped_files = missing_files
+            missing_files = 0
+
+        if verified_files == 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No files were uploaded",
+            )
+
+        # 4. If all files are verified or skipped, transition session to UPLOADED
+        # (CAS guard).
         if missing_files == 0:
             await self.session_repo.update_status(
                 session_id,
@@ -728,6 +972,7 @@ class UploadService:
             "verified_files": verified_files,
             "missing_files": missing_files,
             "mismatched_files": mismatched_files,
+            "skipped_files": skipped_files,
         }
 
     async def get_session_status(

@@ -132,6 +132,7 @@ secrets marked **prod-guarded** below.
 | `UPLOAD_ALLOWED_EXTENSIONS` | `.wav,.flac,.mp3,.ogg,.opus` | optional | Allowed audio extensions (JSON list). |
 | `UPLOAD_STAGING_DIR` | `/data/upload_staging` | optional | Directory for staged upload chunks. |
 | `UPLOAD_CHUNK_SIZE` | `8388608` | optional | Maximum upload chunk request size (bytes). |
+| `UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER` | `6` | optional | Maximum chunk requests one user may have in flight at once. |
 | `UPLOAD_RETENTION_SECONDS` | `86400` | optional | Inactivity window before unfinished uploads are removed (seconds). |
 | `DEFAULT_STORAGE_QUOTA` | `107374182400` (100 GB) | optional | Default per-project storage quota (bytes). |
 | `JANITOR_DRY_RUN` | `true` | optional | Orphan-S3 cleanup dry-run switch; flip to `false` after prod monitoring. |
@@ -241,6 +242,8 @@ allow 5173` and `sudo ufw allow 8002`).
 | `RATE_LIMIT_UPLOAD_SESSION_CREATE_WINDOW_SECONDS` | `3600` | optional | Upload-session create window. |
 | `RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS` | `20` | optional | Upload-session complete attempts per window. |
 | `RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS` | `3600` | optional | Upload-session complete window. |
+| `RATE_LIMIT_UPLOAD_CHUNK_ATTEMPTS` | `600` | optional | Upload chunk attempts per window. |
+| `RATE_LIMIT_UPLOAD_CHUNK_WINDOW_SECONDS` | `60` | optional | Upload chunk rate-limit window. |
 | `TRUSTED_DEVICE_REGISTRATION_ENABLED` | `false` | optional | Enable trusted-device registration (spec/010). |
 | `TRUSTED_DEVICE_BYPASS_ENABLED` | `false` | optional | Allow trusted-device 2FA bypass. |
 | `TRUSTED_DEVICE_COOKIE_NAME` | `echoroo_trusted_device` | optional | Trusted-device cookie name. |
