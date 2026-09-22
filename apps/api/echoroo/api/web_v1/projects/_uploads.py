@@ -58,7 +58,6 @@ from echoroo.middleware.rate_limit import (
 from echoroo.schemas.upload import (
     ActiveUploadSessionResponse,
     ChunkAcceptedResponse,
-    ChunkOffsetConflict,
     CompleteUploadRequest,
     CompleteUploadResponse,
     CreateUploadSessionRequest,
@@ -196,7 +195,20 @@ async def get_active_upload_session(
                 "application/json": {
                     "schema": {
                         "oneOf": [
-                            ChunkOffsetConflict.model_json_schema(),
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "detail": {
+                                        "type": "object",
+                                        "properties": {
+                                            "detail": {"type": "string"},
+                                            "received_bytes": {"type": "integer"},
+                                        },
+                                        "required": ["detail", "received_bytes"],
+                                    }
+                                },
+                                "required": ["detail"],
+                            },
                             {
                                 "type": "object",
                                 "properties": {"detail": {"type": "string"}},

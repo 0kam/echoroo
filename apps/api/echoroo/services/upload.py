@@ -698,21 +698,6 @@ class UploadService:
         reconcile in step 5 is the staging module's documented contract.
         """
         await self._load_owned_session(user_id, project_id, dataset_id, session_id)
-        # Lock the session row too: completion / cancellation take the same
-        # lock, so the status read here cannot change under this request.
-        session = await self.session_repo.get_for_update(session_id)
-        if session is None or session.status != UploadSessionStatus.ISSUED:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Upload session is not accepting chunks",
-            )
-
-        upload_file = await self.file_repo.get_for_update(file_id)
-        if upload_file is None or upload_file.session_id != session_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Upload file not found",
-            )
 
         settings = get_settings()
         if len(data) > settings.UPLOAD_CHUNK_SIZE:
@@ -734,26 +719,8 @@ class UploadService:
                     detail="Chunk checksum mismatch",
                 )
 
-        # Reconcile the staged file with the committed counter BEFORE any
-        # guard that reads the counter (staging contract, see core/upload_staging).
-        received, reset = await self._reconcile_staged_file(upload_file)
-        if reset:
-            # The reset was committed, which released both row locks: take them
-            # again before writing anything.
-            session = await self.session_repo.get_for_update(session_id)
-            if session is None or session.status != UploadSessionStatus.ISSUED:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Upload session is not accepting chunks",
-                )
-            relocked = await self.file_repo.get_for_update(file_id)
-            if relocked is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Upload file not found"
-                )
-            upload_file = relocked
-            # Another request may have written and rolled back in between.
-            received, _ = await self._reconcile_staged_file(upload_file)
+        # Session lock, file lock, reconciled offset — all held from here on.
+        _session, upload_file, received = await self._lock_and_reconcile(session_id, file_id)
 
         if received >= upload_file.declared_size:
             raise HTTPException(
@@ -799,6 +766,33 @@ class UploadService:
             "received_bytes": new_offset,
             "complete": new_offset == upload_file.declared_size,
         }
+
+    async def _lock_and_reconcile(
+        self, session_id: UUID, file_id: UUID
+    ) -> tuple[UploadSession, UploadFile, int]:
+        """Take the session lock, then the file lock, and reconcile the staged file.
+
+        A reconciliation that resets the transfer commits and thereby releases
+        both locks, so the whole sequence repeats until reconciliation leaves
+        the row untouched. Returns the locked rows and the committed offset.
+        Lock order (session, then file) is the same in every caller.
+        """
+        while True:
+            session = await self.session_repo.get_for_update(session_id)
+            if session is None or session.status != UploadSessionStatus.ISSUED:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Upload session is not accepting chunks",
+                )
+            upload_file = await self.file_repo.get_for_update(file_id)
+            if upload_file is None or upload_file.session_id != session_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Upload file not found",
+                )
+            received, reset = await self._reconcile_staged_file(upload_file)
+            if not reset:
+                return session, upload_file, received
 
     async def _reconcile_staged_file(self, upload_file: UploadFile) -> tuple[int, bool]:
         """Make the staged file match the committed ``received_bytes``.
@@ -984,18 +978,9 @@ class UploadService:
                 # append: an uncommitted tail is cut off, a short file restarts
                 # the transfer (that reset commits and releases the locks, so
                 # re-take them; the session status is re-checked below).
-                locked_file = await self.file_repo.get_for_update(upload_file.id)
-                if locked_file is None:
-                    continue
-                received, reset = await self._reconcile_staged_file(locked_file)
-                if reset:
-                    relocked = await self.session_repo.get_for_update(session_id)
-                    if relocked is None or relocked.status != UploadSessionStatus.ISSUED:
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail="Upload session is no longer 'issued'",
-                        )
-                    await self.file_repo.get_for_update(upload_file.id)
+                _session, locked_file, received = await self._lock_and_reconcile(
+                    session_id, upload_file.id
+                )
                 if received == locked_file.declared_size:
                     verified_files += 1
                     await self.file_repo.update_status(
