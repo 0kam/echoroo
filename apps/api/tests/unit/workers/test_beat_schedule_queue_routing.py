@@ -1,4 +1,4 @@
-"""Every beat-scheduled task must land on a queue a worker consumes.
+"""Every Celery task must land on a queue a worker consumes.
 
 Regression guard for the silent ``drain-outbox-events`` outage found on
 2026-09-21: :mod:`echoroo.workers.outbox_processor` declared
@@ -7,22 +7,38 @@ queue name. The CPU worker subscribes to ``-Q default`` and the GPU
 worker to ``-Q gpu``, so nothing consumed ``worker-cpu``. Beat happily
 dispatched the task every 30s and the messages piled up unread in Redis
 (251,160 of them, ~250 MB, by the time it was noticed) while the outbox
-never drained.
+never drained. ``audit_log_export.export_weekly`` carried the same
+``queue="worker-cpu"`` and was fixed independently in #271.
 
 Celery gives no warning for this: publishing to a queue with no
 consumer is perfectly legal AMQP/Redis. The only defence is asserting
-the routing statically, which is what this module does.
+the routing statically, which is what this module does, at three
+layers:
+
+1. every ``beat_schedule`` entry resolves (Celery's own order:
+   ``task_routes`` → task ``queue`` attribute → ``task_default_queue``)
+   to a consumed queue;
+2. every ``task_routes`` value names a consumed queue;
+3. every ``queue=`` keyword on a task decorator anywhere under
+   ``echoroo/workers/`` names a consumed queue — found by AST scan so
+   tasks that are only ever ``.delay()``-ed (never beat-scheduled) are
+   covered too, without importing the heavy ML modules.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib
 import re
 from pathlib import Path
 
 import pytest
 
+import echoroo.workers
 from echoroo.workers.celery_app import app
+
+_WORKERS_DIR = Path(echoroo.workers.__file__).resolve().parent
+_TASK_DECORATORS = frozenset({"task", "shared_task"})
 
 # Queues the compose workers actually consume. Kept as a literal so the
 # test still protects CI images that do not ship compose.dev.yaml; the
@@ -97,6 +113,91 @@ def test_beat_task_routes_to_a_consumed_queue(entry_name: str) -> None:
         f"never executed. Drop the ``queue=`` argument from the task "
         f"declaration, or subscribe a worker to {queue!r} in "
         f"compose.dev.yaml and add it to CONSUMED_QUEUES here."
+    )
+
+
+def test_task_routes_name_consumed_queues() -> None:
+    """``task_routes`` is the first thing Celery consults — check it too."""
+    for task_name, route in (app.conf.task_routes or {}).items():
+        queue = route.get("queue")
+        assert queue in CONSUMED_QUEUES, (
+            f"task_routes sends {task_name} to queue {queue!r}, which no "
+            f"worker consumes (consumed: {sorted(CONSUMED_QUEUES)})."
+        )
+
+
+def _decorator_queue_kwargs() -> list[tuple[str, int, str]]:
+    """Static scan: ``(relative_path, lineno, queue)`` for every task
+    decorator under ``echoroo/workers/`` that passes ``queue=<literal>``.
+
+    Walks the AST rather than importing the modules so ``ml_tasks`` /
+    ``model_preloader`` (TensorFlow) stay out of the unit-test process,
+    and so a task nobody has imported yet is still covered. Both
+    ``@shared_task(...)`` and ``@app.task(...)`` spellings are matched.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sorted(_WORKERS_DIR.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for deco in node.decorator_list:
+                if not isinstance(deco, ast.Call):
+                    continue
+                func = deco.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+                if name not in _TASK_DECORATORS:
+                    continue
+                for kw in deco.keywords:
+                    if kw.arg == "queue" and isinstance(kw.value, ast.Constant):
+                        found.append((path.name, kw.value.lineno, str(kw.value.value)))
+    return found
+
+
+def test_decorator_queue_kwargs_name_consumed_queues() -> None:
+    """No task decorator under ``echoroo/workers/`` may name an orphan queue.
+
+    This is the layer that would have caught both the outbox task and
+    ``audit_log_export.export_weekly`` on the day they were written,
+    regardless of whether beat or a ``.delay()`` call dispatches them.
+    """
+    offenders = [
+        (file, line, queue)
+        for file, line, queue in _decorator_queue_kwargs()
+        if queue not in CONSUMED_QUEUES
+    ]
+    assert not offenders, (
+        "task decorators name queues no worker consumes "
+        f"(consumed: {sorted(CONSUMED_QUEUES)}): "
+        + ", ".join(f"{f}:{ln} queue={q!r}" for f, ln, q in offenders)
+        + ". Remember the compose *service* name (worker-cpu) is not a "
+        "queue name. Drop the ``queue=`` argument so the task rides "
+        "task_default_queue, or subscribe a worker to it in "
+        "compose.dev.yaml and add it to CONSUMED_QUEUES."
+    )
+
+
+def test_decorator_scan_sees_the_workers_package() -> None:
+    """Guard the scanner itself: it must actually find task decorators.
+
+    If the package moved or the decorator spelling changed, the scan
+    above would trivially pass on an empty list — this makes that
+    failure loud instead.
+    """
+    task_defs = 0
+    for path in _WORKERS_DIR.glob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for deco in node.decorator_list:
+                    func = deco.func if isinstance(deco, ast.Call) else deco
+                    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+                    if name in _TASK_DECORATORS:
+                        task_defs += 1
+    assert task_defs >= len(app.conf.beat_schedule), (
+        f"AST scan found only {task_defs} task decorators under "
+        f"{_WORKERS_DIR} but beat_schedule has {len(app.conf.beat_schedule)} "
+        "entries — the scanner is looking in the wrong place."
     )
 
 
