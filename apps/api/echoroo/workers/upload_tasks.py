@@ -450,8 +450,8 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             invalid_count += 1
                             continue
 
-                        probe_data = _run_ffprobe(str(source))
-                        if probe_data is None:
+                        staged_probe: dict[str, Any] | None = _run_ffprobe(str(source))
+                        if staged_probe is None:
                             await file_repo.update_status(
                                 file.id,
                                 UploadFileStatus.INVALID,
@@ -497,7 +497,7 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                                 with contextlib.suppress(OSError):
                                     temp_clean_path.unlink()
 
-                        metadata = _extract_audio_metadata(probe_data)
+                        metadata = _extract_audio_metadata(staged_probe)
                         if metadata["duration"] is None or metadata["samplerate"] is None:
                             await file_repo.update_status(
                                 file.id,
