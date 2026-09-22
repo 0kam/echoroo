@@ -102,6 +102,7 @@ disappears, which frees local disk rather than consuming it.
 | --- | --- | --- | --- | --- |
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
+| 5 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
 
 ## Risks
 
@@ -169,8 +170,25 @@ S3, then cut over once.
   and snapshots; the wipe guard's genesis-marker check reads the same path;
   runbook entry for the mount and snapshot schedule.
 - **Out of scope** — the chain hash itself, which already exists.
-- **Acceptance** — export then verify the chain end to end; wipe guard still
-  refuses when the marker is present.
+- **Acceptance** — export then verify the chain end to end; wipe guard exit
+  codes unchanged.
+- **Status** — done. Found while slicing: the export task was never registered
+  with Celery (no `include`, no beat entry), so it had never run; it is now
+  scheduled Mondays 03:00 UTC. Without Object Lock the code itself has to be
+  write-once, so each archive is one *closed* ISO week (deterministic
+  contents), an existing key is skipped rather than overwritten, the archive
+  is read back and re-verified after writing, and an 8-week look-back catches
+  up missed runs. The wipe guard reads the genesis marker through `core/s3`
+  from the same bucket. Runbook: `docs/runbook/audit_log_archive.md`.
+- **Follow-up, not in this slice** — a signed manifest per archive (row count
+  and digest recorded as a MAC-chained `platform_audit_log` event) would make
+  tail truncation detectable from the archive alone after the 8-week window.
+  Today that needs the live table, the next archive or a snapshot.
+- **Not changed, flagged** — `check_wipe_guard.py` contradicts itself: the
+  docstring and `all_clear_for_wipe` expect the genesis marker to be *absent*
+  before a wipe, `main()` refuses when it is absent (exit 12). Behaviour left
+  as is; which one is intended is a release-ritual question for the
+  maintainer.
 - **Depends on** — slice 1. **UX preview needed** — no.
 
 ### 4. Cutover
@@ -196,3 +214,6 @@ One PR, because any subset leaves a broken state.
 | 2026-09-20 | Maintainer | Decisions 1 and 2; local disk is ~200 GB | Audit slice unblocked; OGG cache moved to Lustre, spectrogram cache capped; embeddings-vs-local-disk risk recorded with open decision 4 |
 | 2026-09-20 | Astra (gpt-6-astra), slice 1 code review | Building the client per helper call moved construction errors inside per-item `except` blocks (valid uploads marked INVALID, cleanup marking sessions FAILED, recordings 404, search sources skipped); lint missed `from boto3 import client`; a missing scan root passed as clean | All accepted: `ensure_configured()` at every former `get_s3_client()` site with regression tests; SDK-import rule; missing root exits 2. Not accepted: linting raw operations on passed-in clients — no module can obtain one |
 | 2026-09-20 | Astra, slice 1 re-review | `search/batch.py` lost its fail-fast when a rerun carries no new uploads (empty search job instead of HTTP 500); the lint missed an SDK module re-exported through `core/kms.py` | Accepted: `ensure_configured()` before the upload loop, pinned by the wiring test; re-export rule added. Not accepted: alias/data-flow tracking inside `core/kms.py` — the lint guards against accidents, same stated limit as `lint_kms_isolation.py` |
+| 2026-09-21 | Astra, slice 3 code review | Task routed to a queue no worker consumes; HEAD-then-PUT is not write-once under concurrency; `verify_archive` authenticated rows but not order or completeness; a row committed into an already archived week was silently skipped; one read-back failure blocked the clean weeks; naive `now_iso`; tests faked the SQL window and signed fixtures with the verifier's own canonicaliser; bootstrap `genesis` rows (zero hashes by design) would block the first production week; IAM `ListBucket` | All accepted: default queue; PostgreSQL advisory lock; chain-link check plus empty/malformed detection; every archive in the window is byte-compared with the live table on every run; failures aggregate per week; naive = UTC; fixtures signed with `audit_service._build_canonical_row`, real query asserted; bootstrap actions accepted without a MAC. Deferred: signed manifest (above). Not accepted: a persisted write cutoff in the audit writer — detection is enough before launch |
+| 2026-09-21 | Astra, slice 3 re-review | The bootstrap exception allowed a whole week to be replaced by a forged zero-hash row (links restarted each week); a storage error on one key still aborted the run; `verify_archive` ignored week membership and leaked raw exceptions; runbook omitted prefix truncation and silent recreation | All accepted: each week's first row must link to the row before it (confines bootstrap rows to the chain start), `verify_archive(expected_prev_hash=…)`, per-week isolation of any exception, week-membership check, normalised errors, runbook matrix corrected |
+| 2026-09-21 | Astra, slice 3 third pass | A forged zero-hash row outside the catch-up window could make a later forged bootstrap week link correctly; archive rows were not shape-checked; a non-week key skipped the week check; runbook wording | Accepted: a bootstrap week is refused when any signed row precedes it (whole table, not just the window); required-field and type checks; non-week keys rejected; runbook corrected. Not accepted, recorded: (a) rows sharing one microsecond timestamp are ordered by random UUID, so a legitimate week could fail verification — 0 of 1,012 real rows tie, the failure is a visible false alarm, and the fix belongs in the audit writer (a monotonic sequence column), not here; (b) isolating database read failures per week with savepoints — if the database fails, aborting the run is the right outcome |

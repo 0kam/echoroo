@@ -13,7 +13,6 @@ from __future__ import annotations
 import io
 import logging
 import struct
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -477,7 +476,7 @@ def test_unknown_format_passthrough() -> None:
 def test_audit_log_export_routes_put_object_through_sanitizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """audit_log_export._upload_with_object_lock must use sanitize_put_object_kwargs."""
+    """audit_log_export._write_archive must use sanitize_put_object_kwargs."""
     from echoroo.workers import audit_log_export
 
     captured_kwargs: dict[str, Any] = {}
@@ -501,14 +500,11 @@ def test_audit_log_export_routes_put_object_through_sanitizer(
 
     monkeypatch.setattr(sanitizer_mod, "sanitize_put_object_kwargs", _spy)
 
-    now = datetime(2026, 5, 7, tzinfo=UTC)
-    audit_log_export._upload_with_object_lock(
-        bucket="b", key="audit-log/x.ndjson", body=b"{}", now=now,
-    )
+    audit_log_export._write_archive("audit-log/x.ndjson", b"{}")
 
     assert sanitizer_called, "sanitize_put_object_kwargs was not invoked"
-    assert captured_kwargs["Bucket"] == "b"
     assert captured_kwargs["Key"] == "audit-log/x.ndjson"
+    assert "ObjectLockMode" not in captured_kwargs
     # Sanity: kwargs passed downstream do not carry GPS keys.
     assert "Metadata" not in captured_kwargs or all(
         not k.lower().startswith(("gps", "geo", "lat", "lon", "lng", "coord", "location"))

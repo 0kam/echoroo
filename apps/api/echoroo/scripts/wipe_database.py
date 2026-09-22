@@ -95,8 +95,7 @@ def _verify_precondition() -> None:
 
     from echoroo.scripts import check_wipe_guard as cwg
 
-    database_url, audit_bucket, s3_endpoint_url = cwg._load_settings()
-    status = cwg.check(database_url, audit_bucket, s3_endpoint_url)
+    status = cwg.check(cwg._load_settings())
     if not status.all_clear_for_wipe:
         logger.error(
             "Wipe precondition failed: db_row=%s, alembic_baseline=%s, s3_marker=%s",

@@ -108,34 +108,6 @@ def head_bucket(client: Any = None) -> None:
     client.head_bucket(Bucket=settings.S3_BUCKET)
 
 
-def object_exists_at_endpoint(
-    bucket: str,
-    object_key: str,
-    endpoint_url: str | None = None,
-) -> bool:
-    """Return True if ``object_key`` exists in ``bucket`` at ``endpoint_url``.
-
-    Unlike the other helpers this uses the ambient AWS credential chain, not
-    ``S3_ACCESS_KEY`` / ``S3_SECRET_KEY``: the wipe guard runs standalone
-    against the audit bucket.
-
-    Raises:
-        ClientError: On any failure other than "not found".
-    """
-    client_kwargs: dict[str, Any] = {}
-    if endpoint_url:
-        client_kwargs["endpoint_url"] = endpoint_url
-    client = boto3.client("s3", **client_kwargs)
-    try:
-        client.head_object(Bucket=bucket, Key=object_key)
-        return True
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code")
-        if code in {"404", "NoSuchKey", "NotFound"}:
-            return False
-        raise
-
-
 def generate_presigned_upload_url(
     object_key: str,
     expiry_seconds: int | None = None,
@@ -286,6 +258,22 @@ def head_object(
     return response
 
 
+def object_exists(object_key: str, client: Any = None) -> bool:
+    """Return True if ``object_key`` exists in the configured bucket.
+
+    Raises:
+        ClientError: On any failure other than "not found".
+    """
+    try:
+        head_object(object_key, client=client)
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+
+
 def put_object(
     object_key: str,
     body: bytes,
@@ -293,8 +281,6 @@ def put_object(
     content_type: str | None = None,
     metadata: dict[str, str] | None = None,
     bucket: str | None = None,
-    object_lock_mode: str | None = None,
-    object_lock_retain_until: datetime | None = None,
     client: Any = None,
 ) -> None:
     """Write ``body`` to ``object_key``.
@@ -322,10 +308,6 @@ def put_object(
         put_kwargs["Metadata"] = metadata
     if content_type:
         put_kwargs["ContentType"] = content_type
-    if object_lock_mode:
-        put_kwargs["ObjectLockMode"] = object_lock_mode
-    if object_lock_retain_until is not None:
-        put_kwargs["ObjectLockRetainUntilDate"] = object_lock_retain_until
     client.put_object(**sanitize_put_object_kwargs(put_kwargs))
 
 
