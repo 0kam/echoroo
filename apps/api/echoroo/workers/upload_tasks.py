@@ -879,7 +879,7 @@ async def _run_import(
                 # through the foreign key, so take it explicitly first or a
                 # concurrent create (dataset FOR UPDATE, then session) deadlocks.
                 await db.execute(
-                    select(Dataset.id).where(Dataset.id == dataset_id).with_for_update(key_share=True)
+                    select(Dataset.id).where(Dataset.id == dataset_id).with_for_update(read=True, key_share=True)
                 )
                 owner = await session_repo.get_for_update(session_uuid)
                 if owner is None or owner.status != UploadSessionStatus.IMPORTING:
