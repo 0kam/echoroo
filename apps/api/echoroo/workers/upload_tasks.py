@@ -884,7 +884,9 @@ async def _run_import(
                         # Re-create the staging directory so the reaper's sweep
                         # revisits this session and retries the deletion.
                         with contextlib.suppress(OSError):
-                            upload_staging.session_dir(upload_session.id).mkdir(
+                            # UUID(session_id), not upload_session.id: the
+                            # rollback above expired the ORM object.
+                            upload_staging.session_dir(UUID(session_id)).mkdir(
                                 mode=0o700, parents=True, exist_ok=True
                             )
                     pending_recordings.clear()
