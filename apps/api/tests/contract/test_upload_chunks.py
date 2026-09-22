@@ -543,3 +543,41 @@ def test_chunk_response_schema_has_stable_shape() -> None:
         "received_bytes": 1,
         "complete": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_offset_chunks_never_truncate_committed_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    csrf_headers: dict[str, str],
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """Two requests for offset 0: the loser must see the winner's commit under the lock.
+
+    Regression for the stale identity-map read: the loser used to re-read
+    received_bytes == 0 and truncate the bytes the winner had committed.
+    """
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER", 4)
+    session_id, files = await _create_session(
+        client, csrf_headers, test_project_id, test_dataset.id,
+        [{"filename": "race.wav", "size": 8}],
+    )
+    url = _upload_url(test_project_id, test_dataset.id, session_id, files[0]["file_id"])
+    first, second = await asyncio.gather(
+        client.put(f"{url}?offset=0", headers=csrf_headers, content=b"abcd"),
+        client.put(f"{url}?offset=0", headers=csrf_headers, content=b"abcd"),
+    )
+    codes = sorted([first.status_code, second.status_code])
+    assert codes == [200, 409], (first.text, second.text)
+    loser = first if first.status_code == 409 else second
+    assert loser.json()["detail"]["received_bytes"] == 4
+    part = upload_staging.part_path(UUID(session_id), UUID(files[0]["file_id"]))
+    assert part.read_bytes() == b"abcd"
+    tail = await client.put(f"{url}?offset=4", headers=csrf_headers, content=b"efgh")
+    assert tail.status_code == 200 and tail.json()["complete"] is True
+

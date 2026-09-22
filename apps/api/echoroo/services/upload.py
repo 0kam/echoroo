@@ -409,6 +409,21 @@ def _strip_mp3_gps(payload: bytes) -> bytes:
     )
 
 
+async def _run_blocking(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run filesystem work in a thread; finish it even if the request is cancelled.
+
+    A cancelled ``await asyncio.to_thread(...)`` leaves the thread writing while
+    the caller drops its row lock and admission slot, so a retry could append
+    concurrently. Shield the task and wait for it before propagating.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await asyncio.wait({task})
+        raise
+
+
 class UploadService:
     """Service for managing file upload sessions."""
 
@@ -674,10 +689,11 @@ class UploadService:
         ``get_for_update`` is what serialises chunks of one file, and the
         reconcile in step 5 is the staging module's documented contract.
         """
-        session = await self._load_owned_session(
-            user_id, project_id, dataset_id, session_id
-        )
-        if session.status != UploadSessionStatus.ISSUED:
+        await self._load_owned_session(user_id, project_id, dataset_id, session_id)
+        # Lock the session row too: completion / cancellation take the same
+        # lock, so the status read here cannot change under this request.
+        session = await self.session_repo.get_for_update(session_id)
+        if session is None or session.status != UploadSessionStatus.ISSUED:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Upload session is not accepting chunks",
@@ -688,14 +704,6 @@ class UploadService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Upload file not found",
-            )
-        if upload_file.received_bytes >= upload_file.declared_size:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "detail": "File already complete",
-                    "received_bytes": upload_file.received_bytes,
-                },
             )
 
         settings = get_settings()
@@ -718,39 +726,39 @@ class UploadService:
                     detail="Chunk checksum mismatch",
                 )
 
-        # Filesystem calls (fsync included) run in a worker thread so an 8 MiB
-        # write does not stall the event loop for every other request.
-        staged = await asyncio.to_thread(upload_staging.staged_size, session_id, file_id)
-        if staged > upload_file.received_bytes:
-            await asyncio.to_thread(
-                upload_staging.truncate_to, session_id, file_id, upload_file.received_bytes
-            )
-        elif staged < upload_file.received_bytes:
-            logger.warning(
-                "staged_upload_bytes_lost session_id=%s file_id=%s received_bytes=%s "
-                "staged_bytes=%s",
-                session_id,
-                file_id,
-                upload_file.received_bytes,
-                staged,
-            )
-            await self.file_repo.reset_transfer(file_id)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"detail": "Chunk offset mismatch", "received_bytes": 0},
-            )
+        # Reconcile the staged file with the committed counter BEFORE any
+        # guard that reads the counter (staging contract, see core/upload_staging).
+        received, reset = await self._reconcile_staged_file(upload_file)
+        if reset:
+            # The reset was committed, which released both row locks: take them
+            # again before writing anything.
+            session = await self.session_repo.get_for_update(session_id)
+            if session is None or session.status != UploadSessionStatus.ISSUED:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Upload session is not accepting chunks",
+                )
+            relocked = await self.file_repo.get_for_update(file_id)
+            if relocked is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="Upload file not found"
+                )
+            upload_file = relocked
+            received = upload_file.received_bytes
 
-        if offset != upload_file.received_bytes:
+        if received >= upload_file.declared_size:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "detail": "Chunk offset mismatch",
-                    "received_bytes": upload_file.received_bytes,
-                },
+                detail={"detail": "File already complete", "received_bytes": received},
+            )
+        if offset != received:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"detail": "Chunk offset mismatch", "received_bytes": received},
             )
 
         try:
-            new_offset = await asyncio.to_thread(
+            new_offset = await _run_blocking(
                 upload_staging.append_chunk,
                 session_id,
                 file_id,
@@ -766,26 +774,60 @@ class UploadService:
         except upload_staging.StagingOffsetError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "detail": "Chunk offset mismatch",
-                    "received_bytes": exc.expected_offset,
-                },
+                detail={"detail": "Chunk offset mismatch", "received_bytes": exc.expected_offset},
             ) from exc
 
-        await self.file_repo.record_chunk(
-            file_id,
-            received_bytes=new_offset,
-            digest=digest,
-        )
+        await self.file_repo.record_chunk(file_id, received_bytes=new_offset, digest=digest)
         if new_offset == upload_file.declared_size:
             await self.file_repo.update_status(file_id, UploadFileStatus.UPLOADED)
         await self.session_repo.touch(session_id)
+        # Commit here, not after the response: the client must never be told an
+        # offset that a later commit failure would roll back.
+        await self.session_repo.db.commit()
 
         return {
             "file_id": str(file_id),
             "received_bytes": new_offset,
             "complete": new_offset == upload_file.declared_size,
         }
+
+    async def _reconcile_staged_file(self, upload_file: UploadFile) -> tuple[int, bool]:
+        """Make the staged file match the committed ``received_bytes``.
+
+        Returns ``(received_bytes, reset)``; ``reset`` is True when the
+        transfer was restarted from zero, which is committed immediately (and
+        therefore releases the caller's row locks).
+
+        Called under the file row lock. Excess bytes (written before a commit
+        that never happened) are cut off. A shorter file means staged data was
+        lost: the transfer restarts from zero, and that reset is committed at
+        once so it survives the 409 the caller may raise next.
+        """
+        staged = await _run_blocking(
+            upload_staging.staged_size, upload_file.session_id, upload_file.id
+        )
+        if staged > upload_file.received_bytes:
+            await _run_blocking(
+                upload_staging.truncate_to,
+                upload_file.session_id,
+                upload_file.id,
+                upload_file.received_bytes,
+            )
+        elif staged < upload_file.received_bytes:
+            logger.warning(
+                "staged_upload_bytes_lost session_id=%s file_id=%s received_bytes=%s staged_bytes=%s",
+                upload_file.session_id,
+                upload_file.id,
+                upload_file.received_bytes,
+                staged,
+            )
+            await _run_blocking(
+                upload_staging.truncate_to, upload_file.session_id, upload_file.id, 0
+            )
+            await self.file_repo.reset_transfer(upload_file.id)
+            await self.session_repo.db.commit()
+            return 0, True
+        return upload_file.received_bytes, False
 
     async def get_active_session(
         self,
@@ -813,11 +855,15 @@ class UploadService:
         dataset_id: UUID,
         session_id: UUID,
     ) -> None:
-        """Cancel an upload session and remove its staged bytes."""
-        session = await self._load_owned_session(
-            user_id, project_id, dataset_id, session_id
-        )
-        if session.status not in (
+        """Abandon a session the caller created and delete its staged bytes.
+
+        Only ``issued`` and ``uploaded`` sessions can be cancelled. The status
+        change is committed before any file is removed, so a failed commit
+        never leaves a live session without its staged data.
+        """
+        await self._load_owned_session(user_id, project_id, dataset_id, session_id)
+        session = await self.session_repo.get_for_update(session_id)
+        if session is None or session.status not in (
             UploadSessionStatus.ISSUED,
             UploadSessionStatus.UPLOADED,
         ):
@@ -826,13 +872,19 @@ class UploadService:
                 detail="Upload session can no longer be cancelled",
             )
 
-        await self.session_repo.update_status(
+        updated = await self.session_repo.update_status(
             session_id,
             UploadSessionStatus.FAILED,
             error="Cancelled by the uploader",
             expected_status=session.status,
         )
-        await asyncio.to_thread(upload_staging.remove_session, session_id)
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Upload session can no longer be cancelled",
+            )
+        await self.session_repo.db.commit()
+        await _run_blocking(upload_staging.remove_session, session_id)
 
     async def complete_upload(
         self,
@@ -898,14 +950,18 @@ class UploadService:
                 detail="You do not own this upload session",
             )
 
-        # 2. Require ISSUED state
-        if session.status != UploadSessionStatus.ISSUED:
+        # 2. Require ISSUED state, under the session lock shared with chunk
+        # appends and cancellation so no chunk lands while files are counted.
+        locked = await self.session_repo.get_for_update(session_id)
+        if locked is None or locked.status != UploadSessionStatus.ISSUED:
+            current = locked.status.value if locked is not None else "missing"
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Upload session is in '{session.status.value}' state; expected 'issued'",
+                detail=f"Upload session is in '{current}' state; expected 'issued'",
             )
 
-        # 3. Verify each file in S3
+        # 3. Verify each file: staged files against the staging directory,
+        # presigned files against S3.
         files = await self.file_repo.get_by_session(session_id)
 
         verified_files = 0
@@ -915,12 +971,33 @@ class UploadService:
 
         for upload_file in files:
             if upload_file.received_bytes > 0:
-                if upload_file.received_bytes == upload_file.declared_size:
+                # The counter alone is not proof: the staged file must still
+                # be there with exactly that many bytes.
+                staged = await _run_blocking(
+                    upload_staging.staged_size, session_id, upload_file.id
+                )
+                if (
+                    upload_file.received_bytes == upload_file.declared_size
+                    and staged == upload_file.declared_size
+                ):
                     verified_files += 1
                     await self.file_repo.update_status(
                         upload_file.id, UploadFileStatus.UPLOADED
                     )
                 else:
+                    if staged != upload_file.received_bytes:
+                        logger.warning(
+                            "staged_upload_bytes_lost session_id=%s file_id=%s "
+                            "received_bytes=%s staged_bytes=%s",
+                            session_id,
+                            upload_file.id,
+                            upload_file.received_bytes,
+                            staged,
+                        )
+                        await _run_blocking(
+                            upload_staging.truncate_to, session_id, upload_file.id, 0
+                        )
+                        await self.file_repo.reset_transfer(upload_file.id)
                     missing_files += 1
                     missing_file_ids.append(upload_file.id)
                 continue

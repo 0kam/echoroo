@@ -37,6 +37,25 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
 
     model = UploadSession
 
+    async def get_for_update(self, session_id: UUID) -> UploadSession | None:
+        """Load one session while holding its row lock (fresh values).
+
+        Chunk appends, completion and cancellation all take this lock, so a
+        lifecycle transition and a chunk write can never interleave.
+        """
+        result = await self.db.execute(
+            select(UploadSession)
+            .where(UploadSession.id == session_id)
+            .options(
+                noload(UploadSession.dataset),
+                noload(UploadSession.created_by),
+                noload(UploadSession.files),
+            )
+            .with_for_update(of=UploadSession)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
     async def lock_dataset_for_session_change(self, dataset_id: UUID) -> None:
         """Serialise session creation per dataset for the rest of the transaction.
 
@@ -364,11 +383,15 @@ class UploadFileRepository(BaseRepository[UploadFile]):
         """Load one upload file while holding its database row lock."""
         # ``recording`` is lazy="joined" (an outer join); PostgreSQL refuses
         # FOR UPDATE on the nullable side, so lock only the upload_files row.
+        # populate_existing: the session row's ``files`` may already sit in the
+        # identity map from an earlier query in this request; the values read
+        # under the lock must win over that stale copy.
         result = await self.db.execute(
             select(UploadFile)
             .where(UploadFile.id == file_id)
             .options(noload(UploadFile.recording))
             .with_for_update(of=UploadFile)
+            .execution_options(populate_existing=True)
         )
         return result.scalar_one_or_none()
 
@@ -401,6 +424,7 @@ class UploadFileRepository(BaseRepository[UploadFile]):
             .values(
                 received_bytes=0,
                 chunk_digests=[],
+                status=UploadFileStatus.PENDING,
                 updated_at=datetime.now(UTC),
             )
         )

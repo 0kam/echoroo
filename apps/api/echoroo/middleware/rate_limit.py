@@ -141,8 +141,23 @@ def upload_session_complete_rate_limiter() -> Any:
     )
 
 
+async def _chunk_bucket_identifier(request: Any) -> str:
+    """One bucket per authenticated user for every chunk route.
+
+    The default identifier mixes the client IP (spoofable via
+    ``X-Forwarded-For``) with the concrete path, which would give every file
+    its own budget. The principal is set by the auth middleware; anonymous
+    callers are rejected there before this runs, but fall back to the IP.
+    """
+    principal = getattr(request.state, "principal", None)
+    user_id = getattr(principal, "user_id", None) if principal is not None else None
+    if user_id is None:
+        return f"upload-chunk:anon:{request.client.host if request.client else 'unknown'}"
+    return f"upload-chunk:user:{user_id}"
+
+
 def upload_chunk_rate_limiter() -> Any:
-    """Rate limiter for upload chunk requests.
+    """Rate limiter for upload chunk requests (per user, all chunk routes).
 
     Returns:
         Rate limiter dependency (600 attempts per minute)
@@ -150,4 +165,5 @@ def upload_chunk_rate_limiter() -> Any:
     return RateLimiterDependency(
         times=settings.RATE_LIMIT_UPLOAD_CHUNK_ATTEMPTS,
         seconds=settings.RATE_LIMIT_UPLOAD_CHUNK_WINDOW_SECONDS,
+        identifier=_chunk_bucket_identifier,
     )

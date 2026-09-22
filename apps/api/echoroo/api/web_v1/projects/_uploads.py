@@ -234,12 +234,20 @@ async def put_upload_chunk(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail="Chunk exceeds maximum size",
                 )
-        data = await request.body()
-        if len(data) > settings.UPLOAD_CHUNK_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="Chunk exceeds maximum size",
-            )
+        # Read the body incrementally: a request without Content-Length (or
+        # chunked) must be refused as soon as it exceeds the cap, never buffered
+        # whole first.
+        chunks: list[bytes] = []
+        total = 0
+        async for piece in request.stream():
+            total += len(piece)
+            if total > settings.UPLOAD_CHUNK_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="Chunk exceeds maximum size",
+                )
+            chunks.append(piece)
+        data = b"".join(chunks)
         result = await service.append_chunk(
             user_id=current_user.id,
             project_id=project_id,

@@ -138,11 +138,17 @@ class ChunkAcceptedResponse(BaseModel):
     complete: bool = Field(..., description="True once received_bytes == declared_size")
 
 
-class ChunkOffsetConflict(BaseModel):
-    """Body of the 409 returned when the chunk does not start at received_bytes."""
+class ChunkOffsetDetail(BaseModel):
+    """Payload of the 409 returned when a chunk cannot be appended."""
 
     detail: str
-    received_bytes: int
+    received_bytes: int = Field(..., description="Offset the next chunk must start at")
+
+
+class ChunkOffsetConflict(BaseModel):
+    """Wire envelope of that 409 (FastAPI wraps HTTPException detail)."""
+
+    detail: ChunkOffsetDetail
 
 
 class ActiveUploadSessionResponse(BaseModel):
