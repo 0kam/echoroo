@@ -500,7 +500,13 @@ class UploadService:
         # 2. Check for existing active session (serialised per dataset)
         await self.session_repo.lock_dataset_for_session_change(dataset_id)
         active_session = await self.session_repo.get_active_by_dataset(dataset_id)
+        superseded_id: UUID | None = None
         if active_session is not None:
+            # Re-read under the session row lock: a chunk append, completion or
+            # a worker may have moved it since the unlocked read above.
+            locked_active = await self.session_repo.get_for_update(active_session.id)
+            if locked_active is not None:
+                active_session = locked_active
             processing_statuses = (
                 UploadSessionStatus.VALIDATING,
                 UploadSessionStatus.VALIDATED,
@@ -516,13 +522,21 @@ class UploadService:
                         detail="Another user has an unfinished upload for this dataset",
                     )
                 # Not-yet-processing session (user retried after a failure) —
-                # always safe for the same user to supersede.
-                await self.session_repo.update_status(
+                # the same user may supersede it. Guarded by the status read
+                # under the lock; its staging is deleted only after the
+                # replacement is committed (see the end of this method).
+                superseded = await self.session_repo.update_status(
                     active_session.id,
                     UploadSessionStatus.FAILED,
                     error="Superseded by new upload session",
+                    expected_status=active_session.status,
                 )
-                await _run_blocking(upload_staging.remove_session, active_session.id)
+                if not superseded:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An upload session for this dataset changed state; retry",
+                    )
+                superseded_id = active_session.id
             elif active_session.status in processing_statuses:
                 # Session claims to be actively processing
                 # (VALIDATING/VALIDATED/IMPORTING). A live worker bumps
@@ -646,6 +660,12 @@ class UploadService:
         # Persist file records
         await self.file_repo.create_many(upload_file_records)
 
+        if superseded_id is not None:
+            # Everything above is now valid; make it durable, then drop the
+            # superseded session's bytes. A failure before this point leaves
+            # the old session (and its staging) intact.
+            await self.session_repo.db.commit()
+            await _run_blocking(upload_staging.remove_session, superseded_id)
         return session, presigned_responses
 
     async def _load_owned_session(
@@ -734,9 +754,18 @@ class UploadService:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="restart requires offset=0",
                 )
-            await _run_blocking(upload_staging.truncate_to, session_id, file_id, 0)
-            await self.file_repo.reset_transfer(file_id)
-            received = 0
+            if received > 0:
+                # Make the reset durable BEFORE any replacement byte is
+                # written: with equal-length content a rolled-back reset would
+                # leave the old digests next to new bytes, invisible to the
+                # size-based reconciliation. The commit releases the locks, so
+                # take them (and reconcile) again.
+                await _run_blocking(upload_staging.truncate_to, session_id, file_id, 0)
+                await self.file_repo.reset_transfer(file_id)
+                await self.session_repo.db.commit()
+                _session, upload_file, received, _ = await self._lock_and_reconcile(
+                    session_id, file_id
+                )
 
         if received >= upload_file.declared_size:
             raise HTTPException(
