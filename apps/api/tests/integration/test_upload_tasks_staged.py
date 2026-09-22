@@ -30,6 +30,7 @@ from echoroo.models.enums import DatasetStatus, UploadFileStatus, UploadSessionS
 from echoroo.models.recording import Recording
 from echoroo.models.site import Site
 from echoroo.models.upload import UploadFile, UploadSession
+from echoroo.repositories.upload import UploadSessionRepository
 from echoroo.workers import upload_tasks
 from tests.conftest import TEST_DATABASE_URL
 
@@ -355,6 +356,21 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
     assert file_row[6] is not None
     assert session_result.scalar_one() == UploadSessionStatus.IMPORTED
     assert not upload_staging.session_dir(session_id).exists()
+    # Deterministic destination: the recording id is the upload file id, so a
+    # republish after a crash would overwrite the same key.
+    assert upload_call["Key"] == f"recordings/{staged_dataset.project_id}/{staged_dataset.id}/{file_id}.wav"
+
+    # Duplicate deliveries after completion are harmless: the terminal state,
+    # the dataset and the published object are left alone.
+    await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
+    await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
+    session_result = await db_session.execute(
+        select(UploadSession.status, UploadSession.error).where(UploadSession.id == session_id)
+    )
+    status_after, error_after = session_result.one()
+    assert status_after == UploadSessionStatus.IMPORTED
+    assert error_after is None
+    assert len(staged_worker_env.upload_calls) == 1
 
 
 async def test_import_refuses_tampered_clean_file(
@@ -468,3 +484,49 @@ async def test_cleanup_removes_staging_of_terminal_and_unknown_sessions(
     assert not upload_staging.session_dir(session_ids[UploadSessionStatus.FAILED]).exists()
     assert not upload_staging.session_dir(unknown_id).exists()
     assert upload_staging.session_dir(session_ids[UploadSessionStatus.ISSUED]).exists()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_does_not_reap_a_session_that_came_back_to_life(
+    db_session: AsyncSession,
+    test_project: Project,
+    staged_dataset: Dataset,
+    staged_worker_env: _FakeS3,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale candidate whose heartbeat moved after selection is left alone."""
+    raw = _build_wav_with_fake_gps_chunk()
+    session_id, _file_id = await _create_staged_upload(
+        db_session, staged_dataset, test_project.owner_id, raw
+    )
+    stale_at = datetime.now(UTC) - timedelta(hours=2)
+    await db_session.execute(
+        update(UploadSession)
+        .where(UploadSession.id == session_id)
+        .values(status=UploadSessionStatus.VALIDATING, updated_at=stale_at)
+    )
+    await db_session.commit()
+
+    real_get_stale = UploadSessionRepository.get_stale_sessions
+
+    async def revived_between_select_and_claim(self: Any, *args: Any, **kwargs: Any) -> Any:
+        candidates = await real_get_stale(self, *args, **kwargs)
+        # Simulate the worker heartbeating right after the reaper picked it.
+        await db_session.execute(
+            update(UploadSession)
+            .where(UploadSession.id == session_id)
+            .values(updated_at=datetime.now(UTC))
+        )
+        await db_session.commit()
+        return candidates
+
+    monkeypatch.setattr(UploadSessionRepository, "get_stale_sessions", revived_between_select_and_claim)
+
+    await asyncio.to_thread(upload_tasks.cleanup_orphan_uploads.apply)
+
+    result = await db_session.execute(
+        select(UploadSession.status).where(UploadSession.id == session_id)
+    )
+    assert result.scalar_one() == UploadSessionStatus.VALIDATING
+    assert upload_staging.session_dir(session_id).exists()
+
