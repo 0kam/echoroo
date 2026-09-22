@@ -754,17 +754,25 @@ class UploadService:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="restart requires offset=0",
                 )
-            if received > 0:
-                # Make the reset durable BEFORE any replacement byte is
-                # written: with equal-length content a rolled-back reset would
-                # leave the old digests next to new bytes, invisible to the
-                # size-based reconciliation. The commit releases the locks, so
-                # take them (and reconcile) again.
+            # Make the reset durable BEFORE any replacement byte is written:
+            # with equal-length content a rolled-back reset would leave the old
+            # digests next to new bytes, invisible to the size-based
+            # reconciliation. The commit releases the locks, so take them (and
+            # reconcile) again — and repeat if a queued request for the old
+            # content slipped in between and re-grew the file.
+            for _attempt in range(3):
+                if received == 0:
+                    break
                 await _run_blocking(upload_staging.truncate_to, session_id, file_id, 0)
                 await self.file_repo.reset_transfer(file_id)
                 await self.session_repo.db.commit()
                 _session, upload_file, received, _ = await self._lock_and_reconcile(
                     session_id, file_id
+                )
+            if received != 0:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Restart keeps being overtaken by other requests for this file; retry",
                 )
 
         if received >= upload_file.declared_size:
