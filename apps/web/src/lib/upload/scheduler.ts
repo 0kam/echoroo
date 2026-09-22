@@ -20,7 +20,7 @@ export interface FileUiState {
 
 export interface SchedulerCallbacks {
   onFileProgress(fileId: string, sentBytes: number): void;
-  onFileAcknowledged(fileId: string, received: number): void;
+  onFileAcknowledged(fileId: string, received: number, via: 'ok' | 'offset'): void;
   onFileDone(fileId: string): void;
   onFileFailed(fileId: string, message: string): void;
   onFileRetrying(fileId: string, attempt: number, maxAttempts: number): void;
@@ -189,7 +189,7 @@ export class UploadScheduler {
 
         if (result.kind === 'ok') {
           item.offset = result.received;
-          this.cb.onFileAcknowledged(plan.fileId, result.received);
+          this.cb.onFileAcknowledged(plan.fileId, result.received, 'ok');
           this.reportProgress(item, item.offset);
           if (result.complete || item.offset >= plan.declaredSize) {
             this.markDone(item);
@@ -200,7 +200,7 @@ export class UploadScheduler {
 
         if (result.kind === 'offset') {
           item.offset = result.received;
-          this.cb.onFileAcknowledged(plan.fileId, result.received);
+          this.cb.onFileAcknowledged(plan.fileId, result.received, 'offset');
           this.reportProgress(item, item.offset);
           break;
         }

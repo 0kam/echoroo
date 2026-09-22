@@ -1912,7 +1912,7 @@
   "file_upload_paused_desc": "送信済みの分は保存されています。接続が戻ると、続きから自動で再開します。",
   "file_upload_retry_now": "今すぐ再試行",
   "file_upload_partial_title": "{failed} 件を送信できませんでした",
-  "file_upload_partial_desc": "ほかの {sent} 件は送信済みです。",
+  "file_upload_partial_desc": "ほかの {sent} 件は送信済みです。{skipped} 件はスキップされます。",
   "file_upload_retry_failed": "{count} 件を再試行",
   "file_upload_import_without_failed": "失敗した {count} 件を除いて取り込む",
   "file_upload_reason_incomplete": "送信が完了していません",

@@ -15,6 +15,7 @@ export interface ResumePlan {
   matched: PlannedFile[];
   needsRestart: string[];
   unmatched: UploadFileStatusResponse[];
+  alreadyComplete: UploadFileStatusResponse[];
   extra: File[];
 }
 
@@ -26,6 +27,7 @@ export async function planResume(
   const matched: PlannedFile[] = [];
   const needsRestart: string[] = [];
   const unmatched: UploadFileStatusResponse[] = [];
+  const alreadyComplete: UploadFileStatusResponse[] = [];
   const usedLocalIndexes = new Set<number>();
 
   for (const serverFile of session.files) {
@@ -37,7 +39,11 @@ export async function planResume(
     );
 
     if (localIndex === -1) {
-      unmatched.push(serverFile);
+      if (serverFile.received_bytes === serverFile.declared_size) {
+        alreadyComplete.push(serverFile);
+      } else {
+        unmatched.push(serverFile);
+      }
       continue;
     }
 
@@ -77,5 +83,5 @@ export async function planResume(
   }
 
   const extra = files.filter((_file, index) => !usedLocalIndexes.has(index));
-  return { matched, needsRestart, unmatched, extra };
+  return { matched, needsRestart, unmatched, alreadyComplete, extra };
 }

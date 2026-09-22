@@ -73,7 +73,24 @@ describe('planResume', () => {
     const plan = await planResume(current, [local], { chunkSize: 2, hash: vi.fn() });
     expect(plan.matched).toEqual([]);
     expect(plan.unmatched).toHaveLength(1);
+    expect(plan.alreadyComplete).toEqual([]);
     expect(plan.extra).toEqual([local]);
+  });
+
+  it('separates completed unmatched server files from files still needing selection', async () => {
+    const current = session([
+      {
+        original_filename: 'complete-server-only.wav',
+        received_bytes: 4,
+      },
+      {
+        original_filename: 'incomplete-server-only.wav',
+        received_bytes: 2,
+      },
+    ]);
+    const plan = await planResume(current, [], { chunkSize: 2, hash: vi.fn() });
+    expect(plan.alreadyComplete.map((file) => file.original_filename)).toEqual(['complete-server-only.wav']);
+    expect(plan.unmatched.map((file) => file.original_filename)).toEqual(['incomplete-server-only.wav']);
   });
 
   it('restarts when hashing is unavailable', async () => {

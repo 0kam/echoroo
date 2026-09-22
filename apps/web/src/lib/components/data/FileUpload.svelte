@@ -91,19 +91,24 @@
   let lastReceived = $state<Record<string, number>>({});
   let ackReceived = $state<Record<string, number>>({});
   let resumeSession = $state<UploadSessionStatusResponse | null>(null);
+  let latestActiveSession = $state<UploadSessionStatusResponse | null>(null);
   let resumePlan = $state<ResumePlan | null>(null);
   let resumeUnmatched = $state<UploadSessionStatusResponse['files']>([]);
   let resumeExtra = $state<File[]>([]);
   let restartFileIds = new Set<string>();
-  let currentScheduler: UploadScheduler | null = null;
+  let activeScheduler: UploadScheduler | null = null;
   let resumeGeneration = 0;
+  let runGeneration = 0;
   const onlineWaiters = new Set<() => void>();
 
   const totalBytes = $derived(selectedFiles.reduce((sum, file) => sum + file.size, 0));
   const isPolling = $derived(step === 'polling');
   const canImportWithoutFailed = $derived(
     uploadPlans.some((plan) => ackReceived[plan.fileId] === plan.declaredSize) ||
-      (resumeSession?.files.some((file) => file.received_bytes === file.declared_size) ?? false),
+      (latestActiveSession?.files.some((file) =>
+        !uploadPlans.some((plan) => plan.fileId === file.file_id) &&
+        file.received_bytes === file.declared_size,
+      ) ?? false),
   );
 
   const statusQuery = $derived(
@@ -187,8 +192,10 @@
 
   $effect(() => {
     return () => {
-      currentScheduler?.abort();
+      activeScheduler?.abort();
+      activeScheduler = null;
       resumeGeneration += 1;
+      runGeneration += 1;
     };
   });
 
@@ -235,10 +242,12 @@
   async function loadActiveSession() {
     try {
       const active = await fetchActiveUploadSession(projectId, datasetId);
+      latestActiveSession = active.session;
       if (active.session?.status === 'issued') {
         resumeSession = active.session;
         step = 'resume';
       } else if (active.session) {
+        resumeSession = null;
         // Already past the transfer (uploaded / validating / validated /
         // importing): pick the session up where the previous page left it.
         // The polling effect starts the import once it is validated.
@@ -257,8 +266,8 @@
   async function chooseResumeFiles(incoming: File[]) {
     const generation = ++resumeGeneration;
     if (!resumeSession) return;
-    currentScheduler?.abort();
-    currentScheduler = null;
+    activeScheduler?.abort();
+    activeScheduler = null;
     step = 'verifying';
     const { valid, errors } = validateFiles(incoming);
     resumeError = errors.length > 0 ? errors.join('\n') : null;
@@ -272,7 +281,7 @@
       resumeUnmatched = planned.unmatched;
       resumeExtra = planned.extra;
       selectedFiles = planned.matched.map((item) => item.file);
-      restartFileIds = new Set(planned.needsRestart);
+      restartFileIds = new Set([...restartFileIds, ...planned.needsRestart]);
       sessionId = resumeSession.session_id;
       if (planned.extra.length > 0) {
         resumeError = planned.extra.map((file) => m.file_upload_resume_extra({ name: file.name })).join('\n');
@@ -302,6 +311,7 @@
       }
       resumeGeneration += 1;
       resumeSession = active.session;
+      latestActiveSession = active.session;
       sessionId = active.session.session_id;
       selectedFiles = [];
       resumePlan = null;
@@ -316,6 +326,7 @@
 
   async function startUpload() {
     if (selectedFiles.length === 0) return;
+    const generation = ++runGeneration;
     errorMessage = null;
     step = 'creating';
     let session: CreateUploadSessionResponse;
@@ -324,14 +335,16 @@
         files: selectedFiles.map((file) => ({ filename: file.name, size: file.size })),
       });
     } catch (error) {
+      if (generation !== runGeneration) return;
       handleUploadError(error, true);
       return;
     }
+    if (generation !== runGeneration) return;
     try {
       sessionId = session.session_id;
       const plans = buildFreshPlans(session);
       restartFileIds = new Set();
-      await runUpload(plans);
+      await runUpload(plans, undefined, generation);
     } catch (error) {
       handleUploadError(error);
     }
@@ -352,9 +365,14 @@
     });
   }
 
-  async function runUpload(plans: PlannedFile[], generation?: number) {
+  async function runUpload(
+    plans: PlannedFile[],
+    resumeGenerationToken?: number,
+    runGenerationToken?: number,
+  ) {
     if (!sessionId || plans.length === 0) return;
-    if (generation !== undefined && generation !== resumeGeneration) return;
+    if (resumeGenerationToken !== undefined && resumeGenerationToken !== resumeGeneration) return;
+    if (runGenerationToken !== undefined && runGenerationToken !== runGeneration) return;
     const planById = new Map(uploadPlans.map((plan) => [plan.fileId, plan]));
     for (const plan of plans) planById.set(plan.fileId, plan);
     uploadPlans = [...planById.values()];
@@ -400,9 +418,9 @@
           fileStates = { ...fileStates, [fileId]: { ...state, sent: next, state: 'sending' } };
         }
       },
-      onFileAcknowledged: (fileId, received) => {
+      onFileAcknowledged: (fileId, received, via) => {
         ackReceived = { ...ackReceived, [fileId]: received };
-        if (received > 0 && restartFileIds.has(fileId)) {
+        if (via === 'ok' && received > 0 && restartFileIds.has(fileId)) {
           const next = new Set(restartFileIds);
           next.delete(fileId);
           restartFileIds = next;
@@ -451,12 +469,12 @@
       },
     });
 
-    currentScheduler = scheduler;
+    activeScheduler = scheduler;
     try {
       await scheduler.run();
     } catch (error) {
-      if (currentScheduler !== scheduler) return;
-      currentScheduler = null;
+      if (activeScheduler !== scheduler) return;
+      activeScheduler = null;
       if (error instanceof SchedulerAbortedError) {
         step = 'error';
         errorMessage = error.reason === 'session' ? m.file_upload_session_lost() : m.file_upload_auth_lost();
@@ -465,9 +483,10 @@
       }
       return;
     }
-    if (currentScheduler !== scheduler) return;
-    currentScheduler = null;
-    if (generation !== undefined && generation !== resumeGeneration) return;
+    if (activeScheduler !== scheduler) return;
+    activeScheduler = null;
+    if (resumeGenerationToken !== undefined && resumeGenerationToken !== resumeGeneration) return;
+    if (runGenerationToken !== undefined && runGenerationToken !== runGeneration) return;
     const failed = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
     if (failed.length > 0) {
       step = 'partial';
@@ -481,7 +500,9 @@
   }
 
   async function retryFailed() {
-    const plans = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed');
+    const plans = uploadPlans.filter(
+      (plan) => (ackReceived[plan.fileId] ?? 0) < plan.declaredSize,
+    );
     const retryPlans = plans.map((plan) => ({
       ...plan,
       startOffset: ackReceived[plan.fileId] ?? plan.startOffset,
@@ -499,21 +520,54 @@
     try {
       const response = await completeUploadSession(projectId, datasetId, sessionId, { skip_missing: skipMissing });
       if (response.status === 'issued') {
+        const active = await fetchActiveUploadSession(projectId, datasetId);
+        latestActiveSession = active.session;
+        if (active.session) resumeSession = active.session;
+        const nextAcknowledged = { ...ackReceived };
+        for (const file of active.session?.files ?? []) {
+          nextAcknowledged[file.file_id] = file.received_bytes;
+        }
+        for (const plan of uploadPlans) {
+          if (!Object.hasOwn(nextAcknowledged, plan.fileId)) nextAcknowledged[plan.fileId] = 0;
+        }
+        ackReceived = nextAcknowledged;
+        const nextReceived = { ...lastReceived };
         const nextStates = { ...fileStates };
         for (const plan of uploadPlans) {
-          const received = ackReceived[plan.fileId] ?? 0;
+          const received = nextAcknowledged[plan.fileId] ?? 0;
+          nextReceived[plan.fileId] = received;
           if (received < plan.declaredSize) {
-            const state = nextStates[plan.fileId];
-            if (state) {
-              nextStates[plan.fileId] = {
-                ...state,
-                state: 'failed',
-                message: m.file_upload_reason_incomplete(),
-              };
-            }
+            nextStates[plan.fileId] = {
+              ...(nextStates[plan.fileId] ?? {
+                sent: received,
+                total: plan.declaredSize,
+                state: 'queued' as const,
+              }),
+              sent: received,
+              total: plan.declaredSize,
+              state: 'failed',
+              message: m.file_upload_reason_incomplete(),
+            };
+          } else {
+            nextStates[plan.fileId] = {
+              ...(nextStates[plan.fileId] ?? {
+                sent: plan.declaredSize,
+                total: plan.declaredSize,
+                state: 'queued' as const,
+              }),
+              sent: plan.declaredSize,
+              total: plan.declaredSize,
+              state: 'done',
+              message: undefined,
+            };
           }
         }
+        lastReceived = nextReceived;
         fileStates = nextStates;
+        const planIds = new Set(uploadPlans.map((plan) => plan.fileId));
+        resumeUnmatched = (active.session?.files ?? []).filter(
+          (file) => !planIds.has(file.file_id) && file.received_bytes < file.declared_size,
+        );
         step = 'partial';
         return;
       }
@@ -612,8 +666,9 @@
 
   async function resetToSelect() {
     resumeGeneration += 1;
-    currentScheduler?.abort();
-    currentScheduler = null;
+    runGeneration += 1;
+    activeScheduler?.abort();
+    activeScheduler = null;
     const oldSessionId = sessionId ?? resumeSession?.session_id ?? null;
     const shouldCancel = oldSessionId !== null && !['completing', 'polling', 'done'].includes(step);
     if (shouldCancel && oldSessionId) {
@@ -628,6 +683,7 @@
     errorMessage = null;
     resumeError = null;
     resumeSession = null;
+    latestActiveSession = null;
     resumePlan = null;
     resumeUnmatched = [];
     resumeExtra = [];
@@ -786,10 +842,19 @@
   {#if step === 'partial'}
     {@const failedPlans = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'failed')}
     {@const sentCount = uploadPlans.filter((plan) => fileStates[plan.fileId]?.state === 'done').length}
+    {@const incompletePlanIds = uploadPlans
+      .filter((plan) => (ackReceived[plan.fileId] ?? 0) < plan.declaredSize)
+      .map((plan) => plan.fileId)}
+    {@const skippedFileIds = new Set([
+      ...failedPlans.map((plan) => plan.fileId),
+      ...resumeUnmatched.map((file) => file.file_id),
+      ...incompletePlanIds,
+    ])}
+    {@const skippedCount = skippedFileIds.size}
     <div class="space-y-4">
       <div class="rounded-md border border-warning/20 bg-warning-light p-4">
         <p class="font-medium text-warning">{m.file_upload_partial_title({ failed: failedPlans.length })}</p>
-        <p class="mt-1 text-sm text-warning">{m.file_upload_partial_desc({ sent: sentCount })}</p>
+        <p class="mt-1 text-sm text-warning">{m.file_upload_partial_desc({ sent: sentCount, skipped: skippedCount })}</p>
       </div>
       <ul class="divide-y divide-stone-100 rounded-md border border-stone-200">
         {#each failedPlans as plan (plan.fileId)}
@@ -817,7 +882,7 @@
           disabled={!canImportWithoutFailed}
           class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-card"
         >
-          {m.file_upload_import_without_failed({ count: failedPlans.length })}
+          {m.file_upload_import_without_failed({ count: skippedCount })}
         </button>
         {#if resumeUnmatched.length > 0}
           <button

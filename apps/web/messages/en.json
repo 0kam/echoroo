@@ -1912,7 +1912,7 @@
   "file_upload_paused_desc": "What was sent is saved. The upload resumes automatically when the connection is back.",
   "file_upload_retry_now": "Retry now",
   "file_upload_partial_title": "{failed} file(s) could not be sent",
-  "file_upload_partial_desc": "The other {sent} were sent.",
+  "file_upload_partial_desc": "The other {sent} were sent. {skipped} file(s) will be skipped.",
   "file_upload_retry_failed": "Retry {count} file(s)",
   "file_upload_import_without_failed": "Import without the {count} failed file(s)",
   "file_upload_reason_incomplete": "Not fully transferred",

@@ -96,7 +96,7 @@ describe('UploadScheduler', () => {
     expect(bodies).toEqual([1, 1]);
   });
 
-  it('acknowledges server offsets for accepted and offset-conflict results', async () => {
+  it('labels accepted acknowledgements separately from offset conflicts', async () => {
     const acknowledged = vi.fn();
     const transport = scriptedTransport({
       a: [
@@ -109,9 +109,9 @@ describe('UploadScheduler', () => {
 
     await new UploadScheduler([planned('a')], options(transport), cb).run();
 
-    expect(acknowledged).toHaveBeenNthCalledWith(1, 'a', 1);
-    expect(acknowledged).toHaveBeenNthCalledWith(2, 'a', 2);
-    expect(acknowledged).toHaveBeenNthCalledWith(3, 'a', 3);
+    expect(acknowledged).toHaveBeenNthCalledWith(1, 'a', 1, 'ok');
+    expect(acknowledged).toHaveBeenNthCalledWith(2, 'a', 2, 'offset');
+    expect(acknowledged).toHaveBeenNthCalledWith(3, 'a', 3, 'ok');
   });
 
   it('retries network errors and lets another file finish after one file gives up', async () => {
