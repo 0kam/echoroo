@@ -127,7 +127,16 @@ export interface PutChunkOptions {
   sha256: string | null;
   signal: AbortSignal;
   onProgress?: (loadedBytes: number) => void;
+  /**
+   * Abort the request when no upload progress and no response arrive for this
+   * long. A connection that silently dies (NAT timeout, Wi-Fi drop without a
+   * TCP reset, server paused) otherwise hangs the chunk forever; the scheduler
+   * treats the abort as a network error and retries. 0 disables it.
+   */
+  inactivityMs?: number;
 }
+
+export const DEFAULT_CHUNK_INACTIVITY_MS = 30_000;
 
 function parseResponseBody(responseText: string): unknown {
   if (!responseText) return null;
@@ -157,8 +166,21 @@ export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promis
     const xhr = new XMLHttpRequest();
     let settled = false;
 
+    const inactivityMs = opts.inactivityMs ?? DEFAULT_CHUNK_INACTIVITY_MS;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    const armWatchdog = () => {
+      if (inactivityMs <= 0) return;
+      if (watchdog !== null) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, inactivityMs);
+    };
+
     const cleanup = () => {
       opts.signal.removeEventListener('abort', onSignalAbort);
+      if (watchdog !== null) clearTimeout(watchdog);
     };
 
     const resolveOnce = (result: ChunkResult) => {
@@ -182,6 +204,7 @@ export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promis
     };
 
     xhr.upload.addEventListener('progress', (event: ProgressEvent) => {
+      armWatchdog();
       opts.onProgress?.(event.loaded);
     });
     xhr.addEventListener('load', () => {
@@ -228,6 +251,11 @@ export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promis
     });
     xhr.addEventListener('error', () => resolveOnce({ kind: 'network' }));
     xhr.addEventListener('abort', () => {
+      if (stalled) {
+        // Our own watchdog fired: the connection went silent. Retry.
+        resolveOnce({ kind: 'network' });
+        return;
+      }
       rejectOnce(new DOMException('Aborted', 'AbortError'));
     });
 
@@ -244,6 +272,7 @@ export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promis
       onSignalAbort();
       return;
     }
+    armWatchdog();
     xhr.send(body);
   });
 }

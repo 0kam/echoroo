@@ -214,6 +214,14 @@
       if (active.session?.status === 'issued') {
         resumeSession = active.session;
         step = 'resume';
+      } else if (active.session) {
+        // Already past the transfer (uploaded / validating / validated /
+        // importing): pick the session up where the previous page left it.
+        // The polling effect starts the import once it is validated.
+        sessionId = active.session.session_id;
+        pollStartedAt = Date.now();
+        nowMs = Date.now();
+        step = 'polling';
       }
     } catch (error) {
       step = 'select';
@@ -239,6 +247,8 @@
         resumeError = planned.extra.map((file) => m.file_upload_resume_extra({ name: file.name })).join('\n');
       }
       if (planned.matched.length > 0) {
+        // The scheduler sends into the session being resumed, not a new one.
+        sessionId = resumeSession.session_id;
         await runUpload(planned.matched);
       }
     } catch (error) {

@@ -37,8 +37,11 @@ class FakeXMLHttpRequest {
     this.url = url;
   }
 
+  static hang = false;
+
   send(body: Blob) {
     this.body = body;
+    if (FakeXMLHttpRequest.hang) return; // never answers: the watchdog must act
     const response = FakeXMLHttpRequest.next;
     this.status = response.status;
     this.responseText = response.responseText;
@@ -138,5 +141,27 @@ describe('putChunk', () => {
     });
     controller.abort();
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('treats a silent connection as a network error after the inactivity window', async () => {
+    vi.useFakeTimers();
+    try {
+      FakeXMLHttpRequest.hang = true;
+      const promise = putChunk('/chunk', new Blob(['abc']), {
+        sha256: null,
+        signal: new AbortController().signal,
+        inactivityMs: 1000,
+      });
+      // Progress keeps the watchdog alive …
+      await vi.advanceTimersByTimeAsync(800);
+      FakeXMLHttpRequest.last!.upload.emit('progress', { loaded: 1 } as ProgressEvent);
+      await vi.advanceTimersByTimeAsync(800);
+      // … silence after the last progress event does not.
+      await vi.advanceTimersByTimeAsync(300);
+      await expect(promise).resolves.toEqual({ kind: 'network' });
+    } finally {
+      FakeXMLHttpRequest.hang = false;
+      vi.useRealTimers();
+    }
   });
 });
