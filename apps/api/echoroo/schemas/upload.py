@@ -52,10 +52,15 @@ class CreateUploadSessionRequest(BaseModel):
 
 
 class CompleteUploadRequest(BaseModel):
-    """Optional request body for complete endpoint."""
+    """Options for completing a session."""
 
-    # Reserved for future partial completion flags
-    pass
+    skip_missing: bool = Field(
+        False,
+        description=(
+            "Mark files that were never fully transferred as skipped and proceed with the rest, "
+            "instead of leaving the session open."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +94,8 @@ class UploadFileStatusResponse(BaseModel):
     original_filename: str = Field(..., description="Original filename")
     status: str = Field(..., description="File status")
     file_size: int = Field(..., description="File size in bytes")
+    declared_size: int = Field(..., description="Size announced at session creation")
+    received_bytes: int = Field(0, description="Bytes staged so far")
     duration: float | None = Field(None, description="Audio duration in seconds")
     samplerate: int | None = Field(None, description="Sample rate in Hz")
     channels: int | None = Field(None, description="Number of audio channels")
@@ -120,3 +127,31 @@ class CompleteUploadResponse(BaseModel):
     verified_files: int = Field(..., description="Number of files confirmed present in S3")
     missing_files: int = Field(..., description="Number of files not yet found in S3")
     mismatched_files: int = Field(..., description="Number of files with size or checksum mismatch")
+    skipped_files: int = Field(0, description="Files marked skipped")
+
+
+class ChunkAcceptedResponse(BaseModel):
+    """Result of one accepted chunk."""
+
+    file_id: str
+    received_bytes: int = Field(..., description="Bytes staged after this chunk")
+    complete: bool = Field(..., description="True once received_bytes == declared_size")
+
+
+class ChunkOffsetDetail(BaseModel):
+    """Payload of the 409 returned when a chunk cannot be appended."""
+
+    detail: str
+    received_bytes: int = Field(..., description="Offset the next chunk must start at")
+
+
+class ChunkOffsetConflict(BaseModel):
+    """Wire envelope of that 409 (FastAPI wraps HTTPException detail)."""
+
+    detail: ChunkOffsetDetail
+
+
+class ActiveUploadSessionResponse(BaseModel):
+    """The caller's unfinished session, or ``session`` = None."""
+
+    session: UploadSessionStatusResponse | None

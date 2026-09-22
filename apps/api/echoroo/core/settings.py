@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_UPLOAD_SESSION_CREATE_WINDOW_SECONDS: int = 3600
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS: int = 20
     RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS: int = 3600
+    RATE_LIMIT_UPLOAD_CHUNK_ATTEMPTS: int = 600
+    RATE_LIMIT_UPLOAD_CHUNK_WINDOW_SECONDS: int = 60
+    UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER: int = Field(
+        default=6,
+        description="Chunk requests one user may have in flight at once (server admission limit).",
+    )
 
     # Trusted devices (spec/010).
     # spec/011 §FR-011-006 / Step 10 (carry-over #4) — the

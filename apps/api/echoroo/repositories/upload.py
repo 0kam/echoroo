@@ -6,8 +6,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
+from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
@@ -35,6 +36,25 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
     """Repository for UploadSession entity operations."""
 
     model = UploadSession
+
+    async def get_for_update(self, session_id: UUID) -> UploadSession | None:
+        """Load one session while holding its row lock (fresh values).
+
+        Chunk appends, completion and cancellation all take this lock, so a
+        lifecycle transition and a chunk write can never interleave.
+        """
+        result = await self.db.execute(
+            select(UploadSession)
+            .where(UploadSession.id == session_id)
+            .options(
+                noload(UploadSession.dataset),
+                noload(UploadSession.created_by),
+                noload(UploadSession.files),
+            )
+            .with_for_update(of=UploadSession)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
 
     async def lock_dataset_for_session_change(self, dataset_id: UUID) -> None:
         """Serialise session creation per dataset for the rest of the transaction.
@@ -104,6 +124,36 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_active_for_user(
+        self,
+        dataset_id: UUID,
+        user_id: UUID,
+    ) -> UploadSession | None:
+        """Find the caller's unfinished ISSUED session for a dataset."""
+        result = await self.db.execute(
+            select(UploadSession)
+            .where(
+                UploadSession.dataset_id == dataset_id,
+                UploadSession.created_by_id == user_id,
+                UploadSession.status == UploadSessionStatus.ISSUED,
+            )
+            .options(selectinload(UploadSession.files))
+            .order_by(UploadSession.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def touch(self, session_id: UUID) -> None:
+        """Extend inactivity retention after accepting a chunk."""
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=get_settings().UPLOAD_RETENTION_SECONDS)
+        await self.db.execute(
+            update(UploadSession)
+            .where(UploadSession.id == session_id)
+            .values(updated_at=now, expires_at=expires_at)
+        )
+        await self.db.flush()
 
     async def update_status(
         self,
@@ -322,12 +372,66 @@ class UploadFileRepository(BaseRepository[UploadFile]):
         Returns:
             List of UploadFile instances ordered by original_filename
         """
+        # Fresh values: completion re-reads this list after a commit released
+        # its locks, and the identity map must not hand back the stale copies.
         result = await self.db.execute(
             select(UploadFile)
             .where(UploadFile.session_id == session_id)
             .order_by(UploadFile.original_filename)
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
+
+    async def get_for_update(self, file_id: UUID) -> UploadFile | None:
+        """Load one upload file while holding its database row lock."""
+        # ``recording`` is lazy="joined" (an outer join); PostgreSQL refuses
+        # FOR UPDATE on the nullable side, so lock only the upload_files row.
+        # populate_existing: the session row's ``files`` may already sit in the
+        # identity map from an earlier query in this request; the values read
+        # under the lock must win over that stale copy.
+        result = await self.db.execute(
+            select(UploadFile)
+            .where(UploadFile.id == file_id)
+            .options(noload(UploadFile.recording))
+            .with_for_update(of=UploadFile)
+            .execution_options(populate_existing=True)
+        )
+        return result.scalar_one_or_none()
+
+    async def record_chunk(
+        self,
+        file_id: UUID,
+        *,
+        received_bytes: int,
+        digest: str,
+    ) -> None:
+        """Persist one staged chunk offset and append its digest atomically."""
+        await self.db.execute(
+            update(UploadFile)
+            .where(UploadFile.id == file_id)
+            .values(
+                received_bytes=received_bytes,
+                chunk_digests=UploadFile.chunk_digests.op("||")(
+                    func.jsonb_build_array(digest)
+                ),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.flush()
+
+    async def reset_transfer(self, file_id: UUID) -> None:
+        """Reset staged-transfer bookkeeping after staged bytes were lost."""
+        await self.db.execute(
+            update(UploadFile)
+            .where(UploadFile.id == file_id)
+            .values(
+                received_bytes=0,
+                chunk_digests=[],
+                status=UploadFileStatus.PENDING,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.flush()
 
     async def update_status(
         self,
