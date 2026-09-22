@@ -94,6 +94,7 @@ disappears, which frees local disk rather than consuming it.
 | # | Question | Decision (2026-09-20) |
 | --- | --- | --- |
 | 1 | How do audit log archives stay immutable without S3 Object Lock? | Tamper evidence from the existing KMS chain hash; immutability provided operationally by a read-only mount and periodic snapshots. No new infrastructure. |
+| 5 | Who may upload recordings? (2026-09-22) | **Admin and Owner only.** Overrides spec/006 §Role × Permission (Member ✅ UPLOAD): a Member's upload could never be imported (import needs `MANAGE_DATASET_ADMIN` + session ownership) and the screen starts the import automatically. Member loses `Permission.UPLOAD`; landed in 2d together with the new upload screen. |
 | 3 | After a reload, can an unfinished upload be resumed? (2026-09-21) | Yes. The dataset page offers to continue the caller's unfinished session; re-selecting the same files sends only what is missing. |
 | 4 | May an upload be imported without the files that failed to transfer? (2026-09-21) | Yes. "Import without the N failed files" is offered next to "Retry". |
 | 2 | How much local disk does the VM have? | ~200 GB typical, 500 GB maximum including the OS. See *Data placement* and the embeddings risk below. |
@@ -104,7 +105,6 @@ disappears, which frees local disk rather than consuming it.
 | --- | --- | --- | --- | --- |
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
-| 6 | A project Member may upload (`UPLOAD`) but importing requires `MANAGE_DATASET_ADMIN` **and** being the session's creator, and the upload screen starts the import automatically. So a Member's upload appears to fail at the last step, and an Admin cannot finish it for them. What is intended? | (a) uploading implies importing your own session; (b) Members upload, an Admin reviews and imports — then the UI must say so and ownership must not be required; (c) Members cannot upload at all | Decides the last screen of the upload flow and one permission row | slice 2d only (2a–2c do not depend on it) |
 | 5 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
 
 ## Risks
@@ -251,7 +251,7 @@ intermediate state runs):
 | 2a | Migration, models, enums, schemas, settings, staging utility | additive; nothing uses it yet |
 | 2b | Chunk / active / cancel routes, `complete(skip_missing)`, admission limits, tests against real middleware | new routes next to the old flow |
 | 2c | Workers and janitor accept staged files as well as `uploads/` objects; heartbeats; idempotent publish; every worker status transition conditional on the expected status (a validator finishing after its session was force-failed and replaced must stop, not resurrect it into the unique index) | old sessions keep working |
-| 2d | Browser scheduler, resume UI, i18n for the four upload components | flips the transport; old routes still exist |
+| 2d | Browser scheduler, resume UI, i18n for the four upload components; `Permission.UPLOAD` removed from Member (decision 5) with matrix tests, `can()` matrix and the upload entry point hidden for Members | flips the transport; old routes still exist |
 | 2e | Remove presign, `/s3-proxy`, CORS, `toRelativeUrl()`, the `uploads/` code paths; Playwright upload spec with a real worker in CI | nothing references them after 2d |
 
 - **Out of scope** — the storage backend itself.
