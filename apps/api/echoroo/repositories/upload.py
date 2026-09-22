@@ -372,10 +372,13 @@ class UploadFileRepository(BaseRepository[UploadFile]):
         Returns:
             List of UploadFile instances ordered by original_filename
         """
+        # Fresh values: completion re-reads this list after a commit released
+        # its locks, and the identity map must not hand back the stale copies.
         result = await self.db.execute(
             select(UploadFile)
             .where(UploadFile.session_id == session_id)
             .order_by(UploadFile.original_filename)
+            .execution_options(populate_existing=True)
         )
         return list(result.scalars().all())
 

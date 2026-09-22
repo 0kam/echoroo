@@ -720,7 +720,7 @@ class UploadService:
                 )
 
         # Session lock, file lock, reconciled offset — all held from here on.
-        _session, upload_file, received = await self._lock_and_reconcile(session_id, file_id)
+        _session, upload_file, received, _ = await self._lock_and_reconcile(session_id, file_id)
 
         if received >= upload_file.declared_size:
             raise HTTPException(
@@ -769,14 +769,17 @@ class UploadService:
 
     async def _lock_and_reconcile(
         self, session_id: UUID, file_id: UUID
-    ) -> tuple[UploadSession, UploadFile, int]:
+    ) -> tuple[UploadSession, UploadFile, int, bool]:
         """Take the session lock, then the file lock, and reconcile the staged file.
 
         A reconciliation that resets the transfer commits and thereby releases
         both locks, so the whole sequence repeats until reconciliation leaves
-        the row untouched. Returns the locked rows and the committed offset.
+        the row untouched. Returns the locked rows, the committed offset and
+        whether any reset (and therefore a lock release) happened on the way —
+        callers holding decisions from before must start over then.
         Lock order (session, then file) is the same in every caller.
         """
+        released = False
         while True:
             session = await self.session_repo.get_for_update(session_id)
             if session is None or session.status != UploadSessionStatus.ISSUED:
@@ -792,7 +795,8 @@ class UploadService:
                 )
             received, reset = await self._reconcile_staged_file(upload_file)
             if not reset:
-                return session, upload_file, received
+                return session, upload_file, received, released
+            released = True
 
     async def _reconcile_staged_file(self, upload_file: UploadFile) -> tuple[int, bool]:
         """Make the staged file match the committed ``received_bytes``.
@@ -965,49 +969,60 @@ class UploadService:
 
         # 3. Verify each file: staged files against the staging directory,
         # presigned files against S3.
-        files = await self.file_repo.get_by_session(session_id)
+        # A staged-file reset commits and releases every lock, which invalidates
+        # the decisions taken for earlier files (another request may have
+        # finished one meanwhile). Start the whole pass over, on fresh rows,
+        # in that case.
+        while True:
+            files = await self.file_repo.get_by_session(session_id)
+            verified_files = 0
+            missing_files = 0
+            mismatched_files = 0
+            missing_file_ids: list[UUID] = []
+            restart = False
 
-        verified_files = 0
-        missing_files = 0
-        mismatched_files = 0
-        missing_file_ids: list[UUID] = []
-
-        for upload_file in files:
-            if upload_file.received_bytes > 0:
-                # The counter alone is not proof. Same reconciliation as a chunk
-                # append: an uncommitted tail is cut off, a short file restarts
-                # the transfer (that reset commits and releases the locks, so
-                # re-take them; the session status is re-checked below).
-                _session, locked_file, received = await self._lock_and_reconcile(
-                    session_id, upload_file.id
-                )
-                if received == locked_file.declared_size:
-                    verified_files += 1
-                    await self.file_repo.update_status(
-                        upload_file.id, UploadFileStatus.UPLOADED
+            for upload_file in files:
+                if upload_file.received_bytes > 0:
+                    # The counter alone is not proof. Same reconciliation as a chunk
+                    # append: an uncommitted tail is cut off, a short file restarts
+                    # the transfer (that reset commits and releases the locks, so
+                    # re-take them; the session status is re-checked below).
+                    _session, locked_file, received, released = await self._lock_and_reconcile(
+                        session_id, upload_file.id
                     )
-                else:
+                    if released:
+                        restart = True
+                        break
+                    if received == locked_file.declared_size:
+                        verified_files += 1
+                        await self.file_repo.update_status(
+                            upload_file.id, UploadFileStatus.UPLOADED
+                        )
+                    else:
+                        missing_files += 1
+                        missing_file_ids.append(upload_file.id)
+                    continue
+
+                result = s3.verify_object_exists(
+                    object_key=upload_file.object_key,
+                    expected_size=upload_file.file_size,
+                )
+
+                if not result["exists"]:
                     missing_files += 1
                     missing_file_ids.append(upload_file.id)
-                continue
+                    # Leave file status as PENDING (not uploaded yet)
+                elif not result["size_match"]:
+                    mismatched_files += 1
+                    # Mark as uploaded but size mismatch will be caught during validation
+                    await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
+                    verified_files += 1
+                else:
+                    verified_files += 1
+                    await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
 
-            result = s3.verify_object_exists(
-                object_key=upload_file.object_key,
-                expected_size=upload_file.file_size,
-            )
-
-            if not result["exists"]:
-                missing_files += 1
-                missing_file_ids.append(upload_file.id)
-                # Leave file status as PENDING (not uploaded yet)
-            elif not result["size_match"]:
-                mismatched_files += 1
-                # Mark as uploaded but size mismatch will be caught during validation
-                await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
-                verified_files += 1
-            else:
-                verified_files += 1
-                await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
+            if not restart:
+                break
 
         skipped_files = 0
         if missing_files > 0 and skip_missing:
