@@ -186,7 +186,42 @@ async def get_active_upload_session(
 @router.put(
     "/{project_id}/datasets/{dataset_id}/upload-sessions/{session_id}/files/{file_id}/chunks",
     response_model=ChunkAcceptedResponse,
-    responses={409: {"model": ChunkOffsetConflict}},
+    responses={
+        409: {
+            "description": (
+                "Offset conflict (object detail with received_bytes) or lifecycle "
+                "conflict (string detail: session not accepting chunks)."
+            ),
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "oneOf": [
+                            ChunkOffsetConflict.model_json_schema(),
+                            {
+                                "type": "object",
+                                "properties": {"detail": {"type": "string"}},
+                                "required": ["detail"],
+                            },
+                        ]
+                    }
+                }
+            },
+        },
+        413: {"description": "Chunk larger than UPLOAD_CHUNK_SIZE or than the declared file size"},
+        422: {"description": "X-Chunk-SHA256 malformed or does not match the body"},
+        429: {"description": "Too many concurrent chunk requests for this user (Retry-After: 1)"},
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/octet-stream": {
+                    "schema": {"type": "string", "format": "binary"},
+                }
+            },
+            "description": "Raw chunk bytes; at most UPLOAD_CHUNK_SIZE.",
+        }
+    },
     summary="Append one chunk",
 )
 async def put_upload_chunk(

@@ -420,7 +420,15 @@ async def _run_blocking(fn: Any, *args: Any, **kwargs: Any) -> Any:
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
-        await asyncio.wait({task})
+        # Repeated cancellation (an AnyIO scope re-cancels) must not skip this
+        # wait either: keep waiting until the thread is done, then propagate.
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - the thread failed; we only wait
+                break
         raise
 
 
@@ -744,7 +752,8 @@ class UploadService:
                     status_code=status.HTTP_404_NOT_FOUND, detail="Upload file not found"
                 )
             upload_file = relocked
-            received = upload_file.received_bytes
+            # Another request may have written and rolled back in between.
+            received, _ = await self._reconcile_staged_file(upload_file)
 
         if received >= upload_file.declared_size:
             raise HTTPException(
@@ -971,33 +980,28 @@ class UploadService:
 
         for upload_file in files:
             if upload_file.received_bytes > 0:
-                # The counter alone is not proof: the staged file must still
-                # be there with exactly that many bytes.
-                staged = await _run_blocking(
-                    upload_staging.staged_size, session_id, upload_file.id
-                )
-                if (
-                    upload_file.received_bytes == upload_file.declared_size
-                    and staged == upload_file.declared_size
-                ):
+                # The counter alone is not proof. Same reconciliation as a chunk
+                # append: an uncommitted tail is cut off, a short file restarts
+                # the transfer (that reset commits and releases the locks, so
+                # re-take them; the session status is re-checked below).
+                locked_file = await self.file_repo.get_for_update(upload_file.id)
+                if locked_file is None:
+                    continue
+                received, reset = await self._reconcile_staged_file(locked_file)
+                if reset:
+                    relocked = await self.session_repo.get_for_update(session_id)
+                    if relocked is None or relocked.status != UploadSessionStatus.ISSUED:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail="Upload session is no longer 'issued'",
+                        )
+                    await self.file_repo.get_for_update(upload_file.id)
+                if received == locked_file.declared_size:
                     verified_files += 1
                     await self.file_repo.update_status(
                         upload_file.id, UploadFileStatus.UPLOADED
                     )
                 else:
-                    if staged != upload_file.received_bytes:
-                        logger.warning(
-                            "staged_upload_bytes_lost session_id=%s file_id=%s "
-                            "received_bytes=%s staged_bytes=%s",
-                            session_id,
-                            upload_file.id,
-                            upload_file.received_bytes,
-                            staged,
-                        )
-                        await _run_blocking(
-                            upload_staging.truncate_to, session_id, upload_file.id, 0
-                        )
-                        await self.file_repo.reset_transfer(upload_file.id)
                     missing_files += 1
                     missing_file_ids.append(upload_file.id)
                 continue
