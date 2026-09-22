@@ -120,9 +120,36 @@ async def _with_heartbeat(
             await asyncio.wait({work})
 
 
-def _strip_gps_from_file(path: Path) -> bytes:
-    """Return the GPS-stripped bytes of an audio file (whole file in memory, by design)."""
-    return strip_audio_gps_metadata(io.BytesIO(path.read_bytes())).read()
+def _sanitize_to_clean(source: Path, clean_path: Path) -> tuple[int, str]:
+    """Strip GPS from ``source`` and durably publish the result at ``clean_path``.
+
+    Whole file in memory by design. Temp file in the same directory, fsync,
+    atomic rename, directory fsync. Returns ``(size, sha256)`` of the clean
+    bytes. Blocking: run it under :func:`_with_heartbeat`.
+    """
+    sanitized = strip_audio_gps_metadata(io.BytesIO(source.read_bytes())).read()
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=clean_path.parent, prefix=f".{clean_path.stem}.", delete=False
+        ) as clean_file:
+            temp_path = Path(clean_file.name)
+            clean_file.write(sanitized)
+            clean_file.flush()
+            os.fsync(clean_file.fileno())
+        os.replace(temp_path, clean_path)
+        temp_path = None
+        # The rename is atomic but not durable until the directory entry is flushed.
+        dir_fd = os.open(clean_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temp_path is not None:
+            with contextlib.suppress(OSError):
+                temp_path.unlink()
+    return len(sanitized), hashlib.sha256(sanitized).hexdigest()
 
 
 def _staged_source(file: UploadFile) -> Path | None:
@@ -504,32 +531,14 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             continue
 
                         clean_path = _clean_path(file)
-                        temp_clean_path: Path | None = None
                         try:
-                            sanitized = await _with_heartbeat(
+                            clean_size, clean_sha = await _with_heartbeat(
                                 session_factory,
                                 upload_session.id,
-                                _strip_gps_from_file,
+                                _sanitize_to_clean,
                                 source,
+                                clean_path,
                             )
-                            with tempfile.NamedTemporaryFile(
-                                dir=clean_path.parent,
-                                prefix=f".{file.id}.clean.",
-                                delete=False,
-                            ) as clean_file:
-                                temp_clean_path = Path(clean_file.name)
-                                clean_file.write(sanitized)
-                                clean_file.flush()
-                                os.fsync(clean_file.fileno())
-                            os.replace(temp_clean_path, clean_path)
-                            temp_clean_path = None
-                            # The rename is atomic but not durable until the
-                            # directory entry is flushed.
-                            dir_fd = os.open(clean_path.parent, os.O_RDONLY | os.O_DIRECTORY)
-                            try:
-                                os.fsync(dir_fd)
-                            finally:
-                                os.close(dir_fd)
                         except Exception as exc:  # noqa: BLE001
                             logger.error(
                                 "GPS sanitize failed for %s: %s",
@@ -544,10 +553,6 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             await db.commit()
                             invalid_count += 1
                             continue
-                        finally:
-                            if temp_clean_path is not None:
-                                with contextlib.suppress(OSError):
-                                    temp_clean_path.unlink()
 
                         metadata = _extract_audio_metadata(staged_probe)
                         if metadata["duration"] is None or metadata["samplerate"] is None:
@@ -567,8 +572,8 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
                             samplerate=metadata["samplerate"],
                             channels=metadata["channels"],
                             bit_depth=metadata["bit_depth"],
-                            file_size=len(sanitized),
-                            checksum_sha256=hashlib.sha256(sanitized).hexdigest(),
+                            file_size=clean_size,
+                            checksum_sha256=clean_sha,
                         )
                         await db.commit()
                         valid_count += 1
@@ -860,6 +865,16 @@ async def _run_import(
                 # Recording rows, their UploadFile links and the progress tick
                 # commit together: a crash can never leave a Recording whose
                 # upload row still says VALID.
+                # Lock the session and confirm it is still ours: a force-fail
+                # or reaper claim between publish and here must leave no
+                # Recording behind (the reaper deletes unlinked objects).
+                owner = await session_repo.get_for_update(upload_session.id)
+                if owner is None or owner.status != UploadSessionStatus.IMPORTING:
+                    await db.rollback()
+                    raise UploadSessionStateError(
+                        f"Session {session_id} left IMPORTING during import",
+                        mark_failed=False,
+                    )
                 created = await recording_repo.create_many(pending_recordings)
                 for rec, file_id in zip(created, pending_file_ids, strict=False):
                     await file_repo.update_status(
@@ -1079,14 +1094,15 @@ async def _run_import(
             )
             await db.commit()
 
-            try:
-                upload_staging.remove_session(upload_session.id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to remove staging directory for imported session %s: %s",
-                    upload_session.id,
-                    exc,
-                )
+            if await _delete_unlinked_publications(db, upload_session.id, project_id, dataset_id):
+                try:
+                    upload_staging.remove_session(upload_session.id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to remove staging directory for imported session %s: %s",
+                        upload_session.id,
+                        exc,
+                    )
 
             logger.info(
                 "Import complete for session %s: %d imported, %d failed",
@@ -1107,6 +1123,31 @@ async def _run_import(
             }
     finally:
         await engine.dispose()
+
+
+async def _delete_unlinked_publications(
+    db: Any, session_id: UUID, project_id: UUID, dataset_id: UUID
+) -> bool:
+    """Delete staged files' deterministic destinations that never got a Recording.
+
+    A crash between ``upload_file_to_object`` and the batch commit, or a HEAD
+    size mismatch whose delete failed, leaves an object under
+    ``recordings/…/{file_id}`` with the file unlinked. Returns True only when
+    nothing is left; callers keep the staging directory otherwise so the next
+    sweep retries.
+    """
+    all_gone = True
+    for file in await UploadFileRepository(db).get_by_session(session_id):
+        if file.received_bytes <= 0 or file.recording_id is not None:
+            continue
+        file_ext = splitext(file.original_filename)[1].lower() or ""
+        key = _build_recording_s3_key(project_id, dataset_id, file.id, file_ext)
+        try:
+            if not delete_object(key):
+                all_gone = False
+        except Exception:  # noqa: BLE001
+            all_gone = False
+    return all_gone
 
 
 _STALE_STATUSES_FOR_REAPER = (
@@ -1173,31 +1214,17 @@ async def _run_cleanup() -> dict[str, Any]:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("S3 cleanup failed for session %s: %s", candidate_id, exc)
-                await _delete_unlinked_publications(candidate_id, project_id, dataset_id)
-                try:
-                    upload_staging.remove_session(candidate_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Staging cleanup failed for session %s: %s", candidate_id, exc)
+                if await _delete_unlinked_publications(db, candidate_id, project_id, dataset_id):
+                    try:
+                        upload_staging.remove_session(candidate_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Staging cleanup failed for session %s: %s", candidate_id, exc)
+                else:
+                    logger.warning(
+                        "Session %s: an unlinked object could not be deleted; staging kept for retry",
+                        candidate_id,
+                    )
                 return True
-
-            async def _delete_unlinked_publications(
-                candidate_id: UUID, project_id: UUID, dataset_id: UUID
-            ) -> None:
-                """Remove staged files' deterministic destinations that never got a Recording.
-
-                A crash between ``upload_file_to_object`` and the batch commit
-                leaves the object under ``recordings/…/{file_id}`` with the
-                file still VALID; the session is FAILED by then, so this is the
-                only place that can reclaim it.
-                """
-                file_repo = UploadFileRepository(db)
-                for file in await file_repo.get_by_session(candidate_id):
-                    if file.received_bytes <= 0 or file.recording_id is not None:
-                        continue
-                    file_ext = splitext(file.original_filename)[1].lower() or ""
-                    key = _build_recording_s3_key(project_id, dataset_id, file.id, file_ext)
-                    with contextlib.suppress(Exception):
-                        delete_object(key)
 
             now = datetime.now(UTC)
 
@@ -1248,15 +1275,17 @@ async def _run_cleanup() -> dict[str, Any]:
                     UploadSessionStatus.FAILED,
                     UploadSessionStatus.IMPORTED,
                 ):
-                    if staged_session is not None and staged_session.status == UploadSessionStatus.FAILED:
-                        # A session failed by someone other than this reaper
-                        # (cancel, admin force-fail, task failure) may also
-                        # have published an object it never linked.
-                        await _delete_unlinked_publications(
-                            staged_session_id,
-                            staged_session.dataset.project_id,
-                            staged_session.dataset.id,
-                        )
+                    # A session failed elsewhere (cancel, force-fail, task
+                    # failure) or imported with a rejected file may have
+                    # published an object it never linked. Keep the directory
+                    # until every such object is gone.
+                    if staged_session is not None and not await _delete_unlinked_publications(
+                        db,
+                        staged_session_id,
+                        staged_session.dataset.project_id,
+                        staged_session.dataset.id,
+                    ):
+                        continue
                     try:
                         upload_staging.remove_session(staged_session_id)
                         orphaned_dirs += 1
@@ -1282,74 +1311,65 @@ async def _run_cleanup() -> dict[str, Any]:
         await engine.dispose()
 
 
-_OWNED_PROCESSING_STATUSES = (
-    UploadSessionStatus.UPLOADED,
-    UploadSessionStatus.VALIDATING,
-    UploadSessionStatus.VALIDATED,
-    UploadSessionStatus.IMPORTING,
-)
+async def _mark_session_failed(
+    session_id: str, error: str, *, expected_status: UploadSessionStatus
+) -> bool:
+    """Mark an upload session FAILED only if it is still in ``expected_status``.
 
-
-async def _mark_session_failed(session_id: str, error: str) -> None:
-    """Mark an upload session as FAILED, unless it already reached a terminal state.
-
-    A redelivered task that finds the session IMPORTED, FAILED or cancelled must
-    not overwrite that outcome (or its error text) with its own complaint.
+    ``expected_status`` is the processing state this task owns (VALIDATING for
+    validation, IMPORTING for import). A session that meanwhile reached any
+    other state — VALIDATED by the original run, IMPORTED, FAILED, cancelled —
+    is left untouched, error text included. Returns whether the claim won.
     """
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             session_repo = UploadSessionRepository(db)
-            current = await session_repo.get_by_id(UUID(session_id))
-            if current is None or current.status not in _OWNED_PROCESSING_STATUSES:
-                logger.info(
-                    "Not marking session %s failed: status is %s",
-                    session_id,
-                    current.status.value if current is not None else "missing",
-                )
-                return
-            await session_repo.update_status(
+            claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
                 error=error,
-                expected_status=current.status,
+                expected_status=expected_status,
             )
+            if not claimed:
+                logger.info(
+                    "Not marking session %s failed: no longer in %s",
+                    session_id,
+                    expected_status.value,
+                )
+                await db.rollback()
+                return False
             await db.commit()
+            return True
     finally:
         await engine.dispose()
 
 
 async def _mark_import_failed(session_id: str, error: str) -> None:
-    """Mark an upload session and its dataset as FAILED after an import error."""
+    """Fail an IMPORTING session and its dataset together; no-op otherwise."""
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             session_repo = UploadSessionRepository(db)
             session = await session_repo.get_by_id(UUID(session_id))
-            if session is None or session.status not in _OWNED_PROCESSING_STATUSES:
-                logger.info(
-                    "Not marking import of session %s failed: status is %s",
-                    session_id,
-                    session.status.value if session is not None else "missing",
-                )
+            if session is None:
                 return
             claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
                 error=error,
-                expected_status=session.status,
+                expected_status=UploadSessionStatus.IMPORTING,
             )
             if not claimed:
-                logger.info("Session %s changed state before it could be failed; leaving it", session_id)
+                logger.info("Not marking import of session %s failed: not IMPORTING", session_id)
                 await db.rollback()
                 return
-            if session is not None:
-                dataset_repo = DatasetRepository(db)
-                await dataset_repo.update_import_status(
-                    session.dataset_id,
-                    DatasetStatus.FAILED,
-                    error=error,
-                )
+            dataset_repo = DatasetRepository(db)
+            await dataset_repo.update_import_status(
+                session.dataset_id,
+                DatasetStatus.FAILED,
+                error=error,
+            )
             await db.commit()
     finally:
         await engine.dispose()
@@ -1394,12 +1414,20 @@ def validate_upload_session(self: Any, session_id: str) -> dict[str, Any]:
         logger.warning("Validation aborted for session %s: %s", session_id, exc)
         if exc.mark_failed:
             with contextlib.suppress(Exception):
-                asyncio.run(_mark_session_failed(session_id, str(exc)))
+                asyncio.run(
+                    _mark_session_failed(
+                        session_id, str(exc), expected_status=UploadSessionStatus.VALIDATING
+                    )
+                )
         raise Ignore() from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Validation failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
-            asyncio.run(_mark_session_failed(session_id, str(exc)))
+            asyncio.run(
+                _mark_session_failed(
+                    session_id, str(exc), expected_status=UploadSessionStatus.VALIDATING
+                )
+            )
         raise self.retry(exc=exc, countdown=30) from exc
 
 
