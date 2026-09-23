@@ -119,7 +119,7 @@ router.include_router(_tags.router)
 # already live in ``_media`` so this module only owns the write surface.
 router.include_router(_clips.router)
 
-# Upload-session lifecycle (spec/009 PR 3a) — presigned URL issue +
+# Upload-session lifecycle (spec/009 PR 3a) — session issue +
 # completion + status polling under ``/{project_id}/datasets/{dataset_id}/upload-sessions``.
 router.include_router(_uploads.router)
 

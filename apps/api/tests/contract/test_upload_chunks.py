@@ -99,11 +99,6 @@ async def _create_session(
 def _mock_storage(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep contract tests independent of S3."""
     monkeypatch.setattr(s3, "ensure_bucket_exists", lambda: None)
-    monkeypatch.setattr(
-        s3,
-        "generate_presigned_upload_url",
-        lambda **_: "https://example.invalid/presigned",
-    )
 
 
 def _stub_validation_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -528,7 +523,6 @@ async def test_complete_skip_missing_and_preserves_missing_retry(
     """Partial completion skips untouched files, while the default stays resumable."""
     _mock_storage(monkeypatch)
     _stub_validation_dispatch(monkeypatch)
-    monkeypatch.setattr(s3, "verify_object_exists", lambda **_: {"exists": False})
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
 

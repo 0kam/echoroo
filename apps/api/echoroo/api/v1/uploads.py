@@ -20,9 +20,8 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 
-from echoroo.core import s3
 from echoroo.core.actions import UPLOAD_CREATE_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
@@ -164,7 +163,7 @@ async def create_upload_session(
     db: DbSession,
     _rate_limit: None = Depends(upload_session_create_rate_limiter()),
 ) -> CreateUploadSessionResponse:
-    """Create an upload session with presigned URLs.
+    """Create an upload session.
 
     Guarded by :data:`UPLOAD_CREATE_ACTION` (:data:`Permission.UPLOAD`).
 
@@ -178,7 +177,7 @@ async def create_upload_session(
         db: Database session
 
     Returns:
-        Session info with per-file presigned PUT URLs
+        Session info with per-file chunk-upload identifiers
 
     Raises:
         401: Not authenticated
@@ -199,16 +198,7 @@ async def create_upload_session(
     # boolean on `CreateUploadSessionRequest` and reject the session if it is not
     # set. The schema and service layer changes are tracked in T128.
 
-    # Ensure S3 bucket exists before generating presigned URLs
-    try:
-        s3.ensure_bucket_exists()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Storage service unavailable",
-        ) from exc
-
-    session, presigned_files = await service.create_session(
+    session, issued_files = await service.create_session(
         user_id=current_user.id,
         project_id=project_id,
         dataset_id=dataset_id,
@@ -222,7 +212,7 @@ async def create_upload_session(
         expires_at=session.expires_at,
         total_files=session.total_files,
         total_bytes=session.total_bytes,
-        files=presigned_files,
+        files=issued_files,
     )
 
 
@@ -237,7 +227,7 @@ async def complete_upload_session(
     _rate_limit: None = Depends(upload_session_complete_rate_limiter()),
     request_body: CompleteUploadRequest | None = None,
 ) -> CompleteUploadResponse:
-    """Complete an upload session after files have been uploaded to S3.
+    """Complete an upload session after files have been staged through the API.
 
     Guarded by :data:`UPLOAD_CREATE_ACTION` (:data:`Permission.UPLOAD`).
 
@@ -251,7 +241,7 @@ async def complete_upload_session(
         db: Database session
 
     Returns:
-        Verification summary with file counts
+        Staging summary with file counts
 
     Raises:
         401: Not authenticated
@@ -300,7 +290,6 @@ async def complete_upload_session(
         status=result["status"],
         verified_files=result["verified_files"],
         missing_files=result["missing_files"],
-        mismatched_files=result["mismatched_files"],
         skipped_files=result["skipped_files"],
     )
 

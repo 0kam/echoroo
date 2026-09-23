@@ -79,7 +79,7 @@ async function checkSetupStatus(): Promise<{
  *
  * The paraglideMiddleware must wrap the entire auth logic so that
  * AsyncLocalStorage context (locale) is available when localizeHref() is called.
- * Excludes API, S3 proxy, and favicon routes from i18n processing.
+ * Excludes API and favicon routes from i18n processing.
  */
 export const handle: Handle = ({ event, resolve }) => {
   const { pathname } = event.url;

@@ -1,9 +1,9 @@
 """Smoke coverage for spec/009 PR 3a upload-session BFF adapters.
 
 PR 3a moves the upload-session orchestration endpoints from ``/api/v1``
-to ``/web-api/v1``. The legacy handlers continue to own presigned URL
-issuance, S3 bucket verification, Celery task dispatch, and per-file
-status aggregation; the BFF layer only adds the cookie + CSRF gating
+to ``/web-api/v1``. The legacy handlers continue to own upload-session
+orchestration, Celery task dispatch, and per-file status aggregation; the BFF
+layer only adds the cookie + CSRF gating
 and re-uses :func:`gate_action` for the permission decision.
 
 Both mutating endpoints attach a Redis-backed
@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -58,7 +58,6 @@ def _fake_complete_response(*, session_id: str) -> CompleteUploadResponse:
         status="uploaded",
         verified_files=1,
         missing_files=0,
-        mismatched_files=0,
     )
 
 

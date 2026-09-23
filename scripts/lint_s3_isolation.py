@@ -6,8 +6,7 @@ The two detection rules are:
 1. Flag calls to ``client`` or ``resource`` on any receiver when the literal
    service name ``"s3"`` is first positional argument or the
    ``service_name=`` keyword argument.
-2. Flag imports, attributes, or bare-name references to
-   ``get_s3_client`` or ``get_public_s3_client``.
+2. Flag imports, attributes, or bare-name references to ``get_s3_client``.
 3. Flag any import of an AWS SDK package (``boto3``, ``botocore``,
    ``aioboto3``, ``aiobotocore``, ``s3fs``). This closes
    ``from boto3 import client`` and aliased imports, which rule 1 cannot see.
@@ -38,7 +37,7 @@ from pathlib import Path
 ALLOWLISTED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/s3.py",)
 TARGET_SERVICE = "s3"
 CLIENT_FACTORY_METHODS = frozenset({"client", "resource"})
-RAW_CLIENT_ACCESSORS = frozenset({"get_s3_client", "get_public_s3_client"})
+RAW_CLIENT_ACCESSORS = frozenset({"get_s3_client"})
 SDK_PACKAGES = frozenset({"boto3", "botocore", "aioboto3", "aiobotocore", "s3fs"})
 SDK_IMPORT_ALLOWED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/kms.py",)
 

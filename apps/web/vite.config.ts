@@ -61,16 +61,6 @@ export default defineConfig({
       '/web-api': {
         target: process.env.ECHOROO_API_URL || 'http://localhost:8002',
         changeOrigin: true
-      },
-      // DEV ONLY: Proxies S3 (LocalStack) requests through the Vite dev server
-      // to avoid CORS issues when SSH port-forwarding only the frontend port.
-      '/s3-proxy/echoroo': {
-        target: process.env.S3_PROXY_TARGET || 'http://localstack:4566',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/s3-proxy/, ''),
-        // Allow large file uploads (up to 2 GB) without timeout
-        timeout: 600000,       // 10 minutes for the proxy connection
-        proxyTimeout: 600000,  // 10 minutes for the target response
       }
     }
   }

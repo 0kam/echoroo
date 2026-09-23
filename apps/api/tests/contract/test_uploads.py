@@ -7,16 +7,19 @@ which may not be available in tests; rate limiters are configured to be
 disabled during test execution by the test client setup in conftest.py.
 """
 
+from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
+from echoroo.models.upload import UploadFile
 from echoroo.models.user import User
 from tests.contract.conftest import bff_session_headers
 
@@ -83,25 +86,14 @@ async def test_dataset(
 class TestCreateUploadSession:
     """Test upload session creation endpoint."""
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_success(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST /web-api/v1/projects/{project_id}/datasets/{dataset_id}/upload-sessions - Create upload session."""
-        # Mock S3 client and presigned URL generation
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/echoroo/fake-presigned-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -142,8 +134,34 @@ class TestCreateUploadSession:
         for file_info in data["files"]:
             assert "file_id" in file_info
             assert "original_filename" in file_info
-            assert "upload_url" in file_info
-            assert file_info["upload_url"] == "https://minio:9000/echoroo/fake-presigned-url"
+            assert "declared_size" in file_info
+        assert data["files"][0]["original_filename"] == "recording_001.wav"
+        assert data["files"][0]["declared_size"] == 1024000
+        assert data["files"][1]["original_filename"] == "recording_002.wav"
+        assert data["files"][1]["declared_size"] == 2048000
+
+    async def test_create_session_object_key_is_final_recording_key(
+        self,
+        client: AsyncClient,
+        csrf_headers: dict[str, str],
+        test_project_id: str,
+        test_dataset: Dataset,
+        db_session: AsyncSession,
+    ) -> None:
+        """Created upload files reserve their final recording object keys."""
+        response = await client.post(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/upload-sessions",
+            headers=csrf_headers,
+            json={"files": [{"filename": "recording.wav", "size": 4}]},
+        )
+        assert response.status_code == 201
+        file_info = response.json()["files"][0]
+        upload_file = await db_session.get(UploadFile, UUID(file_info["file_id"]))
+        assert upload_file is not None
+        assert upload_file.object_key.startswith(
+            f"recordings/{test_project_id}/{test_dataset.id}/"
+        )
+        assert upload_file.object_key.endswith(f"{file_info['file_id']}.wav")
 
     async def test_create_upload_session_unauthorized(
         self,
@@ -169,14 +187,8 @@ class TestCreateUploadSession:
 
         assert response.status_code == 401
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_forbidden_non_admin(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers_other: dict[str, str],
         test_project_id: str,
@@ -190,10 +202,6 @@ class TestCreateUploadSession:
         permissions. The member-permission boundary is covered by the
         adjacent member test.
         """
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -212,14 +220,8 @@ class TestCreateUploadSession:
 
         assert response.status_code == 403
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_forbidden_project_member(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         db_session: AsyncSession,
         member_user: User,
@@ -246,23 +248,13 @@ class TestCreateUploadSession:
         assert response.status_code == 403
         assert test_member
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_dataset_not_found(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
     ) -> None:
         """Test POST upload-sessions with invalid dataset_id returns 404."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         fake_dataset_id = "00000000-0000-0000-0000-000000000000"
         request_data = {
             "files": [
@@ -282,24 +274,14 @@ class TestCreateUploadSession:
 
         assert response.status_code == 404
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_invalid_extension(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions rejects unsupported file extension."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -318,24 +300,14 @@ class TestCreateUploadSession:
 
         assert response.status_code == 422
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_file_too_large(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions rejects file exceeding 1GB limit."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         # 1GB + 1 byte
         oversized = 1073741825
         request_data = {
@@ -356,24 +328,14 @@ class TestCreateUploadSession:
 
         assert response.status_code == 422
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_too_many_files(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions rejects >500 files."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         # Create 501 files (over limit)
         files = [
             {
@@ -394,24 +356,14 @@ class TestCreateUploadSession:
 
         assert response.status_code == 422
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_invalid_filename_traversal(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions rejects path traversal in filename."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -430,24 +382,14 @@ class TestCreateUploadSession:
 
         assert response.status_code == 422
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_invalid_checksum(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions rejects invalid checksum format."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -466,14 +408,8 @@ class TestCreateUploadSession:
 
         assert response.status_code == 422
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_create_upload_session_conflict_existing_session(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
@@ -499,10 +435,6 @@ class TestCreateUploadSession:
         manipulates the active session into IMPORTING before issuing
         the second create).
         """
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -538,44 +470,28 @@ class TestCreateUploadSession:
 class TestCompleteUploadSession:
     """Test upload session completion endpoint."""
 
-    @patch("echoroo.core.s3.verify_object_exists")
-    @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
     async def test_complete_upload_session_success(
         self,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
-        mock_get_s3_client_for_verify: MagicMock,
-        mock_verify_object: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Test POST upload-sessions/{session_id}/complete - Complete upload."""
-        # Mock S3 operations for session creation
-        mock_get_s3_client_for_verify.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
-        # Mock verify_object_exists to return successful verification
-        mock_verify_object.return_value = {
-            "exists": True,
-            "size_match": True,
-            "actual_size": 1024000,
-        }
+        monkeypatch.setattr(get_settings(), "UPLOAD_STAGING_DIR", str(tmp_path))
 
         request_data = {
             "files": [
                 {
                     "filename": "recording_001.wav",
-                    "size": 1024000,
+                    "size": 4,
                     "checksum_sha256": "a" * 64,
                 },
                 {
                     "filename": "recording_002.wav",
-                    "size": 2048000,
+                    "size": 6,
                     "checksum_sha256": "b" * 64,
                 },
             ]
@@ -589,6 +505,18 @@ class TestCompleteUploadSession:
         )
         assert create_response.status_code == 201
         session_id = create_response.json()["session_id"]
+
+        # Stage both files through the backend chunk endpoint.
+        for file_info, payload in zip(
+            create_response.json()["files"], (b"1234", b"abcdef"), strict=True
+        ):
+            chunk_response = await client.put(
+                f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/"
+                f"upload-sessions/{session_id}/files/{file_info['file_id']}/chunks?offset=0",
+                headers=csrf_headers,
+                content=payload,
+            )
+            assert chunk_response.status_code == 200
 
         # Complete the session
         response = await client.post(
@@ -608,8 +536,6 @@ class TestCompleteUploadSession:
         assert data["verified_files"] == 2
         assert "missing_files" in data
         assert data["missing_files"] == 0
-        assert "mismatched_files" in data
-        assert data["mismatched_files"] == 0
 
     async def test_complete_upload_session_unauthorized(
         self,
@@ -626,24 +552,14 @@ class TestCompleteUploadSession:
 
         assert response.status_code == 401
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_complete_upload_session_not_found(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test POST upload-sessions/{session_id}/complete with non-existent session."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.post(
@@ -653,37 +569,23 @@ class TestCompleteUploadSession:
 
         assert response.status_code == 404
 
-    @patch("echoroo.core.s3.verify_object_exists")
-    @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
     async def test_complete_upload_session_wrong_state(
         self,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
-        mock_get_s3_client_for_verify: MagicMock,
-        mock_verify_object: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """Test POST upload-sessions/{session_id}/complete fails if session not in ISSUED state."""
-        # Mock S3 operations
-        mock_get_s3_client_for_verify.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-        mock_verify_object.return_value = {
-            "exists": True,
-            "size_match": True,
-            "actual_size": 1024000,
-        }
+        monkeypatch.setattr(get_settings(), "UPLOAD_STAGING_DIR", str(tmp_path))
 
         request_data = {
             "files": [
                 {
                     "filename": "recording.wav",
-                    "size": 1024000,
+                    "size": 4,
                     "checksum_sha256": "a" * 64,
                 }
             ]
@@ -696,6 +598,15 @@ class TestCompleteUploadSession:
             json=request_data,
         )
         session_id = create_response.json()["session_id"]
+
+        file_id = create_response.json()["files"][0]["file_id"]
+        chunk_response = await client.put(
+            f"/web-api/v1/projects/{test_project_id}/datasets/{test_dataset.id}/"
+            f"upload-sessions/{session_id}/files/{file_id}/chunks?offset=0",
+            headers=csrf_headers,
+            content=b"1234",
+        )
+        assert chunk_response.status_code == 200
 
         # Complete once (should succeed)
         response1 = await client.post(
@@ -717,24 +628,14 @@ class TestCompleteUploadSession:
 class TestGetUploadSessionStatus:
     """Test upload session status endpoint."""
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_get_session_status_success(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test GET upload-sessions/{session_id} - Get session status."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
@@ -813,24 +714,14 @@ class TestGetUploadSessionStatus:
 
         assert response.status_code == 401
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_get_session_status_not_found(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
         test_project_id: str,
         test_dataset: Dataset,
     ) -> None:
         """Test GET upload-sessions/{session_id} with non-existent session."""
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
         response = await client.get(
@@ -840,14 +731,8 @@ class TestGetUploadSessionStatus:
 
         assert response.status_code == 404
 
-    @patch("echoroo.api.v1.uploads.s3.ensure_bucket_exists")
-    @patch("echoroo.core.s3.generate_presigned_upload_url")
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_get_session_status_member_access(
         self,
-        mock_get_s3_client: MagicMock,
-        mock_presigned_url: MagicMock,
-        mock_ensure_bucket: MagicMock,
         client: AsyncClient,
         db_session: AsyncSession,
         test_user: User,
@@ -862,10 +747,6 @@ class TestGetUploadSessionStatus:
         on the CSRF-guarded BFF, so each session is built inline right before its
         request — the shared cookie jar only holds one session at a time.
         """
-        mock_get_s3_client.return_value = MagicMock()
-        mock_presigned_url.return_value = "https://minio:9000/fake-url"
-        mock_ensure_bucket.return_value = None
-
         request_data = {
             "files": [
                 {
