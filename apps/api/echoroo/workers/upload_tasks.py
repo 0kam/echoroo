@@ -774,7 +774,7 @@ async def _run_import(
                 )
             await db.commit()
 
-            if await _delete_unlinked_publications(db, session_uuid, project_id, dataset_id):
+            if await _delete_unlinked_publications(db, session_uuid):
                 try:
                     upload_staging.remove_session(session_uuid)
                 except Exception as exc:  # noqa: BLE001
@@ -805,9 +805,7 @@ async def _run_import(
         await engine.dispose()
 
 
-async def _delete_unlinked_publications(
-    db: Any, session_id: UUID, project_id: UUID, dataset_id: UUID
-) -> bool:
+async def _delete_unlinked_publications(db: Any, session_id: UUID) -> bool:
     """Delete staged files' deterministic destinations that never got a Recording.
 
     A crash between ``upload_file_to_object`` and the batch commit, or a HEAD
@@ -882,7 +880,7 @@ async def _run_cleanup() -> dict[str, Any]:
                     return False
                 await db.commit()
 
-                if await _delete_unlinked_publications(db, candidate_id, project_id, dataset_id):
+                if await _delete_unlinked_publications(db, candidate_id):
                     try:
                         upload_staging.remove_session(candidate_id)
                     except Exception as exc:  # noqa: BLE001
@@ -948,10 +946,7 @@ async def _run_cleanup() -> dict[str, Any]:
                     # published an object it never linked. Keep the directory
                     # until every such object is gone.
                     if staged_session is not None and not await _delete_unlinked_publications(
-                        db,
-                        staged_session_id,
-                        staged_session.dataset.project_id,
-                        staged_session.dataset.id,
+                        db, staged_session_id
                     ):
                         continue
                     try:
