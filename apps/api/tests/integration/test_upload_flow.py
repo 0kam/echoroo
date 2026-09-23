@@ -162,7 +162,6 @@ class TestUploadWorkflow:
         assert complete_data["status"] == "uploaded"
         assert complete_data["verified_files"] == 3
         assert complete_data["missing_files"] == 0
-        assert complete_data["mismatched_files"] == 0
 
         # Step 4: Check session status
         status_response = await client.get(
@@ -494,7 +493,6 @@ class TestUploadWorkflow:
         # Verify counts
         assert complete_data["verified_files"] == 1
         assert complete_data["missing_files"] == 1
-        assert complete_data["mismatched_files"] == 0
         # Session should stay in ISSUED state because files are missing
         assert complete_data["status"] == "issued"
 

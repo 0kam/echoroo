@@ -246,8 +246,8 @@ class DetectionRunType(StrEnum):
 class UploadSessionStatus(StrEnum):
     """Upload session lifecycle states."""
 
-    ISSUED = "issued"        # Presigned URLs generated, waiting for upload
-    UPLOADED = "uploaded"    # Server verified files exist in S3
+    ISSUED = "issued"        # Session created, waiting for staged bytes
+    UPLOADED = "uploaded"    # All files have been staged on the server
     VALIDATING = "validating"  # Worker running ffprobe validation
     VALIDATED = "validated"  # All files validated (some may be invalid)
     IMPORTING = "importing"  # Creating recording records
@@ -258,8 +258,8 @@ class UploadSessionStatus(StrEnum):
 class UploadFileStatus(StrEnum):
     """Individual file status within an upload session."""
 
-    PENDING = "pending"    # Presigned URL issued, not yet uploaded
-    UPLOADED = "uploaded"  # Verified in S3
+    PENDING = "pending"    # Session file issued, not yet staged
+    UPLOADED = "uploaded"  # All declared bytes have been staged
     VALID = "valid"        # Passed ffprobe validation
     INVALID = "invalid"    # Failed validation
     IMPORTED = "imported"  # Recording record created

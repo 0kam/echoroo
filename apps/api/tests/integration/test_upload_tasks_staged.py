@@ -317,6 +317,103 @@ async def test_validate_staged_missing_file_is_invalid_and_session_still_validat
     assert validated_files == 1
 
 
+@pytest.mark.asyncio
+async def test_validate_rejects_legacy_object_key_without_hashing_or_sanitising(
+    db_session: AsyncSession,
+    test_project: Project,
+    staged_dataset: Dataset,
+    staged_worker_env: _FakeS3,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation rejects staged bytes stored under the legacy object key."""
+    del staged_worker_env
+    raw = _build_wav_with_fake_gps_chunk()
+    session_id, file_id = await _create_staged_upload(
+        db_session, staged_dataset, test_project.owner_id, raw
+    )
+    await db_session.execute(
+        update(UploadFile)
+        .where(UploadFile.id == file_id)
+        .values(
+            object_key=f"uploads/{file_id}.wav",
+            status=UploadFileStatus.UPLOADED,
+        )
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(
+        upload_tasks,
+        "_sha256_of_path",
+        lambda *_args: pytest.fail("legacy object key must not be hashed"),
+    )
+    monkeypatch.setattr(
+        upload_tasks,
+        "_sanitize_to_clean",
+        lambda *_args: pytest.fail("legacy object key must not be sanitised"),
+    )
+
+    await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
+
+    row = await _get_file_row(db_session, file_id)
+    assert row[0] == UploadFileStatus.INVALID
+    assert row[1] == "Legacy upload key; upload the file again"
+    assert not (upload_staging.session_dir(session_id) / f"{file_id}.clean").exists()
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_legacy_file_without_staged_bytes_or_s3_access(
+    db_session: AsyncSession,
+    test_project: Project,
+    staged_dataset: Dataset,
+    staged_worker_env: _FakeS3,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Import invalidates a pre-slice-2e file instead of creating a recording."""
+    raw = _build_wav_with_fake_gps_chunk()
+    session_id, file_id = await _create_staged_upload(
+        db_session, staged_dataset, test_project.owner_id, raw
+    )
+    await db_session.execute(
+        update(UploadSession)
+        .where(UploadSession.id == session_id)
+        .values(status=UploadSessionStatus.VALIDATED)
+    )
+    await db_session.execute(
+        update(UploadFile)
+        .where(UploadFile.id == file_id)
+        .values(
+            object_key=f"uploads/{file_id}.wav",
+            received_bytes=0,
+            status=UploadFileStatus.VALID,
+        )
+    )
+    await db_session.commit()
+    upload_staging.part_path(session_id, file_id).unlink()
+
+    monkeypatch.setattr(
+        upload_tasks,
+        "upload_file_to_object",
+        lambda *_args, **_kwargs: pytest.fail("legacy file must not be uploaded"),
+    )
+    monkeypatch.setattr(
+        upload_tasks,
+        "head_object",
+        lambda *_args, **_kwargs: pytest.fail("legacy file must not be checked in S3"),
+    )
+
+    result = await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
+
+    assert result.get()["failed_files"] == 1
+    row = await _get_file_row(db_session, file_id)
+    recording_count = await db_session.scalar(
+        select(Recording.id).where(Recording.dataset_id == staged_dataset.id)
+    )
+    assert row[0] == UploadFileStatus.INVALID
+    assert row[1] == "No staged bytes; upload the file again"
+    assert recording_count is None
+    assert staged_worker_env.upload_calls == []
+
+
 async def test_import_staged_file_publishes_once_and_removes_staging(
     db_session: AsyncSession,
     test_project: Project,

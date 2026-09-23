@@ -188,7 +188,6 @@ describe('FileUpload', () => {
       status: 'issued',
       verified_files: 0,
       missing_files: 1,
-      mismatched_files: 0,
       skipped_files: 0,
     });
     const target = await render();
@@ -258,7 +257,6 @@ describe('FileUpload', () => {
       status: 'uploaded',
       verified_files: 1,
       missing_files: 0,
-      mismatched_files: 0,
       skipped_files: 0,
     });
     const target = await render();
@@ -289,7 +287,6 @@ describe('FileUpload', () => {
       status: 'issued',
       verified_files: 0,
       missing_files: 1,
-      mismatched_files: 0,
       skipped_files: 0,
     });
     let runCount = 0;
@@ -364,7 +361,6 @@ describe('FileUpload', () => {
       status: 'uploaded',
       verified_files: 2,
       missing_files: 0,
-      mismatched_files: 0,
       skipped_files: 0,
     });
     const target = await render();
@@ -442,7 +438,6 @@ describe('FileUpload', () => {
       status: 'uploaded',
       verified_files: 1,
       missing_files: 0,
-      mismatched_files: 0,
       skipped_files: 0,
     });
     const target = await render();

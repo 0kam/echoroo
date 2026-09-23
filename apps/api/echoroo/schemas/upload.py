@@ -124,13 +124,12 @@ class UploadSessionStatusResponse(BaseModel):
 
 
 class CompleteUploadResponse(BaseModel):
-    """Response after completing upload verification."""
+    """Response after completing upload staging."""
 
     session_id: str = Field(..., description="Upload session UUID")
     status: str = Field(..., description="Updated session status")
-    verified_files: int = Field(..., description="Number of files confirmed present in S3")
-    missing_files: int = Field(..., description="Number of files not yet found in S3")
-    mismatched_files: int = Field(..., description="Number of files with size or checksum mismatch")
+    verified_files: int = Field(..., description="Number of files fully staged on the server")
+    missing_files: int = Field(..., description="Number of files not fully staged on the server")
     skipped_files: int = Field(0, description="Files marked skipped")
 
 

@@ -961,7 +961,7 @@ class UploadService:
 
         Returns:
             Dict with keys: session_id, status, verified_files, missing_files,
-            mismatched_files, and skipped_files.
+            and skipped_files.
 
         Raises:
             HTTPException 403: Caller does not own this upload session
@@ -1084,7 +1084,6 @@ class UploadService:
             "status": new_status.value,
             "verified_files": verified_files,
             "missing_files": missing_files,
-            "mismatched_files": 0,
             "skipped_files": skipped_files,
         }
 

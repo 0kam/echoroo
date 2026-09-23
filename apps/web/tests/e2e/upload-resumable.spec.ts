@@ -56,6 +56,49 @@ async function waitForDone(page: Page): Promise<void> {
 
 async function openDataset(page: Page, user: SeededTestUser): Promise<void> {
   await login(page, user);
+  if (user.role === 'owner') {
+    const bearer = await getBearerTokenAfterLogin(page);
+    const activeResponse = await page.request.get(
+      `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/active`,
+      {
+        headers: { Authorization: `Bearer ${bearer}` },
+        failOnStatusCode: false,
+      },
+    );
+    expect(activeResponse.ok()).toBe(true);
+    if (activeResponse.status() !== 204) {
+      const body = (await activeResponse.text()).trim();
+      if (body && body !== 'null') {
+        const active = JSON.parse(body) as {
+          session?: { session_id?: string } | null;
+        } | null;
+        const activeSessionId = active?.session?.session_id;
+        if (activeSessionId) {
+          const csrfToken = await page.evaluate(() => {
+            const prefix = 'echoroo_csrf=';
+            const cookie = document.cookie
+              .split('; ')
+              .find((part) => part.startsWith(prefix));
+            if (!cookie) return null;
+            try {
+              return decodeURIComponent(cookie.slice(prefix.length));
+            } catch {
+              return cookie.slice(prefix.length);
+            }
+          });
+          const headers: Record<string, string> = {
+            Authorization: `Bearer ${bearer}`,
+          };
+          if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+          const cancelResponse = await page.request.post(
+            `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/${activeSessionId}/cancel`,
+            { headers, failOnStatusCode: false },
+          );
+          expect(cancelResponse.status()).toBe(204);
+        }
+      }
+    }
+  }
   await page.goto(`/en/projects/${projectId}/datasets/${datasetId}`);
 }
 
@@ -67,6 +110,35 @@ function sessionIdFromChunkUrl(url: string): string {
   const match = url.match(/\/upload-sessions\/([^/]+)\/files\/[^/]+\/chunks\?offset=/);
   expect(match, `could not find an upload session id in ${url}`).not.toBeNull();
   return match![1];
+}
+
+async function expectSessionImported(
+  page: Page,
+  sessionId: string,
+  filenames: string[],
+): Promise<void> {
+  const bearer = await getBearerTokenAfterLogin(page);
+  const response = await page.request.get(
+    `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`,
+    {
+      headers: { Authorization: `Bearer ${bearer}` },
+      failOnStatusCode: false,
+    },
+  );
+  expect(response.ok()).toBe(true);
+  const status = (await response.json()) as {
+    files: Array<{
+      original_filename: string;
+      status: string;
+      recording_id: string | null;
+    }>;
+  };
+  for (const filename of filenames) {
+    const file = status.files.find((candidate) => candidate.original_filename === filename);
+    expect(file, `missing status for ${filename}`).toBeDefined();
+    expect(file?.status).toBe('imported');
+    expect(file?.recording_id ?? null).not.toBeNull();
+  }
 }
 
 test.describe.serial('resumable uploads (storage slice 2)', () => {
@@ -85,7 +157,11 @@ test.describe.serial('resumable uploads (storage slice 2)', () => {
   test.afterEach(({ page }) => {
     const origin = new URL(page.url()).origin;
     const externalUrls = (requestUrlsByPage.get(page) ?? []).filter(
-      (url) => !url.startsWith(origin),
+      (url) => {
+        const requestUrl = new URL(url);
+        if (requestUrl.protocol === 'data:' || requestUrl.protocol === 'blob:') return false;
+        return requestUrl.origin !== origin;
+      },
     );
     expect(externalUrls, 'no request leaves the app origin').toEqual([]);
   });
@@ -101,12 +177,7 @@ test.describe.serial('resumable uploads (storage slice 2)', () => {
 
     const chunks = chunkUrls(page);
     expect(chunks.length).toBeGreaterThanOrEqual(4);
-
-    await page.reload();
-    const recordings = page.locator('table');
-    await expect(recordings).toBeVisible();
-    await expect(recordings).toContainText('a.wav');
-    await expect(recordings).toContainText('b.wav');
+    await expectSessionImported(page, sessionIdFromChunkUrl(chunks[0]), ['a.wav', 'b.wav']);
   });
 
   test('interrupt and automatic retry', async ({ page }) => {
@@ -128,6 +199,7 @@ test.describe.serial('resumable uploads (storage slice 2)', () => {
 
     const retried = chunkUrls(page).filter((url) => url.endsWith('/chunks?offset=8388608'));
     expect(retried).toHaveLength(2);
+    await expectSessionImported(page, sessionIdFromChunkUrl(retried[0]), ['c.wav']);
   });
 
   test('reload during transfer, then resume', async ({ page }) => {
@@ -154,16 +226,22 @@ test.describe.serial('resumable uploads (storage slice 2)', () => {
     await chooseFiles(page, [dPath]);
     await waitForDone(page);
 
-    const afterReload = (requestUrlsByPage.get(page) ?? [])
+    const resumedChunkUrls = (requestUrlsByPage.get(page) ?? [])
       .slice(requestCountBeforeReload)
-      .filter((url) => url.includes(`/upload-sessions/${sessionId}/`));
-    const resumedOffsets = afterReload
+      .filter((url) => url.includes('/chunks?offset='));
+    expect(resumedChunkUrls.length).toBeGreaterThan(0);
+    for (const url of resumedChunkUrls) {
+      expect(sessionIdFromChunkUrl(url)).toBe(sessionId);
+    }
+    const resumedOffsets = resumedChunkUrls
       .map((url) => url.match(/\/chunks\?offset=(\d+)/)?.[1])
       .filter((offset): offset is string => offset !== undefined)
       .map(Number);
+    expect(resumedOffsets).toContain(16777216);
     expect(resumedOffsets).not.toContain(0);
     expect(resumedOffsets).not.toContain(8388608);
     expect(resumedOffsets.every((offset) => offset >= 16777216)).toBe(true);
+    await expectSessionImported(page, sessionId, ['d.wav']);
   });
 
   test('partial import', async ({ page }) => {

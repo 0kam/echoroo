@@ -241,7 +241,7 @@ async def complete_upload_session(
         db: Database session
 
     Returns:
-        Verification summary with file counts
+        Staging summary with file counts
 
     Raises:
         401: Not authenticated
@@ -290,7 +290,6 @@ async def complete_upload_session(
         status=result["status"],
         verified_files=result["verified_files"],
         missing_files=result["missing_files"],
-        mismatched_files=result["mismatched_files"],
         skipped_files=result["skipped_files"],
     )
 

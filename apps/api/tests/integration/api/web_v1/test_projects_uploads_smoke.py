@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -58,7 +58,6 @@ def _fake_complete_response(*, session_id: str) -> CompleteUploadResponse:
         status="uploaded",
         verified_files=1,
         missing_files=0,
-        mismatched_files=0,
     )
 
 

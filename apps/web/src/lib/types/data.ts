@@ -292,7 +292,6 @@ export interface CompleteUploadResponse {
   status: string;
   verified_files: number;
   missing_files: number;
-  mismatched_files: number;
   skipped_files: number;
 }
 

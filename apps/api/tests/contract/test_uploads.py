@@ -19,8 +19,8 @@ from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus
 from echoroo.models.site import Site
-from echoroo.models.user import User
 from echoroo.models.upload import UploadFile
+from echoroo.models.user import User
 from tests.contract.conftest import bff_session_headers
 
 if TYPE_CHECKING:
@@ -536,8 +536,6 @@ class TestCompleteUploadSession:
         assert data["verified_files"] == 2
         assert "missing_files" in data
         assert data["missing_files"] == 0
-        assert "mismatched_files" in data
-        assert data["mismatched_files"] == 0
 
     async def test_complete_upload_session_unauthorized(
         self,
