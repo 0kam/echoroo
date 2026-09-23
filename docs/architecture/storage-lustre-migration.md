@@ -22,16 +22,16 @@ storage abstraction with two backends.
 - The VM has a 20 TiB Lustre filesystem at `/data`: POSIX, writable, reachable
   from several VMs in the project, GPU available. The mount options cannot be
   changed by us.
-- Echoroo has not launched. There is no data to migrate and no compatibility
-  window.
-- `Recording.path` is written as the S3 key and is also interpreted relative to
-  `AUDIO_ROOT` (`workers/upload_tasks.py:215`, `:739`). The data model needs no
-  change.
+- Echoroo has not launched: no production data and no compatibility window.
+  Dev, preview and trial deployments do hold objects in LocalStack; the
+  cutover runbook copies them (slice 4, *Deployment*).
+- `Recording.path` is written as the storage key (`workers/upload_tasks.py:730`)
+  and becomes a path under `STORAGE_ROOT`. The data model needs no change.
 - Reads resolve local paths in two places, not one:
   `AudioService.ensure_file_local()` (`services/audio/service.py:138`, the S3
   download gate) and `get_absolute_path()` (`:103`), which `read_audio()`
-  (`:296`) and `load_clip_bytes()` (`:691`) call directly. Both look under
-  `AUDIO_ROOT` first, so both resolve once Lustre is `AUDIO_ROOT`.
+  (`:274`) and `load_clip_bytes()` (`:648`) call. Both collapse to one
+  resolver in slice 4.
 - The API and the Celery workers already share a POSIX volume
   (`backend-data:/data`).
 - No multipart upload is used anywhere. Spectrograms and export artifacts never
@@ -55,17 +55,17 @@ unless it needs random I/O.
 | Location | Contents |
 | --- | --- |
 | Lustre `/data` | Recording originals, model artifacts, search reference audio, OGG playback cache |
-| Local disk | PostgreSQL data directory, Redis dump, Docker volumes and images, spectrogram cache (size-capped) |
+| Local disk | PostgreSQL data directory, Redis dump, Docker volumes and images |
 
 Lustre is built for large sequential I/O; its metadata server is the bottleneck
 for files under ~256 KiB. PostgreSQL and Redis never go on Lustre.
 
 The OGG playback cache is currently hardcoded to `/data/audio_compressed`
-(`services/audio/service.py:576`). It becomes a setting (slice 4). Its files are
+(`services/audio/service.py:572`). It becomes a setting (slice 4). Its files are
 megabytes each and costly to regenerate, so it stays on Lustre, with an
-age-based sweep. The spectrogram cache holds many small PNGs and stays on local
-disk under a size cap. The `/data/s3_audio_cache` copy of every recording
-disappears, which frees local disk rather than consuming it.
+age-based sweep. Spectrograms are rendered per request; there is no disk cache
+(the unused `AUDIO_CACHE_DIR` goes). The `/data/s3_audio_cache` copy of every
+recording disappears, which frees local disk rather than consuming it.
 
 ## Assumptions
 
@@ -87,7 +87,8 @@ disappears, which frees local disk rather than consuming it.
   the helpers keep an optional `client=` parameter. In slice 4
   `ensure_configured()` becomes the mount probe.
 - **The FR-028e metadata sanitizer runs inside `core/s3.put_object`**, not at
-  each call site, so no write can bypass it. Reversible.
+  each call site, so no write can bypass it. Slice 4 removes it with object
+  metadata itself: POSIX files carry none.
 
 ## Decisions taken
 
@@ -106,6 +107,8 @@ disappears, which frees local disk rather than consuming it.
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
 | 7 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
+| 8 | On the production VM: where is Lustre mounted on the host, which numeric UID/GID will the containers run as, and can that identity create directories, files and hard links under it (root squash, quotas)? | one UID/GID owning `/data/storage` etc. on Lustre, verified by `ensure_ready(full=True)` | decides the compose mounts and the provisioning runbook | 4b deployment section, not 4a |
+| 9 | Which existing deployments' LocalStack objects must survive the cutover (dev, preview trial data, ninjin)? | copy preview and ninjin with the runbook, start dev fresh | decides where the maintenance-window copy runs | the 4b rollout, not the code |
 
 ## Risks
 
@@ -187,7 +190,9 @@ nothing retries or resumes; there is no upload e2e test.
   file, by the import worker, from the staged file after validation and GPS
   stripping — straight to the `recordings/` key. The `uploads/` prefix, the GPS
   read-modify-write and the import-time SHA-256 re-read disappear. After slice 4
-  the same code stages on Lustre and the final write is a rename.
+  the same code stages on Lustre and the final write is a copy to a temp name
+  plus an atomic rename (a move would break retries: import needs the clean
+  staged file until its Recording rows commit).
 - *Integrity* — the server hashes what it receives (per chunk against
   `X-Chunk-SHA256` when the browser can compute it, whole file during
   validation). The browser no longer hashes whole files up front.
@@ -237,9 +242,8 @@ nothing retries or resumes; there is no upload e2e test.
   staging directories of terminal and orphaned sessions, including those whose
   rows were cascaded away.
 - *Staging location*: its own directory on the shared `backend-data` volume
-  (`/data/upload_staging`), never under the read-only `/data/audio`. The
-  "final write becomes a rename" claim holds only if staging and recordings end
-  up on the same filesystem — a slice 4 placement constraint.
+  (`/data/upload_staging`), never under the read-only `/data/audio`. Slice 4
+  publishes by copy, so staging and storage may sit on different filesystems.
 - *Known amplification, accepted for now*: the GPS sanitiser still reads a whole
   file into memory; staging uses local disk until slice 4.
 
@@ -299,17 +303,163 @@ intermediate state runs):
 
 ### 4. Cutover
 
-One PR, because any subset leaves a broken state.
+Two PRs. **4a** lands `core/storage.py` unused, with its settings and contract
+tests — additive, nothing switches. **4b** switches every caller, deletes
+`core/s3.py`, and changes deployment configuration together; any subset of 4b
+leaves a broken state. 4b is built by parallel implementers on explicitly
+assigned files against the 4a API.
 
-- **Scope** — POSIX implementation behind `core/s3.py` (temp + rename on every
-  write, fresh mtime on copy); `ensure_file_local()` and `get_absolute_path()`
-  collapse to `AUDIO_ROOT`; remove the hardcoded `/data/s3_audio_cache` in the
-  ML workers; `COMPRESSED_CACHE_DIR` becomes a setting (Lustre, age-based sweep) and the spectrogram cache gets a size cap; boot
-  check probes the mount for existence and writability instead of
-  `head_bucket`; `/data/audio` mounted read-write; LocalStack reduced to
-  `SERVICES=kms`; `CONFIGURATION.md`.
-- **Acceptance** — Playwright spec: upload → detection run → playback →
-  search by reference audio → model train, with LocalStack S3 disabled.
+**Findings from the pre-slice survey and the design review (2026-09-23)** that
+change the original scope:
+- `_delete_unlinked_publications` relies on S3 deleting a missing key
+  successfully; POSIX delete must report a missing file as deleted.
+- Keys become paths: every key needs validation against the root.
+- Prefix deletes are string prefixes, not always directory-aligned
+  (`search_reference/{p}/{j}` without a slash in `batch.py`, `crud.py`).
+- The reference-audio media route forwards the raw `Range` header to S3; POSIX
+  has to parse it; an unsatisfiable range becomes 416 instead of today's 500.
+- There is no spectrogram disk cache to cap: `AudioService.cache_dir` is created
+  and never used. Dropped from scope; the dead setting goes.
+- Object metadata disappears, so the FR-028e metadata sanitizer
+  (`services/s3_upload_sanitizer.py`) has nothing left to guard. Removed. The
+  file-content GPS strip in the upload worker stays.
+- A fifth namespace exists: `e2e/` (the permission seeder).
+- **Directory-scan import does not exist** (`Dataset.audio_dir` is deprecated,
+  the frontend "rescan" calls an unimplemented route) and every recording path
+  on dev is `recordings/…` or `e2e/…`. So every key resolves under
+  `STORAGE_ROOT` only; the `AUDIO_ROOT` fallback, its setting and the
+  `/data/audio` mount go. No shadowing between two roots is possible. A future
+  bulk import from Lustre would place files into `STORAGE_ROOT` (a hard link on
+  the same filesystem costs nothing).
+- The search janitor deletes whole prefixes after classifying only the aged
+  keys, so young siblings go too (pre-existing). 4b deletes the enumerated keys.
+- `search_tmp/{job}` holds uploaded reference audio, not only the manifest;
+  4b makes the manifest point at stored keys and keeps only the manifest there.
+
+**Trust model.** `STORAGE_ROOT` is an application-owned tree: only Echoroo
+processes (one numeric UID/GID, see *Deployment*) write under it, and it
+contains no symlinks. `path_for` rejects any key whose existing components are
+symlinks (`lstat` walk); listing and deletion never follow symlinks. This
+guards against mistakes, not against a hostile local user with write access to
+the tree.
+
+**Storage API** (`echoroo/core/storage.py`, 4a). Keys keep their S3 form, so
+`Recording.path` and every stored key stay valid.
+
+- `class StorageError(Exception)`; `StorageKeyError(StorageError, ValueError)`
+  for invalid keys; `StorageUnavailable(StorageError)` when the root is
+  missing, unreadable or not the provisioned tree.
+- `root() -> Path` — `STORAGE_ROOT`, read from settings on each call.
+- `path_for(key) -> Path` — rejects empty keys, a leading `/`, `..` or `.`
+  components, empty components (`a//b`), NUL, backslash, a trailing `/`, and
+  existing symlink components; the result is `root() / key`.
+- `ensure_ready(*, full=False)` — `root()` is a directory owned by the tree
+  and contains the provisioning marker `.echoroo-storage` (so a missing mount
+  cannot silently redirect writes onto local disk); raises
+  `StorageUnavailable`. `full=True` (boot and worker start) additionally
+  checks, in `.echoroo-probe/`: create + fsync + replace, hard-link
+  publication, collision refusal of a second link, directory fsync, cleanup.
+  Any failure raises; there is no fallback to overwriting.
+- `exists(key) -> bool` — `False` only for "no such file"; permission and I/O
+  errors propagate, and a missing root raises `StorageUnavailable`, so a
+  caller never mistakes an outage for absence.
+- `size(key) -> int | None` — same error rules.
+- `open_read(key) -> BinaryIO` — `FileNotFoundError` when missing; the caller
+  closes it. An open handle stays valid across a later replace.
+- `read_range(key, range_header: str | None) -> RangeRead` — opens once,
+  takes the size with `fstat`. `RangeRead(stream, start, end, total,
+  partial)`: `end` inclusive; `stream` is a bounded iterator of chunks that
+  closes the file when exhausted or closed. Supported: `bytes=a-b` (b clamped
+  to `total-1`), `bytes=a-`, `bytes=-n` (n clamped to `total`). `None` or a
+  malformed/multi-range header → the whole file, `partial=False`. `a >= total`,
+  or any range on an empty file → `RangeNotSatisfiable(total)`, which the route
+  turns into 416 with `Content-Range: bytes */{total}`.
+- `write_bytes(key, data, *, exclusive=False) -> int` and
+  `write_file(src: Path, key, *, exclusive=False) -> int` — copy (never move;
+  the source stays) into `.{name}.tmp-{uuid}` in the destination directory,
+  flush, fsync, then publish with `os.replace`, or with `os.link` + unlink of
+  the temp when `exclusive` (raises `FileExistsError` if the key exists — the
+  write-once primitive). Then fsync the destination directory and every
+  directory created for this write, and its parent. The temp is removed in
+  `finally`. Fresh mtime always. Returns the byte count. An error after
+  publication may leave the object published; callers treat a write error as
+  "maybe written" (they already do: upload import deletes on size mismatch,
+  audit export reads back).
+- `copy(src_key, dst_key) -> int` — `write_file(path_for(src_key), dst_key)`.
+- `delete(key) -> bool` — `True` when the file is gone, including when it was
+  never there; `False` on an OS error. fsyncs the directory. Never removes
+  directories.
+- `delete_prefix(prefix) -> int` — S3 string-prefix semantics (a trailing `/`
+  and partial final components both work); deletes files only, skips temps,
+  returns the count deleted.
+- `list_prefix(prefix) -> Iterator[StoredObject]` — `StoredObject(key, size,
+  modified)` with `modified` = UTC-aware mtime; files only, temps skipped,
+  entries that vanish during the walk are skipped.
+- `delete_many(keys) -> BatchDeleteResult(deleted: list[str], errors:
+  list[StorageDeletionError(key, code, message)])` — no 1000-key limit.
+- `sweep_temporaries(max_age) -> int` — deletes temps older than `max_age`
+  (default 24 h), for a daily maintenance task; ordinary operations never
+  touch temps.
+
+**Settings** (4a adds, 4b removes): `STORAGE_ROOT` (default `/data/storage`),
+`COMPRESSED_CACHE_DIR` (default `/data/audio_compressed`),
+`COMPRESSED_CACHE_MAX_AGE_DAYS` (30). 4b removes `S3_*`, `S3_AUDIO_CACHE_DIR`,
+`AUDIO_CACHE_DIR`, `AUDIO_ROOT` and the production guard on `S3_SECRET_KEY`.
+
+**4b scope**
+- Every caller moves to the API (`workers/upload_tasks.py`,
+  `workers/search_tasks.py`, `api/v1/search/batch.py`,
+  `api/v1/search/sessions/crud.py`, `api/v1/search/sessions/media.py`,
+  `workers/classifier/*`, `services/custom_model.py`,
+  `workers/audit_log_export.py`, `services/audio/service.py`, the
+  `AudioService` constructions, `workers/ml/*`, `scripts/check_wipe_guard.py`,
+  `scripts/seed_e2e_permissions.py`). Readers that downloaded to a temp file
+  read the stored path (search sources, classifier models — without the
+  `finally: unlink`). The seeder verifies with `open_read` + digest.
+- `AudioService`: one resolver, `storage.path_for`; `ensure_file_local()`
+  keeps its name and returns that path. OGG cache under the setting, unique
+  encoder temps, a hit refreshes mtime, the route streams from an opened
+  handle (a sweep between lookup and open → re-encode once).
+- Scheduled tasks on the default queue with beat entries: OGG cache sweep
+  (daily) and `sweep_temporaries` (daily).
+- Boot check and `/health/ready`: component `storage` via `ensure_ready()`
+  (`full=True` at boot and worker start); `s3` disappears.
+- Audit export publishes with `exclusive=True`; read-back comparison stays.
+- `lint_s3_isolation.py` bans the AWS SDK everywhere but `core/kms.py` and any
+  import of `core.s3`.
+- Tests: `tests/conftest.py` sets unique `STORAGE_ROOT`,
+  `UPLOAD_STAGING_DIR` and `COMPRESSED_CACHE_DIR` per test run and xdist
+  worker before any application import, with the marker; fakes of the boto
+  client go.
+- Infra: LocalStack `SERVICES=kms`, bucket creation removed from
+  `init-localstack.sh`, compose/CI/e2e/runbook-job env without `S3_*`,
+  `STORAGE_ROOT` provisioned with its marker, the LocalStack health predicates
+  updated.
+
+**Deployment** (4b, runbook). Storage, staging, the OGG cache and
+`search_tmp` are bind mounts of directories on Lustre, the same paths in the
+API and every worker, provisioned (owner, mode 0750, marker) before first
+start. All Echoroo containers run as one numeric UID/GID that owns them;
+published files are 0640, directories 0750; upload staging keeps its
+0700/0600. Existing objects move in a maintenance window: stop ingress and
+beat, drain workers, copy out of the still-running LocalStack
+(`awslocal s3 sync`), verify keys, sizes and SHA-256 digests against the
+database references, then start every process on the new version. Rollback
+before any POSIX write = restart the old version; after = not supported.
+Backup/restore and release-readiness runbooks change with it.
+
+- **Out of scope** — deleting a recording's file when the recording, dataset or
+  project is deleted (never done on S3 either); renaming `s3_key` / `origin:
+  's3'` in API schemas and the frontend (names only).
+- **Acceptance** — CI: the e2e workflow and the runbook job run with LocalStack
+  `SERVICES=kms`; the upload spec also plays back an imported recording;
+  `/health/ready` reports `storage`; integration tests without model weights
+  cover ML audio resolution (`workers/ml/utils.py`), search sources with
+  inference stubbed, classifier train/save/load on synthetic vectors, both
+  export paths, range responses, concurrent exclusive publication, readers
+  across a replace, upload retry and reaper. By hand on dev: real detection,
+  embedding, search and training. On the production VM: `ensure_ready(full=True)`
+  on the Lustre mount.
 - **Depends on** — slices 1, 2, 3. **UX preview needed** — no.
 
 ## Review log
@@ -336,4 +486,4 @@ One PR, because any subset leaves a broken state.
 | 2026-09-23 | Astra, slice 2d re-review | Choosing missing files replaced pending restarts; a queued old request could overtake the restart reset and an offset conflict was taken as its acknowledgement; creation locked dataset→session while import finalised session→dataset (deadlock); `issued` recovery trusted stale local offsets; completed server files counted as unmatched; fresh runs unguarded on destroy; partial-import enablement and exclusion count wrong | All accepted: restart re-checks after re-lock (3 tries) and is acknowledged only by `ok`; dataset→session everywhere; offsets rebuilt from `/active`; `alreadyComplete` in the resume plan; generation guard; counts from current state |
 | 2026-09-23 | Fable, slice 2e e2e run (dev stack) | The upload spec passed 5/5 twice against the real backend, Celery worker and LocalStack; recordings land at the reserved `recordings/{p}/{d}/{file_id}` key. A third pass hit 429 on session creation: the create/complete limiters key on the direct peer, which behind the BFF is the frontend container, so every user of a dataset shares 10 creations per hour | CI raises the create limit for the e2e job (Playwright retries the serial group). Per-user limiter keys for create/complete split off as a separate task (pre-existing since before slice 2) |
 | 2026-09-23 | Astra, slice 2e code review | With the presigned branches gone, a pre-2e VALID file with no staged bytes imported without any existence/size/hash check, and a staged 2d-era file published under its `uploads/` key; legacy `uploads/` objects are no longer cleaned; e2e: retries share one dataset, resume assertions pass on an empty set, origin checked by string prefix; `mismatched_files` always 0; ruff F841/ARG001 | Accepted: validation and import refuse files without staged bytes or outside the reserved key (INVALID, no Recording, no write), regression tests; each test cancels the owner's unfinished session first; resume must continue the original session at 16 MiB and every session is checked for `imported` + `recording_id`; exact origin match; `mismatched_files` removed; lint fixed. Not adopted: cleanup code for legacy `uploads/` objects — pre-launch, none in production |
-
+| 2026-09-23 | Astra, slice 4 design review | Named volume ≠ Lustre and no guard against an absent mount; shared identity and file modes unspecified; existence-based two-root lookup allows shadowing; "final write is a rename" breaks import retries; durability of new ancestor directories and of deletes; readiness probe did not test link/replace; parent-directory pruning races writers; range contract loose; API contract too vague for parallel implementers; live `s3 sync` is not a cutover; test isolation across xdist workers; janitor deletes young siblings; symlink trust model; orphaned temps; `search_tmp` holds audio; cache sweep races; CI could cover more without models; file ownership across the parallel split; earlier sections contradicted slice 4 | All accepted. Split into 4a (API unused) and 4b (switch); single root (directory import does not exist); copy-then-publish; fsync of every created directory and after unlink; `ensure_ready(full=True)` with link/collision/replace probe and a provisioning marker; no directory pruning; exact range contract; full API contract; maintenance-window runbook; per-run/per-worker roots in conftest; janitor deletes enumerated keys; application-owned tree without symlinks; temp sweep; manifest points at stored keys; unique encoder temps and handle-based streaming; CI integration tests without weights; earlier sections reconciled. Production mount/identity and which deployments' data to copy raised as open decisions 8 and 9 |
