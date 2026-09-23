@@ -150,7 +150,7 @@ describe('FileUpload', () => {
       expires_at: '2026-09-23T01:00:00Z',
       total_files: 1,
       total_bytes: 3,
-      files: [{ file_id: 'file-1', original_filename: 'bird.wav', upload_url: '' }],
+      files: [{ file_id: 'file-1', original_filename: 'bird.wav', declared_size: 3 }],
     });
     const target = await render();
     const file = new File([new Uint8Array([1, 2, 3])], 'bird.wav', { type: 'audio/wav' });
@@ -177,7 +177,7 @@ describe('FileUpload', () => {
       expires_at: '2026-09-23T01:00:00Z',
       total_files: 1,
       total_bytes: 3,
-      files: [{ file_id: 'file-1', original_filename: 'bird.wav', upload_url: '' }],
+      files: [{ file_id: 'file-1', original_filename: 'bird.wav', declared_size: 3 }],
     });
     mockedScheduler.runImpl = async (fileId, cb) => {
       if (fileId) cb.onFileAcknowledged?.(fileId, 1, 'ok');
@@ -282,7 +282,7 @@ describe('FileUpload', () => {
       expires_at: '2026-09-23T01:00:00Z',
       total_files: 1,
       total_bytes: 3,
-      files: [{ file_id: 'file-1', original_filename: 'bird.wav', upload_url: '' }],
+      files: [{ file_id: 'file-1', original_filename: 'bird.wav', declared_size: 3 }],
     });
     completeUploadSession.mockResolvedValue({
       session_id: 'session-1',
@@ -467,7 +467,7 @@ describe('FileUpload', () => {
       expires_at: string;
       total_files: number;
       total_bytes: number;
-      files: Array<{ file_id: string; original_filename: string; upload_url: string }>;
+      files: Array<{ file_id: string; original_filename: string; declared_size: number }>;
     }) => void = () => undefined;
     createUploadSession.mockReturnValue(new Promise((resolve) => { resolveCreate = resolve; }));
     const target = await render();
@@ -490,7 +490,7 @@ describe('FileUpload', () => {
       expires_at: '2026-09-23T01:00:00Z',
       total_files: 1,
       total_bytes: 3,
-      files: [{ file_id: 'file-1', original_filename: 'bird.wav', upload_url: '' }],
+      files: [{ file_id: 'file-1', original_filename: 'bird.wav', declared_size: 3 }],
     });
     await Promise.resolve();
     await Promise.resolve();
@@ -505,7 +505,7 @@ describe('FileUpload', () => {
       expires_at: '2026-09-23T01:00:00Z',
       total_files: 1,
       total_bytes: 3,
-      files: [{ file_id: 'file-1', original_filename: 'bird.wav', upload_url: '' }],
+      files: [{ file_id: 'file-1', original_filename: 'bird.wav', declared_size: 3 }],
     });
     let releaseRun: () => void = () => undefined;
     mockedScheduler.runImpl = () => new Promise((resolve) => {

@@ -74,7 +74,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'run-e2e')
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       # Backend env — mirrors the backend-tests job for Postgres/Redis plus the
       # LocalStack S3 + KMS wiring and the TEST_MODE shared-TOTP contract that
@@ -95,15 +95,15 @@ jobs:
       # JBSWY3DPEHPK3PXP here.
       TEST_MODE: "true"
       TEST_TOTP_SECRET_BASE32: VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
-      # S3 / LocalStack. S3_ENDPOINT_URL is the API↔S3 path; S3_PUBLIC_ENDPOINT_URL
-      # is the browser-facing presign host routed through the Vite /s3-proxy on
-      # the Playwright dev server (:5173).
+      # S3 / LocalStack. S3_ENDPOINT_URL is the API↔S3 path.
       S3_ENDPOINT_URL: http://localhost:4566
-      S3_PUBLIC_ENDPOINT_URL: http://localhost:5173/s3-proxy
       S3_ACCESS_KEY: echoroo
       S3_SECRET_KEY: echoroo-dev
       S3_BUCKET: echoroo
       AUDIO_ROOT: /tmp/echoroo-audio
+      UPLOAD_STAGING_DIR: /tmp/echoroo-staging
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
       # AWS / KMS (LocalStack). AWS_ENDPOINT_URL_KMS points the KMS client at
       # LocalStack; the four CMK aliases are provisioned below by
       # scripts/init-localstack.sh and default to the app's expected names
@@ -169,6 +169,11 @@ jobs:
       - name: Install backend dependencies
         working-directory: apps/api
         run: uv sync --all-extras --dev
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          which ffprobe
 
       # --- Frontend toolchain (node) ------------------------------------------
       - name: Setup Node 22
@@ -262,7 +267,7 @@ jobs:
       - name: Start backend (uvicorn :8002)
         working-directory: apps/api
         run: |
-          mkdir -p /tmp/echoroo-audio
+          mkdir -p /tmp/echoroo-audio /tmp/echoroo-staging
           nohup uv run uvicorn echoroo.main:app \
             --host 0.0.0.0 --port 8002 \
             > /tmp/backend.log 2>&1 &
@@ -280,6 +285,22 @@ jobs:
           echo "::error::backend did not become healthy within 60s"
           echo "=== last 100 lines of backend.log ==="
           tail -100 /tmp/backend.log || true
+          exit 1
+
+      - name: Start Celery worker
+        working-directory: apps/api
+        run: |
+          nohup uv run celery -A echoroo.workers.celery_app worker -l info --pool=solo -Q default -n e2e-worker@%h > /tmp/worker.log 2>&1 &
+          for i in $(seq 1 90); do
+            if uv run celery -A echoroo.workers.celery_app inspect ping -d e2e-worker@$(hostname) >/dev/null 2>&1; then
+              echo "Celery worker healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Celery worker did not become ready within 90s"
+          echo "=== last 100 lines of worker.log ==="
+          tail -100 /tmp/worker.log || true
           exit 1
 
       # --- Seed deterministic permission fixtures -----------------------------
@@ -331,6 +352,7 @@ jobs:
             tests/e2e/no-email-ui-fresh-deployment.spec.ts \
             tests/e2e/banner-stack.spec.ts \
             tests/e2e/permissions/seeded-vote-comment.spec.ts \
+            tests/e2e/upload-resumable.spec.ts \
             --reporter=line
 
       # --- Artifacts on failure -----------------------------------------------
@@ -349,5 +371,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-full-backend-log
-          path: /tmp/backend.log
+          path: |
+            /tmp/backend.log
+            /tmp/worker.log
           retention-days: 7

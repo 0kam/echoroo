@@ -272,10 +272,10 @@ export interface CreateUploadSessionRequest {
   files: UploadFileRequest[];
 }
 
-export interface UploadFilePresignedResponse {
+export interface UploadFileIssuedResponse {
   file_id: string;
   original_filename: string;
-  upload_url: string;
+  declared_size: number;
 }
 
 export interface CreateUploadSessionResponse {
@@ -284,7 +284,7 @@ export interface CreateUploadSessionResponse {
   expires_at: string;
   total_files: number;
   total_bytes: number;
-  files: UploadFilePresignedResponse[];
+  files: UploadFileIssuedResponse[];
 }
 
 export interface CompleteUploadResponse {
