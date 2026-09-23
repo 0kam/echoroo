@@ -138,7 +138,6 @@ apps/web/src/lib/components/data/EmbeddingStatus.svelte:Queued, waiting to start
 apps/web/src/lib/components/data/EmbeddingStatus.svelte:Recent Runs:hardcoded-ui-string
 apps/web/src/lib/components/data/ExportDialog.svelte:Close:hardcoded-ui-string
 apps/web/src/lib/components/data/ExportDialog.svelte:Export:hardcoded-ui-string
-apps/web/src/lib/components/data/FileDropZone.svelte:Drop audio files here or click to browse:hardcoded-ui-string
 apps/web/src/lib/components/data/FilenameCharGrid.svelte:Remove assignment:hardcoded-ui-string
 apps/web/src/lib/components/data/ImportProgress.svelte:Import Error:hardcoded-ui-string
 apps/web/src/lib/components/data/ImportProgress.svelte:Import Status:hardcoded-ui-string
@@ -153,11 +152,6 @@ apps/web/src/lib/components/data/MLAnalysisStatus.svelte:View Detections:hardcod
 apps/web/src/lib/components/data/NoteEditor.svelte:Cancel:hardcoded-ui-string
 apps/web/src/lib/components/data/NoteEditor.svelte:Click to edit:hardcoded-ui-string
 apps/web/src/lib/components/data/NoteEditor.svelte:Save:hardcoded-ui-string
-apps/web/src/lib/components/data/SelectedFileList.svelte:Clear all:hardcoded-ui-string
-apps/web/src/lib/components/data/SelectedFileList.svelte:Remove:hardcoded-ui-string
-apps/web/src/lib/components/data/SelectedFileList.svelte:Upload File:hardcoded-ui-string
-apps/web/src/lib/components/data/UploadProgressPanel.svelte:Uploading file &mdash; up to at a time:hardcoded-ui-string
-apps/web/src/lib/components/data/UploadProgressPanel.svelte:Uploading files:hardcoded-ui-string
 apps/web/src/lib/components/data/VisibilitySelector.svelte:Visibility:hardcoded-ui-string
 apps/web/src/lib/components/map/H3MapPicker.svelte:Resolution::hardcoded-ui-string
 apps/web/src/lib/components/map/H3MapPicker.svelte:Selected H3::hardcoded-ui-string

@@ -485,10 +485,7 @@ class UploadService:
         Note:
             Permission enforcement is performed by the API layer via the
             Stage-1 ``is_allowed`` gate (``UPLOAD_CREATE_ACTION`` /
-            ``Permission.UPLOAD``). The legacy admin-only check has been
-            removed here so that any caller satisfying the matrix-defined
-            ``UPLOAD`` permission (Member or higher) can create a session
-            without a redundant admin gate that contradicted the spec.
+            ``Permission.UPLOAD``).
         """
         settings = get_settings()
 
@@ -503,7 +500,13 @@ class UploadService:
         # 2. Check for existing active session (serialised per dataset)
         await self.session_repo.lock_dataset_for_session_change(dataset_id)
         active_session = await self.session_repo.get_active_by_dataset(dataset_id)
+        superseded_id: UUID | None = None
         if active_session is not None:
+            # Re-read under the session row lock: a chunk append, completion or
+            # a worker may have moved it since the unlocked read above.
+            locked_active = await self.session_repo.get_for_update(active_session.id)
+            if locked_active is not None:
+                active_session = locked_active
             processing_statuses = (
                 UploadSessionStatus.VALIDATING,
                 UploadSessionStatus.VALIDATED,
@@ -513,13 +516,27 @@ class UploadService:
                 UploadSessionStatus.ISSUED,
                 UploadSessionStatus.UPLOADED,
             ):
+                if active_session.created_by_id != user_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="Another user has an unfinished upload for this dataset",
+                    )
                 # Not-yet-processing session (user retried after a failure) —
-                # always safe to supersede.
-                await self.session_repo.update_status(
+                # the same user may supersede it. Guarded by the status read
+                # under the lock; its staging is deleted only after the
+                # replacement is committed (see the end of this method).
+                superseded = await self.session_repo.update_status(
                     active_session.id,
                     UploadSessionStatus.FAILED,
                     error="Superseded by new upload session",
+                    expected_status=active_session.status,
                 )
+                if not superseded:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An upload session for this dataset changed state; retry",
+                    )
+                superseded_id = active_session.id
             elif active_session.status in processing_statuses:
                 # Session claims to be actively processing
                 # (VALIDATING/VALIDATED/IMPORTING). A live worker bumps
@@ -643,6 +660,12 @@ class UploadService:
         # Persist file records
         await self.file_repo.create_many(upload_file_records)
 
+        if superseded_id is not None:
+            # Everything above is now valid; make it durable, then drop the
+            # superseded session's bytes. A failure before this point leaves
+            # the old session (and its staging) intact.
+            await self.session_repo.db.commit()
+            await _run_blocking(upload_staging.remove_session, superseded_id)
         return session, presigned_responses
 
     async def _load_owned_session(
@@ -690,12 +713,15 @@ class UploadService:
         offset: int,
         data: bytes,
         chunk_sha256: str | None,
+        restart: bool = False,
     ) -> dict[str, Any]:
         """Append one chunk to a staged upload file.
 
         The caller (route) does no locking; the row lock from
         ``get_for_update`` is what serialises chunks of one file, and the
         reconcile in step 5 is the staging module's documented contract.
+        The browser uses ``restart`` when the re-selected file does not match
+        the staged prefix (digest mismatch).
         """
         await self._load_owned_session(user_id, project_id, dataset_id, session_id)
 
@@ -721,6 +747,37 @@ class UploadService:
 
         # Session lock, file lock, reconciled offset — all held from here on.
         _session, upload_file, received, _ = await self._lock_and_reconcile(session_id, file_id)
+
+        if restart:
+            if offset != 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="restart requires offset=0",
+                )
+            # Make the reset durable BEFORE any replacement byte is written:
+            # with equal-length content a rolled-back reset would leave the old
+            # digests next to new bytes, invisible to the size-based
+            # reconciliation. The commit releases the locks, so take them (and
+            # reconcile) again — and repeat if a queued request for the old
+            # content slipped in between and re-grew the file.
+            for _attempt in range(3):
+                if received == 0:
+                    break
+                await _run_blocking(upload_staging.truncate_to, session_id, file_id, 0)
+                await self.file_repo.reset_transfer(file_id)
+                await self.session_repo.db.commit()
+                _session, upload_file, received, _ = await self._lock_and_reconcile(
+                    session_id, file_id
+                )
+            if received != 0:
+                # Transient: other requests for this file keep re-growing it.
+                # 429 + Retry-After makes the browser retry the same chunk
+                # instead of treating the session as lost.
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Restart keeps being overtaken by other requests for this file; retry",
+                    headers={"Retry-After": "1"},
+                )
 
         if received >= upload_file.declared_size:
             raise HTTPException(

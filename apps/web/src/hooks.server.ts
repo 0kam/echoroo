@@ -84,10 +84,9 @@ async function checkSetupStatus(): Promise<{
 export const handle: Handle = ({ event, resolve }) => {
   const { pathname } = event.url;
 
-  // Skip i18n processing for API, S3 proxy, and static asset routes
+  // Skip i18n processing for API and static asset routes
   if (
     pathname.startsWith('/api/') ||
-    pathname.startsWith('/s3-proxy/') ||
     pathname.startsWith('/favicon.')
   ) {
     return handleAuth(event, resolve);

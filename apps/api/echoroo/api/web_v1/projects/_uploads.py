@@ -246,6 +246,7 @@ async def put_upload_chunk(
     service: legacy_uploads.UploadServiceDep,
     db: DbSession,
     offset: int = Query(..., ge=0),
+    restart: bool = Query(False),
     x_chunk_sha256: str | None = Header(None, alias="X-Chunk-SHA256"),
     _rate_limit: None = Depends(upload_chunk_rate_limiter()),
 ) -> ChunkAcceptedResponse:
@@ -304,6 +305,7 @@ async def put_upload_chunk(
             offset=offset,
             data=data,
             chunk_sha256=x_chunk_sha256,
+            restart=restart,
         )
         return ChunkAcceptedResponse(**result)
     finally:

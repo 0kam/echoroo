@@ -334,6 +334,94 @@ async def test_active_session_cancel_and_status_progress(
 
 
 @pytest.mark.asyncio
+async def test_active_exposes_chunk_digests(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    csrf_headers: dict[str, str],
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """Active-session status exposes the digest of every staged chunk."""
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    session_id, files = await _create_session(
+        client,
+        csrf_headers,
+        test_project_id,
+        test_dataset.id,
+        [{"filename": "digests.wav", "size": 8}],
+    )
+    url = _upload_url(test_project_id, test_dataset.id, session_id, files[0]["file_id"])
+    chunks = [b"1234", b"5678"]
+    for offset, chunk in ((0, chunks[0]), (4, chunks[1])):
+        response = await client.put(
+            f"{url}?offset={offset}", headers=csrf_headers, content=chunk
+        )
+        assert response.status_code == 200
+
+    active = await client.get(
+        f"{_session_url(test_project_id, test_dataset.id)}/active",
+        headers=csrf_headers,
+    )
+    assert active.status_code == 200
+    assert active.json()["session"]["files"][0]["chunk_digests"] == [
+        hashlib.sha256(chunk).hexdigest() for chunk in chunks
+    ]
+
+
+@pytest.mark.asyncio
+async def test_restart_resets_a_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    csrf_headers: dict[str, str],
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """A digest mismatch can restart one file from offset zero."""
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    session_id, files = await _create_session(
+        client,
+        csrf_headers,
+        test_project_id,
+        test_dataset.id,
+        [{"filename": "restart.wav", "size": 8}],
+    )
+    file_id = files[0]["file_id"]
+    url = _upload_url(test_project_id, test_dataset.id, session_id, file_id)
+    first = b"old!"
+    new = b"new!"
+    assert (
+        await client.put(f"{url}?offset=0", headers=csrf_headers, content=first)
+    ).status_code == 200
+
+    restarted = await client.put(
+        f"{url}?offset=0&restart=true", headers=csrf_headers, content=new
+    )
+    assert restarted.status_code == 200
+    assert restarted.json()["received_bytes"] == len(new)
+    assert upload_staging.part_path(UUID(session_id), UUID(file_id)).read_bytes() == new
+
+    active = await client.get(
+        f"{_session_url(test_project_id, test_dataset.id)}/active",
+        headers=csrf_headers,
+    )
+    assert active.status_code == 200
+    file_status = active.json()["session"]["files"][0]
+    assert len(file_status["chunk_digests"]) == 1
+
+    invalid_restart = await client.put(
+        f"{url}?offset=4&restart=true", headers=csrf_headers, content=b"tail"
+    )
+    assert invalid_restart.status_code == 422
+    assert invalid_restart.json()["detail"] == "restart requires offset=0"
+
+
+@pytest.mark.asyncio
 async def test_active_session_is_owner_scoped(
     monkeypatch: pytest.MonkeyPatch,
     client: AsyncClient,
@@ -366,10 +454,65 @@ async def test_active_session_is_owner_scoped(
         f"{_session_url(test_project_id, test_dataset.id)}/active",
         headers=member_headers,
     )
-    assert member_response.status_code == 200
-    assert member_response.json()["session"] is None
+    # Decision 5: members cannot upload at all, so the resume lookup is 403 for them.
+    assert member_response.status_code == 403
     assert test_member
     assert session_id
+
+
+@pytest.mark.asyncio
+async def test_create_conflicts_with_another_users_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+    admin_user: User,
+    test_admin_member: object,
+    test_project_id: str,
+    test_dataset: Dataset,
+) -> None:
+    """Only the session owner may supersede an unfinished upload."""
+    _mock_storage(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
+    owner_headers = await bff_session_headers(client, db_session, test_user)
+    session_id, files = await _create_session(
+        client,
+        owner_headers,
+        test_project_id,
+        test_dataset.id,
+        [{"filename": "conflict.wav", "size": 8}],
+    )
+    chunk_url = _upload_url(test_project_id, test_dataset.id, session_id, files[0]["file_id"])
+    uploaded = await client.put(
+        f"{chunk_url}?offset=0", headers=owner_headers, content=b"1234"
+    )
+    assert uploaded.status_code == 200
+
+    admin_headers = await bff_session_headers(client, db_session, admin_user)
+    conflict = await client.post(
+        _session_url(test_project_id, test_dataset.id),
+        headers=admin_headers,
+        json={"files": [{"filename": "admin.wav", "size": 4}]},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "Another user has an unfinished upload for this dataset"
+
+    owner_headers = await bff_session_headers(client, db_session, test_user)
+    replacement = await client.post(
+        _session_url(test_project_id, test_dataset.id),
+        headers=owner_headers,
+        json={"files": [{"filename": "replacement.wav", "size": 4}]},
+    )
+    assert replacement.status_code == 201
+
+    result = await db_session.execute(
+        select(UploadSession).where(UploadSession.id == UUID(session_id))
+    )
+    assert result.scalar_one().status == UploadSessionStatus.FAILED
+    assert not upload_staging.session_dir(UUID(session_id)).exists()
+    assert test_admin_member
 
 
 @pytest.mark.asyncio
@@ -645,4 +788,3 @@ async def test_chunk_admission_limit_is_deterministic(
     assert busy.headers.get("Retry-After") == "1"
     # The rejected request must not have touched the counter.
     assert _uploads._chunk_in_flight[test_user.id] == 1
-

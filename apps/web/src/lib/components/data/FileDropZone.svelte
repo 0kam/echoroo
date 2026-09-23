@@ -4,16 +4,19 @@
    *
    * Handles drag events and file input change. Calls onFilesAdded with selected files.
    * Does not validate files itself — validation is delegated to the parent.
-   */
+  */
+
+  import * as m from '$lib/paraglide/messages';
 
   interface Props {
     isDragOver: boolean;
+    prompt?: string;
     onFilesAdded: (files: File[]) => void;
     onDragOver: () => void;
     onDragLeave: () => void;
   }
 
-  let { isDragOver, onFilesAdded, onDragOver, onDragLeave }: Props = $props();
+  let { isDragOver, prompt, onFilesAdded, onDragOver, onDragLeave }: Props = $props();
 
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
@@ -42,7 +45,7 @@
       ? 'border-primary-400 bg-primary-50'
       : 'border-stone-300 hover:border-stone-400 hover:bg-stone-50'}"
   role="button"
-  aria-label="Drop audio files here or click to browse"
+  aria-label={m.file_upload_dropzone_aria()}
   ondragover={handleDragOver}
   ondragleave={onDragLeave}
   ondrop={handleDrop}
@@ -64,11 +67,11 @@
     />
   </svg>
   <p class="mb-1 text-sm font-medium text-stone-700">
-    {isDragOver ? 'Release to add files' : 'Drag and drop audio files here'}
+    {isDragOver ? m.file_upload_dropzone_release() : prompt ?? m.file_upload_dropzone_prompt()}
   </p>
   <p class="text-xs text-stone-400">
-    or <span class="text-primary-600 underline">browse</span> &mdash;
-    WAV, FLAC, MP3, OGG, OPUS &bull; max 1 GB per file &bull; up to 500 files
+    {m.file_upload_dropzone_or()} <span class="text-primary-600 underline">{m.file_upload_dropzone_browse()}</span> &mdash;
+    {m.file_upload_dropzone_hint()}
   </p>
 </div>
 

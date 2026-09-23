@@ -96,6 +96,10 @@ class UploadFileStatusResponse(BaseModel):
     file_size: int = Field(..., description="File size in bytes")
     declared_size: int = Field(..., description="Size announced at session creation")
     received_bytes: int = Field(0, description="Bytes staged so far")
+    chunk_digests: list[str] = Field(
+        default_factory=list,
+        description="SHA-256 of every staged chunk, in order",
+    )
     duration: float | None = Field(None, description="Audio duration in seconds")
     samplerate: int | None = Field(None, description="Sample rate in Hz")
     channels: int | None = Field(None, description="Number of audio channels")

@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from celery.exceptions import Ignore
+from sqlalchemy import select
 
 from echoroo.core import upload_staging
 from echoroo.core.s3 import (
@@ -38,6 +39,7 @@ from echoroo.core.s3 import (
     verify_object_exists,
 )
 from echoroo.core.settings import get_settings
+from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
     DatasetStatus,
     DatetimeParseStatus,
@@ -872,6 +874,13 @@ async def _run_import(
                 # Lock the session and confirm it is still ours: a force-fail
                 # or reaper claim between publish and here must leave no
                 # Recording behind (the reaper deletes unlinked objects).
+                # Dataset before session (the same order as session creation):
+                # inserting Recording rows takes a KEY SHARE lock on the dataset
+                # through the foreign key, so take it explicitly first or a
+                # concurrent create (dataset FOR UPDATE, then session) deadlocks.
+                await db.execute(
+                    select(Dataset.id).where(Dataset.id == dataset_id).with_for_update(read=True, key_share=True)
+                )
                 owner = await session_repo.get_for_update(session_uuid)
                 if owner is None or owner.status != UploadSessionStatus.IMPORTING:
                     await db.rollback()
@@ -1097,13 +1106,24 @@ async def _run_import(
             # Flush any remaining recordings
             await _flush_batch()
 
-            # Mark the session as imported only if it is still being imported.
+            # Dataset first, then the session CAS: session creation locks the
+            # dataset row before the session row, so this transaction must take
+            # them in the same order or a concurrent create can deadlock it.
+            await dataset_repo.update_import_status(
+                dataset_id,
+                DatasetStatus.COMPLETED,
+                total_files=len(valid_files),
+                processed_files=imported_count,
+            )
+            # Mark the session as imported only if it is still being imported;
+            # the dataset update above rolls back with it otherwise.
             transitioned = await session_repo.update_status(
                 session_uuid,
                 UploadSessionStatus.IMPORTED,
                 expected_status=UploadSessionStatus.IMPORTING,
             )
             if not transitioned:
+                await db.rollback()
                 logger.warning(
                     "Session %s left IMPORTING during import; not marking IMPORTED",
                     session_id,
@@ -1112,15 +1132,6 @@ async def _run_import(
                     f"Session {session_id} left IMPORTING during import",
                     mark_failed=False,
                 )
-            # The session's IMPORTED and the dataset's COMPLETED land in one
-            # commit, so no other upload can start against a dataset whose
-            # completion is still pending.
-            await dataset_repo.update_import_status(
-                dataset_id,
-                DatasetStatus.COMPLETED,
-                total_files=len(valid_files),
-                processed_files=imported_count,
-            )
             await db.commit()
 
             if await _delete_unlinked_publications(db, session_uuid, project_id, dataset_id):
@@ -1383,6 +1394,14 @@ async def _mark_import_failed(session_id: str, error: str) -> None:
             session = await session_repo.get_by_id(UUID(session_id))
             if session is None:
                 return
+            # Dataset row before the session row (same order as session
+            # creation, which locks dataset → session) to avoid a deadlock.
+            dataset_repo = DatasetRepository(db)
+            await dataset_repo.update_import_status(
+                session.dataset_id,
+                DatasetStatus.FAILED,
+                error=error,
+            )
             claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
@@ -1393,12 +1412,6 @@ async def _mark_import_failed(session_id: str, error: str) -> None:
                 logger.info("Not marking import of session %s failed: not IMPORTING", session_id)
                 await db.rollback()
                 return
-            dataset_repo = DatasetRepository(db)
-            await dataset_repo.update_import_status(
-                session.dataset_id,
-                DatasetStatus.FAILED,
-                error=error,
-            )
             await db.commit()
     finally:
         await engine.dispose()

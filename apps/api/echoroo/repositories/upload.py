@@ -130,13 +130,19 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
         dataset_id: UUID,
         user_id: UUID,
     ) -> UploadSession | None:
-        """Find the caller's unfinished ISSUED session for a dataset."""
+        """Find the caller's unfinished session for a dataset.
+
+        Any non-terminal status counts: an ``issued`` session is resumed by
+        sending the remaining bytes, a processing one (uploaded … importing)
+        is picked up again by polling, so a reload during validation cannot
+        strand a finished upload.
+        """
         result = await self.db.execute(
             select(UploadSession)
             .where(
                 UploadSession.dataset_id == dataset_id,
                 UploadSession.created_by_id == user_id,
-                UploadSession.status == UploadSessionStatus.ISSUED,
+                UploadSession.status.in_(_ACTIVE_STATUSES),
             )
             .options(selectinload(UploadSession.files))
             .order_by(UploadSession.created_at.desc())

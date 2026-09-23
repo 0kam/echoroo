@@ -1,9 +1,11 @@
 /**
- * Upload sessions API client for TanStack Query.
- * Handles file upload sessions, presigned URL uploads, and status polling.
+ * Upload sessions API client for chunked, resumable browser uploads.
  */
 
 import type {
+  ActiveUploadSessionResponse,
+  ChunkAcceptedResponse,
+  CompleteUploadRequest,
   CompleteUploadResponse,
   CreateUploadSessionRequest,
   CreateUploadSessionResponse,
@@ -11,14 +13,10 @@ import type {
 } from '$lib/types/data';
 import { apiClient } from './client';
 
-// spec/009 PR 3a: upload-session orchestration (create / complete /
-// status) migrated to ``/web-api/v1``. The S3 PUT itself
-// (``uploadFileToPresignedUrl`` below) talks to S3 directly and never
-// flows through the FastAPI app, so it is intentionally out of scope.
 const WEB_API_BASE = '/web-api/v1';
 const CSRF_COOKIE_NAME = 'echoroo_csrf';
 
-function getCsrfToken(): string | null {
+export function getCsrfToken(): string | null {
   if (typeof document === 'undefined') return null;
   const prefix = `${CSRF_COOKIE_NAME}=`;
   const parts = document.cookie ? document.cookie.split('; ') : [];
@@ -41,162 +39,242 @@ function csrfHeaders(): Record<string, string> {
   return headers;
 }
 
-/**
- * Create a new upload session for a dataset.
- * Returns presigned upload URLs for each file.
- */
 export async function createUploadSession(
   projectId: string,
   datasetId: string,
-  data: CreateUploadSessionRequest
+  data: CreateUploadSessionRequest,
 ): Promise<CreateUploadSessionResponse> {
   return apiClient.post<CreateUploadSessionResponse>(
     `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions`,
     data,
-    { headers: csrfHeaders() }
+    { headers: csrfHeaders() },
   );
 }
 
-/**
- * Mark an upload session as complete, triggering backend verification.
- */
+export async function fetchActiveUploadSession(
+  projectId: string,
+  datasetId: string,
+): Promise<ActiveUploadSessionResponse> {
+  return apiClient.get<ActiveUploadSessionResponse>(
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/active`,
+  );
+}
+
 export async function completeUploadSession(
   projectId: string,
   datasetId: string,
-  sessionId: string
+  sessionId: string,
+  body: CompleteUploadRequest = { skip_missing: false },
 ): Promise<CompleteUploadResponse> {
   return apiClient.post<CompleteUploadResponse>(
     `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/complete`,
-    undefined,
-    { headers: csrfHeaders() }
+    body,
+    { headers: csrfHeaders() },
   );
 }
 
-/**
- * Fetch the current status of an upload session.
- * Used for polling during validating/importing phases.
- */
+export async function cancelUploadSession(
+  projectId: string,
+  datasetId: string,
+  sessionId: string,
+): Promise<void> {
+  await apiClient.post<void>(
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}/cancel`,
+    undefined,
+    { headers: csrfHeaders() },
+  );
+}
+
 export async function fetchUploadSessionStatus(
   projectId: string,
   datasetId: string,
-  sessionId: string
+  sessionId: string,
 ): Promise<UploadSessionStatusResponse> {
   return apiClient.get<UploadSessionStatusResponse>(
-    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`
+    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`,
   );
 }
 
-/**
- * Compute SHA-256 hash of a File object using the Web Crypto API.
- * Processes the file in 8MB chunks to avoid blocking the main thread for large files.
- * Returns null if crypto.subtle is unavailable (e.g. HTTP non-secure contexts).
- */
-export async function computeFileSHA256(file: File): Promise<string | null> {
-  // crypto.subtle is only available in secure contexts (HTTPS or localhost)
-  if (!crypto.subtle) {
-    return null;
-  }
+export const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 
-  const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MB chunks
-  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-  // For single-chunk files, use a direct approach
-  if (totalChunks <= 1) {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-    return bufferToHex(hashBuffer);
-  }
-
-  // For multi-chunk files, concatenate all chunks then hash
-  // (Web Crypto API doesn't support streaming SHA-256 natively)
-  const buffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-  return bufferToHex(hashBuffer);
+export function chunkUrl(
+  projectId: string,
+  datasetId: string,
+  sessionId: string,
+  fileId: string,
+  offset: number,
+  restart = false,
+): string {
+  const url = `${WEB_API_BASE}/projects/${encodeURIComponent(projectId)}/datasets/${encodeURIComponent(datasetId)}/upload-sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}/chunks?offset=${offset}`;
+  return restart ? `${url}&restart=true` : url;
 }
 
-/**
- * Convert an ArrayBuffer to a hex string.
- */
-function bufferToHex(buffer: ArrayBuffer): string {
-  const byteArray = new Uint8Array(buffer);
-  return Array.from(byteArray)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+export async function sha256Hex(data: ArrayBuffer): Promise<string | null> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/**
- * Convert a presigned URL to a same-origin relative path.
- *
- * The backend generates presigned URLs with an absolute origin
- * (e.g. http://localhost:3000/s3-proxy/echoroo/...) based on
- * S3_PUBLIC_ENDPOINT_URL.  When the user accesses the app through
- * SSH port-forwarding or a different host/IP, the origin in the
- * presigned URL may not match the browser's actual origin, causing
- * a cross-origin request that fails due to CORS.
- *
- * By stripping the origin and keeping only the path + query, the
- * browser always sends a same-origin request through the Vite
- * dev proxy (or production reverse proxy), avoiding CORS entirely.
- */
-function toRelativeUrl(absoluteUrl: string): string {
+export type ChunkResult =
+  | { kind: 'ok'; received: number; complete: boolean }
+  | { kind: 'offset'; received: number }
+  | { kind: 'retry'; after: number }
+  | { kind: 'unauthorized'; tokenUsed: string | null }
+  | { kind: 'fatal'; reason: 'session' | 'auth' | 'file'; message: string }
+  | { kind: 'network' };
+
+export interface PutChunkOptions {
+  sha256: string | null;
+  signal: AbortSignal;
+  onProgress?: (loadedBytes: number) => void;
+  /**
+   * Abort the request when no upload progress and no response arrive for this
+   * long. A connection that silently dies (NAT timeout, Wi-Fi drop without a
+   * TCP reset, server paused) otherwise hangs the chunk forever; the scheduler
+   * treats the abort as a network error and retries. 0 disables it.
+   */
+  inactivityMs?: number;
+}
+
+export const DEFAULT_CHUNK_INACTIVITY_MS = 30_000;
+
+function parseResponseBody(responseText: string): unknown {
+  if (!responseText) return null;
   try {
-    const parsed = new URL(absoluteUrl);
-    return parsed.pathname + parsed.search;
+    return JSON.parse(responseText) as unknown;
   } catch {
-    // If it's already relative or unparseable, return as-is
-    return absoluteUrl;
+    return responseText;
   }
 }
 
-/**
- * Upload a file to a presigned URL via HTTP PUT.
- * Uses XMLHttpRequest to support upload progress tracking.
- *
- * @param url - Presigned URL from the upload session
- * @param file - File object to upload
- * @param onProgress - Optional callback receiving upload percentage (0-100)
- */
-export function uploadFileToPresignedUrl(
-  url: string,
-  file: File,
-  onProgress?: (percent: number) => void
-): Promise<void> {
+function responseDetail(responseText: string): string {
+  const body = parseResponseBody(responseText);
+  if (typeof body === 'string') return body.slice(0, 200);
+  if (body && typeof body === 'object' && 'detail' in body) {
+    const detail = (body as { detail: unknown }).detail;
+    if (typeof detail === 'string') return detail.slice(0, 200);
+    if (detail && typeof detail === 'object' && 'detail' in detail) {
+      const nested = (detail as { detail: unknown }).detail;
+      if (typeof nested === 'string') return nested.slice(0, 200);
+    }
+  }
+  return responseText.slice(0, 200);
+}
+
+export function putChunk(url: string, body: Blob, opts: PutChunkOptions): Promise<ChunkResult> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let settled = false;
 
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && onProgress) {
-        const percent = Math.round((event.loaded / event.total) * 100);
-        onProgress(percent);
-      }
+    const inactivityMs = opts.inactivityMs ?? DEFAULT_CHUNK_INACTIVITY_MS;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    let stalled = false;
+    const armWatchdog = () => {
+      if (inactivityMs <= 0) return;
+      if (watchdog !== null) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, inactivityMs);
+    };
+
+    const cleanup = () => {
+      opts.signal.removeEventListener('abort', onSignalAbort);
+      if (watchdog !== null) clearTimeout(watchdog);
+    };
+
+    const resolveOnce = (result: ChunkResult) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const rejectOnce = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const onSignalAbort = () => {
+      if (settled) return;
+      xhr.abort();
+      rejectOnce(new DOMException('Aborted', 'AbortError'));
+    };
+
+    xhr.upload.addEventListener('progress', (event: ProgressEvent) => {
+      armWatchdog();
+      opts.onProgress?.(event.loaded);
     });
-
     xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress?.(100);
-        resolve();
+      if (xhr.status === 200) {
+        const bodyData = parseResponseBody(xhr.responseText ?? '');
+        const accepted = bodyData as Partial<ChunkAcceptedResponse>;
+        resolveOnce({
+          kind: 'ok',
+          received: typeof accepted.received_bytes === 'number' ? accepted.received_bytes : 0,
+          complete: accepted.complete === true,
+        });
+      } else if (xhr.status === 409) {
+        const bodyData = parseResponseBody(xhr.responseText ?? '');
+        const detail =
+          bodyData && typeof bodyData === 'object' && 'detail' in bodyData
+            ? (bodyData as { detail: unknown }).detail
+            : null;
+        if (detail && typeof detail === 'object' && 'received_bytes' in detail) {
+          const received = (detail as { received_bytes: unknown }).received_bytes;
+          if (typeof received === 'number') {
+            resolveOnce({ kind: 'offset', received });
+            return;
+          }
+        }
+        if (typeof detail === 'string') {
+          resolveOnce({ kind: 'fatal', reason: 'session', message: detail.slice(0, 200) });
+          return;
+        }
+        resolveOnce({ kind: 'fatal', reason: 'session', message: responseDetail(xhr.responseText ?? '') });
+      } else if (xhr.status === 429) {
+        const retryAfter = Number(xhr.getResponseHeader('Retry-After') ?? '');
+        resolveOnce({ kind: 'retry', after: Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter : 1 });
+      } else if (xhr.status === 401) {
+        resolveOnce({ kind: 'unauthorized', tokenUsed: accessToken });
+      } else if (xhr.status === 403 || xhr.status === 419) {
+        resolveOnce({ kind: 'fatal', reason: 'auth', message: responseDetail(xhr.responseText ?? '') });
+      } else if (xhr.status === 413 || xhr.status === 422) {
+        resolveOnce({ kind: 'fatal', reason: 'file', message: responseDetail(xhr.responseText ?? '') });
+      } else if (xhr.status === 500 || xhr.status === 502 || xhr.status === 503 || xhr.status === 504) {
+        resolveOnce({ kind: 'network' });
+      } else if (xhr.status >= 400) {
+        resolveOnce({ kind: 'fatal', reason: 'file', message: responseDetail(xhr.responseText ?? '') });
       } else {
-        const body = xhr.responseText?.substring(0, 200) || '';
-        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}. ${body}`));
+        resolveOnce({ kind: 'network' });
       }
     });
-
-    xhr.addEventListener('error', () => {
-      // XHR error events fire for network-level failures (CORS, DNS, connection refused, etc.)
-      // Include any available response info to help debugging.
-      const detail = xhr.statusText || 'no details available';
-      reject(new Error(`Network error during file upload (${detail}). Check browser console for CORS or connectivity issues.`));
-    });
-
+    xhr.addEventListener('error', () => resolveOnce({ kind: 'network' }));
     xhr.addEventListener('abort', () => {
-      reject(new Error('File upload was aborted'));
+      if (stalled) {
+        // Our own watchdog fired: the connection went silent. Retry.
+        resolveOnce({ kind: 'network' });
+        return;
+      }
+      rejectOnce(new DOMException('Aborted', 'AbortError'));
     });
 
-    // Convert absolute presigned URL to relative path to ensure same-origin
-    // requests regardless of how the user accesses the app (SSH tunnel, IP, etc.)
-    const relativeUrl = toRelativeUrl(url);
-    xhr.open('PUT', relativeUrl);
-    // Do not set Content-Type header; let the presigned URL policy control it
-    xhr.send(file);
+    xhr.open('PUT', url);
+    xhr.withCredentials = true;
+    const accessToken = apiClient.getAccessToken();
+    if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+    const csrfToken = getCsrfToken();
+    if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+    if (opts.sha256 !== null) xhr.setRequestHeader('X-Chunk-SHA256', opts.sha256);
+
+    opts.signal.addEventListener('abort', onSignalAbort, { once: true });
+    if (opts.signal.aborted) {
+      onSignalAbort();
+      return;
+    }
+    armWatchdog();
+    xhr.send(body);
   });
 }
