@@ -110,12 +110,10 @@ secrets marked **prod-guarded** below.
 | Variable | Default | Req | Description |
 |----------|---------|-----|-------------|
 | `S3_ENDPOINT_URL` | `http://localhost:9000` | optional | Object-store endpoint (compose → `http://localstack:4566`). |
-| `S3_PUBLIC_ENDPOINT_URL` | *(unset)* | optional | Browser-facing base for presigned URLs (routed through the Vite `/s3-proxy` in dev). |
 | `S3_ACCESS_KEY` | `echoroo` | optional | Access key ID. |
 | `S3_SECRET_KEY` | `echoroo-dev` | **prod-guarded** | Secret access key. Must be changed away from `echoroo-dev` in production/staging. |
 | `S3_BUCKET` | `echoroo` | optional | Bucket name. |
 | `S3_REGION` | `us-east-1` | optional | Bucket region. |
-| `S3_PRESIGNED_URL_EXPIRY` | `900` | optional | Presigned URL lifetime (seconds). |
 | `AUDIO_ROOT` | `/data/audio` | optional | In-container root for audio files. |
 | `AUDIO_CACHE_DIR` | *(unset)* | optional | Optional spectrogram cache directory. |
 | `S3_AUDIO_CACHE_DIR` | `/data/s3_audio_cache` | optional | Local cache dir `AudioService` downloads S3 objects into. |
@@ -180,7 +178,6 @@ the top). The only one that matters operationally is `web_session_secret`.
 | `ALLOWED_ORIGINS` | derived | optional | CORS allowlist (JSON list). Compose derives it from `ECHOROO_PUBLIC_HOST`; explicit value always wins. |
 | `PUBLIC_API_URL` | derived | optional | **Frontend** — browser-facing API base. Compose derives from `ECHOROO_PUBLIC_HOST` + `ECHOROO_API_PORT`. |
 | `ECHOROO_API_URL` | `http://backend:8000` | optional | **Frontend** — server-side (SSR/BFF) API base inside the Docker network. |
-| `S3_PROXY_TARGET` | *(vite)* | optional | **Frontend** — LocalStack target the Vite `/s3-proxy` forwards to. |
 
 #### LAN / remote-host deployment
 
@@ -198,8 +195,8 @@ ECHOROO_PUBLIC_HOST=192.168.1.100   # your server's IP or FQDN
 
 `ECHOROO_PUBLIC_HOST` is a **bare hostname or IP** — no `http://`, no port.
 Everything browser-facing derives from it: the frontend `APP_URL`, the
-`PUBLIC_API_URL`, the S3 presigned-URL proxy base, the CORS allowlist, the
-Vite `allowedHosts`, and the WebAuthn relying-party ID + origins. Ports keep
+`PUBLIC_API_URL`, the CORS allowlist, the Vite `allowedHosts`, and the
+WebAuthn relying-party ID + origins. Ports keep
 their own knobs (`ECHOROO_FRONTEND_PORT` / `ECHOROO_API_PORT`); the scheme
 stays `http` in the dev stack (front it with a reverse proxy for TLS in
 production).

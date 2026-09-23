@@ -2,11 +2,10 @@
 
 Phase 17 §C heavy-gap batch: targets the boto3-wrapping helpers that the
 full S3 integration suite skips when LocalStack is not available —
-``get_s3_client`` / ``get_public_s3_client`` (lines 78-83, 101-103),
-``ensure_bucket_exists`` (lines 113, 121), ``generate_presigned_upload_url``
-(lines 163-165, 173), ``verify_object_exists`` (lines 173, 201-223),
+``get_s3_client`` (lines 78-83), ``ensure_bucket_exists`` (lines 113, 121),
+``verify_object_exists`` (lines 163, 191-213),
 ``delete_object`` / ``delete_objects_by_prefix`` (lines 240, 260-282),
-``copy_object`` / ``move_object`` / ``get_object_stream`` /
+``copy_object`` / ``get_object_stream`` /
 ``list_objects_paginated`` / ``delete_objects_batch`` (lines 300-360)
 so the module clears the 85% threshold without touching production code.
 
@@ -42,7 +41,6 @@ def _fake_client() -> MagicMock:
     client.delete_object = MagicMock()
     client.delete_objects = MagicMock(return_value={"Deleted": []})
     client.copy_object = MagicMock()
-    client.generate_presigned_url = MagicMock(return_value="https://signed/")
     return client
 
 
@@ -59,16 +57,6 @@ def test_ensure_bucket_exists_skip_when_present() -> None:
     client = _fake_client()
     s3mod.ensure_bucket_exists(client=client)
     client.create_bucket.assert_not_called()
-
-
-def test_generate_presigned_upload_url_returns_signed_url() -> None:
-    """generate_presigned_upload_url() returns the signed URL (lines 113, 121)."""
-    client = _fake_client()
-    url = s3mod.generate_presigned_upload_url(
-        object_key="recordings/x.wav", expiry_seconds=60, client=client,
-    )
-    assert url == "https://signed/"
-    client.generate_presigned_url.assert_called_once()
 
 
 def test_verify_object_exists_404_returns_not_found() -> None:
@@ -155,28 +143,13 @@ def test_copy_object_invokes_client_copy() -> None:
     client.copy_object.assert_called_once()
 
 
-def test_move_object_returns_true_on_success() -> None:
-    """move_object() returns True after copy + delete (lines 271-281)."""
-    client = _fake_client()
-    assert s3mod.move_object("a", "b", client=client) is True
-
-
-def test_move_object_returns_false_on_client_error() -> None:
-    """move_object() returns False when the boto3 call raises."""
-    client = _fake_client()
-    client.copy_object.side_effect = _client_error("AccessDenied")
-    assert s3mod.move_object("a", "b", client=client) is False
-
-
-def test_get_object_stream_with_byte_range() -> None:
-    """get_object_stream() forwards the Range parameter (lines 300-306)."""
+def test_get_object_stream() -> None:
+    """get_object_stream() returns the object's streaming body."""
     client = _fake_client()
     body = io.BytesIO(b"data")
     client.get_object = MagicMock(return_value={"Body": body})
-    out = s3mod.get_object_stream("k", byte_range="bytes=0-3", client=client)
+    out = s3mod.get_object_stream("k", client=client)
     assert out is body
-    args = client.get_object.call_args
-    assert args.kwargs["Range"] == "bytes=0-3"
 
 
 def test_list_objects_paginated_yields_metadata_with_continuation() -> None:
@@ -242,21 +215,4 @@ def test_get_s3_client_returns_boto3_client(monkeypatch: pytest.MonkeyPatch) -> 
     out = s3mod.get_s3_client()
     assert out is not None
     assert captured["service"] == "s3"
-    assert "endpoint_url" in captured["kwargs"]
-
-
-def test_get_public_s3_client_uses_public_endpoint(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """get_public_s3_client() picks S3_PUBLIC_ENDPOINT_URL when set (lines 101-103)."""
-    captured: dict[str, Any] = {}
-
-    def fake_boto3_client(service: str, **kwargs: Any) -> object:
-        captured["kwargs"] = kwargs
-        return object()
-
-    monkeypatch.setattr(s3mod.boto3, "client", fake_boto3_client)
-    out = s3mod.get_public_s3_client()
-    assert out is not None
-    # Either S3_PUBLIC_ENDPOINT_URL or S3_ENDPOINT_URL was used.
     assert "endpoint_url" in captured["kwargs"]

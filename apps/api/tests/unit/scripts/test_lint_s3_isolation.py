@@ -78,11 +78,11 @@ def test_flags_raw_client_accessor_attribute(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "module.py",
-        "from echoroo.core import s3\nc = s3.get_public_s3_client()\n",
+        "from echoroo.core import s3\nc = s3.get_s3_client()\n",
     )
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 1
-    assert "get_public_s3_client" in findings[0]
+    assert "get_s3_client" in findings[0]
 
 
 def test_allows_helper_usage(tmp_path: Path) -> None:
@@ -182,4 +182,3 @@ def test_flags_sdk_module_reexported_through_wrapper(tmp_path: Path) -> None:
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 1, findings
     assert "boto3" in findings[0]
-

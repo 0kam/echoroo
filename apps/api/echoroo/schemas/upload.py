@@ -41,7 +41,7 @@ class UploadFileRequest(BaseModel):
 
 
 class CreateUploadSessionRequest(BaseModel):
-    """Request to create an upload session and get presigned URLs."""
+    """Request to create an upload session."""
 
     files: list[UploadFileRequest] = Field(
         ...,
@@ -68,23 +68,23 @@ class CompleteUploadRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class UploadFilePresignedResponse(BaseModel):
-    """Presigned URL info for a single file."""
+class UploadFileIssuedResponse(BaseModel):
+    """One file of a freshly created session."""
 
-    file_id: str = Field(..., description="Upload file UUID")
-    original_filename: str = Field(..., description="Original filename")
-    upload_url: str = Field(..., description="Presigned S3 PUT URL")
+    file_id: str = Field(..., description="Upload file UUID; used in the chunk URL")
+    original_filename: str
+    declared_size: int
 
 
 class CreateUploadSessionResponse(BaseModel):
-    """Response with session info and presigned URLs."""
+    """Response with session info and issued file identifiers."""
 
     session_id: str = Field(..., description="Upload session UUID")
     status: str = Field(..., description="Session status")
-    expires_at: datetime = Field(..., description="Presigned URL expiry time")
+    expires_at: datetime = Field(..., description="Inactivity deadline; extended by every accepted chunk")
     total_files: int = Field(..., description="Total number of files in session")
     total_bytes: int = Field(..., description="Total expected bytes")
-    files: list[UploadFilePresignedResponse] = Field(..., description="Per-file presigned URL info")
+    files: list[UploadFileIssuedResponse] = Field(..., description="Per-file issued upload info")
 
 
 class UploadFileStatusResponse(BaseModel):

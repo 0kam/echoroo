@@ -3,8 +3,7 @@
 #
 # Responsibilities:
 #   1. Provision the default S3 bucket used by the API / workers.
-#   2. Apply permissive CORS for browser-based presigned uploads.
-#   3. Provision KMS Customer Master Keys (CMKs) + aliases used by the
+#   2. Provision KMS Customer Master Keys (CMKs) + aliases used by the
 #      006-permissions-redesign feature (per research.md §1 key isolation).
 #
 # The script is expected to be idempotent — re-running it on an existing
@@ -34,20 +33,6 @@ else
   awslocal s3 mb s3://echoroo
   echo "Bucket 'echoroo' created successfully"
 fi
-
-# Configure CORS on the bucket for browser-based uploads via presigned URLs
-awslocal s3api put-bucket-cors --bucket echoroo --cors-configuration '{
-  "CORSRules": [
-    {
-      "AllowedOrigins": ["http://localhost:5173", "http://localhost:3000"],
-      "AllowedMethods": ["GET", "PUT", "POST", "HEAD"],
-      "AllowedHeaders": ["*"],
-      "ExposeHeaders": ["ETag", "x-amz-version-id"],
-      "MaxAgeSeconds": 3600
-    }
-  ]
-}'
-echo "CORS configuration applied to bucket 'echoroo'"
 
 # ---------------------------------------------------------------------------
 # KMS CMKs + aliases (006-permissions-redesign)

@@ -218,7 +218,7 @@ class UploadSessionRepository(BaseRepository[UploadSession]):
         await self.db.flush()
 
     async def get_expired_sessions(self) -> list[UploadSession]:
-        """Return sessions whose presigned URLs have expired and were never uploaded.
+        """Return issued sessions whose inactivity deadline has passed.
 
         Returns:
             List of ISSUED sessions past their expiry time

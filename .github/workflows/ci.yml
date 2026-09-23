@@ -1429,7 +1429,6 @@ jobs:
       ENVIRONMENT: development
       # LocalStack S3 — check_wipe_guard looks up the genesis marker through core/s3 (S3_* settings).
       AWS_ENDPOINT_URL: http://localhost:4566
-      S3_PUBLIC_ENDPOINT_URL: http://localhost:4566
       S3_ENDPOINT_URL: http://localhost:4566
       S3_ACCESS_KEY: test
       S3_SECRET_KEY: test

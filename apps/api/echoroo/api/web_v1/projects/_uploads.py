@@ -2,8 +2,8 @@
 
 Spec/009 PR 3a moves the upload-session orchestration endpoints from
 ``/api/v1`` to ``/web-api/v1``. The legacy handlers in
-``/api/v1/uploads.py`` continue to own presigned URL issuance, S3 bucket
-verification, Celery task dispatch, and per-file status aggregation; the
+``/api/v1/uploads.py`` continue to own upload-session creation, completion,
+Celery task dispatch, and per-file status aggregation; the
 BFF layer only adds the cookie + CSRF gating and re-uses
 :func:`gate_action` for the permission decision on mutations.
 

@@ -208,7 +208,7 @@ async def _create_staged_upload(
         id=file_id,
         session_id=session.id,
         original_filename="recording.wav",
-        object_key=f"uploads/{dataset.project_id}/{dataset.id}/{session.id}/{file_id}.wav",
+        object_key=f"recordings/{dataset.project_id}/{dataset.id}/{file_id}.wav",
         file_size=len(payload),
         declared_size=len(payload),
         received_bytes=0,
@@ -336,6 +336,10 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
 
     assert len(staged_worker_env.upload_calls) == 1
     upload_call = staged_worker_env.upload_calls[0]
+    object_key_result = await db_session.execute(
+        select(UploadFile.object_key).where(UploadFile.id == file_id)
+    )
+    file_object_key = object_key_result.scalar_one()
     assert upload_call["Key"].startswith(
         f"recordings/{staged_dataset.project_id}/{staged_dataset.id}/"
     )
@@ -358,7 +362,7 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
     assert not upload_staging.session_dir(session_id).exists()
     # Deterministic destination: the recording id is the upload file id, so a
     # republish after a crash would overwrite the same key.
-    assert upload_call["Key"] == f"recordings/{staged_dataset.project_id}/{staged_dataset.id}/{file_id}.wav"
+    assert upload_call["Key"] == file_object_key
 
     # Duplicate deliveries after completion are harmless: the terminal state,
     # the dataset and the published object are left alone.
@@ -578,4 +582,3 @@ async def test_import_deletes_object_when_stored_size_mismatches(
     file_row = await _get_file_row(db_session, file_id)
     assert file_row[0] == UploadFileStatus.INVALID
     assert not any(key.startswith("recordings/") for key in staged_worker_env.objects)
-

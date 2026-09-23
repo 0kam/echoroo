@@ -235,12 +235,10 @@ class Settings(BaseSettings):
 
     # S3 / Object Storage
     S3_ENDPOINT_URL: str = "http://localhost:9000"
-    S3_PUBLIC_ENDPOINT_URL: str | None = None  # Public URL for presigned URLs (browser access)
     S3_ACCESS_KEY: str = "echoroo"
     S3_SECRET_KEY: str = "echoroo-dev"
     S3_BUCKET: str = "echoroo"
     S3_REGION: str = "us-east-1"
-    S3_PRESIGNED_URL_EXPIRY: int = 900  # 15 minutes
 
     # Upload limits
     UPLOAD_MAX_FILE_SIZE: int = 1 * 1024 * 1024 * 1024  # 1GB per file

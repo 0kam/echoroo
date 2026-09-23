@@ -62,25 +62,6 @@ def get_s3_client() -> Any:
     )
 
 
-def get_public_s3_client() -> Any:
-    """Create and return an S3 client using the public endpoint URL.
-
-    This client is intended for generating presigned URLs that are accessible
-    from browsers. Uses S3_PUBLIC_ENDPOINT_URL when set, falling back to
-    S3_ENDPOINT_URL.
-    """
-    settings = get_settings()
-    endpoint_url = settings.S3_PUBLIC_ENDPOINT_URL or settings.S3_ENDPOINT_URL
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=settings.S3_ACCESS_KEY,
-        aws_secret_access_key=settings.S3_SECRET_KEY,
-        region_name=settings.S3_REGION,
-        config=Config(signature_version="s3v4"),
-    )
-
-
 def ensure_configured() -> None:
     """Raise if the storage settings cannot produce a client.
 
@@ -108,47 +89,6 @@ def head_bucket(client: Any = None) -> None:
     client.head_bucket(Bucket=settings.S3_BUCKET)
 
 
-def generate_presigned_upload_url(
-    object_key: str,
-    expiry_seconds: int | None = None,
-    client: Any = None,
-    public: bool = False,
-) -> str:
-    """Generate a presigned PUT URL for browser-direct upload.
-
-    Args:
-        object_key: S3 object key (must start with allowed prefix)
-        expiry_seconds: URL expiry in seconds (default from settings)
-        client: Optional S3 client instance
-        public: Sign against the browser-reachable endpoint
-            (``get_public_s3_client``). Ignored when ``client`` is given.
-
-    Returns:
-        Presigned URL string
-    """
-    settings = get_settings()
-    client = client or (get_public_s3_client() if public else get_s3_client())
-    expiry = expiry_seconds or settings.S3_PRESIGNED_URL_EXPIRY
-
-    # Only include Bucket and Key in presigned URL params.
-    # ContentLength and ChecksumSHA256 are NOT included because they would
-    # force the browser to send matching headers (content-length,
-    # x-amz-checksum-sha256) which must exactly match the signed values.
-    # Browsers set Content-Length automatically and don't know about
-    # x-amz-checksum-sha256, causing signature mismatch errors that manifest
-    # as CORS failures (S3 error responses lack CORS headers).
-    # Integrity is verified server-side during the validation step instead.
-    url: str = client.generate_presigned_url(
-        "put_object",
-        Params={
-            "Bucket": settings.S3_BUCKET,
-            "Key": object_key,
-        },
-        ExpiresIn=expiry,
-    )
-    return url
-
-
 def verify_object_exists(
     object_key: str,
     expected_size: int | None = None,
@@ -157,12 +97,8 @@ def verify_object_exists(
 ) -> dict[str, Any]:
     """Verify an object exists in S3 and optionally check its size and SHA-256.
 
-    When ``expected_sha256`` is provided, the object body is streamed and its
-    SHA-256 is recomputed for byte-level integrity verification. This guards
-    against TOCTOU replacement: a presigned PUT URL that is still within its
-    expiry window can be re-used to swap an object's contents while keeping
-    the same Content-Length, so a size check alone is insufficient (FR-028a /
-    upload sanitizer Round 2 hardening).
+    Used by the e2e seeder to check a fixture object byte for byte before
+    overwriting it.
 
     Args:
         object_key: S3 object key.
@@ -391,22 +327,6 @@ def copy_object(source_key: str, dest_key: str, client: Any = None) -> None:
     )
 
 
-def move_object(source_key: str, dest_key: str, client: Any = None) -> bool:
-    """Move an object by copying then deleting the source."""
-    settings = get_settings()
-    client = client or get_s3_client()
-    try:
-        client.copy_object(
-            Bucket=settings.S3_BUCKET,
-            CopySource={"Bucket": settings.S3_BUCKET, "Key": source_key},
-            Key=dest_key,
-        )
-        client.delete_object(Bucket=settings.S3_BUCKET, Key=source_key)
-        return True
-    except ClientError:
-        return False
-
-
 def get_object_response(
     object_key: str,
     byte_range: str | None = None,
@@ -433,20 +353,18 @@ def get_object_response(
 
 def get_object_stream(
     object_key: str,
-    byte_range: str | None = None,
     client: Any = None,
 ) -> Any:
     """Get a streaming response for an S3 object.
 
     Args:
         object_key: S3 object key
-        byte_range: Optional byte range (e.g., "bytes=0-65535")
         client: Optional S3 client instance
 
     Returns:
         StreamingBody object
     """
-    return get_object_response(object_key, byte_range=byte_range, client=client)["Body"]
+    return get_object_response(object_key, client=client)["Body"]
 
 
 def list_objects_paginated(prefix: str, client: Any = None) -> Iterator[S3ObjectMeta]:

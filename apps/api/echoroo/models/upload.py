@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 
 class UploadSession(UUIDMixin, TimestampMixin, Base):
-    """Upload session tracking presigned URL issuance through import completion.
+    """Upload session tracking issuance through import completion.
 
     Attributes:
         id: Unique identifier (UUID)
@@ -45,7 +45,7 @@ class UploadSession(UUIDMixin, TimestampMixin, Base):
         validated_files: Number of files that passed validation
         imported_files: Number of files successfully imported as recordings
         error: Error message if session failed
-        expires_at: Expiry time for presigned URLs
+        expires_at: Inactivity deadline extended by accepted chunks
         created_at: Session creation timestamp
         updated_at: Last update timestamp
     """
@@ -107,7 +107,7 @@ class UploadSession(UUIDMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        doc="Expiry time for presigned URLs",
+        doc="Inactivity deadline extended by accepted chunks",
     )
 
     # Relationships

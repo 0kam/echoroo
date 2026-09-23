@@ -16,14 +16,14 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
-from echoroo.core import s3, upload_staging
+from echoroo.core import upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.enums import UploadFileStatus, UploadSessionStatus
 from echoroo.models.upload import UploadFile, UploadSession
 from echoroo.repositories.dataset import DatasetRepository
 from echoroo.repositories.project import ProjectRepository
 from echoroo.repositories.upload import UploadFileRepository, UploadSessionRepository
-from echoroo.schemas.upload import UploadFilePresignedResponse, UploadFileRequest
+from echoroo.schemas.upload import UploadFileIssuedResponse, UploadFileRequest
 
 __all__ = [
     "AudioGpsStripError",
@@ -461,11 +461,10 @@ class UploadService:
         project_id: UUID,
         dataset_id: UUID,
         files: list[UploadFileRequest],
-    ) -> tuple[UploadSession, list[UploadFilePresignedResponse]]:
-        """Create upload session with presigned URLs.
+    ) -> tuple[UploadSession, list[UploadFileIssuedResponse]]:
+        """Create an upload session with issued file identifiers.
 
-        Validates permissions, file constraints, and generates presigned S3 PUT
-        URLs for each file in the session.
+        Validates permissions and file constraints for each file in the session.
 
         Args:
             user_id: ID of the requesting user
@@ -474,7 +473,7 @@ class UploadService:
             files: List of file metadata entries to upload
 
         Returns:
-            Tuple of (UploadSession instance, list of per-file presigned URL responses)
+            Tuple of (UploadSession instance, list of issued file responses)
 
         Raises:
             HTTPException 404: Dataset not found or does not belong to the project
@@ -619,24 +618,14 @@ class UploadService:
         )
         session = await self.session_repo.create(session)
 
-        # Build UploadFile records and presigned URLs.
-        # Presigned URLs are signed against the browser-accessible endpoint (public=True).
+        # Build UploadFile records with their final recording keys.
         upload_file_records: list[UploadFile] = []
-        presigned_responses: list[UploadFilePresignedResponse] = []
+        issued_files: list[UploadFileIssuedResponse] = []
 
         for file_req in files:
             ext = os.path.splitext(file_req.filename)[1].lower()
             file_uuid = uuid.uuid4()
-            object_key = (
-                f"uploads/{project_id}/{dataset_id}/{session.id}/{file_uuid}{ext}"
-            )
-
-            # Generate presigned PUT URL
-            upload_url = s3.generate_presigned_upload_url(
-                object_key=object_key,
-                expiry_seconds=settings.S3_PRESIGNED_URL_EXPIRY,
-                public=True,
-            )
+            object_key = f"recordings/{project_id}/{dataset_id}/{file_uuid}{ext}"
 
             upload_file = UploadFile(
                 id=file_uuid,
@@ -649,11 +638,11 @@ class UploadService:
                 status=UploadFileStatus.PENDING,
             )
             upload_file_records.append(upload_file)
-            presigned_responses.append(
-                UploadFilePresignedResponse(
+            issued_files.append(
+                UploadFileIssuedResponse(
                     file_id=str(file_uuid),
                     original_filename=file_req.filename,
-                    upload_url=upload_url,
+                    declared_size=file_req.size,
                 )
             )
 
@@ -666,7 +655,7 @@ class UploadService:
             # the old session (and its staging) intact.
             await self.session_repo.db.commit()
             await _run_blocking(upload_staging.remove_session, superseded_id)
-        return session, presigned_responses
+        return session, issued_files
 
     async def _load_owned_session(
         self,
@@ -959,10 +948,10 @@ class UploadService:
         *,
         skip_missing: bool = False,
     ) -> dict[str, Any]:
-        """Verify uploaded files and transition session to UPLOADED state.
+        """Count staged files and transition the session to UPLOADED state.
 
-        Checks S3 for each file's presence, updates per-file status accordingly,
-        and advances the session status to UPLOADED when all files are confirmed.
+        Counts staged files, updates per-file status accordingly, and advances
+        the session status to UPLOADED when all files are present.
 
         Args:
             user_id: ID of the requesting user
@@ -1024,8 +1013,7 @@ class UploadService:
                 detail=f"Upload session is in '{current}' state; expected 'issued'",
             )
 
-        # 3. Verify each file: staged files against the staging directory,
-        # presigned files against S3.
+        # 3. Verify each file against the staging directory.
         # A staged-file reset commits and releases every lock, which invalidates
         # the decisions taken for earlier files (another request may have
         # finished one meanwhile). Start the whole pass over, on fresh rows,
@@ -1034,7 +1022,6 @@ class UploadService:
             files = await self.file_repo.get_by_session(session_id)
             verified_files = 0
             missing_files = 0
-            mismatched_files = 0
             missing_file_ids: list[UUID] = []
             restart = False
 
@@ -1060,23 +1047,8 @@ class UploadService:
                         missing_file_ids.append(upload_file.id)
                     continue
 
-                result = s3.verify_object_exists(
-                    object_key=upload_file.object_key,
-                    expected_size=upload_file.file_size,
-                )
-
-                if not result["exists"]:
-                    missing_files += 1
-                    missing_file_ids.append(upload_file.id)
-                    # Leave file status as PENDING (not uploaded yet)
-                elif not result["size_match"]:
-                    mismatched_files += 1
-                    # Mark as uploaded but size mismatch will be caught during validation
-                    await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
-                    verified_files += 1
-                else:
-                    verified_files += 1
-                    await self.file_repo.update_status(upload_file.id, UploadFileStatus.UPLOADED)
+                missing_files += 1
+                missing_file_ids.append(upload_file.id)
 
             if not restart:
                 break
@@ -1112,7 +1084,7 @@ class UploadService:
             "status": new_status.value,
             "verified_files": verified_files,
             "missing_files": missing_files,
-            "mismatched_files": mismatched_files,
+            "mismatched_files": 0,
             "skipped_files": skipped_files,
         }
 

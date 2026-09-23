@@ -94,7 +94,7 @@ window opens.
 - IAM role: PutObject / GetObject / DeleteObject on the objects and
   ListBucket on the bucket (without it a HEAD on a missing key returns 403
   instead of 404 and the audit export cannot tell "absent" from "denied").
-- Wire via `S3_BUCKET`, `S3_PUBLIC_ENDPOINT_URL` (presigned URL base).
+- Wire via `S3_BUCKET`.
 
 ### 5. Email — removed (spec/011 zero-email deployment)
 
