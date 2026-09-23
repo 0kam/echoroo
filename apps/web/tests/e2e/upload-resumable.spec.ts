@@ -54,50 +54,59 @@ async function waitForDone(page: Page): Promise<void> {
   });
 }
 
+async function csrfHeader(page: Page): Promise<Record<string, string>> {
+  const csrfToken = await page.evaluate(() => {
+    const prefix = 'echoroo_csrf=';
+    const cookie = document.cookie.split('; ').find((part) => part.startsWith(prefix));
+    if (!cookie) return null;
+    try {
+      return decodeURIComponent(cookie.slice(prefix.length));
+    } catch {
+      return cookie.slice(prefix.length);
+    }
+  });
+  return csrfToken ? { 'X-CSRF-Token': csrfToken } : {};
+}
+
+// A retry of the serial group must start without an unfinished session of the
+// owner. Sessions still accepting bytes are cancelled; sessions the worker is
+// processing cannot be cancelled (409), so wait for them to reach a terminal
+// state. A 409 from a session that moved on between the two calls re-checks.
+async function clearUnfinishedSession(page: Page): Promise<void> {
+  const base = `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions`;
+  const deadline = Date.now() + 150_000;
+  while (Date.now() < deadline) {
+    const bearer = await getBearerTokenAfterLogin(page);
+    const activeResponse = await page.request.get(`${base}/active`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+      failOnStatusCode: false,
+    });
+    expect(activeResponse.ok()).toBe(true);
+    const body = activeResponse.status() === 204 ? '' : (await activeResponse.text()).trim();
+    const active =
+      body && body !== 'null'
+        ? ((JSON.parse(body) as { session?: { session_id: string; status: string } | null })
+            .session ?? null)
+        : null;
+    if (!active) return;
+
+    if (active.status === 'issued' || active.status === 'uploaded') {
+      const cancelResponse = await page.request.post(`${base}/${active.session_id}/cancel`, {
+        headers: { Authorization: `Bearer ${bearer}`, ...(await csrfHeader(page)) },
+        failOnStatusCode: false,
+      });
+      expect([204, 409]).toContain(cancelResponse.status());
+      continue;
+    }
+    await page.waitForTimeout(2_000);
+  }
+  throw new Error('an unfinished upload session did not finish within 150 s');
+}
+
 async function openDataset(page: Page, user: SeededTestUser): Promise<void> {
   await login(page, user);
   if (user.role === 'owner') {
-    const bearer = await getBearerTokenAfterLogin(page);
-    const activeResponse = await page.request.get(
-      `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/active`,
-      {
-        headers: { Authorization: `Bearer ${bearer}` },
-        failOnStatusCode: false,
-      },
-    );
-    expect(activeResponse.ok()).toBe(true);
-    if (activeResponse.status() !== 204) {
-      const body = (await activeResponse.text()).trim();
-      if (body && body !== 'null') {
-        const active = JSON.parse(body) as {
-          session?: { session_id?: string } | null;
-        } | null;
-        const activeSessionId = active?.session?.session_id;
-        if (activeSessionId) {
-          const csrfToken = await page.evaluate(() => {
-            const prefix = 'echoroo_csrf=';
-            const cookie = document.cookie
-              .split('; ')
-              .find((part) => part.startsWith(prefix));
-            if (!cookie) return null;
-            try {
-              return decodeURIComponent(cookie.slice(prefix.length));
-            } catch {
-              return cookie.slice(prefix.length);
-            }
-          });
-          const headers: Record<string, string> = {
-            Authorization: `Bearer ${bearer}`,
-          };
-          if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
-          const cancelResponse = await page.request.post(
-            `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/${activeSessionId}/cancel`,
-            { headers, failOnStatusCode: false },
-          );
-          expect(cancelResponse.status()).toBe(204);
-        }
-      }
-    }
+    await clearUnfinishedSession(page);
   }
   await page.goto(`/en/projects/${projectId}/datasets/${datasetId}`);
 }
