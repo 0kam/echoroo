@@ -17,20 +17,24 @@ import os
 import re
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from os.path import splitext
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from celery.exceptions import Ignore
 
+from echoroo.core import upload_staging
 from echoroo.core.s3 import (
+    delete_object,
     delete_objects_by_prefix,
     ensure_configured,
     get_object_stream,
     head_object,
     move_object,
     put_object,
+    upload_file_to_object,
     verify_object_exists,
 )
 from echoroo.core.settings import get_settings
@@ -62,6 +66,10 @@ class UploadSessionStateError(Exception):
     re-queuing.
     """
 
+    def __init__(self, message: str, *, mark_failed: bool = True) -> None:
+        super().__init__(message)
+        self.mark_failed = mark_failed
+
 
 # ---------------------------------------------------------------------------
 # Audio format magic byte signatures
@@ -80,6 +88,92 @@ _BATCH_SIZE = 100  # Number of recordings to insert per batch
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
+
+
+_HEARTBEAT_INTERVAL_S = 60.0
+
+
+async def _with_heartbeat(
+    session_factory: Any, session_id: UUID, fn: Any, *args: Any, **kwargs: Any
+) -> Any:
+    """Run blocking ``fn`` in a thread and keep the session's heartbeat fresh meanwhile.
+
+    A 1 GiB hash, sanitise or upload can outlast the 15-minute stale window on
+    its own; the reaper (or the API's self-heal) would then fail live work. The
+    heartbeat uses its own database session so it never touches the worker's
+    open transaction.
+    """
+    work = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        while True:
+            done, _ = await asyncio.wait({work}, timeout=_HEARTBEAT_INTERVAL_S)
+            if done:
+                return work.result()
+            try:
+                async with session_factory() as beat_db:
+                    await UploadSessionRepository(beat_db).touch(session_id)
+                    await beat_db.commit()
+            except Exception as exc:  # noqa: BLE001 - a missed beat is not fatal
+                logger.warning("Heartbeat for session %s failed: %s", session_id, exc)
+    finally:
+        if not work.done():
+            await asyncio.wait({work})
+
+
+def _sanitize_to_clean(source: Path, clean_path: Path) -> tuple[int, str]:
+    """Strip GPS from ``source`` and durably publish the result at ``clean_path``.
+
+    Whole file in memory by design. Temp file in the same directory, fsync,
+    atomic rename, directory fsync. Returns ``(size, sha256)`` of the clean
+    bytes. Blocking: run it under :func:`_with_heartbeat`.
+    """
+    sanitized = strip_audio_gps_metadata(io.BytesIO(source.read_bytes())).read()
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=clean_path.parent, prefix=f".{clean_path.stem}.", delete=False
+        ) as clean_file:
+            temp_path = Path(clean_file.name)
+            clean_file.write(sanitized)
+            clean_file.flush()
+            os.fsync(clean_file.fileno())
+        os.replace(temp_path, clean_path)
+        temp_path = None
+        # The rename is atomic but not durable until the directory entry is flushed.
+        dir_fd = os.open(clean_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    finally:
+        if temp_path is not None:
+            with contextlib.suppress(OSError):
+                temp_path.unlink()
+    return len(sanitized), hashlib.sha256(sanitized).hexdigest()
+
+
+def _staged_source(file: UploadFile) -> Path | None:
+    """Return the staged file for a chunked upload, or None for a presigned one."""
+    if file.received_bytes <= 0:
+        return None
+    return upload_staging.part_path(file.session_id, file.id)
+
+
+def _clean_path(file: UploadFile) -> Path:
+    """Where the GPS-sanitised copy of a staged file lives (same directory, atomic rename target)."""
+    return upload_staging.session_dir(file.session_id) / f"{file.id}.clean"
+
+
+def _sha256_of_path(path: Path) -> str:
+    """Return the SHA-256 digest of a local file read in bounded chunks."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            hasher.update(chunk)
+    return hasher.hexdigest()
 
 
 def _detect_audio_format(header: bytes) -> str | None:
@@ -330,16 +424,22 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
             upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
             if upload_session is None:
                 raise ValueError(f"Upload session not found: {session_id}")
+            # Plain UUID for everything below: a rollback expires the ORM row.
+            session_uuid = UUID(session_id)
 
             # Guard: only transition from UPLOADED state
             if upload_session.status != UploadSessionStatus.UPLOADED:
+                # A dead earlier run (VALIDATING) is failed so the uploader
+                # can start over (#250); any later stage means the work was
+                # already done and this delivery is simply dropped.
                 raise UploadSessionStateError(
-                    f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED"
+                    f"Session {session_id} is in {upload_session.status.value}, expected UPLOADED",
+                    mark_failed=upload_session.status == UploadSessionStatus.VALIDATING,
                 )
 
             # CAS transition: UPLOADED -> VALIDATING
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.VALIDATING,
                 expected_status=UploadSessionStatus.UPLOADED,
             )
@@ -355,202 +455,337 @@ async def _run_validate(session_id: str) -> dict[str, Any]:
             # Process each uploaded file
             files = upload_session.files
             for file in files:
-                if file.status != UploadFileStatus.UPLOADED:
-                    continue
-
-                file_ext = splitext(file.original_filename)[1].lower() or ".bin"
-
-                # --- Step 1: Check magic bytes ---
                 try:
-                    stream = get_object_stream(file.object_key, byte_range="bytes=0-65535")
-                    header = stream.read(65536)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Failed to read S3 header for %s: %s", file.object_key, exc)
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error=f"Failed to read file from storage: {exc}",
-                    )
-                    await db.commit()
-                    invalid_count += 1
-                    continue
+                    if file.status != UploadFileStatus.UPLOADED:
+                        continue
 
-                detected_format = _detect_audio_format(header)
-                if detected_format is None:
-                    logger.info("Invalid audio magic bytes for file %s", file.original_filename)
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error="Invalid audio file format",
-                    )
-                    await db.commit()
-                    invalid_count += 1
-                    continue
+                    source = _staged_source(file)
+                    if source is not None:
+                        if not source.exists() or source.stat().st_size != file.declared_size:
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error="Staged file missing or truncated",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
 
-                # --- Step 2: ffprobe metadata extraction ---
-                probe_data: dict[str, Any] | None = None
-                tmp_path: str | None = None
-                checksum_ok = True
-                # FR-028a: per-file sanitizer outputs (None when no rewrite).
-                sanitized_file_size: int | None = None
-                sanitized_checksum: str | None = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
-                        tmp_path = tmp.name
-                        # Download full file to temp location for ffprobe.
-                        # Read in chunks to enforce a size limit (M4) and compute
-                        # SHA-256 for integrity verification (M3 / H4 TOCTOU).
-                        full_stream = get_object_stream(file.object_key)
-                        max_bytes = file.file_size + 1024  # small margin for headers
-                        bytes_written = 0
-                        while True:
-                            chunk = full_stream.read(65536)
-                            if not chunk:
-                                break
-                            bytes_written += len(chunk)
-                            if bytes_written > max_bytes:
-                                raise ValueError(
-                                    f"File exceeds expected size of {file.file_size} bytes"
-                                )
-                            tmp.write(chunk)
-                        tmp.flush()
+                        try:
+                            with source.open("rb") as stream:
+                                header = stream.read(65536)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning("Failed to read staged header for %s: %s", source, exc)
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error=f"Failed to read file from storage: {exc}",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
 
-                        # Verify SHA-256 checksum to detect corruption or TOCTOU replacement
-                        # Skip verification if no checksum was provided (e.g. HTTP without crypto.subtle)
-                        if file.checksum_sha256 is not None:
-                            tmp.seek(0)
-                            hasher = hashlib.sha256()
+                        if _detect_audio_format(header) is None:
+                            logger.info("Invalid audio magic bytes for file %s", file.original_filename)
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error="Invalid audio file format",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
+
+                        actual_hash = await _with_heartbeat(
+                            session_factory, session_uuid, _sha256_of_path, source
+                        )
+                        if (
+                            file.checksum_sha256 is not None
+                            and not hmac.compare_digest(actual_hash, file.checksum_sha256)
+                        ):
+                            logger.warning(
+                                "Checksum mismatch for file %s: expected %s..., got %s...",
+                                file.original_filename,
+                                file.checksum_sha256[:16],
+                                actual_hash[:16],
+                            )
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error=(
+                                    f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
+                                    f"got {actual_hash[:16]}..."
+                                ),
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
+
+                        staged_probe: dict[str, Any] | None = _run_ffprobe(str(source))
+                        if staged_probe is None:
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error="Could not extract audio metadata (ffprobe failed)",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
+
+                        clean_path = _clean_path(file)
+                        try:
+                            clean_size, clean_sha = await _with_heartbeat(
+                                session_factory,
+                                session_uuid,
+                                _sanitize_to_clean,
+                                source,
+                                clean_path,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.error(
+                                "GPS sanitize failed for %s: %s",
+                                file.original_filename,
+                                exc,
+                            )
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error=f"GPS metadata strip failed: {exc}",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
+
+                        metadata = _extract_audio_metadata(staged_probe)
+                        if metadata["duration"] is None or metadata["samplerate"] is None:
+                            await file_repo.update_status(
+                                file.id,
+                                UploadFileStatus.INVALID,
+                                validation_error="Could not determine audio duration or sample rate",
+                            )
+                            await db.commit()
+                            invalid_count += 1
+                            continue
+
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.VALID,
+                            duration=metadata["duration"],
+                            samplerate=metadata["samplerate"],
+                            channels=metadata["channels"],
+                            bit_depth=metadata["bit_depth"],
+                            file_size=clean_size,
+                            checksum_sha256=clean_sha,
+                        )
+                        await db.commit()
+                        valid_count += 1
+                        continue
+
+                    file_ext = splitext(file.original_filename)[1].lower() or ".bin"
+
+                    # --- Step 1: Check magic bytes ---
+                    try:
+                        stream = get_object_stream(file.object_key, byte_range="bytes=0-65535")
+                        header = stream.read(65536)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Failed to read S3 header for %s: %s", file.object_key, exc)
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error=f"Failed to read file from storage: {exc}",
+                        )
+                        await db.commit()
+                        invalid_count += 1
+                        continue
+
+                    detected_format = _detect_audio_format(header)
+                    if detected_format is None:
+                        logger.info("Invalid audio magic bytes for file %s", file.original_filename)
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Invalid audio file format",
+                        )
+                        await db.commit()
+                        invalid_count += 1
+                        continue
+
+                    # --- Step 2: ffprobe metadata extraction ---
+                    probe_data: dict[str, Any] | None = None
+                    tmp_path: str | None = None
+                    checksum_ok = True
+                    # FR-028a: per-file sanitizer outputs (None when no rewrite).
+                    sanitized_file_size: int | None = None
+                    sanitized_checksum: str | None = None
+                    try:
+                        with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp:
+                            tmp_path = tmp.name
+                            # Download full file to temp location for ffprobe.
+                            # Read in chunks to enforce a size limit (M4) and compute
+                            # SHA-256 for integrity verification (M3 / H4 TOCTOU).
+                            full_stream = get_object_stream(file.object_key)
+                            max_bytes = file.file_size + 1024  # small margin for headers
+                            bytes_written = 0
                             while True:
-                                read_chunk = tmp.read(65536)
-                                if not read_chunk:
+                                chunk = full_stream.read(65536)
+                                if not chunk:
                                     break
-                                hasher.update(read_chunk)
-                            actual_hash = hasher.hexdigest()
-                            if not hmac.compare_digest(actual_hash, file.checksum_sha256):
-                                checksum_ok = False
-                                logger.warning(
-                                    "Checksum mismatch for file %s: expected %s..., got %s...",
-                                    file.original_filename,
-                                    file.checksum_sha256[:16],
-                                    actual_hash[:16],
-                                )
-                                await file_repo.update_status(
-                                    file.id,
-                                    UploadFileStatus.INVALID,
-                                    validation_error=(
-                                        f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
-                                        f"got {actual_hash[:16]}..."
-                                    ),
-                                )
-                                await db.commit()
-                                invalid_count += 1
+                                bytes_written += len(chunk)
+                                if bytes_written > max_bytes:
+                                    raise ValueError(
+                                        f"File exceeds expected size of {file.file_size} bytes"
+                                    )
+                                tmp.write(chunk)
+                            tmp.flush()
 
-                    if checksum_ok:
-                        probe_data = _run_ffprobe(tmp_path)
+                            # Verify SHA-256 checksum to detect corruption or TOCTOU replacement
+                            # Skip verification if no checksum was provided (e.g. HTTP without crypto.subtle)
+                            if file.checksum_sha256 is not None:
+                                tmp.seek(0)
+                                hasher = hashlib.sha256()
+                                while True:
+                                    read_chunk = tmp.read(65536)
+                                    if not read_chunk:
+                                        break
+                                    hasher.update(read_chunk)
+                                actual_hash = hasher.hexdigest()
+                                if not hmac.compare_digest(actual_hash, file.checksum_sha256):
+                                    checksum_ok = False
+                                    logger.warning(
+                                        "Checksum mismatch for file %s: expected %s..., got %s...",
+                                        file.original_filename,
+                                        file.checksum_sha256[:16],
+                                        actual_hash[:16],
+                                    )
+                                    await file_repo.update_status(
+                                        file.id,
+                                        UploadFileStatus.INVALID,
+                                        validation_error=(
+                                            f"Checksum mismatch: expected {file.checksum_sha256[:16]}..., "
+                                            f"got {actual_hash[:16]}..."
+                                        ),
+                                    )
+                                    await db.commit()
+                                    invalid_count += 1
 
-                        # FR-028a + FR-028e: strip GPS from audio bytes and
-                        # S3 user-metadata, then re-upload the sanitized
-                        # payload so persistent storage never carries raw
-                        # coordinates. Must run BEFORE the temp file is
-                        # deleted in the finally block.
-                        if probe_data is not None:
-                            try:
-                                sanitize_result = _sanitize_uploaded_object_gps(
-                                    file.object_key, tmp_path,
-                                )
-                            except Exception as exc:  # noqa: BLE001
-                                logger.error(
-                                    "GPS sanitize failed for %s: %s",
-                                    file.original_filename,
-                                    exc,
-                                )
-                                await file_repo.update_status(
-                                    file.id,
-                                    UploadFileStatus.INVALID,
-                                    validation_error=(
-                                        f"GPS metadata strip failed: {exc}"
-                                    ),
-                                )
-                                await db.commit()
-                                invalid_count += 1
-                                checksum_ok = False
-                                probe_data = None
-                            else:
-                                if sanitize_result is not None:
-                                    new_bytes, new_sha = sanitize_result
-                                    sanitized_file_size = len(new_bytes)
-                                    sanitized_checksum = new_sha
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Error downloading/validating file %s: %s", file.original_filename, exc)
+                        if checksum_ok:
+                            probe_data = _run_ffprobe(tmp_path)
+
+                            # FR-028a + FR-028e: strip GPS from audio bytes and
+                            # S3 user-metadata, then re-upload the sanitized
+                            # payload so persistent storage never carries raw
+                            # coordinates. Must run BEFORE the temp file is
+                            # deleted in the finally block.
+                            if probe_data is not None:
+                                try:
+                                    sanitize_result = _sanitize_uploaded_object_gps(
+                                        file.object_key, tmp_path,
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    logger.error(
+                                        "GPS sanitize failed for %s: %s",
+                                        file.original_filename,
+                                        exc,
+                                    )
+                                    await file_repo.update_status(
+                                        file.id,
+                                        UploadFileStatus.INVALID,
+                                        validation_error=(
+                                            f"GPS metadata strip failed: {exc}"
+                                        ),
+                                    )
+                                    await db.commit()
+                                    invalid_count += 1
+                                    checksum_ok = False
+                                    probe_data = None
+                                else:
+                                    if sanitize_result is not None:
+                                        new_bytes, new_sha = sanitize_result
+                                        sanitized_file_size = len(new_bytes)
+                                        sanitized_checksum = new_sha
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Error downloading/validating file %s: %s", file.original_filename, exc)
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error=f"Validation error: {exc}",
+                        )
+                        await db.commit()
+                        invalid_count += 1
+                        checksum_ok = False  # Prevent further processing
+                    finally:
+                        if tmp_path is not None:
+                            with contextlib.suppress(OSError):
+                                os.unlink(tmp_path)
+
+                    if not checksum_ok:
+                        continue
+
+                    if probe_data is None:
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Could not extract audio metadata (ffprobe failed)",
+                        )
+                        await db.commit()
+                        invalid_count += 1
+                        continue
+
+                    metadata = _extract_audio_metadata(probe_data)
+
+                    # Require at minimum a duration and samplerate
+                    if metadata["duration"] is None or metadata["samplerate"] is None:
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Could not determine audio duration or sample rate",
+                        )
+                        await db.commit()
+                        invalid_count += 1
+                        continue
+
+                    # Mark file as valid with extracted metadata. When the GPS
+                    # sanitizer rewrote the object, propagate the new file size
+                    # and checksum so downstream import-time TOCTOU checks
+                    # operate on the sanitized payload.
+                    update_kwargs: dict[str, Any] = {
+                        "duration": metadata["duration"],
+                        "samplerate": metadata["samplerate"],
+                        "channels": metadata["channels"],
+                        "bit_depth": metadata["bit_depth"],
+                    }
+                    if sanitized_file_size is not None:
+                        update_kwargs["file_size"] = sanitized_file_size
+                    if sanitized_checksum is not None:
+                        update_kwargs["checksum_sha256"] = sanitized_checksum
                     await file_repo.update_status(
                         file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error=f"Validation error: {exc}",
+                        UploadFileStatus.VALID,
+                        **update_kwargs,
                     )
                     await db.commit()
-                    invalid_count += 1
-                    checksum_ok = False  # Prevent further processing
+                    valid_count += 1
                 finally:
-                    if tmp_path is not None:
-                        with contextlib.suppress(OSError):
-                            os.unlink(tmp_path)
-
-                if not checksum_ok:
-                    continue
-
-                if probe_data is None:
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error="Could not extract audio metadata (ffprobe failed)",
+                    await session_repo.update_progress(
+                        session_uuid, validated_files=valid_count + invalid_count,
                     )
                     await db.commit()
-                    invalid_count += 1
-                    continue
 
-                metadata = _extract_audio_metadata(probe_data)
-
-                # Require at minimum a duration and samplerate
-                if metadata["duration"] is None or metadata["samplerate"] is None:
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error="Could not determine audio duration or sample rate",
-                    )
-                    await db.commit()
-                    invalid_count += 1
-                    continue
-
-                # Mark file as valid with extracted metadata. When the GPS
-                # sanitizer rewrote the object, propagate the new file size
-                # and checksum so downstream import-time TOCTOU checks
-                # operate on the sanitized payload.
-                update_kwargs: dict[str, Any] = {
-                    "duration": metadata["duration"],
-                    "samplerate": metadata["samplerate"],
-                    "channels": metadata["channels"],
-                    "bit_depth": metadata["bit_depth"],
-                }
-                if sanitized_file_size is not None:
-                    update_kwargs["file_size"] = sanitized_file_size
-                if sanitized_checksum is not None:
-                    update_kwargs["checksum_sha256"] = sanitized_checksum
-                await file_repo.update_status(
-                    file.id,
-                    UploadFileStatus.VALID,
-                    **update_kwargs,
+            # Mark session as validated only if it is still being validated.
+            transitioned = await session_repo.update_status(
+                session_uuid,
+                UploadSessionStatus.VALIDATED,
+                expected_status=UploadSessionStatus.VALIDATING,
+            )
+            if not transitioned:
+                logger.warning(
+                    "Session %s left VALIDATING during validation; not marking VALIDATED",
+                    session_id,
                 )
-                await db.commit()
-                valid_count += 1
-
-                # Update validated_files counter (valid+invalid = processed for progress)
-                await session_repo.update_progress(
-                    upload_session.id, validated_files=valid_count + invalid_count,
+                raise UploadSessionStateError(
+                    f"Session {session_id} left VALIDATING during validation",
+                    mark_failed=False,
                 )
-                await db.commit()
-
-            # Mark session as validated regardless of per-file errors
-            await session_repo.update_status(upload_session.id, UploadSessionStatus.VALIDATED)
             await db.commit()
 
             logger.info(
@@ -589,16 +824,20 @@ async def _run_import(
             upload_session: UploadSession | None = await session_repo.get_by_id(UUID(session_id))
             if upload_session is None:
                 raise ValueError(f"Upload session not found: {session_id}")
+            # Plain UUID for everything below: a rollback expires the ORM row.
+            session_uuid = UUID(session_id)
 
             if upload_session.status != UploadSessionStatus.VALIDATED:
+                # Same rule as validation: only a dead IMPORTING run is failed.
                 raise UploadSessionStateError(
                     f"Session {session_id} is in status {upload_session.status.value}, "
-                    "expected VALIDATED"
+                    "expected VALIDATED",
+                    mark_failed=upload_session.status == UploadSessionStatus.IMPORTING,
                 )
 
             # CAS transition: VALIDATED -> IMPORTING
             transitioned = await session_repo.update_status(
-                upload_session.id,
+                session_uuid,
                 UploadSessionStatus.IMPORTING,
                 expected_status=UploadSessionStatus.VALIDATED,
             )
@@ -627,95 +866,181 @@ async def _run_import(
                 nonlocal imported_count
                 if not pending_recordings:
                     return
+                # Recording rows, their UploadFile links and the progress tick
+                # commit together: a crash can never leave a Recording whose
+                # upload row still says VALID.
+                # Lock the session and confirm it is still ours: a force-fail
+                # or reaper claim between publish and here must leave no
+                # Recording behind (the reaper deletes unlinked objects).
+                owner = await session_repo.get_for_update(session_uuid)
+                if owner is None or owner.status != UploadSessionStatus.IMPORTING:
+                    await db.rollback()
+                    # The objects of this batch were published after the
+                    # session was taken from us; the reaper may already have
+                    # run and will not come back, so this worker deletes them.
+                    leftover = False
+                    for rec in pending_recordings:
+                        try:
+                            leftover |= not delete_object(rec.path)
+                        except Exception:  # noqa: BLE001
+                            leftover = True
+                    if leftover:
+                        # Re-create the staging directory so the reaper's sweep
+                        # revisits this session and retries the deletion.
+                        with contextlib.suppress(OSError):
+                            # UUID(session_id), not session_uuid: the
+                            # rollback above expired the ORM object.
+                            upload_staging.session_dir(UUID(session_id)).mkdir(
+                                mode=0o700, parents=True, exist_ok=True
+                            )
+                    pending_recordings.clear()
+                    pending_file_ids.clear()
+                    raise UploadSessionStateError(
+                        f"Session {session_id} left IMPORTING during import",
+                        mark_failed=False,
+                    )
                 created = await recording_repo.create_many(pending_recordings)
-                await db.commit()
                 for rec, file_id in zip(created, pending_file_ids, strict=False):
                     await file_repo.update_status(
                         file_id,
                         UploadFileStatus.IMPORTED,
                         recording_id=rec.id,
                     )
-                await db.commit()
                 imported_count += len(created)
-                await session_repo.update_progress(upload_session.id, imported_files=imported_count)
+                await session_repo.update_progress(session_uuid, imported_files=imported_count)
                 await db.commit()
                 pending_recordings.clear()
                 pending_file_ids.clear()
 
-            valid_files: list[UploadFile] = await file_repo.get_valid_files(upload_session.id)
+            valid_files: list[UploadFile] = await file_repo.get_valid_files(session_uuid)
 
-            for file in valid_files:
-                recording_id = uuid4()
+            async def _process_file(file: UploadFile) -> None:
+                """Publish one valid upload file and queue its Recording row."""
+                nonlocal failed_count
+
+                # Staged files get a deterministic destination (recording id =
+                # upload file id): a re-run after a crash between publish and
+                # commit overwrites the same key instead of leaving an orphan.
+                recording_id = file.id if _staged_source(file) is not None else uuid4()
                 file_ext = splitext(file.original_filename)[1].lower() or ""
 
                 # Build destination S3 key
                 dest_key = _build_recording_s3_key(project_id, dataset_id, recording_id, file_ext)
 
-                # Re-verify S3 object existence, size, AND SHA-256 before
-                # moving. A presigned PUT URL that is still inside its
-                # expiry window can be re-used by an attacker to swap the
-                # object's body for unsanitized / different content while
-                # keeping the same Content-Length — size checks alone do
-                # not detect this. Recomputing the SHA-256 against the
-                # value persisted by the validation pass (which reflects
-                # the post-sanitize bytes when GPS was stripped) closes
-                # this TOCTOU window (H4 / Round 2 hardening).
-                obj_info = verify_object_exists(
-                    file.object_key,
-                    expected_size=file.file_size,
-                    expected_sha256=file.checksum_sha256,
-                )
-                if not obj_info["exists"] or not obj_info["size_match"]:
-                    logger.error(
-                        "File %s missing or size changed before import, skipping",
-                        file.object_key,
-                    )
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error="Object missing or size changed before import",
-                    )
-                    await db.commit()
-                    failed_count += 1
-                    continue
-                if (
-                    file.checksum_sha256 is not None
-                    and obj_info.get("sha256_match") is False
-                ):
-                    actual_hex = obj_info.get("actual_sha256") or "unknown"
-                    logger.error(
-                        "audio_import_checksum_mismatch",
-                        extra={
-                            "event": "audio_import_checksum_mismatch",
-                            "object_key": file.object_key,
-                            "expected_sha256_prefix": file.checksum_sha256[:16],
-                            "actual_sha256_prefix": actual_hex[:16],
-                        },
-                    )
-                    await file_repo.update_status(
-                        file.id,
-                        UploadFileStatus.INVALID,
-                        validation_error=(
-                            "Checksum mismatch detected at import: "
-                            f"expected {file.checksum_sha256[:16]}..., "
-                            f"got {actual_hex[:16]}..."
-                        ),
-                    )
-                    await db.commit()
-                    failed_count += 1
-                    continue
+                source = _staged_source(file)
+                if source is not None:
+                    clean = _clean_path(file)
+                    if not clean.exists() or clean.stat().st_size != file.file_size:
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Clean staged file missing or truncated",
+                        )
+                        await db.commit()
+                        failed_count += 1
+                        return
 
-                # Move S3 object from uploads prefix to recordings prefix
-                moved = move_object(file.object_key, dest_key)
-                if not moved:
-                    logger.error(
-                        "Failed to move S3 object %s -> %s for file %s",
-                        file.object_key,
-                        dest_key,
-                        file.id,
+                    actual_hash = await _with_heartbeat(
+                        session_factory, session_uuid, _sha256_of_path, clean
                     )
-                    failed_count += 1
-                    continue
+                    if (
+                        file.checksum_sha256 is None
+                        or not hmac.compare_digest(actual_hash, file.checksum_sha256)
+                    ):
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Checksum mismatch at import",
+                        )
+                        await db.commit()
+                        failed_count += 1
+                        return
+
+                    await _with_heartbeat(
+                        session_factory, session_uuid, upload_file_to_object, clean, dest_key
+                    )
+                    try:
+                        stored_size = head_object(dest_key)["ContentLength"]
+                    except Exception:  # noqa: BLE001
+                        stored_size = None
+                    if stored_size != file.file_size:
+                        # Never leave an unlinked object behind.
+                        with contextlib.suppress(Exception):
+                            delete_object(dest_key)
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Stored object size mismatch",
+                        )
+                        await db.commit()
+                        failed_count += 1
+                        return
+                else:
+                    # Re-verify S3 object existence, size, AND SHA-256 before
+                    # moving. A presigned PUT URL that is still inside its
+                    # expiry window can be re-used by an attacker to swap the
+                    # object's body for unsanitized / different content while
+                    # keeping the same Content-Length — size checks alone do
+                    # not detect this. Recomputing the SHA-256 against the
+                    # value persisted by the validation pass (which reflects
+                    # the post-sanitize bytes when GPS was stripped) closes
+                    # this TOCTOU window (H4 / Round 2 hardening).
+                    obj_info = verify_object_exists(
+                        file.object_key,
+                        expected_size=file.file_size,
+                        expected_sha256=file.checksum_sha256,
+                    )
+                    if not obj_info["exists"] or not obj_info["size_match"]:
+                        logger.error(
+                            "File %s missing or size changed before import, skipping",
+                            file.object_key,
+                        )
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error="Object missing or size changed before import",
+                        )
+                        await db.commit()
+                        failed_count += 1
+                        return
+                    if (
+                        file.checksum_sha256 is not None
+                        and obj_info.get("sha256_match") is False
+                    ):
+                        actual_hex = obj_info.get("actual_sha256") or "unknown"
+                        logger.error(
+                            "audio_import_checksum_mismatch",
+                            extra={
+                                "event": "audio_import_checksum_mismatch",
+                                "object_key": file.object_key,
+                                "expected_sha256_prefix": file.checksum_sha256[:16],
+                                "actual_sha256_prefix": actual_hex[:16],
+                            },
+                        )
+                        await file_repo.update_status(
+                            file.id,
+                            UploadFileStatus.INVALID,
+                            validation_error=(
+                                "Checksum mismatch detected at import: "
+                                f"expected {file.checksum_sha256[:16]}..., "
+                                f"got {actual_hex[:16]}..."
+                            ),
+                        )
+                        await db.commit()
+                        failed_count += 1
+                        return
+
+                    # Move S3 object from uploads prefix to recordings prefix
+                    moved = move_object(file.object_key, dest_key)
+                    if not moved:
+                        logger.error(
+                            "Failed to move S3 object %s -> %s for file %s",
+                            file.object_key,
+                            dest_key,
+                            file.id,
+                        )
+                        failed_count += 1
+                        return
 
                 # Parse datetime from original filename
                 parsed_dt, parse_error = _parse_datetime_from_filename(
@@ -755,11 +1080,41 @@ async def _run_import(
                 if len(pending_recordings) >= _BATCH_SIZE:
                     await _flush_batch()
 
+            for file in valid_files:
+                ownership_lost = False
+                try:
+                    await _process_file(file)
+                except UploadSessionStateError:
+                    ownership_lost = True  # the row is no longer ours: no progress tick
+                    raise
+                finally:
+                    if not ownership_lost:
+                        await session_repo.update_progress(
+                            session_uuid, imported_files=imported_count,
+                        )
+                        await db.commit()
+
             # Flush any remaining recordings
             await _flush_batch()
 
-            # Update both session and dataset status in a single commit
-            await session_repo.update_status(upload_session.id, UploadSessionStatus.IMPORTED)
+            # Mark the session as imported only if it is still being imported.
+            transitioned = await session_repo.update_status(
+                session_uuid,
+                UploadSessionStatus.IMPORTED,
+                expected_status=UploadSessionStatus.IMPORTING,
+            )
+            if not transitioned:
+                logger.warning(
+                    "Session %s left IMPORTING during import; not marking IMPORTED",
+                    session_id,
+                )
+                raise UploadSessionStateError(
+                    f"Session {session_id} left IMPORTING during import",
+                    mark_failed=False,
+                )
+            # The session's IMPORTED and the dataset's COMPLETED land in one
+            # commit, so no other upload can start against a dataset whose
+            # completion is still pending.
             await dataset_repo.update_import_status(
                 dataset_id,
                 DatasetStatus.COMPLETED,
@@ -767,6 +1122,16 @@ async def _run_import(
                 processed_files=imported_count,
             )
             await db.commit()
+
+            if await _delete_unlinked_publications(db, session_uuid, project_id, dataset_id):
+                try:
+                    upload_staging.remove_session(session_uuid)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to remove staging directory for imported session %s: %s",
+                        session_uuid,
+                        exc,
+                    )
 
             logger.info(
                 "Import complete for session %s: %d imported, %d failed",
@@ -789,6 +1154,39 @@ async def _run_import(
         await engine.dispose()
 
 
+async def _delete_unlinked_publications(
+    db: Any, session_id: UUID, project_id: UUID, dataset_id: UUID
+) -> bool:
+    """Delete staged files' deterministic destinations that never got a Recording.
+
+    A crash between ``upload_file_to_object`` and the batch commit, or a HEAD
+    size mismatch whose delete failed, leaves an object under
+    ``recordings/…/{file_id}`` with the file unlinked. Returns True only when
+    nothing is left; callers keep the staging directory otherwise so the next
+    sweep retries.
+    """
+    all_gone = True
+    for file in await UploadFileRepository(db).get_by_session(session_id):
+        if file.received_bytes <= 0 or file.recording_id is not None:
+            continue
+        file_ext = splitext(file.original_filename)[1].lower() or ""
+        key = _build_recording_s3_key(project_id, dataset_id, file.id, file_ext)
+        try:
+            if not delete_object(key):
+                all_gone = False
+        except Exception:  # noqa: BLE001
+            all_gone = False
+    return all_gone
+
+
+_STALE_STATUSES_FOR_REAPER = (
+    UploadSessionStatus.UPLOADED,
+    UploadSessionStatus.VALIDATING,
+    UploadSessionStatus.VALIDATED,
+    UploadSessionStatus.IMPORTING,
+)
+
+
 async def _run_cleanup() -> dict[str, Any]:
     """Async implementation of orphan upload cleanup."""
     engine, session_factory = get_worker_engine_and_session_factory()
@@ -800,29 +1198,82 @@ async def _run_cleanup() -> dict[str, Any]:
 
             expired_count = 0
             stale_count = 0
+            orphaned_dirs = 0
 
-            # --- Cleanup expired ISSUED sessions ---
-            expired_sessions: list[UploadSession] = await session_repo.get_expired_sessions()
-            for upload_session in expired_sessions:
-                dataset = upload_session.dataset
-                prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
+            async def _claim_and_purge(
+                candidate_id: UUID,
+                project_id: UUID,
+                dataset_id: UUID,
+                *,
+                reason: str,
+                still_dead: Any,
+            ) -> bool:
+                """Fail a dead session and only then delete its bytes.
+
+                The candidate list is a snapshot: between selection and here the
+                session may have accepted a chunk (extended retention), started
+                processing, or finished. Re-read under the row lock, re-check
+                with ``still_dead``, claim it FAILED with a CAS, commit, and
+                delete only after the claim is durable. Only scalars are used
+                after the lock: a rollback expires every loaded ORM object.
+                """
+                locked = await session_repo.get_for_update(candidate_id)
+                if locked is None or not still_dead(locked):
+                    await db.rollback()
+                    return False
+                claimed = await session_repo.update_status(
+                    candidate_id,
+                    UploadSessionStatus.FAILED,
+                    error=reason,
+                    expected_status=locked.status,
+                )
+                if not claimed:
+                    await db.rollback()
+                    return False
+                await db.commit()
+
+                prefix = f"uploads/{project_id}/{dataset_id}/{candidate_id}/"
                 try:
                     deleted = delete_objects_by_prefix(prefix)
                     logger.info(
-                        "Deleted %d S3 objects for expired session %s",
+                        "Deleted %d S3 objects for %s session %s",
                         deleted,
-                        upload_session.id,
+                        reason.lower(),
+                        candidate_id,
                     )
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("S3 cleanup failed for expired session %s: %s", upload_session.id, exc)
+                    logger.warning("S3 cleanup failed for session %s: %s", candidate_id, exc)
+                if await _delete_unlinked_publications(db, candidate_id, project_id, dataset_id):
+                    try:
+                        upload_staging.remove_session(candidate_id)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Staging cleanup failed for session %s: %s", candidate_id, exc)
+                else:
+                    logger.warning(
+                        "Session %s: an unlinked object could not be deleted; staging kept for retry",
+                        candidate_id,
+                    )
+                return True
 
-                await session_repo.update_status(
-                    upload_session.id,
-                    UploadSessionStatus.FAILED,
-                    error="Session expired",
-                )
-                await db.commit()
-                expired_count += 1
+            now = datetime.now(UTC)
+
+            # --- Cleanup expired ISSUED sessions ---
+            # Capture scalars first: candidates are ORM rows and a later
+            # rollback would expire them.
+            expired_candidates = [
+                (s.id, s.dataset.project_id, s.dataset.id)
+                for s in await session_repo.get_expired_sessions()
+            ]
+            for candidate_id, project_id, dataset_id in expired_candidates:
+                if await _claim_and_purge(
+                    candidate_id,
+                    project_id,
+                    dataset_id,
+                    reason="Session expired",
+                    still_dead=lambda s: s.status == UploadSessionStatus.ISSUED
+                    and s.expires_at <= now,
+                ):
+                    expired_count += 1
 
             # --- Cleanup stale mid-processing sessions ---
             # Processing states (UPLOADED/VALIDATING/VALIDATED/IMPORTING) bump
@@ -830,78 +1281,124 @@ async def _run_cleanup() -> dict[str, Any]:
             # (default 15 min) only reaps genuinely dead sessions — not slow
             # but alive imports.
             stale_timeout_seconds = get_settings().UPLOAD_STALE_TIMEOUT_SECONDS
-            stale_sessions: list[UploadSession] = await session_repo.get_stale_sessions(
-                max_age_seconds=stale_timeout_seconds
-            )
-            for upload_session in stale_sessions:
-                dataset = upload_session.dataset
-                prefix = f"uploads/{dataset.project_id}/{dataset.id}/{upload_session.id}/"
-                try:
-                    deleted = delete_objects_by_prefix(prefix)
-                    logger.info(
-                        "Deleted %d S3 objects for stale session %s",
-                        deleted,
-                        upload_session.id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("S3 cleanup failed for stale session %s: %s", upload_session.id, exc)
+            stale_cutoff = now - timedelta(seconds=stale_timeout_seconds)
+            stale_candidates = [
+                (s.id, s.dataset.project_id, s.dataset.id)
+                for s in await session_repo.get_stale_sessions(max_age_seconds=stale_timeout_seconds)
+            ]
+            for candidate_id, project_id, dataset_id in stale_candidates:
+                if await _claim_and_purge(
+                    candidate_id,
+                    project_id,
+                    dataset_id,
+                    reason="Session timed out",
+                    still_dead=lambda s: s.status in _STALE_STATUSES_FOR_REAPER
+                    and s.updated_at <= stale_cutoff,
+                ):
+                    stale_count += 1
 
-                await session_repo.update_status(
-                    upload_session.id,
+            # --- Sweep staging directories that no longer belong to active sessions ---
+            for staged_session_id in upload_staging.list_staged_sessions():
+                staged_session = await session_repo.get_by_id(staged_session_id)
+                if staged_session is None or staged_session.status in (
                     UploadSessionStatus.FAILED,
-                    error="Session timed out",
-                )
-                await db.commit()
-                stale_count += 1
+                    UploadSessionStatus.IMPORTED,
+                ):
+                    # A session failed elsewhere (cancel, force-fail, task
+                    # failure) or imported with a rejected file may have
+                    # published an object it never linked. Keep the directory
+                    # until every such object is gone.
+                    if staged_session is not None and not await _delete_unlinked_publications(
+                        db,
+                        staged_session_id,
+                        staged_session.dataset.project_id,
+                        staged_session.dataset.id,
+                    ):
+                        continue
+                    try:
+                        upload_staging.remove_session(staged_session_id)
+                        orphaned_dirs += 1
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Staging cleanup failed for orphaned session %s: %s",
+                            staged_session_id,
+                            exc,
+                        )
 
             logger.info(
-                "Cleanup complete: %d expired sessions, %d stale sessions removed",
+                "Cleanup complete: %d expired sessions, %d stale sessions removed, %d orphaned staging directories",
                 expired_count,
                 stale_count,
+                orphaned_dirs,
             )
             return {
                 "expired_sessions_cleaned": expired_count,
                 "stale_sessions_cleaned": stale_count,
+                "orphaned_dirs": orphaned_dirs,
             }
     finally:
         await engine.dispose()
 
 
-async def _mark_session_failed(session_id: str, error: str) -> None:
-    """Mark an upload session as FAILED with an error message."""
+async def _mark_session_failed(
+    session_id: str, error: str, *, expected_status: UploadSessionStatus
+) -> bool:
+    """Mark an upload session FAILED only if it is still in ``expected_status``.
+
+    ``expected_status`` is the processing state this task owns (VALIDATING for
+    validation, IMPORTING for import). A session that meanwhile reached any
+    other state — VALIDATED by the original run, IMPORTED, FAILED, cancelled —
+    is left untouched, error text included. Returns whether the claim won.
+    """
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             session_repo = UploadSessionRepository(db)
-            await session_repo.update_status(
+            claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
                 error=error,
+                expected_status=expected_status,
             )
+            if not claimed:
+                logger.info(
+                    "Not marking session %s failed: no longer in %s",
+                    session_id,
+                    expected_status.value,
+                )
+                await db.rollback()
+                return False
             await db.commit()
+            return True
     finally:
         await engine.dispose()
 
 
 async def _mark_import_failed(session_id: str, error: str) -> None:
-    """Mark an upload session and its dataset as FAILED after an import error."""
+    """Fail an IMPORTING session and its dataset together; no-op otherwise."""
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
             session_repo = UploadSessionRepository(db)
             session = await session_repo.get_by_id(UUID(session_id))
-            await session_repo.update_status(
+            if session is None:
+                return
+            claimed = await session_repo.update_status(
                 UUID(session_id),
                 UploadSessionStatus.FAILED,
                 error=error,
+                expected_status=UploadSessionStatus.IMPORTING,
             )
-            if session is not None:
-                dataset_repo = DatasetRepository(db)
-                await dataset_repo.update_import_status(
-                    session.dataset_id,
-                    DatasetStatus.FAILED,
-                    error=error,
-                )
+            if not claimed:
+                logger.info("Not marking import of session %s failed: not IMPORTING", session_id)
+                await db.rollback()
+                return
+            dataset_repo = DatasetRepository(db)
+            await dataset_repo.update_import_status(
+                session.dataset_id,
+                DatasetStatus.FAILED,
+                error=error,
+            )
             await db.commit()
     finally:
         await engine.dispose()
@@ -944,13 +1441,22 @@ def validate_upload_session(self: Any, session_id: str) -> dict[str, Any]:
         # already moved past UPLOADED). Retrying can never succeed, so mark the
         # session FAILED and stop without re-queuing.
         logger.warning("Validation aborted for session %s: %s", session_id, exc)
-        with contextlib.suppress(Exception):
-            asyncio.run(_mark_session_failed(session_id, str(exc)))
+        if exc.mark_failed:
+            with contextlib.suppress(Exception):
+                asyncio.run(
+                    _mark_session_failed(
+                        session_id, str(exc), expected_status=UploadSessionStatus.VALIDATING
+                    )
+                )
         raise Ignore() from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Validation failed for session %s: %s", session_id, exc)
         with contextlib.suppress(Exception):
-            asyncio.run(_mark_session_failed(session_id, str(exc)))
+            asyncio.run(
+                _mark_session_failed(
+                    session_id, str(exc), expected_status=UploadSessionStatus.VALIDATING
+                )
+            )
         raise self.retry(exc=exc, countdown=30) from exc
 
 
@@ -995,8 +1501,9 @@ def import_from_upload_session(
         # can never succeed and could risk duplicate work, so mark FAILED and
         # stop without re-queuing.
         logger.warning("Import aborted for session %s: %s", session_id, exc)
-        with contextlib.suppress(Exception):
-            asyncio.run(_mark_import_failed(session_id, str(exc)))
+        if exc.mark_failed:
+            with contextlib.suppress(Exception):
+                asyncio.run(_mark_import_failed(session_id, str(exc)))
         raise Ignore() from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("Import failed for session %s: %s", session_id, exc)
