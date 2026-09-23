@@ -102,6 +102,10 @@ jobs:
       S3_BUCKET: echoroo
       AUDIO_ROOT: /tmp/echoroo-audio
       UPLOAD_STAGING_DIR: /tmp/echoroo-staging
+      # upload-resumable.spec.ts creates 4 sessions per pass as e2e-owner and
+      # Playwright retries the whole serial group (retries: 2 on CI), which
+      # would exceed the default 10 per hour and fail a retry with 429.
+      RATE_LIMIT_UPLOAD_SESSION_CREATE_ATTEMPTS: "50"
       CELERY_BROKER_URL: redis://localhost:6379/0
       CELERY_RESULT_BACKEND: redis://localhost:6379/1
       # AWS / KMS (LocalStack). AWS_ENDPOINT_URL_KMS points the KMS client at
