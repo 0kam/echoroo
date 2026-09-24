@@ -227,11 +227,12 @@ host's swap to be encrypted or disabled.
 a maintenance window: stop every consumer (API, workers), change the file and
 the selectors, recreate them all (`docker compose -f compose.dev.yaml up -d
 --force-recreate backend worker worker-cpu`), and compare the loaded state
-before reopening. The API reports it in `/health/ready`; each Celery worker
-answers a custom remote-control command (`celery inspect keyring_status`) from
-its own cache with selectors, TOTP versions and key fingerprints. The runbook
-compares all answers; a test starts a worker on an old ring and asserts the
-comparison flags it. There is no rolling activation.
+before reopening. `/health/ready` exposes only the `keyring_state` digest, not
+key IDs or fingerprints. Each Celery worker answers a custom remote-control
+command (`celery inspect keyring_status`) from its own cache with selectors,
+TOTP versions, and key fingerprints. `keyring_activation_check` compares the
+API digest with the detailed worker answers; a test starts a worker on an old
+ring and asserts the comparison flags it. There is no rolling activation.
 
 **Rotation (what the existing hooks support).**
 

@@ -4,6 +4,10 @@
 **Status**: pre-launch — no external users yet
 **Owner**: release driver (human action required for every item below)
 
+> **Superseded in part:** the key-management checklist below predates the
+> local keyring. Follow [keyring.md](keyring.md) for provisioning, backup,
+> activation, and restore checks; the full rewrite is scheduled for slice 3.
+
 This document is the operator-facing checklist that must be completed
 before the first production release. Every item requires real
 credentials, cost decisions, or a human-in-the-loop call that an

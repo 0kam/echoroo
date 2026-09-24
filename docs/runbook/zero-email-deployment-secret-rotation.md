@@ -3,6 +3,11 @@
 **Spec**: `specs/011-zero-email-deployment/spec.md` §Removal Plan
 §settings, §NFR-011-001 (post-removal CI guard).
 
+> **Superseded in part:** the legacy key-management inventory below predates
+> the local keyring. See [keyring.md](keyring.md) for current keyring
+> provisioning, rotation, backup, and recovery; the full inventory rewrite is
+> scheduled for slice 3.
+
 **Audience**: Echoroo deployment operators auditing the spec/011 cutover
 for residual email-subsystem secrets, and operators preparing for
 periodic key rotation.

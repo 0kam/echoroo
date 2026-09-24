@@ -63,7 +63,8 @@ services:
     networks:
       - echoroo-net
 
-  # LocalStack KMS for development
+  # Legacy LocalStack service retained for slice 2 compatibility. Nothing
+  # depends on it any more; slice 3 removes it.
   localstack:
     # LocalStack >= 2026.03.0 requires an auth token (container exits with
     # code 55 "License activation failed"). `community-archive` (2026-03-18)
@@ -109,8 +110,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      localstack:
-        condition: service_healthy
     ports:
       - "${ECHOROO_API_PORT:-8002}:8000"
     volumes:
@@ -130,6 +129,12 @@ services:
       # Redis TLS CA (read-only) — required so the backend can verify the
       # dev Redis self-signed cert when connecting via rediss://.
       - ./config/redis/tls:/etc/redis/tls:ro
+      - type: bind
+        source: ${ECHOROO_KEYRING_DIR:-/etc/echoroo}/echoroo-keyring.json
+        target: /run/secrets/echoroo-keyring.json
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-echoroo}
       - REDIS_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
@@ -159,16 +164,16 @@ services:
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - XENO_CANTO_API_KEY=${XENO_CANTO_API_KEY:-}
-      # AWS / KMS — LocalStack KMS backs envelope encryption (TOTP DEK),
-      # PII hashing, audit chain HMAC, and invitation token signing
-      # (006-permissions-redesign). LocalStack accepts any non-empty creds.
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_KMS_REGION=us-east-1
-      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      - KEYRING_FILE=/run/secrets/echoroo-keyring.json
+      - KEYRING_TOTP_KEY=${KEYRING_TOTP_KEY:-}
+      - KEYRING_TOTP_KEY_VERSION=${KEYRING_TOTP_KEY_VERSION:-1}
+      - KEYRING_TOTP_KEY_OLD=${KEYRING_TOTP_KEY_OLD:-}
+      - KEYRING_TOTP_KEY_VERSION_OLD=${KEYRING_TOTP_KEY_VERSION_OLD:-}
+      - KEYRING_PII_KEY=${KEYRING_PII_KEY:-}
+      - KEYRING_PII_KEY_V2=${KEYRING_PII_KEY_V2:-}
+      - KEYRING_AUDIT_KEY=${KEYRING_AUDIT_KEY:-}
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -229,12 +234,14 @@ services:
       - STORAGE_ROOT=/data/storage
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # AWS / KMS — see backend service for rationale.
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_KMS_REGION=us-east-1
-      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      - KEYRING_FILE=/run/secrets/echoroo-keyring.json
+      - KEYRING_TOTP_KEY=${KEYRING_TOTP_KEY:-}
+      - KEYRING_TOTP_KEY_VERSION=${KEYRING_TOTP_KEY_VERSION:-1}
+      - KEYRING_TOTP_KEY_OLD=${KEYRING_TOTP_KEY_OLD:-}
+      - KEYRING_TOTP_KEY_VERSION_OLD=${KEYRING_TOTP_KEY_VERSION_OLD:-}
+      - KEYRING_PII_KEY=${KEYRING_PII_KEY:-}
+      - KEYRING_PII_KEY_V2=${KEYRING_PII_KEY_V2:-}
+      - KEYRING_AUDIT_KEY=${KEYRING_AUDIT_KEY:-}
       # Invitation token signing — mirror backend (spec/011 NFR-011-010);
       # celery_app imports echoroo settings at startup, which validates
       # the invitation kid envelope at every boot.
@@ -258,14 +265,18 @@ services:
       - backend-data:/data
       - ml-models-data:/home/appuser/.local/share/birdnet
       - ./config/redis/tls:/etc/redis/tls:ro
+      - type: bind
+        source: ${ECHOROO_KEYRING_DIR:-/etc/echoroo}/echoroo-keyring.json
+        target: /run/secrets/echoroo-keyring.json
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
       backend:
-        condition: service_healthy
-      localstack:
         condition: service_healthy
     networks:
       - echoroo-net
@@ -290,12 +301,14 @@ services:
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - STORAGE_ROOT=/data/storage
-      # AWS / KMS — see backend service for rationale.
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_KMS_REGION=us-east-1
-      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
+      - KEYRING_FILE=/run/secrets/echoroo-keyring.json
+      - KEYRING_TOTP_KEY=${KEYRING_TOTP_KEY:-}
+      - KEYRING_TOTP_KEY_VERSION=${KEYRING_TOTP_KEY_VERSION:-1}
+      - KEYRING_TOTP_KEY_OLD=${KEYRING_TOTP_KEY_OLD:-}
+      - KEYRING_TOTP_KEY_VERSION_OLD=${KEYRING_TOTP_KEY_VERSION_OLD:-}
+      - KEYRING_PII_KEY=${KEYRING_PII_KEY:-}
+      - KEYRING_PII_KEY_V2=${KEYRING_PII_KEY_V2:-}
+      - KEYRING_AUDIT_KEY=${KEYRING_AUDIT_KEY:-}
       # Invitation token signing — mirror backend (spec/011 NFR-011-010);
       # celery_app imports echoroo settings at startup, which validates
       # the invitation kid envelope at every boot.
@@ -318,14 +331,18 @@ services:
       - backend-data:/data
       - ml-models-data:/home/appuser/.local/share/birdnet
       - ./config/redis/tls:/etc/redis/tls:ro
+      - type: bind
+        source: ${ECHOROO_KEYRING_DIR:-/etc/echoroo}/echoroo-keyring.json
+        target: /run/secrets/echoroo-keyring.json
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
       backend:
-        condition: service_healthy
-      localstack:
         condition: service_healthy
     networks:
       - echoroo-net
@@ -342,12 +359,6 @@ services:
       - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
-      # AWS / KMS — see backend service for rationale.
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - AWS_KMS_REGION=us-east-1
-      - AWS_ENDPOINT_URL_KMS=http://localstack:4566
       # Invitation token signing — mirror backend (spec/011 NFR-011-010);
       # celery_app imports echoroo settings at startup, which validates
       # the invitation kid envelope at every boot.
@@ -361,6 +372,20 @@ services:
         condition: service_started
     networks:
       - echoroo-net
+
+  # Provision the keyring before starting runtime consumers. The service is
+  # intentionally isolated from the runtime keyring mount.
+  # Usage: docker compose -f compose.dev.yaml run --rm keyring-admin create /keyring/echoroo-keyring.json
+  keyring-admin:
+    profiles: [admin]
+    build:
+      context: apps/api
+      dockerfile: Dockerfile.dev
+    user: "1000:1000"
+    volumes:
+      - "${ECHOROO_KEYRING_DIR:-/etc/echoroo}:/keyring"
+      - "./apps/api/echoroo:/app/echoroo:ro"
+    entrypoint: ["uv", "run", "python", "-m", "echoroo.scripts.keyring"]
 
   # Frontend SvelteKit Server
   frontend:
