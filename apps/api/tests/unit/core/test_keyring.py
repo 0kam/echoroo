@@ -89,7 +89,10 @@ def test_hmac_rejects_wrapping_purpose_for_compute_and_verify(ring: keyring.Keyr
         ring.hmac_hex("totp-wrap-current", b"message", "totp-wrap")  # type: ignore[arg-type]
     with pytest.raises(keyring.KeyringKeyError):
         ring.verify_hmac_hex(
-            "totp-wrap-current", b"message", "0" * 64, "totp-wrap"  # type: ignore[arg-type]
+            "totp-wrap-current",
+            b"message",
+            "0" * 64,
+            "totp-wrap",  # type: ignore[arg-type]
         )
 
 
@@ -403,7 +406,7 @@ def test_selectors_validate_roles_versions_and_conflicts(ring: keyring.Keyring) 
         ),
     ]
     for selectors in cases:
-        with pytest.raises(keyring.KeyringError):
+        with pytest.raises(keyring.KeyringConfigError):
             selectors.validate(ring)
 
 
@@ -428,6 +431,23 @@ def test_file_loading_modes_and_symlinks(tmp_path: Path, ring: keyring.Keyring) 
         keyring.load_keyring(tmp_path / "missing.json")
 
 
+_SELECTOR_SETTINGS = {
+    "KEYRING_TOTP_KEY": "totp-wrap-current",
+    "KEYRING_TOTP_KEY_VERSION": 2,
+    "KEYRING_TOTP_KEY_OLD": "totp-wrap-old",
+    "KEYRING_TOTP_KEY_VERSION_OLD": 1,
+    "KEYRING_PII_KEY": "pii-hmac-current",
+    "KEYRING_PII_KEY_V2": None,
+    "KEYRING_AUDIT_KEY": "audit-hmac-current",
+}
+
+
+def _use_settings(monkeypatch: pytest.MonkeyPatch, path: Path, **overrides: object) -> None:
+    values = {"KEYRING_FILE": str(path), **_SELECTOR_SETTINGS, **overrides}
+    monkeypatch.setattr(keyring, "get_settings", lambda: type("SettingsStub", (), values)())
+    keyring.reset_cache()
+
+
 def test_cache_can_be_reset(
     tmp_path: Path, ring: keyring.Keyring, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -435,13 +455,82 @@ def test_cache_can_be_reset(
 
     path = tmp_path / "ring.json"
     _write_ring(path, ring)
-    monkeypatch.setattr(
-        keyring, "get_settings", lambda: type("SettingsStub", (), {"KEYRING_FILE": str(path)})()
-    )
-    keyring.reset_cache()
+    _use_settings(monkeypatch, path)
     try:
         first = keyring.get_keyring()
         assert keyring.get_keyring() is first
+        assert keyring.get_selectors().totp_key == "totp-wrap-current"
+        keyring.reset_cache()
+        assert keyring.get_keyring() is not first
+    finally:
+        keyring.reset_cache()
+
+
+def test_get_keyring_validates_selectors(
+    tmp_path: Path, ring: keyring.Keyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loading refuses selectors that do not fit the ring, and caches nothing."""
+
+    path = tmp_path / "ring.json"
+    _write_ring(path, ring)
+    _use_settings(monkeypatch, path, KEYRING_AUDIT_KEY="pii-hmac-v2")
+    try:
+        with pytest.raises(keyring.KeyringConfigError):
+            keyring.get_keyring()
+        with pytest.raises(keyring.KeyringConfigError):
+            keyring.keyring_status()
+    finally:
+        keyring.reset_cache()
+
+
+def test_keyring_status_describes_loaded_state_without_material(
+    tmp_path: Path, ring: keyring.Keyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Status names selections and fingerprints; its state changes with the ring."""
+
+    path = tmp_path / "ring.json"
+    _write_ring(path, ring)
+    _use_settings(monkeypatch, path)
+    try:
+        status = keyring.keyring_status()
+        assert status["selected"] == {
+            "totp": {
+                "id": "totp-wrap-current",
+                "fingerprint": ring.fingerprint("totp-wrap-current"),
+            },
+            "totp_old": {"id": "totp-wrap-old", "fingerprint": ring.fingerprint("totp-wrap-old")},
+            "pii": {"id": "pii-hmac-current", "fingerprint": ring.fingerprint("pii-hmac-current")},
+            "audit": {
+                "id": "audit-hmac-current",
+                "fingerprint": ring.fingerprint("audit-hmac-current"),
+            },
+        }
+        assert status["totp_version"] == 2
+        assert status["totp_version_old"] == 1
+        assert status["key_ids"] == sorted(ring.key_ids)
+        assert isinstance(status["state"], str) and len(status["state"]) == 16
+        rendered = json.dumps(status)
+        for entry in ring.keys.values():
+            assert base64.b64encode(entry.material).decode("ascii") not in rendered
+            assert entry.material.hex() not in rendered
+
+        # A different selection (same ring) yields a different state.
+        _use_settings(
+            monkeypatch, path, KEYRING_TOTP_KEY_OLD=None, KEYRING_TOTP_KEY_VERSION_OLD=None
+        )
+        assert keyring.keyring_status()["state"] != status["state"]
+
+        # The same selection over a ring with one more key yields a different state.
+        document = _document()
+        document["keys"]["pii-hmac-later"] = {  # type: ignore[index]
+            "purpose": "pii-hmac",
+            "material": base64.b64encode(_material("pii-later")).decode("ascii"),
+            "created": "2026-09-24",
+        }
+        larger = tmp_path / "larger.json"
+        _write_ring(larger, keyring.Keyring.from_dict(document))
+        _use_settings(monkeypatch, larger)
+        assert keyring.keyring_status()["state"] != status["state"]
     finally:
         keyring.reset_cache()
 
@@ -461,9 +550,7 @@ def test_errors_and_representations_are_secret_free(ring: keyring.Keyring) -> No
     material = _material("secret-check")
     plaintext = b"plaintext-dek-for-error-check" * 2
     encoded = base64.b64encode(material).decode("ascii")
-    secret_ring = keyring.Keyring.from_dict(
-        _document({"secret-key": ("pii-hmac", material, None)})
-    )
+    secret_ring = keyring.Keyring.from_dict(_document({"secret-key": ("pii-hmac", material, None)}))
     secret_entry = secret_ring.keys["secret-key"]
     errors: list[BaseException] = []
     for action in (
