@@ -2,8 +2,7 @@
 # LocalStack dev bootstrap script.
 #
 # Responsibilities:
-#   1. Provision the default S3 bucket used by the API / workers.
-#   2. Provision KMS Customer Master Keys (CMKs) + aliases used by the
+#   Provision KMS Customer Master Keys (CMKs) + aliases used by the
 #      006-permissions-redesign feature (per research.md §1 key isolation).
 #
 # The script is expected to be idempotent — re-running it on an existing
@@ -12,7 +11,7 @@
 #
 # It runs in two contexts:
 #   * inside the LocalStack container as a ready.d hook
-#     (/etc/localstack/init/ready.d/init-s3.sh) — re-executed on EVERY
+#     (/etc/localstack/init/ready.d/init-kms.sh) — re-executed on EVERY
 #     container start;
 #   * on the GitHub e2e runner host (bash scripts/init-localstack.sh with
 #     AWS_ENDPOINT_URL pointing at the LocalStack service container).
@@ -21,18 +20,6 @@
 # container's system python3).
 
 set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# S3 bucket
-# ---------------------------------------------------------------------------
-
-# Create the default S3 bucket for development (idempotent)
-if awslocal s3api head-bucket --bucket echoroo >/dev/null 2>&1; then
-  echo "Bucket 'echoroo' already exists, skipping create"
-else
-  awslocal s3 mb s3://echoroo
-  echo "Bucket 'echoroo' created successfully"
-fi
 
 # ---------------------------------------------------------------------------
 # KMS CMKs + aliases (006-permissions-redesign)

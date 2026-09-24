@@ -39,7 +39,7 @@ RUN groupadd -g 1000 appuser \
     && useradd -u 1000 -g appuser -m appuser
 
 # Create data directories and set ownership
-RUN mkdir -p /data/audio /data/cache /home/appuser/.local/share/birdnet \
+RUN mkdir -p /data/storage /home/appuser/.local/share/birdnet \
     && chown -R appuser:appuser /data /opt/venv /home/appuser
 
 USER appuser

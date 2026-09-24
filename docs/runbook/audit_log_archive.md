@@ -5,7 +5,7 @@
 **Owner**: operations (human action required for the items marked **ops**)
 
 The audit tables (`project_audit_log`, `platform_audit_log`) are exported
-weekly to object storage as NDJSON archives (FR-095). This runbook says what
+weekly to the POSIX storage tree as NDJSON archives (FR-095). This runbook says what
 the application guarantees about those archives, what it does **not**, and
 what operations must add so the archives stay immutable.
 
@@ -28,8 +28,8 @@ itself; a failed run is picked up by the next one.
 
 ## What the application does NOT guarantee
 
-S3 Object Lock is gone (it does not exist on a POSIX filesystem). Nothing in
-the application stops someone with write access to the storage root from
+Object Lock is gone (it does not exist on a POSIX filesystem). Nothing in the
+application stops someone with write access to the storage root from
 replacing or deleting an archive. What is detectable, and how:
 
 | Change to an archive | Detected by |
@@ -68,8 +68,9 @@ operational control — the next section.
      otherwise a weekly `rsync --ignore-existing` to a location owned by a
      different account, run after the Monday export._
 
-Until cutover (slice 4) the archives are in the S3 bucket `S3_BUCKET` under the
-same `audit-log/` prefix; the same keys become the same relative paths.
+Archives are files under `STORAGE_ROOT/audit-log/…`. The exporter publishes
+each archive write-once by copying it to a temporary file and creating a hard
+link at the final path; an existing final path is never overwritten.
 
 ## Verifying an archive
 
@@ -115,8 +116,8 @@ worker log has one `audit export failed key=… : <reason>` line per week:
   deciding which one is right.
 - `AuditArchiveMismatchError: archive exists but the live table has no rows` —
   rows were deleted from the database.
-- `ClientError: …`, `EndpointConnectionError: …` and similar — storage was
-  unreachable or denied for that key; the next run retries the week.
+- `StorageUnavailable`, `OSError` and similar — storage was unreachable or
+  denied for that key; the next run retries the week.
 
 A database error aborts the whole run instead (nothing can be trusted without
 it); the next run starts over.

@@ -692,8 +692,8 @@ jobs:
       # W0 mutation-harness fix #2 — free disk before the run.
       #
       # The mutmut harness is disk-bound: mutmut's own `run_stats` full-suite
-      # run accumulates tmp artifacts (pytest-of-*, the
-      # echoroo-test-s3-audio-cache, coverage files), and mutmut additionally
+      # run accumulates tmp artifacts (pytest-of-* and coverage files), and
+      # mutmut additionally
       # copies tests/ into mutants/. On GitHub ubuntu-24.04 runners (~14GB
       # free by default) this collapsed the stats phase with `No space left on
       # device (os error 28)`, turning every mutant into "not checked" and
@@ -763,7 +763,7 @@ jobs:
       # full, no-collect-only run of the same suite — was DROPPED. It existed
       # only to surface baseline test failures early, but it (a) duplicated
       # ~10 min of runtime and (b) wrote a full set of tmp artifacts
-      # (pytest-of-*, the echoroo-test-s3-audio-cache, coverage files) that
+      # (pytest-of-* and coverage files) that
       # then competed for the same ~14GB of runner disk as mutmut's own
       # `run_stats` full-suite run — a direct contributor to the
       # `No space left on device` stats collapse. The "Assert mutants/
@@ -823,9 +823,8 @@ jobs:
 
       # W0 mutation-harness fix #2 — reclaim disk before mutmut's own
       # full-suite `run_stats`. The preflight/diagnostic steps above run the
-      # unit+security suites and leave behind pytest tmp dirs, the
-      # echoroo-test-s3-audio-cache (Path(gettempdir())/"echoroo-test-s3-audio-cache",
-      # see tests/conftest.py), and coverage files. Clearing them here keeps
+      # unit+security suites and leave behind pytest tmp dirs and coverage
+      # files. Clearing them here keeps
       # those artifacts from stacking on top of the artifacts mutmut writes
       # during its stats run (which was the `No space left on device` trigger).
       # `.mutmut-cache` is intentionally NOT touched — it is mutmut's own
@@ -836,7 +835,6 @@ jobs:
         working-directory: apps/api
         run: |
           rm -rf /tmp/pytest-of-* /tmp/pytest-* 2>/dev/null || true
-          rm -rf /tmp/echoroo-test-s3-audio-cache 2>/dev/null || true
           rm -rf .pytest_cache 2>/dev/null || true
           rm -f .coverage .coverage.* coverage.xml 2>/dev/null || true
           echo "=== disk before mutmut run ==="
@@ -1233,7 +1231,7 @@ jobs:
       # Phase 17 PR-C3: ``not requires_runbook`` was missing from this
       # filter, causing tests/runbook/test_quickstart_phase3_smoke.py
       # live-infra tests to run inside backend-tests (which does not
-      # provision the live KMS / S3 / IUCN stack) and AssertionError
+      # provision the live KMS / storage / IUCN stack) and AssertionError
       # with "Unable to locate credentials". The dedicated
       # ``runbook-smoke-tests`` job already runs these correctly with
       # ``-m "not requires_runbook"``; pyproject.toml documents the
@@ -1298,7 +1296,7 @@ jobs:
   #
   # The job runs the smoke subset only — ``-m "not requires_runbook"`` skips
   # the live-infra integration tests that need a Docker Compose dev stack
-  # with PostgreSQL / Redis / LocalStack / KMS aliases provisioned. Operators
+  # with PostgreSQL / Redis provisioned. Operators
   # opt in locally via ``pytest -m requires_runbook`` per quickstart §3.
   # ---------------------------------------------------------------------------
   runbook-smoke-tests:
@@ -1371,14 +1369,14 @@ jobs:
   # Phase 17 §C-E: Runbook live-infra E2E (requires_runbook marker).
   #
   # This job runs the single ``requires_runbook``-gated test that exercises
-  # ``echoroo.scripts.check_wipe_guard`` against a live Postgres + S3
-  # (LocalStack) stack. The test is intentionally NOT a per-PR hard gate
+  # ``echoroo.scripts.check_wipe_guard`` against a live Postgres + POSIX
+  # storage tree. The test is intentionally NOT a per-PR hard gate
   # (Option B, quarterly cron + manual dispatch) because:
   #
   #   * The runbook smoke suite (``runbook-smoke-tests``) covers argparse
   #     surface on every push with no infra.
-  #   * Live-infra provisioning (LocalStack ~30 s cold start) adds too much
-  #     latency to make it a per-PR default.
+  #   * Live-infra provisioning adds too much latency to make it a per-PR
+  #     default.
   #   * The risk profile (silent drift of a one-off bootstrap CLI) suits a
   #     quarterly health-check cadence rather than a per-PR gate.
   #
@@ -1389,12 +1387,12 @@ jobs:
   #   * pgvector/pgvector:pg16 — Postgres 16 with pgvector extension
   #   * redis:7                — not required by check_wipe_guard, but
   #                              provisioned so settings validation passes
-  #   * localstack/localstack  — S3 endpoint for check_wipe_guard's S3 check
+  #   * /tmp/echoroo-storage — provisioned POSIX storage tree for the check
   #
   # Exit-code contract: the test asserts ``returncode in (0, 10, 11, 12)`` —
   # all three are legitimate "script ran end-to-end" outcomes. On a freshly
   # migrated CI stack the typical code is 11 (alembic version != baseline
-  # "0001") or 12 (S3 genesis marker absent). rc=20 (infra unreachable)
+  # "0001") or 12 (storage genesis marker absent). rc=20 (infra unreachable)
   # fails the job because it means the services wiring below is broken.
   #
   # On failure: a GitHub issue is auto-created via ``actions/github-script``
@@ -1427,16 +1425,7 @@ jobs:
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
       ENVIRONMENT: development
-      # LocalStack S3 — check_wipe_guard looks up the genesis marker through core/s3 (S3_* settings).
-      AWS_ENDPOINT_URL: http://localhost:4566
-      S3_ENDPOINT_URL: http://localhost:4566
-      S3_ACCESS_KEY: test
-      S3_SECRET_KEY: test
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      # Bucket holding the audit-log archive and its genesis marker.
-      S3_BUCKET: echoroo-audit
+      STORAGE_ROOT: /tmp/echoroo-storage
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -1460,20 +1449,6 @@ jobs:
           --health-retries 5
         ports:
           - 6379:6379
-      localstack:
-        # Pinned: LocalStack >= 2026.03.0 needs an auth token (exit 55); community-archive is the last token-free build (matches compose.dev.yaml).
-        image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
-        env:
-          SERVICES: s3
-          DEFAULT_REGION: us-east-1
-        options: >-
-          --health-cmd "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('services',{}).get('s3')=='available' else 1)\""
-          --health-interval 15s
-          --health-timeout 10s
-          --health-retries 8
-          --health-start-period 30s
-        ports:
-          - 4566:4566
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1521,14 +1496,9 @@ jobs:
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
           "
 
-      # Provision the S3 audit bucket in LocalStack so check_wipe_guard can
-      # reach it (the S3 head_object call returns 404 for missing marker,
-      # which is a legitimate non-crash exit code 12, not an infra failure).
-      - name: Provision S3 audit bucket in LocalStack
-        run: |
-          aws --endpoint-url http://localhost:4566 s3 mb s3://echoroo-audit \
-            --region us-east-1 || true
-          echo "S3 audit bucket provisioned"
+      - name: Provision POSIX storage tree
+        working-directory: apps/api
+        run: uv run python -m echoroo.scripts.provision_storage /tmp/echoroo-storage
 
       # Run the live-infra test. Capture pytest output to a file so the
       # failure auto-issue step can include the last 50 lines without

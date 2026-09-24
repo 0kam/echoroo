@@ -19,7 +19,7 @@ As of 2026-05-07 every release-blocker has merged or is in flight:
 |---------|--------|-------------|
 | A-1 .. A-13 | DONE | merged in earlier batches |
 | B-1 (response filter) | DONE | #32 (`17645e9f`) |
-| B-2 (upload EXIF + S3 metadata) | DONE | #33 (`c31f02dd`) |
+| B-2 (upload EXIF + file metadata) | DONE | #33 (`c31f02dd`) |
 | §C-0 .. §C-7 (CI burn-down) | DONE | merged (#25, #26, #27, #28, #29, #30, #31) |
 | §C residual (PR-A / PR-C / PR-D) | OPEN | #34, #35, #36 (CI green pending) |
 
@@ -82,19 +82,26 @@ window opens.
 - Used for rate limiting, Celery broker, and 2FA failure counters.
 - `REDIS_URL` in deployment env.
 
-### 4. S3 bucket (uploads + audit log archive)
+### 4. Lustre storage tree (recordings + audit log archive)
 
-- One bucket for audio uploads. CORS configured for the production
-  origin. Object lifecycle policy aligned with the project / dataset
-  retention contract.
-- The weekly audit log export (`workers/audit_log_export.py`) writes
-  write-once archives under the `audit-log/` prefix of the same bucket.
-  Object Lock is not used; immutability is operational — see
-  [audit_log_archive.md](audit_log_archive.md).
-- IAM role: PutObject / GetObject / DeleteObject on the objects and
-  ListBucket on the bucket (without it a HEAD on a missing key returns 403
-  instead of 404 and the audit export cannot tell "absent" from "denied").
-- Wire via `S3_BUCKET`.
+- Mount the production Lustre filesystem on the host and choose the
+  application path `/data/storage` for `STORAGE_ROOT`.
+- Bind-mount the same path into the API and every worker. The host directory
+  must be owned by UID/GID 1000 with mode `0750`.
+- From the API checkout's `apps/api` directory, run the provisioner as
+  UID/GID 1000 so it performs the full readiness probe:
+
+  ```bash
+  sudo -u '#1000' -g '#1000' env STORAGE_ROOT=/data/storage \
+    uv run python -m echoroo.scripts.provision_storage /data/storage
+  ```
+
+  The provisioner creates `.echoroo-storage` and runs `ensure_ready(full=True)`
+  on the Lustre mount, including the atomic publication checks. Do this before
+  the first API or worker start and after any mount replacement.
+- The weekly audit log export writes write-once files under
+  `STORAGE_ROOT/audit-log/`; operational immutability is covered by the
+  [audit log archive runbook](audit_log_archive.md).
 
 ### 5. Email — removed (spec/011 zero-email deployment)
 
@@ -164,7 +171,8 @@ Operational references:
   idempotent and writes a TOTP DEK under the live KMS alias.
 - Verify `scripts/check_wipe_guard.py` returns exit 0 (clear for
   wipe) — exit 1 means the genesis rows are present and a wipe was
-  performed; exit > 1 is a misconfig (e.g., missing AWS creds).
+  performed; exit > 1 is a misconfiguration (including an unavailable
+  storage tree).
 
 ## CI / observability hardening (NOT release-blocking)
 
@@ -175,7 +183,7 @@ These improve operational quality but do not block first launch:
   permission-critical modules.
 - **E-Runbook E2E**: PHASE17_BACKLOG §E — provision a CI job that
   boots the live compose stack and runs `wipe_database` / `init_iucn_sync`
-  / `seed_moe_rdb` end-to-end against real KMS / S3 / IUCN.
+  / `seed_moe_rdb` end-to-end against real KMS / storage / IUCN.
 - **F-Traceability orphan**: PHASE17_BACKLOG §F — decide whether
   FR-011a is retired or renamed; trace doc currently has 1 orphan.
 - **Hard gate promotion**: once the 5-test residual cluster lands
