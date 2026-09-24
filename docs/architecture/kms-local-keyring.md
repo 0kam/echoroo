@@ -227,11 +227,22 @@ host's swap to be encrypted or disabled.
 a maintenance window: stop every consumer (API, workers), change the file and
 the selectors, recreate them all (`docker compose -f compose.dev.yaml up -d
 --force-recreate backend worker worker-cpu`), and compare the loaded state
-before reopening. The API reports it in `/health/ready`; each Celery worker
-answers a custom remote-control command (`celery inspect keyring_status`) from
-its own cache with selectors, TOTP versions and key fingerprints. The runbook
-compares all answers; a test starts a worker on an old ring and asserts the
-comparison flags it. There is no rolling activation.
+before reopening. `/health/ready` exposes only the `keyring_state` digest, not
+key IDs or fingerprints. Each Celery worker answers a custom remote-control
+command (`keyring_status`) from its own cache with selectors, TOTP versions,
+and key fingerprints. Run the check with `--expected-workers N`, counting one
+for each running Celery worker container: development normally has
+`worker-cpu` (`N=1`), plus `worker` when the GPU worker runs (`N=2`). The
+required count prevents a busy, unreachable, or stale worker from being
+omitted from a passing activation. `keyring_activation_check` compares the
+API digest with the detailed worker answers; a test starts a worker on an old
+ring and asserts the comparison flags it. There is no rolling activation.
+
+```bash
+docker compose -f compose.dev.yaml exec backend \
+  uv run python -m echoroo.scripts.keyring_activation_check \
+  --expected-workers 1
+```
 
 **Rotation (what the existing hooks support).**
 
@@ -339,3 +350,4 @@ comparison flags it. There is no rolling activation.
 | 2026-09-24 | Astra, design re-review | Decisions unrecorded; `add` had no safe update contract; provisioning through the backend service inherited the keyring mount; no activation barrier, and retiring `_OLD` was conflated with keeping its material; audit-chain restart unsupported; memory-handling rules missing; PII completion mode and old runbooks still in scope; mount separation and archive checkpoints overstated | All accepted: decisions recorded; locked atomic `add` with failure tests; `keyring-admin` service; maintenance-window activation with loaded-state readiness; unselect `_OLD` after verified rewrap, keep material for backups; audit-key compromise recovery stated as unsupported until key epochs; bytearray DEKs, secret-free errors, no core dumps, encrypted/no swap; completion mode removed, runbooks rewritten in slice 2 |
 | 2026-09-24 | Astra, design pass 3 (GO WITH CHANGES, slice 1 may proceed) | Key-loss recovery still promised an audit restart; the verify endpoint differs from the exporter (rejects fresh bootstrap rows, no link check); no way to see what a worker loaded; `RLIMIT_CORE` ignored by piped core collectors; a path exclusion does not stop disk or memory snapshots | All accepted: loss handling states the audit chain cannot be restarted without epochs; one shared verification in slice 2 with acceptance cases; `celery inspect keyring_status` plus a stale-worker test; `PR_SET_DUMPABLE=0` in every keyring process; VM snapshot check before production, separate excluded disk if snapshots exist |
 | 2026-09-24 | Astra, slice 1 code review (2 passes) | CLI parser errors echoed user-supplied arguments; ignore patterns missed generated temp/rollback/lock names; HMAC operations accepted a wrapping key; duplicate JSON members silently replaced earlier values; malformed expected MACs raised `TypeError`; plaintext copied before the wiping `try`; failure injection and creation-mode tests too shallow; unknown-key and repr tests did not test what they claimed | All accepted; approved on the second pass |
+| 2026-09-24 | Astra, slice 2 code review | Activation check called a non-existent `Inspect.keyring_status()` and passed when a worker did not answer; integration/security doubles returned immutable DEKs; e2e did not enrol 2FA or verify the audit chain; rewrap runbook command incomplete | All accepted: broadcast + required `--expected-workers`; doubles removed in favour of the fixture keyring; `keyring-2fa.spec.ts` (register, enrol, log in with the enrolled secret) and `verify_audit_chain --check-detects-deleted-row` in the e2e workflow; runbook commands corrected. Dev: fresh DB on a provisioned keyring, activation check equal across API and worker, boot refuses public material / wrong selector / missing file |

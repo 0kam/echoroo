@@ -33,6 +33,7 @@ from celery import Celery  # noqa: E402
 from celery.schedules import crontab  # noqa: E402
 
 from echoroo.core.settings import get_settings  # noqa: E402
+from echoroo.workers import keyring_control as _keyring_control  # noqa: E402,F401
 
 _settings = get_settings()
 
@@ -49,13 +50,11 @@ app = Celery(
 # production while still allowing dev to relax via REDIS_TLS_INSECURE=1.
 import ssl as _ssl  # noqa: E402
 
-if _settings.CELERY_BROKER_URL.startswith("rediss://") or _settings.CELERY_RESULT_BACKEND.startswith(
+if _settings.CELERY_BROKER_URL.startswith(
     "rediss://"
-):
+) or _settings.CELERY_RESULT_BACKEND.startswith("rediss://"):
     _redis_ssl_cert_reqs = (
-        _ssl.CERT_NONE
-        if getattr(_settings, "REDIS_TLS_INSECURE", False)
-        else _ssl.CERT_REQUIRED
+        _ssl.CERT_NONE if getattr(_settings, "REDIS_TLS_INSECURE", False) else _ssl.CERT_REQUIRED
     )
     if _settings.CELERY_BROKER_URL.startswith("rediss://"):
         app.conf.broker_use_ssl = {"ssl_cert_reqs": _redis_ssl_cert_reqs}
@@ -229,9 +228,7 @@ app.conf.beat_schedule = {
     # idempotency is guaranteed by the per-day key in
     # :func:`echoroo.workers.trusted_expiry_notifier._idempotency_key`.
     "trusted-expiry-notifier-daily": {
-        "task": (
-            "echoroo.workers.trusted_expiry_notifier.notify_expiring_trusted_users"
-        ),
+        "task": ("echoroo.workers.trusted_expiry_notifier.notify_expiring_trusted_users"),
         "schedule": crontab(hour=3, minute=0),
     },
     # FR-060 — dormancy detection daily at 00:00 UTC. The single-worker
@@ -273,9 +270,7 @@ app.conf.beat_schedule = {
     # rehashing under the v2 CMK. Single-key deployments (no v2 alias)
     # short-circuit the task body to a no-op fast path.
     "pii-hash-backfill-daily": {
-        "task": (
-            "echoroo.workers.pii_hash_backfill.pii_hash_backfill_invitations"
-        ),
+        "task": ("echoroo.workers.pii_hash_backfill.pii_hash_backfill_invitations"),
         "schedule": crontab(hour=1, minute=0),
     },
     # Phase 17 backlog A-4 — daily API key age sweep (FR-083). Fires

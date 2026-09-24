@@ -1,438 +1,156 @@
-"""Unit tests for echoroo.core.kms — the single source of truth for KMS ops.
-
-Covers T030a-d via T031 (TDD red → green):
-    * wrap_dek / unwrap_dek         — TOTP DEK envelope (FR-051, FR-066, FR-067)
-    * compute_pii_hash              — keyed HMAC via kms:GenerateMac (FR-091, FR-091b)
-    * sign_invitation_hmac /
-      verify_invitation_hmac        — dual-key k_old/k_new rotation (FR-052, FR-040,
-                                      research.md §14)
-    * compute_audit_chain_hash      — tamper-evident chain (FR-092)
-
-All tests exercise the module against a moto-backed KMS so no real AWS
-credentials are required. moto provides `GenerateDataKey`, `Encrypt`,
-`Decrypt`, and `GenerateMac` / `VerifyMac` on HMAC CMKs, which is what
-the module depends on.
-
-The tests intentionally drive the module's public contract — they are
-the *red* side of strict TDD for Phase 2.2 and must exist in the tree
-before `apps/api/echoroo/core/kms.py` is written.
-"""
+"""Tests for the keyring-backed cryptographic adapter."""
 
 from __future__ import annotations
 
-import importlib
-import os
-from collections.abc import Iterator
+import hashlib
+import hmac
+import logging
 from typing import Any
 
-import boto3
 import pytest
-from botocore.exceptions import ClientError
-from moto import mock_aws
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-# Aliases used by the tests — kept in sync with scripts/init-localstack.sh
-# and research.md §1. The module under test reads them from env so the
-# same env values are injected via the `kms_env` fixture below.
-TOTP_DEK_ALIAS = "alias/echoroo-test-totp-dek"
-PII_HASH_ALIAS = "alias/echoroo-test-pii-hash"
-AUDIT_CHAIN_ALIAS = "alias/echoroo-test-audit-chain"
-INVITATION_NEW_ALIAS = "alias/echoroo-test-invitation-hmac-new"
-INVITATION_OLD_ALIAS = "alias/echoroo-test-invitation-hmac-old"
-
-AWS_REGION = "us-east-1"
+from echoroo.core import kms
+from echoroo.core.keyring import KeyringAuthError, KeyringKeyError, load_keyring
+from echoroo.core.settings import get_settings
 
 
-def _create_cmk_with_alias(
-    kms_client: Any,
-    alias_name: str,
-    *,
-    key_usage: str,
-    key_spec: str,
-) -> str:
-    """Create a CMK + alias in moto and return the key-id."""
-    resp = kms_client.create_key(KeyUsage=key_usage, KeySpec=key_spec)
-    key_id = resp["KeyMetadata"]["KeyId"]
-    kms_client.create_alias(AliasName=alias_name, TargetKeyId=key_id)
-    return str(key_id)
+def _key_material(key_id: str) -> bytes:
+    """Read one test key's material from the fixture keyring."""
+    ring = load_keyring(get_settings().KEYRING_FILE)
+    return ring.keys[key_id].material
 
 
-@pytest.fixture
-def kms_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, str]]:
-    """Provision a fresh moto-backed KMS and wire env vars for the module.
+def test_wrap_unwrap_with_explicit_key_id() -> None:
+    plaintext = b"d" * 32
 
-    Yields the key-id mapping so tests can reference specific keys if
-    they need to (e.g. for direct VerifyMac calls). The fixture also
-    re-imports `echoroo.core.kms` so any module-level cached client is
-    reset between tests.
-    """
-    # Phase 16 Batch 6a: clear LocalStack endpoint envs *before* entering
-    # ``mock_aws()`` so moto can intercept the default regional endpoint.
-    # The dev container exports ``AWS_ENDPOINT_URL_KMS`` pointing at
-    # LocalStack, which would otherwise route boto3 requests to a real
-    # service and produce ``AlreadyExistsException`` from residual state.
-    monkeypatch.delenv("AWS_KMS_ENDPOINT", raising=False)
-    monkeypatch.delenv("AWS_ENDPOINT_URL_KMS", raising=False)
-    monkeypatch.delenv("AWS_ENDPOINT_URL", raising=False)
+    wrapped = kms.wrap_dek(plaintext, key_id="test-totp-wrap")
+    recovered = kms.unwrap_dek(wrapped, key_id="test-totp-wrap")
 
-    with mock_aws():
-        # AWS credentials need to be set even for moto — boto3 otherwise
-        # raises NoCredentialsError before the mock intercepts.
-        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
-        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
-        monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
-        monkeypatch.setenv("AWS_DEFAULT_REGION", AWS_REGION)
-
-        client = boto3.client("kms", region_name=AWS_REGION)
-
-        totp_id = _create_cmk_with_alias(
-            client,
-            TOTP_DEK_ALIAS,
-            key_usage="ENCRYPT_DECRYPT",
-            key_spec="SYMMETRIC_DEFAULT",
-        )
-        pii_id = _create_cmk_with_alias(
-            client,
-            PII_HASH_ALIAS,
-            key_usage="GENERATE_VERIFY_MAC",
-            key_spec="HMAC_256",
-        )
-        audit_id = _create_cmk_with_alias(
-            client,
-            AUDIT_CHAIN_ALIAS,
-            key_usage="GENERATE_VERIFY_MAC",
-            key_spec="HMAC_256",
-        )
-        inv_new_id = _create_cmk_with_alias(
-            client,
-            INVITATION_NEW_ALIAS,
-            key_usage="GENERATE_VERIFY_MAC",
-            key_spec="HMAC_256",
-        )
-        inv_old_id = _create_cmk_with_alias(
-            client,
-            INVITATION_OLD_ALIAS,
-            key_usage="GENERATE_VERIFY_MAC",
-            key_spec="HMAC_256",
-        )
-
-        # Wire env vars that echoroo.core.kms reads. The module honours
-        # several historical names; we set the canonical ones used by
-        # scripts/init-localstack.sh and .env.example (T011).
-        monkeypatch.setenv("AWS_KMS_REGION", AWS_REGION)
-        monkeypatch.setenv("AWS_KMS_CMK_2FA_ALIAS", TOTP_DEK_ALIAS)
-        monkeypatch.setenv("AWS_KMS_CMK_PII_HASH_ALIAS", PII_HASH_ALIAS)
-        monkeypatch.setenv("AWS_KMS_CMK_AUDIT_CHAIN_ALIAS", AUDIT_CHAIN_ALIAS)
-        monkeypatch.setenv(
-            "AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW", INVITATION_NEW_ALIAS
-        )
-        monkeypatch.setenv(
-            "AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD", INVITATION_OLD_ALIAS
-        )
-        # Leave AWS_KMS_ENDPOINT unset — moto intercepts the default
-        # regional endpoint. If the module reads it, the None/absent
-        # value must be tolerated.
-        monkeypatch.delenv("AWS_KMS_ENDPOINT", raising=False)
-        monkeypatch.delenv("AWS_ENDPOINT_URL_KMS", raising=False)
-
-        # Force re-import so any module-level boto3 client cache resets.
-        import echoroo.core.kms as kms_module
-
-        importlib.reload(kms_module)
-
-        yield {
-            "totp_id": totp_id,
-            "pii_id": pii_id,
-            "audit_id": audit_id,
-            "inv_new_id": inv_new_id,
-            "inv_old_id": inv_old_id,
-        }
-
-
-# ---------------------------------------------------------------------------
-# T030a — TOTP DEK wrap / unwrap
-# ---------------------------------------------------------------------------
-
-
-def test_wrap_dek_roundtrip(kms_env: dict[str, str]) -> None:
-    """wrap_dek(plaintext) followed by unwrap_dek returns the original DEK."""
-    from echoroo.core import kms
-
-    plaintext = b"\x00" * 32  # 256-bit DEK
-    wrapped = kms.wrap_dek(plaintext)
-
-    assert isinstance(wrapped, bytes)
-    assert wrapped != plaintext  # ciphertext must differ from plaintext
-    assert len(wrapped) > 0
-
-    recovered = kms.unwrap_dek(wrapped)
+    assert isinstance(recovered, bytearray)
     assert recovered == plaintext
 
 
-def test_wrap_dek_produces_distinct_ciphertext_per_call(
-    kms_env: dict[str, str],
-) -> None:
-    """KMS envelope is non-deterministic — two wraps of the same DEK differ."""
-    from echoroo.core import kms
+def test_unwrap_rejects_wrong_key_id() -> None:
+    wrapped = kms.wrap_dek(b"d" * 32, key_id="test-totp-wrap")
 
-    plaintext = b"\x11" * 32
-    wrapped_a = kms.wrap_dek(plaintext)
-    wrapped_b = kms.wrap_dek(plaintext)
-
-    assert wrapped_a != wrapped_b
-    # But both must still unwrap to the same plaintext.
-    assert kms.unwrap_dek(wrapped_a) == plaintext
-    assert kms.unwrap_dek(wrapped_b) == plaintext
+    with pytest.raises(KeyringKeyError):
+        kms.unwrap_dek(wrapped, key_id="test-totp-wrap-old")
 
 
-def test_unwrap_dek_rejects_tampered_blob(kms_env: dict[str, str]) -> None:
-    """Flipping a byte in the wrapped blob must cause unwrap to raise."""
-    from echoroo.core import kms
+def test_rewrap_uses_explicit_source_and_target_ids() -> None:
+    plaintext = b"d" * 32
+    wrapped = kms.wrap_dek(plaintext, key_id="test-totp-wrap-old")
 
-    plaintext = b"\x22" * 32
-    wrapped = bytearray(kms.wrap_dek(plaintext))
-    # Flip a byte in the payload (avoid the first byte of AWS metadata).
-    wrapped[-1] ^= 0xFF
-
-    with pytest.raises(ClientError):
-        kms.unwrap_dek(bytes(wrapped))
-
-
-# ---------------------------------------------------------------------------
-# T030b — compute_pii_hash via kms:GenerateMac
-# ---------------------------------------------------------------------------
-
-
-def test_compute_pii_hash_deterministic(kms_env: dict[str, str]) -> None:
-    """Same input must produce same hash (keyed HMAC determinism, FR-091)."""
-    from echoroo.core import kms
-
-    a = kms.compute_pii_hash("alice@example.com")
-    b = kms.compute_pii_hash("alice@example.com")
-
-    assert a == b
-    assert a != ""
-
-
-def test_compute_pii_hash_returns_hex(kms_env: dict[str, str]) -> None:
-    """Hash must be a lowercase hex string of the MAC output."""
-    from echoroo.core import kms
-
-    result = kms.compute_pii_hash("user@example.com")
-
-    assert isinstance(result, str)
-    # HMAC_SHA_256 → 32 bytes → 64 hex characters.
-    assert len(result) == 64
-    int(result, 16)  # must parse as hex
-    assert result == result.lower()
-
-
-def test_compute_pii_hash_differs_for_different_inputs(
-    kms_env: dict[str, str],
-) -> None:
-    from echoroo.core import kms
-
-    a = kms.compute_pii_hash("alice@example.com")
-    b = kms.compute_pii_hash("bob@example.com")
-
-    assert a != b
-
-
-def test_compute_pii_hash_handles_unicode(kms_env: dict[str, str]) -> None:
-    """Hash must accept arbitrary UTF-8 strings (emails can be IDN)."""
-    from echoroo.core import kms
-
-    # Zero-byte collision check: trailing null must not alias.
-    assert kms.compute_pii_hash("foo") != kms.compute_pii_hash("foo\x00")
-    # Unicode passthrough.
-    assert len(kms.compute_pii_hash("山田太郎@example.jp")) == 64
-
-
-# ---------------------------------------------------------------------------
-# T030c — invitation HMAC sign / verify with k_old fallback
-# ---------------------------------------------------------------------------
-
-
-def test_sign_invitation_hmac_returns_hex(kms_env: dict[str, str]) -> None:
-    from echoroo.core import kms
-
-    sig = kms.sign_invitation_hmac(b"invitation:project=foo;email=bar")
-
-    assert isinstance(sig, str)
-    assert len(sig) == 64
-    int(sig, 16)
-
-
-def test_verify_invitation_hmac_accepts_valid_new_key(
-    kms_env: dict[str, str],
-) -> None:
-    from echoroo.core import kms
-
-    payload = b"invitation:project=foo;email=bar"
-    sig = kms.sign_invitation_hmac(payload)
-
-    assert kms.verify_invitation_hmac(payload, sig) is True
-
-
-def test_verify_invitation_hmac_rejects_tampered_payload(
-    kms_env: dict[str, str],
-) -> None:
-    from echoroo.core import kms
-
-    payload = b"invitation:project=foo;email=bar"
-    sig = kms.sign_invitation_hmac(payload)
-
-    assert kms.verify_invitation_hmac(b"invitation:project=foo;email=evil", sig) is False
-
-
-def test_verify_invitation_hmac_rejects_garbage_signature(
-    kms_env: dict[str, str],
-) -> None:
-    from echoroo.core import kms
-
-    assert kms.verify_invitation_hmac(b"payload", "deadbeef" * 8) is False
-
-
-def test_verify_invitation_hmac_falls_back_to_k_old(
-    kms_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """During 14-day grace, tokens signed by the *previous* key must verify.
-
-    Simulated by: sign with key_old directly (via low-level boto3 GenerateMac
-    against the OLD alias), then ask the module to verify. The module must
-    try k_new first (which fails), then k_old (which succeeds).
-    """
-    from echoroo.core import kms
-
-    payload = b"pre-rotation-token"
-
-    # Sign directly with the OLD key to simulate a token issued before
-    # rotation. The module itself only signs with NEW. moto's
-    # GenerateMac requires a raw KeyId (not an alias), so we pass the
-    # resolved UUID captured in the fixture.
-    kms_client = boto3.client("kms", region_name=AWS_REGION)
-    resp = kms_client.generate_mac(
-        Message=payload,
-        KeyId=kms_env["inv_old_id"],
-        MacAlgorithm="HMAC_SHA_256",
+    rewrapped = kms.rewrap_dek(
+        wrapped,
+        source_key_id="test-totp-wrap-old",
+        destination_key_id="test-totp-wrap",
     )
-    sig_hex = resp["Mac"].hex()
 
-    # Sanity check: signing the same payload with NEW yields a different sig.
-    sig_new = kms.sign_invitation_hmac(payload)
-    assert sig_new != sig_hex
-
-    # Verify must return True because fallback chain includes k_old.
-    assert kms.verify_invitation_hmac(payload, sig_hex) is True
+    assert kms.unwrap_dek(rewrapped, key_id="test-totp-wrap") == plaintext
+    with pytest.raises(KeyringKeyError):
+        kms.unwrap_dek(rewrapped, key_id="test-totp-wrap-old")
 
 
-def test_verify_invitation_hmac_returns_false_when_old_unconfigured(
-    kms_env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+def test_compute_pii_hash_matches_known_answer() -> None:
+    value = "subject@example.com"
+    expected = hmac.new(
+        _key_material("test-pii-hmac"), value.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
+    assert kms.compute_pii_hash(value) == expected
+
+
+def test_compute_pii_hash_dual_write_shape(select_keys: Any) -> None:
+    select = select_keys
+    assert kms.compute_pii_hash_dual("subject@example.com").keys() == {"v1"}
+
+    select(KEYRING_PII_KEY_V2="test-pii-hmac-v2")
+    result = kms.compute_pii_hash_dual("subject@example.com")
+
+    assert result.keys() == {"v1", "v2"}
+    assert result["v1"] != result["v2"]
+    assert kms.get_pii_hash_version() == 2
+
+
+def test_verify_pii_hash_prefers_v2_but_keeps_v1_history(select_keys: Any) -> None:
+    select = select_keys
+    select(KEYRING_PII_KEY_V2="test-pii-hmac-v2")
+    hashes = kms.compute_pii_hash_dual("subject@example.com")
+
+    assert kms.verify_pii_hash("subject@example.com", hashes["v2"])
+    assert kms.verify_pii_hash("subject@example.com", hashes["v1"])
+    assert not kms.verify_pii_hash("other@example.com", hashes["v1"])
+
+
+def test_verify_pii_hash_v2_error_falls_back_without_material_in_warning(
+    select_keys: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """When OLD alias is not configured (post-grace), only k_new is tried.
+    select = select_keys
+    select(KEYRING_PII_KEY_V2="test-pii-hmac-v2")
+    value = "subject@example.com"
+    historical_hash = kms.compute_pii_hash(value)
+    original = kms._hmac_hex
 
-    A signature that would have validated under k_old must now be rejected.
-    """
-    import importlib
+    def fail_v2(key_id: str, message: bytes, purpose: str) -> str:
+        if key_id == "test-pii-hmac-v2":
+            raise KeyringAuthError("test authentication failure")
+        return original(key_id, message, purpose)  # type: ignore[arg-type]
 
-    # Capture a k_old signature before removing the env var. Use the
-    # raw KeyId UUID (moto's GenerateMac does not resolve aliases).
-    kms_client = boto3.client("kms", region_name=AWS_REGION)
-    resp = kms_client.generate_mac(
-        Message=b"legacy",
-        KeyId=kms_env["inv_old_id"],
-        MacAlgorithm="HMAC_SHA_256",
-    )
-    old_sig = resp["Mac"].hex()
+    monkeypatch.setattr(kms, "_hmac_hex", fail_v2)
+    with caplog.at_level(logging.WARNING, logger="echoroo.core.kms"):
+        assert kms.verify_pii_hash(value, historical_hash)
 
-    monkeypatch.delenv("AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD", raising=False)
-
-    # Reload so the module picks up the new env view.
-    import echoroo.core.kms as kms_module
-
-    importlib.reload(kms_module)
-
-    assert kms_module.verify_invitation_hmac(b"legacy", old_sig) is False
+    assert "KeyringAuthError" in caplog.text
+    assert value not in caplog.text
+    assert "test-pii-hmac-v2" not in caplog.text
 
 
-# ---------------------------------------------------------------------------
-# T030d — audit chain HMAC
-# ---------------------------------------------------------------------------
+def test_compute_audit_chain_hash_matches_known_answer() -> None:
+    previous = "0" * 64
+    row = b"canonical-row"
+    expected = hmac.new(
+        _key_material("test-audit-hmac"), previous.encode("ascii") + row, hashlib.sha256
+    ).hexdigest()
+
+    assert kms.compute_audit_chain_hash(previous, row) == expected
 
 
-def test_compute_audit_chain_hash_deterministic(kms_env: dict[str, str]) -> None:
-    from echoroo.core import kms
-
-    prev = "0" * 64
-    row = b'{"action":"login","user_id":"abc"}'
-
-    h1 = kms.compute_audit_chain_hash(prev, row)
-    h2 = kms.compute_audit_chain_hash(prev, row)
-
-    assert h1 == h2
-    assert isinstance(h1, str)
-    assert len(h1) == 64
-    int(h1, 16)
+def test_verify_pii_hash_rejects_malformed_stored_hash() -> None:
+    assert not kms.verify_pii_hash("alice@example.com", "short")
+    assert not kms.verify_pii_hash("alice@example.com", None)  # type: ignore[arg-type]
 
 
-def test_compute_audit_chain_hash_changes_with_prev(kms_env: dict[str, str]) -> None:
-    from echoroo.core import kms
+def test_verify_pii_hash_without_v2_uses_v1_only() -> None:
+    stored = kms.compute_pii_hash("alice@example.com")
 
-    row = b'{"action":"login"}'
-
-    h_a = kms.compute_audit_chain_hash("0" * 64, row)
-    h_b = kms.compute_audit_chain_hash("f" * 64, row)
-
-    assert h_a != h_b
+    assert kms.verify_pii_hash("alice@example.com", stored)
+    assert not kms.verify_pii_hash("bob@example.com", stored)
 
 
-def test_compute_audit_chain_hash_changes_with_row(kms_env: dict[str, str]) -> None:
-    from echoroo.core import kms
+def test_verify_pii_hash_v1_error_is_no_match(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stored = kms.compute_pii_hash("alice@example.com")
 
-    prev = "0" * 64
+    def _fail(*_args: object, **_kwargs: object) -> str:
+        raise KeyringAuthError("keyed hash unavailable")
 
-    h_a = kms.compute_audit_chain_hash(prev, b'{"action":"a"}')
-    h_b = kms.compute_audit_chain_hash(prev, b'{"action":"b"}')
-
-    assert h_a != h_b
-
-
-def test_audit_chain_uses_distinct_key_from_pii_hash(kms_env: dict[str, str]) -> None:
-    """Defence-in-depth: audit_chain and pii_hash keys MUST be separate CMKs.
-
-    We can't directly inspect the key bytes (they never leave KMS), but we
-    can assert that given identical inputs the two HMACs differ — which
-    can only happen if the underlying keys differ.
-    """
-    from echoroo.core import kms
-
-    payload = "identical"
-    pii_h = kms.compute_pii_hash(payload)
-    chain_h = kms.compute_audit_chain_hash("0" * 64, payload.encode())
-
-    # Even if we happened to use the same "prev||row" formatting, the keys
-    # must differ so the hashes diverge.
-    assert pii_h != chain_h
+    monkeypatch.setattr(kms, "_hmac_hex", _fail)
+    with caplog.at_level(logging.WARNING, logger=kms.__name__):
+        assert not kms.verify_pii_hash("alice@example.com", stored)
+    assert "v1 keyring unavailable" in caplog.text
+    assert "alice@example.com" not in caplog.text
 
 
-# ---------------------------------------------------------------------------
-# Key-isolation smoke: each function points at a distinct alias env var.
-# This guards against accidental copy-paste regressions where two functions
-# share a key (which would violate research.md §1 "each alias maps to a
-# distinct CMK").
-# ---------------------------------------------------------------------------
+def test_missing_selected_key_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echoroo.core import keyring
 
+    monkeypatch.setattr(keyring, "get_selectors", lambda: keyring.Selectors())
 
-def test_keys_are_isolated(kms_env: dict[str, str]) -> None:
-    assert os.environ["AWS_KMS_CMK_2FA_ALIAS"] != os.environ["AWS_KMS_CMK_PII_HASH_ALIAS"]
-    assert (
-        os.environ["AWS_KMS_CMK_PII_HASH_ALIAS"]
-        != os.environ["AWS_KMS_CMK_AUDIT_CHAIN_ALIAS"]
-    )
-    assert (
-        os.environ["AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW"]
-        != os.environ["AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD"]
-    )
+    with pytest.raises(keyring.KeyringConfigError):
+        kms.compute_pii_hash("alice@example.com")
+    with pytest.raises(keyring.KeyringConfigError):
+        kms.compute_audit_chain_hash("0" * 64, b"row")

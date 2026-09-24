@@ -26,11 +26,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.api.web_v1 import auth as auth_module
+from echoroo.core.keyring import KeyringAuthError
 from echoroo.models.user import User
 from echoroo.services import login_notification_service as login_module
 from echoroo.services.login_notification_service import (
@@ -147,7 +150,7 @@ class _OutboxRecorder:
 
 @pytest.fixture
 def patch_kms(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``compute_pii_hash`` MUST NOT call boto3 in unit tests.
+    """Use a deterministic PII hash in notification unit tests.
 
     Use a deterministic hash so we can assert on payload contents and
     on the (ip_hash, ua_hash) keying of the seen-table.
@@ -174,6 +177,43 @@ def _user(email: str = "alice@example.com") -> User:
         security_stamp="s" + "0" * 63,
         two_factor_enabled=True,
     )
+
+
+async def test_keyring_failure_does_not_block_login_notification_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PII-keyring failure is swallowed by the post-login side effect."""
+
+    class _Session:
+        def __init__(self) -> None:
+            self.rolled_back = False
+
+        async def __aenter__(self) -> _Session:
+            return self
+
+        async def __aexit__(self, *_args: Any) -> bool:
+            return False
+
+        async def commit(self) -> None:
+            raise AssertionError("login notification must not commit after failure")
+
+        async def rollback(self) -> None:
+            self.rolled_back = True
+
+    session = _Session()
+
+    def fail_hash(_value: str) -> str:
+        raise KeyringAuthError("test authentication failure")
+
+    monkeypatch.setattr(login_module, "compute_pii_hash", fail_hash)
+    monkeypatch.setattr(auth_module, "AsyncSessionLocal", lambda: session)
+
+    request = MagicMock()
+    request.headers = {}
+    request.client = None
+    await auth_module._record_login_notification(user=_user(), request=request)
+
+    assert session.rolled_back is True
 
 
 # ---------------------------------------------------------------------------
@@ -308,8 +348,7 @@ async def test_known_ip_within_retention_window_does_not_renotify(
     # the suppression window has elapsed — that would generate
     # daily emails for the user's primary workstation.
     assert result is False, (
-        "tuple seen 5 days ago must be treated as known device — "
-        "no notification email expected"
+        "tuple seen 5 days ago must be treated as known device — no notification email expected"
     )
     assert len(outbox_recorder.calls) == 0
 

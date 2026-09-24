@@ -304,10 +304,11 @@ check_env_values() {
     err "REDIS_URL must start with redis:// or rediss://, got: ${redis_url}"
     failures=1
   fi
+  check_keyring_config failures
+
   # Production/staging secret-strength gate — mirrors the settings.py
   # validate_production_secrets guard so a bad .env fails here (fast, offline)
-  # rather than at container boot. KMS aliases default to the LocalStack
-  # bootstrap values, so they are only checked for format when set.
+  # rather than at container boot.
   if [[ "${environment,,}" == "production" || "${environment,,}" == "staging" ]]; then
     require_strong_secret "JWT_SECRET_KEY" "${jwt_secret}" \
       "your-secret-key-change-in-production dev-secret-key-change-in-production" \
@@ -317,7 +318,6 @@ check_env_values() {
     require_strong_secret "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY" "${two_factor_hmac}" \
       "dev-two-factor-confirmation-hmac-change-in-production" failures
     require_strong_secret "INVITATION_TOKEN_HMAC_KEY" "${invitation_key}" "" failures
-    check_kms_alias_format failures
   fi
 
   if redis_cert_missing; then
@@ -369,35 +369,67 @@ require_strong_secret() {
   fi
 }
 
-# check_kms_alias_format FAILVAR
-# When a KMS CMK alias is set explicitly, sanity-check it is an alias/... name
-# or an arn:aws:kms ARN. Unset aliases fall back to the code defaults and are
-# fine. Also enforces the TOTP-DEK rotation _OLD alias/kid co-presence rule.
-check_kms_alias_format() {
+env_var_present() {
+  local key="$1" line name
+  [[ -f .env ]] || return 1
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="$(trim_ws "${line}")"
+    [[ -z "${line}" || "${line:0:1}" == "#" || "${line}" != *"="* ]] && continue
+    name="$(trim_ws "${line%%=*}")"
+    [[ "${name}" == "${key}" ]] && return 0
+  done < .env
+  return 1
+}
+
+# check_keyring_config FAILVAR
+# Checks only selector configuration and path metadata. The keyring file is
+# never read by this shell script; the application and keyring CLI validate it.
+check_keyring_config() {
   local fail_var="$1" var value
-  for var in \
-    AWS_KMS_CMK_2FA_ALIAS \
-    AWS_KMS_CMK_PII_HASH_ALIAS \
-    AWS_KMS_CMK_PII_HASH_ALIAS_V2 \
-    AWS_KMS_CMK_AUDIT_CHAIN_ALIAS \
-    AWS_KMS_CMK_INVITATION_HMAC_ALIAS \
-    AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW \
-    AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD \
-    AWS_KMS_CMK_2FA_DEK_ALIAS_NEW \
-    AWS_KMS_CMK_2FA_DEK_ALIAS_OLD; do
+  for var in KEYRING_TOTP_KEY KEYRING_TOTP_KEY_VERSION KEYRING_PII_KEY KEYRING_AUDIT_KEY; do
     value="$(env_value "${var}")"
-    if [[ -n "${value}" && "${value}" != alias/* && "${value}" != arn:aws:kms:* ]]; then
-      err "${var} must be an 'alias/...' name or a KMS ARN, got: ${value}"
+    if [[ -z "${value}" ]]; then
+      err "${var} must be set in .env."
       printf -v "${fail_var}" '%s' 1
     fi
   done
-  local dek_alias_old dek_kid_old
-  dek_alias_old="$(env_value AWS_KMS_CMK_2FA_DEK_ALIAS_OLD)"
-  dek_kid_old="$(env_value AWS_KMS_CMK_2FA_DEK_KID_OLD)"
-  if [[ -n "${dek_alias_old}" && -z "${dek_kid_old}" ]] \
-    || [[ -z "${dek_alias_old}" && -n "${dek_kid_old}" ]]; then
-    err "AWS_KMS_CMK_2FA_DEK_ALIAS_OLD and AWS_KMS_CMK_2FA_DEK_KID_OLD must be set together (or both unset)."
+
+  local totp_key_old totp_version_old
+  totp_key_old="$(env_value KEYRING_TOTP_KEY_OLD)"
+  totp_version_old="$(env_value KEYRING_TOTP_KEY_VERSION_OLD)"
+  if [[ -n "${totp_key_old}" && -z "${totp_version_old}" ]] \
+    || [[ -z "${totp_key_old}" && -n "${totp_version_old}" ]]; then
+    err "KEYRING_TOTP_KEY_OLD and KEYRING_TOTP_KEY_VERSION_OLD must be set together (or both unset)."
     printf -v "${fail_var}" '%s' 1
+  fi
+
+  local deprecated
+  for deprecated in AWS_KMS_CMK_ ECHOROO_PII_HASH_ROTATION_COMPLETE; do
+    if [[ "${deprecated}" == AWS_KMS_CMK_ ]]; then
+      local line
+      while IFS= read -r line || [[ -n "${line}" ]]; do
+        line="${line%$'\r'}"
+        line="$(trim_ws "${line}")"
+        [[ -z "${line}" || "${line:0:1}" == "#" || "${line}" != *"="* ]] && continue
+        local name
+        name="$(trim_ws "${line%%=*}")"
+        if [[ "${name}" == AWS_KMS_CMK_* ]]; then
+          err "${name} is obsolete; remove it from .env."
+          printf -v "${fail_var}" '%s' 1
+        fi
+      done < .env
+    elif env_var_present "${deprecated}"; then
+      err "${deprecated} is obsolete; remove it from .env."
+      printf -v "${fail_var}" '%s' 1
+    fi
+  done
+
+  local keyring_dir keyring_file
+  keyring_dir="$(env_value ECHOROO_KEYRING_DIR)"
+  keyring_file="${keyring_dir:-/etc/echoroo}/echoroo-keyring.json"
+  if [[ ! -f "${keyring_file}" ]]; then
+    warn "Keyring file is missing at ${keyring_file}; provision it before starting the stack."
   fi
 }
 
@@ -540,8 +572,8 @@ run_migrate() {
     print_alembic_state_exec
     compose exec backend uv run alembic upgrade head
   else
-    warn "Backend is not running; starting db, redis, and localstack before one-off migration."
-    compose up -d db redis localstack
+    warn "Backend is not running; starting db and redis before one-off migration."
+    compose up -d db redis
     wait_service_healthy db 60
     print_alembic_state_run
     compose run --rm backend uv run alembic upgrade head

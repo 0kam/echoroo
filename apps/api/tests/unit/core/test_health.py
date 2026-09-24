@@ -1,7 +1,7 @@
 """Unit tests for the readiness probes (``echoroo.core.health``) and the
 ``/health/ready`` endpoint wiring.
 
-The three dependency probes (DB, Redis, storage) are stubbed so no live
+The dependency probes (DB, Redis, storage, keyring) are stubbed so no live
 infrastructure is required. The endpoint tests drive the FastAPI app via
 ``ASGITransport`` with ``check_readiness`` patched, asserting the 200 / 503
 contract and that the body never leaks anything beyond component names and
@@ -123,6 +123,25 @@ async def test_probe_timeout_returns_false(monkeypatch: pytest.MonkeyPatch) -> N
     assert await health._check_redis() is False
 
 
+@pytest.mark.asyncio
+async def test_check_keyring_returns_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echoroo.core import keyring
+
+    monkeypatch.setattr(keyring, "keyring_status", lambda: {"state": "0123456789abcdef"})
+    assert await health._check_keyring() == (True, "0123456789abcdef")
+
+
+@pytest.mark.asyncio
+async def test_check_keyring_failure_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echoroo.core import keyring
+
+    def _fail() -> dict[str, object]:
+        raise keyring.KeyringConfigError("secret")
+
+    monkeypatch.setattr(keyring, "keyring_status", _fail)
+    assert await health._check_keyring() == (False, None)
+
+
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
@@ -133,13 +152,23 @@ async def test_check_readiness_all_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _true() -> bool:
         return True
 
+    async def _true_keyring() -> tuple[bool, str]:
+        return True, "0123456789abcdef"
+
     monkeypatch.setattr(health, "_check_database", lambda _f: _true())
     monkeypatch.setattr(health, "_check_redis", _true)
     monkeypatch.setattr(health, "_check_storage", _true)
+    monkeypatch.setattr(health, "_check_keyring", _true_keyring)
 
     ready, checks = await health.check_readiness(session_factory=_session_factory())
     assert ready is True
-    assert checks == {"database": "ok", "redis": "ok", "storage": "ok"}
+    assert checks == {
+        "database": "ok",
+        "redis": "ok",
+        "storage": "ok",
+        "keyring": "ok",
+    }
+    assert checks.keyring_state == "0123456789abcdef"  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -156,11 +185,17 @@ async def test_check_readiness_names_failing_component(
     monkeypatch.setattr(health, "_check_redis", _false)  # redis is the failure
     monkeypatch.setattr(health, "_check_storage", _true)
 
+    async def _keyring_ok() -> tuple[bool, str]:
+        return True, "0123456789abcdef"
+
+    monkeypatch.setattr(health, "_check_keyring", _keyring_ok)
+
     ready, checks = await health.check_readiness(session_factory=_session_factory())
     assert ready is False
     assert checks["redis"] == "fail"
     assert checks["database"] == "ok"
     assert checks["storage"] == "ok"
+    assert checks["keyring"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -173,20 +208,28 @@ async def test_readiness_endpoint_returns_200_when_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _ready(session_factory: Any = None) -> tuple[bool, dict[str, str]]:
-        return True, {"database": "ok", "redis": "ok", "storage": "ok"}
+        del session_factory
+        return True, health._ReadinessChecks(
+            {"database": "ok", "redis": "ok", "storage": "ok", "keyring": "ok"},
+            keyring_state="0123456789abcdef",
+        )
 
     monkeypatch.setattr("echoroo.main.check_readiness", _ready)
     app = create_app()
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/ready")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body == {
         "status": "ready",
-        "checks": {"database": "ok", "redis": "ok", "storage": "ok"},
+        "checks": {
+            "database": "ok",
+            "redis": "ok",
+            "storage": "ok",
+            "keyring": "ok",
+        },
+        "keyring_state": "0123456789abcdef",
     }
 
 
@@ -195,13 +238,17 @@ async def test_readiness_endpoint_returns_503_when_not_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _not_ready(session_factory: Any = None) -> tuple[bool, dict[str, str]]:
-        return False, {"database": "ok", "redis": "fail", "storage": "ok"}
+        del session_factory
+        return False, {
+            "database": "ok",
+            "redis": "fail",
+            "storage": "ok",
+            "keyring": "fail",
+        }
 
     monkeypatch.setattr("echoroo.main.check_readiness", _not_ready)
     app = create_app()
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health/ready")
 
     assert resp.status_code == 503
@@ -209,7 +256,7 @@ async def test_readiness_endpoint_returns_503_when_not_ready(
     assert body["status"] == "not_ready"
     assert body["checks"]["redis"] == "fail"
     # No config detail leaks: only the three component keys, values in {ok, fail}.
-    assert set(body["checks"]) == {"database", "redis", "storage"}
+    assert set(body["checks"]) == {"database", "redis", "storage", "keyring"}
     assert set(body["checks"].values()) <= {"ok", "fail"}
 
 
@@ -217,9 +264,7 @@ async def test_readiness_endpoint_returns_503_when_not_ready(
 async def test_liveness_endpoint_stays_static() -> None:
     """The cheap liveness probe must not gain dependency checks."""
     app = create_app()
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/health")
 
     assert resp.status_code == 200

@@ -22,10 +22,10 @@ unavailable while a developer works offline on an unrelated feature, so we log
 an ERROR and let the app boot. In staging / production a storage failure is
 fatal.
 
-KMS is deliberately NOT probed at boot — production IAM policies may deny
-``kms:DescribeKey`` even when the encrypt / decrypt / GenerateMac grants the
-app actually uses are present (see ``core/kms.py``). First-use KMS errors are
-surfaced with an actionable message by the wrapper in that module instead.
+The local keyring is always loaded and validated at boot. It is part of the
+application's security boundary, so a missing, invalid, or unprovisioned ring
+is fatal in every environment. Loading it also disables process dumpability
+before the application can serve traffic.
 
 Escape hatch
 ------------
@@ -42,7 +42,7 @@ import asyncio
 import logging
 from typing import Final
 
-from echoroo.core import storage
+from echoroo.core import keyring, storage
 from echoroo.core.redis import get_redis_connection
 from echoroo.core.settings import get_settings
 
@@ -54,9 +54,7 @@ STORAGE_READY_TIMEOUT_S: Final[float] = 5.0
 
 # Environments where a storage probe failure is fatal. Development tolerates a
 # missing storage tree (logs ERROR + continues) so offline work is unblocked.
-_STORAGE_HARD_FAIL_ENVIRONMENTS: Final[frozenset[str]] = frozenset(
-    {"staging", "production"}
-)
+_STORAGE_HARD_FAIL_ENVIRONMENTS: Final[frozenset[str]] = frozenset({"staging", "production"})
 
 
 class BootCheckError(RuntimeError):
@@ -66,6 +64,19 @@ class BootCheckError(RuntimeError):
     handlers (and the process-level crash on an unhandled exception during
     lifespan startup) treat it as fatal.
     """
+
+
+def _probe_keyring() -> None:
+    """Load and validate the configured keyring before serving traffic."""
+    try:
+        keyring.get_keyring()
+    except keyring.KeyringError as exc:
+        # Keyring error messages are secret-free by contract, so the reason
+        # (missing file, denylisted material, selector mismatch) is safe to show.
+        raise BootCheckError(
+            f"The configured local keyring is unavailable or invalid at boot: {exc}. "
+            "Check the provisioned keyring and KEYRING_* settings (docs/runbook/keyring.md)."
+        ) from None
 
 
 async def _probe_redis() -> None:
@@ -145,8 +156,8 @@ async def _probe_storage() -> None:
 async def run_boot_checks() -> None:
     """Run all startup boot probes honouring the skip escape hatch.
 
-    Always probes Redis (fatal in every environment). Probes storage
-    (fatal only in staging / production). Honours
+    Always probes the keyring and Redis (fatal in every environment). Probes
+    storage (fatal only in staging / production). Honours
     ``ECHOROO_SKIP_BOOT_CHECKS``.
 
     Raises:
@@ -154,10 +165,13 @@ async def run_boot_checks() -> None:
     """
     settings = get_settings()
     if settings.ECHOROO_SKIP_BOOT_CHECKS:
-        logger.info("ECHOROO_SKIP_BOOT_CHECKS is set — skipping all boot probes (Redis, storage).")
+        logger.info(
+            "ECHOROO_SKIP_BOOT_CHECKS is set — skipping all boot probes (keyring, Redis, storage)."
+        )
         return
 
-    logger.info("Running startup boot probes (Redis, storage)...")
+    logger.info("Running startup boot probes (keyring, Redis, storage)...")
+    _probe_keyring()
     await _probe_redis()
     await _probe_storage()
     logger.info("Startup boot probes passed.")

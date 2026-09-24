@@ -10,17 +10,15 @@ The detection rules are:
 3. Flag any import of an AWS SDK package (``boto3``, ``botocore``,
    ``aioboto3``, ``aiobotocore``, ``s3fs``). This closes
    ``from boto3 import client`` and aliased imports, which rule 1 cannot see.
-   ``core/kms.py`` is exempt from this rule only: it owns the KMS client.
 4. Flag imports of the legacy ``echoroo.core.s3`` module, including
    ``from echoroo.core import s3``.
 
 The rules apply to every scanned Python file. The legacy ``core/s3.py``
 module is intentionally not exempt because it is being removed.
 
-This is a guard against accidental regressions, not a sandbox: like
-``lint_kms_isolation.py`` it does no data-flow analysis, so deliberately
-aliasing a factory (``make = boto3.client``) inside ``core/kms.py`` is left
-to code review. They support slice 1
+This is a guard against accidental regressions, not a sandbox: it does no
+data-flow analysis, so deliberately aliasing a factory (``make =
+boto3.client``) is left to code review. It supports slice 1
 of the storage migration described in
 ``docs/architecture/storage-lustre-migration.md``.
 
@@ -41,7 +39,6 @@ TARGET_SERVICE = "s3"
 CLIENT_FACTORY_METHODS = frozenset({"client", "resource"})
 RAW_CLIENT_ACCESSORS = frozenset({"get_s3_client"})
 SDK_PACKAGES = frozenset({"boto3", "botocore", "aioboto3", "aiobotocore", "s3fs"})
-SDK_IMPORT_ALLOWED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/kms.py",)
 LEGACY_S3_MODULE = "echoroo.core.s3"
 CORE_MODULE = "echoroo.core"
 
@@ -49,18 +46,15 @@ CORE_MODULE = "echoroo.core"
 class _S3IsolationVisitor(ast.NodeVisitor):
     """Collect ``(lineno, detail)`` for S3 isolation violations."""
 
-    def __init__(self, *, allow_sdk_import: bool = False) -> None:
-        self.allow_sdk_import = allow_sdk_import
+    def __init__(self) -> None:
         self.violations: list[tuple[int, str]] = []
 
     def _check_sdk_import(self, lineno: int, module: str | None) -> None:
-        if self.allow_sdk_import or not module:
+        if not module:
             return
         package = module.split(".", 1)[0]
         if package in SDK_PACKAGES:
-            self.violations.append(
-                (lineno, f"AWS SDK import '{module}' outside core/kms.py")
-            )
+            self.violations.append((lineno, f"AWS SDK import '{module}' is not permitted"))
 
     def _check_legacy_s3_import(self, lineno: int, module: str | None) -> None:
         if module == LEGACY_S3_MODULE or module and module.startswith(f"{LEGACY_S3_MODULE}."):
@@ -75,10 +69,7 @@ class _S3IsolationVisitor(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 — ast API
         if isinstance(node.func, ast.Attribute):
             method = node.func.attr
-            if (
-                method in CLIENT_FACTORY_METHODS
-                and _call_has_s3_service_name(node)
-            ):
+            if method in CLIENT_FACTORY_METHODS and _call_has_s3_service_name(node):
                 self.violations.append(
                     (
                         node.lineno,
@@ -90,16 +81,15 @@ class _S3IsolationVisitor(ast.NodeVisitor):
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: N802
         legacy_module = node.level == 0 and (
             node.module == LEGACY_S3_MODULE
-            or node.module and node.module.startswith(f"{LEGACY_S3_MODULE}.")
+            or node.module
+            and node.module.startswith(f"{LEGACY_S3_MODULE}.")
         )
         if node.level == 0:
             self._check_sdk_import(node.lineno, node.module)
             self._check_legacy_s3_import(node.lineno, node.module)
         for alias in node.names:
             if node.level == 0 and node.module == CORE_MODULE and alias.name == "s3":
-                self.violations.append(
-                    (node.lineno, "legacy S3 import 'echoroo.core.s3'")
-                )
+                self.violations.append((node.lineno, "legacy S3 import 'echoroo.core.s3'"))
             if alias.name in SDK_PACKAGES:
                 # e.g. ``from echoroo.core.kms import boto3`` — an SDK module
                 # re-exported through a wrapper.
@@ -139,19 +129,13 @@ def _call_has_s3_service_name(node: ast.Call) -> bool:
     if node.args and _is_string_literal(node.args[0], TARGET_SERVICE):
         return True
     return any(
-        keyword.arg == "service_name"
-        and _is_string_literal(keyword.value, TARGET_SERVICE)
+        keyword.arg == "service_name" and _is_string_literal(keyword.value, TARGET_SERVICE)
         for keyword in node.keywords
     )
 
 
 def _is_string_literal(node: ast.AST, expected: str) -> bool:
     return isinstance(node, ast.Constant) and node.value == expected
-
-
-def _has_suffix(py_file: Path, suffixes: tuple[str, ...]) -> bool:
-    posix = py_file.as_posix()
-    return any(posix.endswith(suffix) for suffix in suffixes)
 
 
 def find_violations(root: Path) -> list[str]:
@@ -171,9 +155,7 @@ def find_violations(root: Path) -> list[str]:
         except SyntaxError as exc:
             raise RuntimeError(f"syntax error in {py_file}: {exc}") from exc
 
-        visitor = _S3IsolationVisitor(
-            allow_sdk_import=_has_suffix(py_file, SDK_IMPORT_ALLOWED_PATHS)
-        )
+        visitor = _S3IsolationVisitor()
         visitor.visit(tree)
         for lineno, detail in sorted(visitor.violations, key=lambda item: item[0]):
             findings.append(f"{py_file}:{lineno}: {detail}")

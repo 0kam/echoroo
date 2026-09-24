@@ -4,6 +4,11 @@
 **Scope**: storage migration slice 4b
 **Owner**: release driver and operations
 
+> **Superseded in part:** the key-management and LocalStack steps below
+> predate the local keyring. See [keyring.md](keyring.md) for current keyring
+> provisioning and recovery; the full storage-runbook rewrite is scheduled
+> for slice 3.
+
 This is a destructive, empty-deployment cutover. Per decision 9, existing
 LocalStack objects are not migrated. Existing dev, preview, and ninjin
 deployments are recreated with an empty database and an empty application

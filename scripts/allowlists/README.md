@@ -6,7 +6,6 @@ This directory hosts the per-lint exemption files used by:
 - `scripts/lint_response_filter.py` -> `response_filter_allowlist.txt`
 - `scripts/lint_search_gate.py` -> `search_gate_allowlist.txt`
 - `scripts/lint_no_raw_coordinates.py` -> `raw_coordinates_allowlist.txt`
-- `scripts/lint_kms_isolation.py` -> `kms_isolation_allowlist.txt`
 - `scripts/lint_hardcoded_licenses.py` -> `hardcoded_licenses_allowlist.txt`
 - `scripts/assert_openapi_no_coords.py` -> `openapi_coords_allowlist.txt`
   (path-prefix matcher; NOT a fingerprint allowlist — see file header)

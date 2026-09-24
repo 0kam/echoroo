@@ -6,8 +6,8 @@ The **source of truth** for every setting is the code:
 
 - `apps/api/echoroo/core/settings.py` — the pydantic `Settings` model (most
   vars). Note the naming convention mix documented below.
-- `apps/api/echoroo/core/kms.py` — KMS / envelope-encryption vars, read
-  **directly from the environment** (not through `Settings`).
+- `apps/api/echoroo/core/keyring.py` — validates the `KEYRING_*` selectors
+  against the keyring file (see `docs/runbook/keyring.md`).
 - `compose.dev.yaml` — the dev Docker stack (derives many browser-facing
   values from `ECHOROO_PUBLIC_HOST` and builds `DATABASE_URL` / `REDIS_URL`).
 
@@ -21,7 +21,7 @@ The **source of truth** for every setting is the code:
 > - **Fields with a `validation_alias`** are set with the alias exactly as
 >   written — almost always UPPERCASE and usually `ECHOROO_*`-prefixed
 >   (`ECHOROO_PUBLIC_HOST`, `ECHOROO_WEBAUTHN_RP_ID`,
->   `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY`, `AWS_KMS_CMK_2FA_DEK_ALIAS_NEW`, …).
+>   `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY`, …).
 > - **Bare lowercase fields with NO alias** (`web_session_secret`,
 >   `web_csrf_ttl_seconds`, `web_app_base_url`, the `web_*_cookie_name`
 >   family, …) are set with their **exact lowercase field name**. The
@@ -285,41 +285,28 @@ Env-driven key rotation; see `docs/runbook/two_factor_confirmation_key_rotation.
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_NEW` | `v1` | optional | Kid stamped on newly issued tokens. |
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_OLD` | *(unset)* | optional | Kid accepted from prior tokens; pair with `_HMAC_KEY_OLD`. |
 
-### KMS / Envelope Encryption (spec/006 permissions redesign)
+### Local keyring (TOTP envelope encryption, PII hashing, audit chain)
 
-Envelope encryption (TOTP DEK), PII hashing, audit-chain HMAC, and invitation
-signing are backed by KMS (LocalStack in dev, AWS KMS in staging/prod). The
-alias defaults match `scripts/init-localstack.sh` so dev works out of the box.
-
-**Read directly from the environment in `core/kms.py`:**
-
-| Variable | Default | Req | Description |
-|----------|---------|-----|-------------|
-| `AWS_KMS_ENDPOINT` / `AWS_ENDPOINT_URL_KMS` | *(none → real AWS)* | optional | KMS service endpoint (`http://localstack:4566` in dev). Either name is accepted. |
-| `AWS_KMS_REGION` | `us-east-1` (falls back to `AWS_DEFAULT_REGION`) | optional | Region for all CMK operations. |
-| `AWS_KMS_CMK_2FA_ALIAS` | `alias/echoroo-totp-dek` | optional | CMK alias for TOTP-secret envelope encryption (FR-051). |
-| `AWS_KMS_CMK_PII_HASH_ALIAS` | `alias/echoroo-pii-hash-hmac` | optional | CMK alias for audit PII hashing via `GenerateMac` (FR-091b, v1). |
-| `AWS_KMS_CMK_PII_HASH_ALIAS_V2` | *(unset)* | optional | v2 PII-hash alias; setting it enables FR-091b dual-write rotation. Unset = single-key mode. |
-| `AWS_KMS_CMK_AUDIT_CHAIN_ALIAS` | `alias/echoroo-audit-chain-hmac` | optional | CMK alias for audit-log chain HMAC (FR-093). |
-| `AWS_KMS_CMK_INVITATION_HMAC_ALIAS` | `alias/echoroo-invitation-hmac` | optional | Legacy single-key invitation-signing alias; used as the `_NEW` fallback. |
-| `AWS_KMS_CMK_INVITATION_HMAC_ALIAS_NEW` | *(falls back to legacy)* | optional | Current invitation-signing CMK during a rotation. |
-| `AWS_KMS_CMK_INVITATION_HMAC_ALIAS_OLD` | *(unset)* | optional | Previous invitation-signing CMK (grace window only). |
-| `ECHOROO_PII_HASH_ROTATION_COMPLETE` | *(unset)* | optional | Operator flag driving the FR-091b rotation phase machine in `kms.py`. |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `test` (dev) | optional | boto3 credentials (LocalStack accepts any non-empty value). |
-
-**TOTP-DEK CMK rotation, read via `Settings` (`validation_alias`, Phase 17 A-8)** —
-see `docs/runbook/dek_rewrap.md`:
+TOTP secret DEKs are wrapped, and PII hashes and audit-chain MACs computed, with
+keys from a local keyring file (`docs/architecture/kms-local-keyring.md`). The
+file is created with the `keyring-admin` compose service and mounted read-only
+into `backend`, `worker` and `worker-cpu`; operations are in
+`docs/runbook/keyring.md`. The selectors below are read via `Settings` and
+validated against the file at boot and on first use; an empty value means unset.
 
 | Variable | Default | Req | Description |
 |----------|---------|-----|-------------|
-| `AWS_KMS_CMK_2FA_DEK_ALIAS_NEW` | `alias/echoroo-totp-dek` | optional | CMK alias that wraps newly encrypted TOTP DEKs. |
-| `AWS_KMS_CMK_2FA_DEK_ALIAS_OLD` | *(unset)* | optional | Previous alias for decrypting historical DEKs; pair with `_KID_OLD`. |
-| `AWS_KMS_CMK_2FA_DEK_KID_NEW` | `1` | optional | DEK version stamped on new TOTP secrets. |
-| `AWS_KMS_CMK_2FA_DEK_KID_OLD` | *(unset)* | optional | Previous DEK version accepted during the grace window; pair with `_ALIAS_OLD`. |
+| `KEYRING_FILE` | `/run/secrets/echoroo-keyring.json` | required | Path of the keyring inside the container (compose sets it). |
+| `ECHOROO_KEYRING_DIR` | `/etc/echoroo` | optional | Host directory holding `echoroo-keyring.json` (compose bind source). |
+| `KEYRING_TOTP_KEY` | *(none)* | required | Key id (purpose `totp-wrap`) wrapping new TOTP DEKs. |
+| `KEYRING_TOTP_KEY_VERSION` | `1` | required | DEK version stamped on new TOTP secrets. |
+| `KEYRING_TOTP_KEY_OLD` / `KEYRING_TOTP_KEY_VERSION_OLD` | *(unset)* | optional | Previous TOTP key and version during a rewrap window; set together. |
+| `KEYRING_PII_KEY` | *(none)* | required | Key id (purpose `pii-hmac`) for v1 PII hashes; stays selected indefinitely. |
+| `KEYRING_PII_KEY_V2` | *(unset)* | optional | Second PII key; setting it enables v1+v2 dual-write. |
+| `KEYRING_AUDIT_KEY` | *(none)* | required | Key id (purpose `audit-hmac`) for the audit chain; pinned for the data's lifetime. |
 
-> KMS is intentionally **not** probed at boot (production IAM may deny
-> `kms:DescribeKey`); first-use KMS errors are surfaced with an actionable
-> message instead.
+The removed `AWS_KMS_CMK_*` variables and `ECHOROO_PII_HASH_ROTATION_COMPLETE`
+are rejected at startup if still present.
 
 ### PII-hash / API-key lifecycle (Phase 17 backlog)
 
@@ -388,8 +375,7 @@ At startup the API (FastAPI lifespan) and each Celery worker run lightweight pro
 |-------|---------|-------------|----------------------|
 | Redis `ping()` | 2s | Hard fail | Hard fail |
 | Storage `ensure_ready()` | 5s | Log error and continue | Hard fail |
-
-KMS is intentionally **not** probed at boot (production IAM may deny `kms:DescribeKey`); first-use KMS errors are surfaced with an actionable message instead.
+| Keyring load and selector validation | — | Hard fail | Hard fail |
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -468,8 +454,8 @@ DATABASE_URL=postgresql+asyncpg://postgres:your_password@localhost:5432/echoroo
 REDIS_URL=redis://localhost:6379/0
 INVITATION_TOKEN_KID_NEW=dev-kid-001
 INVITATION_TOKEN_HMAC_KEY=replace_with_openssl_rand_hex_32_output
-# KMS aliases + endpoint if you run LocalStack; otherwise the defaults
-# resolve against real AWS KMS.
+# KEYRING_FILE and the KEYRING_* selectors for a keyring created with
+# `python -m echoroo.scripts.keyring create` (see docs/runbook/keyring.md).
 ```
 
 **Start servers:**
@@ -515,7 +501,7 @@ production stack is added. When you build one, set `ENVIRONMENT=production` and
 provide strong values for every **prod-guarded** secret above
 (`JWT_SECRET_KEY`, `web_session_secret`,
 `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY`, `INVITATION_TOKEN_HMAC_KEY` ≥32
-chars), and point the `AWS_KMS_*` aliases at real AWS KMS CMKs.
+chars), and provision a keyring (`docs/runbook/keyring.md`).
 
 ## Architecture
 
@@ -614,12 +600,12 @@ Not currently defined in this repository. Add a production stack before document
 **Additionally for production/staging (`ENVIRONMENT`):**
 - Strong `JWT_SECRET_KEY`, `web_session_secret`,
   `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY` (≥32 chars)
-- Real `AWS_KMS_*` CMK aliases pointing at AWS KMS
+- A provisioned keyring and its `KEYRING_*` selectors, backed up offline
 
 **What the dev Docker stack configures automatically:**
 - `DATABASE_URL` / `REDIS_URL` (from `POSTGRES_*` / `REDIS_*`)
 - Browser-facing URLs, CORS, WebAuthn (from `ECHOROO_PUBLIC_HOST`)
-- KMS CMK aliases (LocalStack bootstrap in `scripts/init-localstack.sh`)
+- The keyring mount (the keyring itself is created once with `keyring-admin`)
 - Health checks and boot probes
 
 Run `./echoroo.sh checkenv` to validate your `.env` before starting.

@@ -40,6 +40,7 @@ PERMISSION_MODULES: frozenset[str] = frozenset(
         "echoroo/core/response_filter.py",
         "echoroo/core/audit.py",
         "echoroo/core/kms.py",
+        "echoroo/core/keyring.py",
         "echoroo/services/superuser_service.py",
         "echoroo/services/api_key_verification.py",
         "echoroo/services/webauthn_service.py",
@@ -681,9 +682,7 @@ def main(argv: list[str] | None = None) -> int:
         for path, pct, thr in hard_failures:
             gap = thr - pct
             print(f"  {path}: {pct:.1f}% (need {thr}%, gap {gap:.1f}pp)")
-        print(
-            "\n[check_coverage_threshold] Add tests to bring these modules up to threshold."
-        )
+        print("\n[check_coverage_threshold] Add tests to bring these modules up to threshold.")
         print(
             "[check_coverage_threshold] Modules pending Phase 17 may be added to"
             " PHASE17_PENDING in this script."

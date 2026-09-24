@@ -106,8 +106,7 @@ def test_argparse_scripts_expose_help(module_name: str) -> None:
     )
     # argparse prints "usage: <prog> ..." on stdout for --help.
     assert result.stdout.lower().startswith("usage:"), (
-        f"{module_name} --help did not print a usage banner.\n"
-        f"stdout: {result.stdout!r}"
+        f"{module_name} --help did not print a usage banner.\nstdout: {result.stdout!r}"
     )
 
 
@@ -213,7 +212,7 @@ def test_wipe_database_module_importable() -> None:
 # These tests are skipped in CI by default. To run locally:
 #
 #     cd apps/api
-#     docker compose up -d db redis localstack
+#     docker compose up -d db redis
 #     uv run pytest tests/runbook/ -m requires_runbook
 #
 # They are intentionally minimal: a full end-to-end wipe-and-bootstrap
@@ -242,9 +241,7 @@ def test_check_wipe_guard_runs_against_live_stack() -> None:
     Anything else (e.g. unhandled traceback yielding rc=1 or rc>20) is a
     regression in the script itself and must fail the gate.
     """
-    result = _run_module(
-        "echoroo.scripts.check_wipe_guard", timeout=60.0, use_live_storage=True
-    )
+    result = _run_module("echoroo.scripts.check_wipe_guard", timeout=60.0, use_live_storage=True)
     assert result.returncode in (0, 10, 11, 12), (
         f"check_wipe_guard exited with unexpected code rc={result.returncode}. "
         "Expected one of 0/10/11/12 (script reached DB+storage cleanly); rc=20 "

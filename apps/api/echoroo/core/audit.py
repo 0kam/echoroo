@@ -25,21 +25,20 @@ cannot smuggle PII through the key axis (Phase 2.10 #3).
 Keyed hashing
 -------------
 Phase 2.10 #4: the redaction marker's ``hash`` field uses a KEYED HMAC
-(via :func:`echoroo.core.kms.compute_pii_hash`, which round-trips to KMS)
+(via :func:`echoroo.core.kms.compute_pii_hash`, backed by the local keyring)
 rather than plain SHA-256. A plain hash of low-entropy values (emails,
 phone numbers) is dictionary-attackable; the keyed HMAC denies that
-attack because the key is held inside KMS and never exposed to the
-application process.
+attack because the key is kept in the local keyring rather than the database.
 
 Tests can inject a deterministic fake hash function via the ``hash_fn``
-parameter on :func:`sanitize_value` to avoid a KMS dependency in unit
+parameter on :func:`sanitize_value` to avoid a keyring operation in unit
 tests. ``hash_version`` is ``v2`` to mark the keyed-hash migration. v1
 (unkeyed sha256) is deprecated; per project_status.md (Pre-launch) no
 production rows exist, so no migration is needed.
 
 Performance: typical audit payloads are < 4 KB with ≤ 50 leaves; scan cost
 is dominated by regex matching (~0.1 ms per payload in CPython 3.11) plus
-one KMS round-trip per redaction (~5 ms p99 in production).
+one keyring HMAC per redaction.
 """
 
 from __future__ import annotations
@@ -83,8 +82,8 @@ be distinguished without a breaking schema migration.
 _KEY_MARKER_HEX_LEN: Final[int] = 32
 
 #: Type alias for the hash function injection point. Tests pass a
-#: deterministic fake to avoid the KMS round-trip; production callers
-#: omit the argument and the default routes through KMS.
+#: deterministic fake to avoid the keyring operation; production callers
+#: omit the argument and the default routes through the keyring.
 HashFn = Callable[[str], str]
 
 # Characters we strip before regex matching. Null bytes and other C0 control
@@ -258,12 +257,12 @@ def _try_base64_decode(value: str) -> str | None:
 
 
 def _default_hash_fn(value: str) -> str:
-    """Default keyed hash — KMS-backed HMAC-SHA256.
+    """Default keyed hash — local-keyring HMAC-SHA256.
 
     Imported lazily so that tests / scripts that never trigger a
-    redaction do not pay the boto3 import cost.
+    redaction do not load the cryptographic adapter.
     """
-    # Local import to avoid a top-level boto3 dependency in modules that
+    # Local import to avoid a top-level cryptographic dependency in modules that
     # only call sanitize_value() with a test ``hash_fn`` injected.
     from echoroo.core.kms import compute_pii_hash
 
@@ -276,9 +275,9 @@ def _build_redaction(original: str, *, hash_fn: HashFn | None = None) -> dict[st
     Args:
         original: The PII string being redacted.
         hash_fn: Optional override of the keyed-hash callable. Defaults
-            to :func:`_default_hash_fn` (KMS-backed). Tests pass a fake
+            to :func:`_default_hash_fn` (keyring-backed). Tests pass a fake
             (e.g. ``lambda v: hashlib.sha256(b"test-key" + v.encode()).
-            hexdigest()``) to keep the suite KMS-free.
+            hexdigest()``) to keep the suite deterministic.
     """
     fn = hash_fn or _default_hash_fn
     digest = fn(original)

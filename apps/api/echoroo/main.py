@@ -161,13 +161,11 @@ _OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "Programmatic API — Licenses",
-        "description": "`/api/v1/licenses` — read the active license master. "
-        "Bearer surface.",
+        "description": "`/api/v1/licenses` — read the active license master. Bearer surface.",
     },
     {
         "name": "Programmatic API — H3",
-        "description": "`/api/v1/h3/*` — resolve / validate H3 geospatial "
-        "indexes. Bearer surface.",
+        "description": "`/api/v1/h3/*` — resolve / validate H3 geospatial indexes. Bearer surface.",
     },
     {
         "name": "Programmatic API — Xeno-canto",
@@ -353,9 +351,7 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     # ``/license-history``, future endpoints) are intentionally NOT added here
     # so they keep falling through to the cookie-required session
     # authenticator.
-    auth_router_public_nested: tuple[
-        tuple[str, str, frozenset[str]], ...
-    ] = (
+    auth_router_public_nested: tuple[tuple[str, str, frozenset[str]], ...] = (
         ("/web-api/v1/projects", "/recordings", frozenset({"GET"})),
         # spec/011 FR-011-105..107 — TOKEN_AUTH_ONLY public-token surface.
         # ``GET /web-api/v1/auth/invitations/{token}`` (resolver) and
@@ -468,21 +464,30 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     async def readiness_check(response: Response) -> dict[str, Any]:
         """Readiness probe with dependency checks.
 
-        Verifies PostgreSQL, Redis, and storage with short bounded timeouts and
+        Verifies PostgreSQL, Redis, storage, and the local keyring with short
+        bounded timeouts and
         returns per-dependency status. Returns 200 when all dependencies
         respond and 503 when any is unreachable, naming the failing
-        component. The body carries component names and ``ok`` / ``fail``
-        only — no endpoint URLs, credentials, or config detail.
+        component. When the keyring is loaded, the body also carries its
+        non-sensitive state digest.
 
         Returns:
             ``{"status": ..., "checks": {component: "ok" | "fail"}}``
         """
-        ready, checks = await check_readiness(
-            session_factory=middleware_session_factory
-        )
+        ready, checks = await check_readiness(session_factory=middleware_session_factory)
+
+        # ``check_readiness`` attaches the loaded keyring digest to ``checks``.
+        keyring_state = getattr(checks, "keyring_state", None)
+
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-        return {"status": "ready" if ready else "not_ready", "checks": checks}
+        body: dict[str, Any] = {
+            "status": "ready" if ready else "not_ready",
+            "checks": checks,
+        }
+        if keyring_state is not None and checks.get("keyring") == "ok":
+            body["keyring_state"] = keyring_state
+        return body
 
     return app
 

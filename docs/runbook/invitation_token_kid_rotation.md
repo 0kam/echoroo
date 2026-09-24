@@ -11,6 +11,10 @@
 signing key for invitation tokens, either as planned hygiene or as an
 emergency response to a suspected key compromise.
 
+> **Superseded in part:** legacy key-management references in this runbook
+> are not the current stack procedure. See [keyring.md](keyring.md) for the
+> local keyring and its TOTP, PII, and audit-key operations.
+
 ---
 
 ## 1. Wire envelope recap

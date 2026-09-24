@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from echoroo.core.keyring import KeyringAuthError
 from echoroo.services import audit_service
 from echoroo.services.audit_service import (
     _AUDIT_CHAIN_LOCK_KEY,
@@ -51,18 +52,14 @@ def _stub_kms(monkeypatch: pytest.MonkeyPatch) -> None:
     return only ``v1`` and the version helper to return 1 — that
     matches the pre-rotation behaviour this test was written for.
     """
-    monkeypatch.setattr(
-        audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True
-    )
+    monkeypatch.setattr(audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True)
     monkeypatch.setattr(
         audit_service,
         "compute_pii_hash_dual",
         lambda _v: {"v1": "a" * 64},
         raising=True,
     )
-    monkeypatch.setattr(
-        audit_service, "get_pii_hash_version", lambda: 1, raising=True
-    )
+    monkeypatch.setattr(audit_service, "get_pii_hash_version", lambda: 1, raising=True)
     monkeypatch.setattr(
         audit_service, "compute_audit_chain_hash", lambda _p, _c: "b" * 64, raising=True
     )
@@ -114,9 +111,7 @@ async def test_write_project_event_sets_serializable_isolation(
     # First call must be the isolation level statement.
     assert any("isolation level serializable" in sql for sql in rendered), rendered
     # The isolation statement must come BEFORE any row_hash SELECT or INSERT.
-    iso_idx = next(
-        i for i, sql in enumerate(rendered) if "isolation level serializable" in sql
-    )
+    iso_idx = next(i for i, sql in enumerate(rendered) if "isolation level serializable" in sql)
     read_idx = next(i for i, sql in enumerate(rendered) if "row_hash from" in sql)
     insert_idx = next(i for i, sql in enumerate(rendered) if "insert into project_audit_log" in sql)
     assert iso_idx < read_idx < insert_idx
@@ -141,9 +136,7 @@ async def test_write_project_event_takes_advisory_lock(
 
     # The advisory-lock SELECT must be present and must use the canonical key.
     lock_calls = [
-        (stmt, params)
-        for stmt, params in calls
-        if "pg_advisory_xact_lock" in str(stmt).lower()
+        (stmt, params) for stmt, params in calls if "pg_advisory_xact_lock" in str(stmt).lower()
     ]
     assert len(lock_calls) == 1, "expected exactly one advisory lock"
     lock_stmt, explicit_params = lock_calls[0]
@@ -183,6 +176,29 @@ async def test_write_platform_event_uses_platform_table(
     for sql in rendered:
         if "insert into platform_audit_log" in sql:
             assert "project_id" not in sql
+
+
+@pytest.mark.asyncio
+async def test_write_platform_event_propagates_keyring_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit writes fail closed when the audit keyring operation fails."""
+    _stub_kms(monkeypatch)
+
+    def fail_chain(_previous: str, _canonical: bytes) -> str:
+        raise KeyringAuthError("test authentication failure")
+
+    monkeypatch.setattr(audit_service, "compute_audit_chain_hash", fail_chain)
+    session, _calls = _make_session(uuid4())
+
+    with pytest.raises(KeyringAuthError):
+        await AuditLogService(session).write_platform_event(
+            actor_user_id=uuid4(),
+            action="auth.login",
+            request_id="req-keyring-failure",
+            ip="198.51.100.4",
+            user_agent="pytest",
+        )
 
 
 def test_advisory_lock_key_is_stable_and_in_signed_bigint_range() -> None:

@@ -1,7 +1,7 @@
 name: E2E (opt-in full-stack)
 
 # ---------------------------------------------------------------------------
-# WS7 Phase 4: Playwright end-to-end tests.
+# WS7 Phase 4: Playwright end-to-end tests with the real local keyring.
 #
 # Split out of ci.yml so the `run-e2e` label trigger works WITHOUT re-running
 # every ci.yml job on label events: this dedicated workflow listens for the
@@ -37,15 +37,15 @@ name: E2E (opt-in full-stack)
 #   TIER 2 — this `e2e-full` job: a full-stack, seeded smoke run. It is OPT-IN
 #   so it never flakes a normal PR — it executes ONLY on `workflow_dispatch` or
 #   when the `run-e2e` label is attached to a PR. It provisions Postgres +
-#   Redis + LocalStack KMS, runs alembic, provisions the storage tree and the
-#   4 isolated KMS CMK aliases via the existing
-#   scripts/init-localstack.sh, boots the FastAPI backend on :8002 (matching
-#   the SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
+#   Redis, creates a local keyring (no LocalStack), runs alembic, provisions
+#   the storage tree, boots the FastAPI backend on :8002 (matching the
+#   SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
 #   fixtures via `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,
-#   stable subset of specs that use the TEST_MODE shared-TOTP login helper
+#   stable subset of specs plus a real per-user keyring 2FA enrollment/login
+#   spec. The seeded specs use the TEST_MODE shared-TOTP login helper
 #   (helpers/spec011-auth.ts → loginWithSharedTotp). TEST_MODE=true +
 #   TEST_TOTP_SECRET_BASE32 lets any seeded e2e-* account log in with the one
-#   shared secret, so no per-user TOTP plumbing is needed.
+#   shared secret; the keyring spec deliberately uses its enrolled secret.
 #
 # Security note: no untrusted `github.event.*` inputs are interpolated into
 # any `run:` block. The `run-e2e` label gate appears only inside the `if:`
@@ -76,10 +76,9 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'run-e2e')
     timeout-minutes: 45
     env:
-      # Backend env — mirrors the backend-tests job for Postgres/Redis plus the
-      # LocalStack KMS wiring, the POSIX storage tree, and the TEST_MODE
-      # shared-TOTP contract that
-      # the e2e login helper depends on. The backend listens on :8002 (host)
+      # Backend env — mirrors the backend-tests job for Postgres/Redis, the
+      # POSIX storage tree, and the TEST_MODE shared-TOTP contract that the
+      # e2e login helper depends on. The backend listens on :8002 (host)
       # which is the SvelteKit BFF default (ECHOROO_API_URL fallback in
       # apps/web/src/hooks.server.ts), so the frontend needs no override.
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
@@ -105,15 +104,6 @@ jobs:
       RATE_LIMIT_UPLOAD_SESSION_CREATE_ATTEMPTS: "50"
       CELERY_BROKER_URL: redis://localhost:6379/0
       CELERY_RESULT_BACKEND: redis://localhost:6379/1
-      # AWS / KMS (LocalStack). AWS_ENDPOINT_URL_KMS points the KMS client at
-      # LocalStack; the four CMK aliases are provisioned below by
-      # scripts/init-localstack.sh and default to the app's expected names
-      # (alias/echoroo-totp-dek, …) — see apps/api/echoroo/core/settings.py.
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_KMS_REGION: us-east-1
-      AWS_ENDPOINT_URL_KMS: http://localhost:4566
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -137,23 +127,6 @@ jobs:
           --health-retries 5
         ports:
           - 6379:6379
-      localstack:
-        # Pinned: LocalStack >= 2026.03.0 needs an auth token (exit 55); community-archive is the last token-free build (matches compose.dev.yaml).
-        image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
-        env:
-          SERVICES: kms
-          DEFAULT_REGION: us-east-1
-        # Stricter probe than a bare gateway ping: assert KMS is `available`.
-        # KMS is login-critical and cold-starts slowly, so a gateway-only
-        # health check could mark the service ready before KMS is usable.
-        options: >-
-          --health-cmd "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; s=json.load(sys.stdin).get('services',{}); sys.exit(0 if s.get('kms')=='available' else 1)\" || exit 1"
-          --health-interval 15s
-          --health-timeout 10s
-          --health-retries 12
-          --health-start-period 30s
-        ports:
-          - 4566:4566
     steps:
       - uses: actions/checkout@v4
 
@@ -169,6 +142,22 @@ jobs:
       - name: Install backend dependencies
         working-directory: apps/api
         run: uv sync --all-extras --dev
+
+      - name: Provision keyring
+        working-directory: apps/api
+        run: |
+          install -d -m 0700 "$RUNNER_TEMP/keyring"
+          uv run python -m echoroo.scripts.keyring create \
+            "$RUNNER_TEMP/keyring/echoroo-keyring.json" --prefix 2026-01
+          {
+            echo "KEYRING_FILE=$RUNNER_TEMP/keyring/echoroo-keyring.json"
+            echo "KEYRING_TOTP_KEY=totp-wrap-2026-01"
+            echo "KEYRING_TOTP_KEY_VERSION=1"
+            echo "KEYRING_PII_KEY=pii-hmac-2026-01"
+            echo "KEYRING_AUDIT_KEY=audit-hmac-2026-01"
+          } >> "$GITHUB_ENV"
+          uv run python -m echoroo.scripts.keyring check \
+            "$RUNNER_TEMP/keyring/echoroo-keyring.json"
 
       - name: Install ffmpeg
         run: |
@@ -227,39 +216,6 @@ jobs:
             GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app;
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
           "
-
-      # --- LocalStack KMS aliases ----------------------------------------------
-      # Reuse the existing dev bootstrap script verbatim. It is idempotent and
-      # provisions the four isolated KMS CMK aliases
-      # (alias/echoroo-totp-dek, alias/echoroo-invitation-hmac,
-      # alias/echoroo-pii-hash-hmac, alias/echoroo-audit-chain-hmac) that the
-      # backend needs at login / seed time. The script invokes `awslocal`, so
-      # install awscli-local and point it at the CI LocalStack endpoint.
-      - name: Install awscli-local
-        run: pip install awscli-local==0.22.0
-
-      - name: Provision LocalStack KMS aliases
-        env:
-          # awslocal honours AWS_ENDPOINT_URL / region; LocalStack is on :4566.
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_DEFAULT_REGION: us-east-1
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-        run: bash scripts/init-localstack.sh
-
-      # Fail loudly at provisioning time if the login-critical TOTP DEK alias
-      # was not created — otherwise a KMS-provision failure surfaces only later
-      # as an opaque login 500. `awslocal` was pip-installed above.
-      - name: Verify KMS aliases provisioned
-        env:
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          AWS_DEFAULT_REGION: us-east-1
-        run: |
-          awslocal kms list-aliases | grep -q 'alias/echoroo-totp-dek' \
-            || { echo "::error::KMS alias alias/echoroo-totp-dek missing — login will 500"; awslocal kms list-aliases; exit 1; }
-
       - name: Provision POSIX storage tree
         working-directory: apps/api
         run: uv run python -m echoroo.scripts.provision_storage /tmp/echoroo-storage
@@ -278,10 +234,10 @@ jobs:
             > /tmp/backend.log 2>&1 &
           echo "backend started (pid $!)"
 
-      - name: Wait for backend /health
+      - name: Wait for backend /health/ready
         run: |
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:8002/health >/dev/null 2>&1; then
+            if curl -sf http://localhost:8002/health/ready >/dev/null 2>&1; then
               echo "backend healthy after ${i}s"
               exit 0
             fi
@@ -358,7 +314,14 @@ jobs:
             tests/e2e/banner-stack.spec.ts \
             tests/e2e/permissions/seeded-vote-comment.spec.ts \
             tests/e2e/upload-resumable.spec.ts \
+            tests/e2e/keyring-2fa.spec.ts \
             --reporter=line
+
+      - name: Verify audit chains and deleted-row detection
+        working-directory: apps/api
+        run: |
+          uv run python -m echoroo.scripts.verify_audit_chain \
+            --check-detects-deleted-row
 
       # --- Artifacts on failure -----------------------------------------------
       - name: Upload Playwright report

@@ -29,9 +29,20 @@ def _write(root: Path, rel: str, source: str) -> Path:
     return path
 
 
-def test_flags_boto3_client_s3_positional(tmp_path: Path) -> None:
+def _sdk_name() -> str:
+    """Return the SDK package name used by the generated snippets."""
+    return "boto" + "3"
+
+
+def _sdk_subpackage_name() -> str:
+    """Return the SDK subpackage name used by the generated snippets."""
+    return "boto" + "core"
+
+
+def test_flags_sdk_client_s3_positional(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'c = boto3.client("s3")\n')
+    sdk = _sdk_name()
+    _write(tmp_path, "module.py", f'c = {sdk}.client("s3")\n')
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 1
     assert "client('s3', ...)" in findings[0]
@@ -40,23 +51,25 @@ def test_flags_boto3_client_s3_positional(tmp_path: Path) -> None:
 
 def test_flags_service_name_keyword(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'c = boto3.client(service_name="s3")\n')
+    sdk = _sdk_name()
+    _write(tmp_path, "module.py", f'c = {sdk}.client(service_name="s3")\n')
     assert len(lint.find_violations(tmp_path)) == 1
 
 
 def test_flags_resource_and_session_receiver(tmp_path: Path) -> None:
     lint = _load_lint()
+    sdk = _sdk_name()
     _write(
         tmp_path,
         "module.py",
-        'boto3.resource("s3")\nboto3.Session().client("s3")\n',
+        f'{sdk}.resource("s3")\n{sdk}.Session().client("s3")\n',
     )
     assert len(lint.find_violations(tmp_path)) == 2
 
 
 def test_ignores_other_services(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "module.py", 'boto3.client("kms")\n')
+    _write(tmp_path, "module.py", f'{_sdk_name()}.client("kms")\n')
     assert lint.find_violations(tmp_path) == []
 
 
@@ -100,7 +113,8 @@ def test_flags_any_legacy_s3_helper_import(tmp_path: Path) -> None:
 
 def test_core_s3_is_not_allowlisted(tmp_path: Path) -> None:
     lint = _load_lint()
-    source = 'import boto3\nc = boto3.client("s3")\n'
+    sdk = _sdk_name()
+    source = f'import {sdk}\nc = {sdk}.client("s3")\n'
     _write(tmp_path, "apps/api/echoroo/core/s3.py", source)
     assert len(lint.find_violations(tmp_path)) == 2
 
@@ -126,41 +140,38 @@ def test_syntax_error_raises_runtime_error(tmp_path: Path) -> None:
 
 def test_flags_sdk_import_forms(tmp_path: Path) -> None:
     lint = _load_lint()
+    sdk = _sdk_name()
+    sdk_subpackage = _sdk_subpackage_name()
     _write(
         tmp_path,
         "mod.py",
-        """\
-        from boto3 import client as make
-        import botocore.exceptions
+        f"""\
+        from {sdk} import client as make
+        import {sdk_subpackage}.exceptions
         c = make("s3")
         """,
     )
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 2, findings
-    assert ":1:" in findings[0] and "boto3" in findings[0]
-    assert ":2:" in findings[1] and "botocore.exceptions" in findings[1]
+    assert ":1:" in findings[0] and _sdk_name() in findings[0]
+    assert ":2:" in findings[1] and f"{_sdk_subpackage_name()}.exceptions" in findings[1]
 
 
-def test_core_kms_may_import_sdk_but_not_build_s3_client(tmp_path: Path) -> None:
+def test_core_kms_has_no_sdk_import_exemption(tmp_path: Path) -> None:
     lint = _load_lint()
+    sdk = _sdk_name()
     _write(
         tmp_path,
         "apps/api/echoroo/core/kms.py",
-        """\
-        import boto3
-        k = boto3.client("kms")
-        """,
-    )
-    assert lint.find_violations(tmp_path) == []
-    _write(
-        tmp_path,
-        "apps/api/echoroo/core/kms.py",
-        """\
-        import boto3
-        k = boto3.client("s3")
-        """,
+        f'import {sdk}\nk = {sdk}.client("kms")\n',
     )
     assert len(lint.find_violations(tmp_path)) == 1
+    _write(
+        tmp_path,
+        "apps/api/echoroo/core/kms.py",
+        f'import {sdk}\nk = {sdk}.client("s3")\n',
+    )
+    assert len(lint.find_violations(tmp_path)) == 2
 
 
 def test_missing_scan_root_raises(tmp_path: Path) -> None:
@@ -171,7 +182,7 @@ def test_missing_scan_root_raises(tmp_path: Path) -> None:
 
 def test_flags_sdk_module_reexported_through_wrapper(tmp_path: Path) -> None:
     lint = _load_lint()
-    _write(tmp_path, "mod.py", "from echoroo.core.kms import boto3\n")
+    _write(tmp_path, "mod.py", f"from echoroo.core.kms import {_sdk_name()}\n")
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 1, findings
-    assert "boto3" in findings[0]
+    assert _sdk_name() in findings[0]

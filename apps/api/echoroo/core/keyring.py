@@ -174,21 +174,6 @@ class Keyring:
             raise KeyringConfigError("keyring JSON must be an object")
         return cls(value)
 
-    @classmethod
-    def _from_entries(cls, entries: Mapping[str, KeyEntry]) -> Keyring:
-        document: dict[str, object] = {
-            "format": 1,
-            "keys": {
-                key_id: {
-                    "purpose": entry.purpose,
-                    "material": base64.b64encode(entry.material).decode("ascii"),
-                    "created": entry.created,
-                }
-                for key_id, entry in entries.items()
-            },
-        }
-        return cls(document)
-
     @staticmethod
     def _parse_document(document: Mapping[str, object]) -> Mapping[str, KeyEntry]:
         if not isinstance(document, Mapping):
@@ -442,7 +427,12 @@ class Selectors:
                 raise KeyringConfigError("a key id is selected for multiple roles")
             seen.add(key_id)
             validated_id = _validate_key_id(key_id, error_type=KeyringConfigError)
-            keyring._purpose_entry(validated_id, purpose)
+            try:
+                keyring._purpose_entry(validated_id, purpose)
+            except KeyringKeyError:
+                raise KeyringConfigError(
+                    "a selected key is missing or has the wrong purpose"
+                ) from None
 
 
 def load_keyring(path: str | os.PathLike[str]) -> Keyring:
@@ -486,17 +476,77 @@ def load_keyring(path: str | os.PathLike[str]) -> Keyring:
         raise KeyringConfigError("keyring file is invalid") from exc
 
 
-_KEYRING_CACHE: Keyring | None = None
+_KEYRING_CACHE: tuple[Keyring, Selectors] | None = None
 
 
-def get_keyring() -> Keyring:
-    """Load and cache the configured keyring."""
+def selectors_from_settings() -> Selectors:
+    """Build the key selectors from the ``KEYRING_*`` settings."""
+
+    settings = get_settings()
+    return Selectors(
+        totp_key=settings.KEYRING_TOTP_KEY,
+        totp_version=settings.KEYRING_TOTP_KEY_VERSION,
+        totp_key_old=settings.KEYRING_TOTP_KEY_OLD,
+        totp_version_old=settings.KEYRING_TOTP_KEY_VERSION_OLD,
+        pii_key=settings.KEYRING_PII_KEY,
+        pii_key_v2=settings.KEYRING_PII_KEY_V2,
+        audit_key=settings.KEYRING_AUDIT_KEY,
+    )
+
+
+def _load_configured() -> tuple[Keyring, Selectors]:
+    """Load, validate and cache the keyring together with its selectors."""
 
     global _KEYRING_CACHE
     if _KEYRING_CACHE is None:
         harden_process()
-        _KEYRING_CACHE = load_keyring(get_settings().KEYRING_FILE)
+        loaded = load_keyring(get_settings().KEYRING_FILE)
+        selectors = selectors_from_settings()
+        selectors.validate(loaded)
+        _KEYRING_CACHE = (loaded, selectors)
     return _KEYRING_CACHE
+
+
+def get_keyring() -> Keyring:
+    """Return the configured keyring, loading and validating it on first use."""
+
+    return _load_configured()[0]
+
+
+def get_selectors() -> Selectors:
+    """Return the selectors validated against the cached keyring."""
+
+    return _load_configured()[1]
+
+
+def keyring_status() -> dict[str, object]:
+    """Describe what this process loaded, without any key material.
+
+    ``state`` is a short digest over the selected ids, their fingerprints, the
+    TOTP versions and every key id in the ring. Two processes report the same
+    ``state`` exactly when they loaded the same selection from the same ring.
+    """
+
+    loaded, selectors = _load_configured()
+    roles = {
+        "totp": selectors.totp_key,
+        "totp_old": selectors.totp_key_old,
+        "pii": selectors.pii_key,
+        "pii_v2": selectors.pii_key_v2,
+        "audit": selectors.audit_key,
+    }
+    detail: dict[str, object] = {
+        "selected": {
+            role: {"id": key_id, "fingerprint": loaded.fingerprint(key_id)}
+            for role, key_id in roles.items()
+            if key_id is not None
+        },
+        "totp_version": selectors.totp_version,
+        "totp_version_old": selectors.totp_version_old,
+        "key_ids": sorted(loaded.key_ids),
+    }
+    canonical = json.dumps(detail, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return {"state": hashlib.sha256(canonical).hexdigest()[:16], **detail}
 
 
 def reset_cache() -> None:
@@ -556,8 +606,11 @@ __all__ = [
     "Purpose",
     "Selectors",
     "get_keyring",
+    "get_selectors",
+    "keyring_status",
     "harden_process",
     "is_dumpable",
     "load_keyring",
     "reset_cache",
+    "selectors_from_settings",
 ]

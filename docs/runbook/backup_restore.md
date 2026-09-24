@@ -4,6 +4,11 @@
 **Status**: pre-launch — development / evaluation stack
 **Owner**: release driver (human action required for every item below)
 
+> **Superseded in part:** the key-management and restore guidance below
+> predates the local keyring. Use [keyring.md](keyring.md) for the current
+> keyring backup, restore, and loss procedure; the full rewrite is scheduled
+> for slice 3.
+
 This runbook covers backing up and restoring the stateful stores in the
 Echoroo stack: **PostgreSQL** (all relational data), the **POSIX storage tree**
 (recordings and artifacts), and the **KMS key material** those two depend on.

@@ -1,42 +1,38 @@
 #!/usr/bin/env python3
-"""Phase 17 backlog A-8 — DEK rewrap CLI for TOTP CMK rotation.
+"""Rewrap TOTP DEKs during a local-keyring rotation.
 
 Re-encrypts every TOTP secret DEK that is still wrapped under the
-**old** CMK so it can be decrypted under the **new** CMK after the
-rotation grace window closes. The plaintext DEK never leaves AWS KMS:
-the rewrap uses ``kms:ReEncrypt`` which performs decrypt + encrypt
-atomically inside the KMS service (FR-091b).
+old key so it can be decrypted under the new key after the rotation grace
+window closes. The local keyring performs the authenticated unwrap and wrap;
+the plaintext DEK is held only briefly by the application and is wiped by the
+keyring after rewrap.
 
 This script is the runbook companion to
 ``docs/runbook/dek_rewrap.md``. The expected operational flow is:
 
-  1. Stand up the new CMK and create the alias
-     ``alias/echoroo-totp-dek`` (or whatever
-     ``two_factor_dek_cmk_alias_new`` is configured as).
-  2. Re-point the previous alias suffix to the old CMK
-     (``alias/echoroo-totp-dek-old``) and set the env vars
-     ``AWS_KMS_CMK_2FA_DEK_ALIAS_OLD`` + ``AWS_KMS_CMK_2FA_DEK_KID_OLD``
-     to enter the rotation grace window.
+  1. Add the new TOTP wrapping key to the keyring and back up the file.
+  2. Select it as ``KEYRING_TOTP_KEY`` with a new version, retaining the
+     previous key and version in ``KEYRING_TOTP_KEY_OLD`` and
+     ``KEYRING_TOTP_KEY_VERSION_OLD``.
   3. Run this script with ``--dry-run`` to preview the workload.
   4. Re-run with ``--confirm`` to perform the rewrap.
-  5. After completion (and after monitoring confirms zero stale
-     records), unset the ``..._OLD`` env vars and schedule the previous
-     CMK for deletion via ``echoroo.core.kms_ops.schedule_cmk_deletion``
-     (30-day window per ``docs/runbook/cmk_rotation.md``).
+  5. After completion, verify that no row has the old version. In a later
+     maintenance window, unselect the old key while retaining its material
+     in the keyring for database-backup recovery.
 
 Usage:
 
     uv run --project apps/api python scripts/rewrap_dek.py \\
-        --source-alias alias/echoroo-totp-dek-old \\
-        --destination-alias alias/echoroo-totp-dek \\
+        --source-key-id test-totp-wrap-old \\
+        --target-key-id test-totp-wrap \\
         --old-version 1 \\
         --new-version 2 \\
         --dry-run
 
     # After review:
     uv run --project apps/api python scripts/rewrap_dek.py \\
-        --source-alias alias/echoroo-totp-dek-old \\
-        --destination-alias alias/echoroo-totp-dek \\
+        --source-key-id test-totp-wrap-old \\
+        --target-key-id test-totp-wrap \\
         --old-version 1 \\
         --new-version 2 \\
         --confirm
@@ -69,7 +65,7 @@ from typing import Any
 # ``sys.path`` manipulation here (Codex plan review §(d)).
 from sqlalchemy import func, select, update
 
-from echoroo.core import kms
+from echoroo.core import keyring, kms
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.models.user import User
 
@@ -80,7 +76,7 @@ async def _rewrap_batch(
     session: Any,
     *,
     destination_key_id: str,
-    source_key_id: str | None,
+    source_key_id: str,
     old_version: int,
     new_version: int,
     batch_size: int,
@@ -92,7 +88,7 @@ async def _rewrap_batch(
     DB), ``rewrapped`` (rows whose payload was written under
     ``new_version``), ``skipped`` (rows whose optimistic guard failed —
     a concurrent enrollment / reset moved them already), and ``failed``
-    (rows where the KMS rewrap itself raised).
+    (rows where the keyring rewrap itself raised).
     """
     rows = (
         await session.execute(
@@ -186,21 +182,17 @@ async def _rewrap_batch(
 
 async def _amain(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Re-encrypt TOTP secret DEKs from an old CMK to a new CMK.",
+        description="Rewrap TOTP secret DEKs from an old keyring key to a new keyring key.",
     )
     parser.add_argument(
-        "--source-alias",
+        "--source-key-id",
         required=True,
-        help=(
-            "Source CMK alias (e.g. alias/echoroo-totp-dek-old). Used to "
-            "resolve --old-version and as an explicit SourceKeyId hint to "
-            "AWS KMS ReEncrypt."
-        ),
+        help="Source key id selected by KEYRING_TOTP_KEY_OLD.",
     )
     parser.add_argument(
-        "--destination-alias",
+        "--target-key-id",
         required=True,
-        help="Destination CMK alias (e.g. alias/echoroo-totp-dek).",
+        help="Target key id selected by KEYRING_TOTP_KEY.",
     )
     parser.add_argument(
         "--old-version",
@@ -236,15 +228,6 @@ async def _amain(argv: Sequence[str]) -> int:
         action="store_true",
         help="Required to perform the actual rewrap (mutually exclusive with --dry-run).",
     )
-    parser.add_argument(
-        "--no-source-key-id",
-        action="store_true",
-        help=(
-            "Skip the SourceKeyId hint and let KMS auto-resolve from "
-            "ciphertext metadata. Useful when the source alias has been "
-            "unset already and only the destination alias remains."
-        ),
-    )
     args = parser.parse_args(argv)
 
     if args.dry_run == args.confirm:
@@ -260,9 +243,23 @@ async def _amain(argv: Sequence[str]) -> int:
         )
         return 2
 
-    # --dry-run is a *preview only*: it MUST NOT call KMS (Codex Round 1
-    # R1-C1). We resolve the destination key id only for the --confirm
-    # path so a typo in --destination-alias surfaces during the real run.
+    selectors = keyring.get_selectors()
+    if (
+        args.target_key_id != selectors.totp_key
+        or args.new_version != selectors.totp_version
+        or selectors.totp_key_old is None
+        or selectors.totp_version_old is None
+        or args.source_key_id != selectors.totp_key_old
+        or args.old_version != selectors.totp_version_old
+    ):
+        print(
+            "ERROR: source/target key ids and versions must match the "
+            "configured current and old TOTP selectors",
+            file=sys.stderr,
+        )
+        return 2
+
+    # --dry-run is a preview only and does not rewrap any DEK.
     if args.dry_run:
         async with AsyncSessionLocal() as session:
             count = (
@@ -275,9 +272,7 @@ async def _amain(argv: Sequence[str]) -> int:
             ).scalar_one()
             samples = (
                 await session.execute(
-                    select(
-                        User.id, func.length(User.two_factor_secret_encrypted)
-                    )
+                    select(User.id, func.length(User.two_factor_secret_encrypted))
                     .where(
                         User.two_factor_secret_dek_version == args.old_version,
                         User.two_factor_secret_encrypted.is_not(None),
@@ -289,21 +284,19 @@ async def _amain(argv: Sequence[str]) -> int:
             f"DRY-RUN: {count} row(s) would be rewrapped "
             f"(old_version={args.old_version} -> new_version={args.new_version})"
         )
-        print(f"Source CMK alias:      {args.source_alias}")
-        print(f"Destination CMK alias: {args.destination_alias}")
+        print(f"Source key id:      {args.source_key_id}")
+        print(f"Target key id:      {args.target_key_id}")
         print(f"Batch size:            {args.batch_size}")
         print(f"Max batches:           {args.max_batches}")
         print("Sample rows (id, payload_size_bytes):")
         for row in samples:
             print(f"  {row[0]}  size={row[1]} bytes")
-        print("\nNo KMS API calls were made. No DB writes were made.")
+        print("\nNo keyring rewraps were made. No DB writes were made.")
         print("Re-run with --confirm to perform the actual rewrap.")
         return 0
 
-    destination_key_id = kms._resolve_key_id(args.destination_alias)
-    source_key_id = (
-        None if args.no_source_key_id else kms._resolve_key_id(args.source_alias)
-    )
+    destination_key_id = args.target_key_id
+    source_key_id = args.source_key_id
 
     totals: dict[str, int] = {"processed": 0, "rewrapped": 0, "skipped": 0, "failed": 0}
     converged = False

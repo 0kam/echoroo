@@ -15,14 +15,10 @@ dependency chain. It mirrors the established
 
 * ``get_redis_connection`` is patched to a process-local ``fakeredis`` so the
   rate-limit / idempotency paths run without a live Redis container.
-* A moto-backed KMS is provisioned (via :func:`tests._kms_moto.provision_moto_kms`)
-  so the issue path's email PII-hash (``compute_pii_hash_dual`` →
-  ``kms:GenerateMac``) succeeds deterministically without a live KMS endpoint.
-  The CI ``backend-tests`` job has no working KMS (moto/isolation creds), and
-  unlike ``tests/integration/conftest.py`` the contract conftest does NOT carry
-  an autouse moto fixture — hence the module-local one below. (Token *signing*
-  itself uses a local Python HMAC keyed by ``INVITATION_TOKEN_HMAC_KEY`` and
-  needs no KMS; the only KMS call in the issue path is the PII hash.)
+* The root test conftest provisions a per-worker local keyring so the issue
+  path's email PII hash succeeds without an external service. (Token
+  *signing* itself uses a local Python HMAC keyed by
+  ``INVITATION_TOKEN_HMAC_KEY``.)
 * The issuer authenticates via the BFF refresh bootstrap
   (``/web-api/v1/auth/refresh``) to obtain a Bearer access token + CSRF token.
 * The owner is seeded as an ADMIN ``ProjectMember`` so the
@@ -62,36 +58,8 @@ _RESTRICTED_CONFIG: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# Fixtures — Redis + KMS patches (mirror the integration harness).
+# Fixtures — Redis patch.
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _moto_kms_for_invitation_service(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Any:
-    """Provide a moto-backed KMS to the invitation contract test.
-
-    The issue endpoint dual-writes a KMS-keyed email PII hash
-    (``invitation_service.hash_email_dual`` → ``echoroo.core.kms``
-    ``compute_pii_hash_dual`` → ``kms:GenerateMac``). The CI
-    ``backend-tests`` job has no working KMS (moto/isolation creds with no
-    provisioned CMKs), so that ``GenerateMac`` 500s with
-    ``UnrecognizedClientException``.
-
-    Unlike ``tests/integration/conftest.py`` — whose autouse
-    ``_integration_moto_kms`` fixture handles this for the integration
-    suite — the ``tests/contract/`` conftest carries no moto fixture. We
-    therefore provision a fresh in-process moto KMS here, mirroring
-    ``_integration_moto_kms`` verbatim, so the PII hash succeeds
-    deterministically with NO live KMS endpoint. This does not weaken the
-    contract assertion: the real endpoint + real signing path still run
-    and emit the genuine 4-part envelope.
-    """
-    from tests._kms_moto import provision_moto_kms
-
-    with provision_moto_kms(monkeypatch) as ids:
-        yield ids
 
 
 @pytest.fixture(autouse=True)
@@ -264,14 +232,11 @@ class TestInvitationIssueEnvelopeShape:
         # 4-part signed envelope: raw_token.expires_unix.kid.mac
         parts = envelope.split(".")
         assert len(parts) == 4, (
-            f"Expected a 4-part signed envelope, got {len(parts)} parts: "
-            f"{envelope!r}"
+            f"Expected a 4-part signed envelope, got {len(parts)} parts: {envelope!r}"
         )
 
         # The 2nd part is the unix expiry — all digits.
-        assert parts[1].isdigit(), (
-            f"Envelope expiry segment must be all digits; got {parts[1]!r}"
-        )
+        assert parts[1].isdigit(), f"Envelope expiry segment must be all digits; got {parts[1]!r}"
 
         # It is NOT a full URL / path — the frontend builds the URL.
         assert not envelope.startswith("http"), (

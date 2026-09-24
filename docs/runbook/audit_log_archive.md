@@ -4,6 +4,11 @@
 **Status**: pre-launch
 **Owner**: operations (human action required for the items marked **ops**)
 
+> **Superseded in part:** the key-management references below predate the
+> local keyring. See [keyring.md](keyring.md) for keyring backup, restore, and
+> audit-key handling; the rest of this archive procedure is retained pending
+> the slice 3 rewrite.
+
 The audit tables (`project_audit_log`, `platform_audit_log`) are exported
 weekly to the POSIX storage tree as NDJSON archives (FR-095). This runbook says what
 the application guarantees about those archives, what it does **not**, and
