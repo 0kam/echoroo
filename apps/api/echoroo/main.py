@@ -12,7 +12,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from echoroo.api.v1 import api_router
 from echoroo.api.web_v1 import web_v1_router
-from echoroo.core import keyring
 from echoroo.core.auth_paths import PUBLIC_AUTH_PATHS
 from echoroo.core.boot_checks import run_boot_checks
 from echoroo.core.database import AsyncSessionLocal
@@ -477,17 +476,8 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
         """
         ready, checks = await check_readiness(session_factory=middleware_session_factory)
 
+        # ``check_readiness`` attaches the loaded keyring digest to ``checks``.
         keyring_state = getattr(checks, "keyring_state", None)
-        if checks.get("keyring") == "ok" and keyring_state is None:
-            # Keep compatibility with small test doubles that return the
-            # historical two-tuple while still exposing the loaded state.
-            try:
-                status_info = keyring.keyring_status()
-                state_value = status_info.get("state")
-                keyring_state = state_value if isinstance(state_value, str) else None
-            except Exception:  # noqa: BLE001 — readiness must remain fail-closed
-                checks["keyring"] = "fail"
-                ready = False
 
         if not ready:
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

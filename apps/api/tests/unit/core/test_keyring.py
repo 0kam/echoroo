@@ -574,3 +574,153 @@ def test_errors_and_representations_are_secret_free(ring: keyring.Keyring) -> No
         assert repr(material) not in rendered
         assert material.hex() not in rendered
         assert encoded not in rendered
+
+
+def _entry(
+    purpose: str = "totp-wrap", material: object = None, created: object = "2026-09-24"
+) -> dict[str, object]:
+    return {
+        "purpose": purpose,
+        "material": base64.b64encode(_material("entry")).decode("ascii")
+        if material is None
+        else material,
+        "created": created,
+    }
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        [],
+        {"format": 1, "keys": {"totp-wrap-a": 1}},
+        {"format": 1, "keys": {"totp-wrap-a": _entry(created="2026/09/24")}},
+        {"format": 1, "keys": {"totp-wrap-a": _entry(created="2026-02-30")}},
+        {"format": 1, "keys": {"totp-wrap-a": _entry(material=123)}},
+        {"format": 1, "keys": {"totp-wrap-a": _entry(material="!!not-base64!!")}},
+        {
+            "format": 1,
+            "keys": {"totp-wrap-a": _entry(material=base64.b64encode(b"x" * 16).decode("ascii"))},
+        },
+    ],
+)
+def test_document_rejections(document: object) -> None:
+    """Malformed documents, entries, dates and materials are configuration errors."""
+
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.Keyring.from_dict(document)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("raw", ["{", "[]", b"\xff\xfe"])
+def test_json_rejections(raw: str | bytes) -> None:
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.Keyring.from_json(raw)
+
+
+def test_operation_input_rejections(ring: keyring.Keyring) -> None:
+    """Unknown purposes, non-bytes messages and undecodable ids are rejected."""
+
+    with pytest.raises(keyring.KeyringKeyError):
+        ring._purpose_entry("totp-wrap-current", "bogus")  # type: ignore[arg-type]
+    with pytest.raises(keyring.KeyringAuthError):
+        ring.hmac_hex("pii-hmac-current", "text", "pii-hmac")  # type: ignore[arg-type]
+
+    header = b"EKR\x01" + bytes([2]) + b"\xff\xfe"
+    with pytest.raises(keyring.KeyringAuthError):
+        ring.unwrap(header + b"\x00" * 12 + b"\x00" * 48, "totp-wrap-current")
+
+
+def test_unwrap_rejects_authenticated_dek_of_wrong_length(ring: keyring.Keyring) -> None:
+    """A correctly authenticated blob whose plaintext is not 32 bytes is refused."""
+
+    key_id = "totp-wrap-current"
+    header = b"EKR\x01" + bytes([len(key_id)]) + key_id.encode("ascii")
+    nonce = b"\x01" * 12
+    ciphertext = AESGCM(_material("totp-current")).encrypt(
+        nonce, b"x" * 16, b"echoroo:totp-wrap:" + header
+    )
+    with pytest.raises(keyring.KeyringAuthError):
+        ring.unwrap(header + nonce + ciphertext, key_id)
+
+
+@pytest.mark.parametrize(
+    "selectors",
+    [
+        keyring.Selectors(totp_key="totp-wrap-current", audit_key="audit-hmac-current"),
+        keyring.Selectors(totp_key="totp-wrap-current", pii_key="pii-hmac-current"),
+        keyring.Selectors(
+            totp_key="totp-wrap-current",
+            totp_key_old="totp-wrap-old",
+            totp_version_old=0,
+            pii_key="pii-hmac-current",
+            audit_key="audit-hmac-current",
+        ),
+        keyring.Selectors(
+            totp_key="totp-wrap-current",
+            pii_key="pii-hmac-current",
+            pii_key_v2="",
+            audit_key="audit-hmac-current",
+        ),
+        keyring.Selectors(
+            totp_key="totp-wrap-current",
+            totp_key_old="",
+            totp_version_old=2,
+            pii_key="pii-hmac-current",
+            audit_key="audit-hmac-current",
+        ),
+    ],
+)
+def test_selector_rejections(ring: keyring.Keyring, selectors: keyring.Selectors) -> None:
+    with pytest.raises(keyring.KeyringConfigError):
+        selectors.validate(ring)
+
+
+def test_load_rejects_non_regular_files_and_opened_file_changes(
+    tmp_path: Path, ring: keyring.Keyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Directories are refused, and the opened descriptor is re-checked."""
+
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.load_keyring(tmp_path)
+
+    path = tmp_path / "ring.json"
+    _write_ring(path, ring)
+    real_fstat = keyring.os.fstat
+
+    def _fstat_with_mode(mode: int) -> object:
+        def _fake(descriptor: int) -> object:
+            result = real_fstat(descriptor)
+            values = list(result)
+            values[0] = mode
+            return keyring.os.stat_result(values)
+
+        return _fake
+
+    monkeypatch.setattr(keyring.os, "fstat", _fstat_with_mode(0o040700))
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.load_keyring(path)
+    monkeypatch.setattr(keyring.os, "fstat", _fstat_with_mode(0o100644))
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.load_keyring(path)
+
+
+def test_dumpability_controls_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """prctl failures raise configuration errors; other platforms skip hardening."""
+
+    def _no_libc(*_args: object, **_kwargs: object) -> object:
+        raise OSError("no libc")
+
+    monkeypatch.setattr(keyring.ctypes, "CDLL", _no_libc)
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring._prctl(3)
+    monkeypatch.undo()
+
+    monkeypatch.setattr(keyring, "_prctl", lambda _option: -1)
+    monkeypatch.setattr(keyring.sys, "platform", "linux")
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.harden_process()
+    with pytest.raises(keyring.KeyringConfigError):
+        keyring.is_dumpable()
+
+    monkeypatch.setattr(keyring.sys, "platform", "darwin")
+    keyring.harden_process()
+    assert keyring.is_dumpable()

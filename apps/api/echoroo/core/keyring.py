@@ -174,21 +174,6 @@ class Keyring:
             raise KeyringConfigError("keyring JSON must be an object")
         return cls(value)
 
-    @classmethod
-    def _from_entries(cls, entries: Mapping[str, KeyEntry]) -> Keyring:
-        document: dict[str, object] = {
-            "format": 1,
-            "keys": {
-                key_id: {
-                    "purpose": entry.purpose,
-                    "material": base64.b64encode(entry.material).decode("ascii"),
-                    "created": entry.created,
-                }
-                for key_id, entry in entries.items()
-            },
-        }
-        return cls(document)
-
     @staticmethod
     def _parse_document(document: Mapping[str, object]) -> Mapping[str, KeyEntry]:
         if not isinstance(document, Mapping):

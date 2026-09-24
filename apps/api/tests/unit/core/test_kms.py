@@ -116,3 +116,41 @@ def test_compute_audit_chain_hash_matches_known_answer() -> None:
     ).hexdigest()
 
     assert kms.compute_audit_chain_hash(previous, row) == expected
+
+
+def test_verify_pii_hash_rejects_malformed_stored_hash() -> None:
+    assert not kms.verify_pii_hash("alice@example.com", "short")
+    assert not kms.verify_pii_hash("alice@example.com", None)  # type: ignore[arg-type]
+
+
+def test_verify_pii_hash_without_v2_uses_v1_only() -> None:
+    stored = kms.compute_pii_hash("alice@example.com")
+
+    assert kms.verify_pii_hash("alice@example.com", stored)
+    assert not kms.verify_pii_hash("bob@example.com", stored)
+
+
+def test_verify_pii_hash_v1_error_is_no_match(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    stored = kms.compute_pii_hash("alice@example.com")
+
+    def _fail(*_args: object, **_kwargs: object) -> str:
+        raise KeyringAuthError("keyed hash unavailable")
+
+    monkeypatch.setattr(kms, "_hmac_hex", _fail)
+    with caplog.at_level(logging.WARNING, logger=kms.__name__):
+        assert not kms.verify_pii_hash("alice@example.com", stored)
+    assert "v1 keyring unavailable" in caplog.text
+    assert "alice@example.com" not in caplog.text
+
+
+def test_missing_selected_key_is_a_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echoroo.core import keyring
+
+    monkeypatch.setattr(keyring, "get_selectors", lambda: keyring.Selectors())
+
+    with pytest.raises(keyring.KeyringConfigError):
+        kms.compute_pii_hash("alice@example.com")
+    with pytest.raises(keyring.KeyringConfigError):
+        kms.compute_audit_chain_hash("0" * 64, b"row")
