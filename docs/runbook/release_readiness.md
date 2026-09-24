@@ -156,9 +156,6 @@ Operational references:
 
 ### 9. Bootstrap
 
-- Run `python -m echoroo.scripts.init_superuser --confirm` in the API
-  container against the production DB to seed the first superuser. The
-  command writes a TOTP DEK under the selected keyring key.
 - Apply the current migration set with `./echoroo.sh migrate`. Then compare
   the output of these commands; the current revision must equal the head
   reported by the second command:
@@ -171,6 +168,10 @@ Operational references:
   Do not require revision `0001` here. That is the wipe guard's baseline,
   while a normally migrated deployment is at the current head (currently
   `0038` in this repository).
+- Only after the migrations are at head, run
+  `python -m echoroo.scripts.init_superuser --confirm` in the API container
+  against the production DB to seed the first superuser. The command writes a
+  TOTP DEK under the selected keyring key.
 - Verify both bootstrap rows and the signed audit history with the shared
   verifier:
 
@@ -181,7 +182,10 @@ Operational references:
   ```
 
   Require exit `0`; exit `1` means the chain is invalid or verification could
-  not complete, including an unavailable audit key.
+  not complete, including an unavailable audit key. The deletion probe is
+  skipped (still exit `0`) for a table with fewer than three rows, and a chain
+  holding only bootstrap rows verifies without using the audit key, so run this
+  after the superuser bootstrap has written signed rows.
 
 ### Wipe-only guard (not a release gate)
 

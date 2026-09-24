@@ -109,9 +109,12 @@ docker exec echoroo-worker-cpu-1 uv run python -m \
   --check-detects-deleted-row
 ```
 
-Exit `0` means the selected chain(s) and, when requested, the deletion probe
-passed. Exit `1` means a chain is invalid or verification could not complete,
-including an unavailable audit key.
+Exit `0` means the selected chain(s) verified and, when requested, the
+deletion probe passed. Two cases exit `0` without proving everything: the
+deletion probe is skipped for a table with fewer than three rows (the output
+says so), and an empty or bootstrap-only chain verifies without touching the
+audit key. Exit `1` means a chain is invalid or verification could not
+complete, including an unavailable audit key while checking a signed row.
 
 ## Running the export by hand
 
@@ -171,8 +174,10 @@ any signed row. It still requires every `prev_hash` to match the immediately
 preceding `row_hash`, including the first row's link to the supplied expected
 previous hash, so a zero-hash bootstrap row after signed history is invalid.
 Hash comparisons use constant-time comparison. A missing, unknown, or otherwise
-unusable keyring key returns a failed verification (the endpoint reports the
-key-unavailable case as HTTP 503); it can never produce a valid result. The
+unusable keyring key returns a failed verification as soon as a signed row
+must be checked (the endpoint reports the key-unavailable case as HTTP 503);
+it can never produce a valid result for signed rows. Empty and bootstrap-only
+chains need no key and verify without one. The
 bootstrap row contents themselves are not authenticated.
 
 ## Wipe guard
