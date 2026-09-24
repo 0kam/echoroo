@@ -61,7 +61,7 @@ therefore impossible to revoke through normal "log out" channels.
 # From the repo root.
 docker exec echoroo-backend sh -c \
   'cd /app && /opt/venv/bin/python -m pytest --no-cov \
-   apps/api/tests/contract/test_no_email_subsystem_traces.py -v'
+   tests/contract/test_no_email_subsystem_traces.py -v'
 ```
 
 Expected: **passed** (0 violations).
@@ -95,7 +95,7 @@ a glance.
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY` / `_OLD` | Sign 2FA reset confirmation token (Phase 17 A-12) | `two_factor_confirmation_key_rotation.md` | Annually |
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_NEW` / `_OLD` | Kid stamp + dual-verify routing | Same | Same |
 | `JWT_SECRET_KEY` | API session JWT signing key | Manual (no automated runbook yet) | Annually (downtime: in-flight sessions invalidated) |
-| `web_session_secret` (`WEB_SESSION_SECRET`) | Web session cookie + step-up token signing key | Manual | Annually |
+| `web_session_secret` | Web session cookie + step-up token signing key | Manual | Annually |
 
 TOTP wrapping, PII HMAC, and audit-chain keys are file-backed keyring
 material, not environment secrets. Provision, back up, restore, and rotate
@@ -137,7 +137,7 @@ as one for hygiene.
 ```bash
 docker exec echoroo-backend sh -c \
   'cd /app && /opt/venv/bin/python -m pytest --no-cov \
-   apps/api/tests/security/test_telemetry_scrubs_sensitive_fields.py -v'
+   tests/security/test_telemetry_scrubs_sensitive_fields.py -v'
 ```
 
 Expected: every assertion passes — the four `SENSITIVE_FIELDS` plus

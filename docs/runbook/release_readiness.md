@@ -156,13 +156,48 @@ Operational references:
 
 ### 9. Bootstrap
 
-- Run `apps/api/echoroo/scripts/init_superuser.py` against the
-  production DB to seed the first superuser. The script is
-  idempotent and writes a TOTP DEK under the selected keyring key.
-- Verify `scripts/check_wipe_guard.py` returns exit 0 (clear for
-  wipe) — exit 1 means the genesis rows are present and a wipe was
-  performed; exit > 1 is a misconfiguration (including an unavailable
-  storage tree).
+- Run `python -m echoroo.scripts.init_superuser --confirm` in the API
+  container against the production DB to seed the first superuser. The
+  command writes a TOTP DEK under the selected keyring key.
+- Apply the current migration set with `./echoroo.sh migrate`. Then compare
+  the output of these commands; the current revision must equal the head
+  reported by the second command:
+
+  ```bash
+  docker compose -f compose.dev.yaml exec -T backend uv run alembic current
+  docker compose -f compose.dev.yaml exec -T backend uv run alembic heads
+  ```
+
+  Do not require revision `0001` here. That is the wipe guard's baseline,
+  while a normally migrated deployment is at the current head (currently
+  `0038` in this repository).
+- Verify both bootstrap rows and the signed audit history with the shared
+  verifier:
+
+  ```bash
+  docker compose -f compose.dev.yaml exec -T backend \
+    uv run python -m echoroo.scripts.verify_audit_chain \
+    --table both --check-detects-deleted-row
+  ```
+
+  Require exit `0`; exit `1` means the chain is invalid or verification could
+  not complete, including an unavailable audit key.
+
+### Wipe-only guard (not a release gate)
+
+The actual wipe checker is the module
+`python -m echoroo.scripts.check_wipe_guard`. It is only for the destructive
+wipe ritual, and its Alembic check is intentionally hard-coded to baseline
+revision `0001`; do not use its exit `0` as evidence that a normally migrated
+database is current.
+
+Its CLI exit codes are:
+
+- `0` — the checker passed its wipe-state checks.
+- `10` — a `wipe_guard` row already exists.
+- `11` — `alembic_version` is not `0001`.
+- `12` — `audit-log/genesis/marker.json` is missing or incorrect.
+- `20` — settings, database, or storage infrastructure error.
 
 ## CI / observability hardening (NOT release-blocking)
 

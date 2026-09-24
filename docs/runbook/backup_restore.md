@@ -180,6 +180,7 @@ the mounted Lustre path, so it runs as UID 1000 and performs the full
 readiness probe after confirming that the marker is present:
 
 ```bash
+cd /path/to/echoroo
 docker compose -f compose.dev.yaml run --rm backend uv run python -m \
   echoroo.scripts.provision_storage /data/storage
 ```
