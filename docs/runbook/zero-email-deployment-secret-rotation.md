@@ -61,7 +61,7 @@ therefore impossible to revoke through normal "log out" channels.
 # From the repo root on the host checkout: the scan needs the full repository
 # layout (apps/, scripts/), which the backend container does not mount under
 # /app — inside the container the test skips instead of scanning.
-cd apps/api && uv run pytest --no-cov \
+cd apps/api && uv run --extra dev pytest --no-cov \
   tests/contract/test_no_email_subsystem_traces.py -v
 ```
 
