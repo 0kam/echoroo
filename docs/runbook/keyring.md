@@ -65,8 +65,14 @@ be treated as a secret independently of the database and storage backups.
    docker compose -f compose.dev.yaml up -d --force-recreate \
      backend worker worker-cpu
    docker compose -f compose.dev.yaml exec backend \
-     uv run python -m echoroo.scripts.keyring_activation_check
+     uv run python -m echoroo.scripts.keyring_activation_check \
+     --expected-workers 1
    ```
+
+   Set `--expected-workers` to one per running Celery worker container. In a
+   development stack this is normally `worker-cpu`; use `2` when the GPU
+   `worker` is also running. The count is required so an unreachable or stale
+   worker cannot make a partial activation appear successful.
 
    Reopen traffic only when the activation check exits `0` and confirms the
    API and every worker loaded the same state. `/health/ready` exposes only
@@ -80,7 +86,9 @@ Every keyring-content or selector change is a maintenance-window operation:
 1. Stop `backend`, `worker`, and `worker-cpu`.
 2. Change the file and `.env` selectors.
 3. Recreate all three consumers with the command above.
-4. Run `keyring_activation_check` and inspect its exit status.
+4. Run `keyring_activation_check --expected-workers N`, where `N` is one per
+   running Celery worker container (`1` for `worker-cpu`, or `2` when the GPU
+   `worker` also runs), and inspect its exit status.
 5. Reopen the application only on exit `0`.
 
 Do not perform a rolling activation. A worker that retains an old cached ring
@@ -103,12 +111,29 @@ docker compose -f compose.dev.yaml run --rm keyring-admin add \
 Run the rewrap with explicit source and target IDs and version numbers:
 
 ```bash
-uv run --project apps/api python scripts/rewrap_dek.py \
+docker compose -f compose.dev.yaml run --rm \
+  -v "$(pwd)/scripts:/app/scripts:ro" backend \
+  uv run python /app/scripts/rewrap_dek.py \
   --source-key-id totp-wrap-2026-01 \
   --target-key-id totp-wrap-2026-02 \
   --old-version 1 \
-  --new-version 2
+  --new-version 2 \
+  --dry-run
+
+docker compose -f compose.dev.yaml run --rm \
+  -v "$(pwd)/scripts:/app/scripts:ro" backend \
+  uv run python /app/scripts/rewrap_dek.py \
+  --source-key-id totp-wrap-2026-01 \
+  --target-key-id totp-wrap-2026-02 \
+  --old-version 1 \
+  --new-version 2 \
+  --confirm
 ```
+
+Run these commands from the repository root. The backend image mounts the
+application package but not the repository-root `scripts/` directory, so the
+temporary read-only mount makes `/app/scripts/rewrap_dek.py` available while
+retaining the backend's keyring and selector environment.
 
 Verify that no database row still has the old version and that login works.
 In the next maintenance window, unselect `_OLD` and recreate all consumers
@@ -134,8 +159,16 @@ Restore both before bringing up consumers. With a restored database and
 storage tree, verify all of the following before reopening traffic:
 
 - decrypt one known TOTP secret and complete its 2FA check;
-- verify the audit chain, including its links and MACs;
-- check `/health/ready` and run `keyring_activation_check`.
+- verify the audit chain, including its links and MACs:
+
+  ```bash
+  docker compose -f compose.dev.yaml exec backend \
+    uv run python -m echoroo.scripts.verify_audit_chain \
+    --table both --check-detects-deleted-row
+  ```
+
+- check `/health/ready` and run `keyring_activation_check` with the expected
+  number of running Celery workers.
 
 A database, storage, or VM backup that does not include the matching keyring
 epoch is not a usable restore set. File-level backup jobs must continue to

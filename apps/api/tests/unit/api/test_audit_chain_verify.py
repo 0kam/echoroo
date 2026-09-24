@@ -75,6 +75,32 @@ def _chain() -> list[dict[str, Any]]:
     return [first, second]
 
 
+def _bootstrap_row(row_id: UUID, created_at: datetime, action: str) -> dict[str, Any]:
+    """Build a zero-hash row emitted by a fresh database bootstrap."""
+    row = _row(row_id, created_at, _ZERO_HASH)
+    row["action"] = action
+    row["row_hash"] = _ZERO_HASH
+    return row
+
+
+def _fresh_chain() -> list[dict[str, Any]]:
+    """Build bootstrap rows followed by ordinary signed rows."""
+    created_at = datetime(2026, 9, 15, tzinfo=UTC)
+    bootstrap_actions = sorted(export._BOOTSTRAP_ACTIONS)
+    rows = [
+        _bootstrap_row(uuid4(), created_at, bootstrap_actions[0]),
+        _bootstrap_row(uuid4(), created_at + timedelta(minutes=1), bootstrap_actions[1]),
+    ]
+    first_signed = _row(uuid4(), created_at + timedelta(minutes=2), _ZERO_HASH)
+    second_signed = _row(
+        uuid4(),
+        created_at + timedelta(minutes=3),
+        first_signed["row_hash"],
+    )
+    rows.extend((first_signed, second_signed))
+    return rows
+
+
 def _client(
     monkeypatch: pytest.MonkeyPatch,
     rows: list[dict[str, Any]],
@@ -120,6 +146,46 @@ def test_endpoint_returns_shared_valid_verdict(monkeypatch: pytest.MonkeyPatch) 
         "first_mismatch_row_id": None,
     }
     assert meta_write.await_count == 1
+
+
+def test_endpoint_accepts_fresh_database_bootstrap_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    rows = _fresh_chain()
+    meta_write = AsyncMock()
+    client = _client(monkeypatch, rows, meta_write)
+
+    response = client.post("/admin/audit-log/chain-verify?target=project")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "is_valid": True,
+        "verified_row_count": 4,
+        "first_mismatch_row_id": None,
+    }
+
+
+def test_endpoint_rejects_deleted_interior_row_after_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    rows = _fresh_chain()
+    deleted_id = rows[2]["id"]
+    del rows[2]
+    meta_write = AsyncMock()
+    client = _client(monkeypatch, rows, meta_write)
+
+    response = client.post("/admin/audit-log/chain-verify?target=project")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["is_valid"] is False
+    assert body["verified_row_count"] == 2
+    assert body["first_mismatch_row_id"] == str(rows[2]["id"])
+    assert body["first_mismatch_row_id"] != str(deleted_id)
 
 
 def test_endpoint_returns_link_verdict_for_deleted_row(

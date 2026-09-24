@@ -108,20 +108,10 @@ class _FastBackupHasher:
 
 
 @pytest.fixture(autouse=True)
-def _patch_kms_and_audit(monkeypatch: pytest.MonkeyPatch) -> None:
+def _patch_audit(monkeypatch: pytest.MonkeyPatch) -> None:
     async def no_audit(self: TwoFactorService, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(
-        two_factor_module.kms,
-        "wrap_dek",
-        lambda plaintext, **_kwargs: bytes(plaintext),
-    )
-    monkeypatch.setattr(
-        two_factor_module.kms,
-        "unwrap_dek",
-        lambda wrapped, **_kwargs: bytes(wrapped),
-    )
     monkeypatch.setattr(TwoFactorService, "_record_audit_event", no_audit)
     monkeypatch.setattr(two_factor_module, "_backup_code_hasher", _FastBackupHasher())
 
@@ -175,11 +165,9 @@ async def test_consuming_codes_decrements_remaining_count_by_one_each_time() -> 
     for n in range(BACKUP_CODE_COUNT - 1):
         assert await service.verify_backup_code(user, backup_codes[n]) is True
         assert user.two_factor_backup_codes_hashed is not None
-        assert (
-            len(user.two_factor_backup_codes_hashed)
-            == BACKUP_CODE_COUNT - (n + 1)
-        ), f"after consuming {n + 1} code(s), expected " \
-           f"{BACKUP_CODE_COUNT - (n + 1)} remaining"
+        assert len(user.two_factor_backup_codes_hashed) == BACKUP_CODE_COUNT - (n + 1), (
+            f"after consuming {n + 1} code(s), expected {BACKUP_CODE_COUNT - (n + 1)} remaining"
+        )
 
 
 # ---------------------------------------------------------------------------

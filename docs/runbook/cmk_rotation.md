@@ -13,4 +13,14 @@ current design. Follow the keyring runbook for the supported operations:
 
 Do not delete old key material while any database backup or archive may still
 depend on it. Use the activation barrier to recreate every consumer and
-compare the loaded state before reopening traffic.
+compare the loaded state before reopening traffic:
+
+```bash
+docker compose -f compose.dev.yaml exec backend \
+  uv run python -m echoroo.scripts.keyring_activation_check \
+  --expected-workers 1
+```
+
+The expected count is one per running Celery worker container: use `1` for
+the development `worker-cpu`, or `2` when the GPU `worker` also runs. Increase
+the value for any additional worker containers before reopening traffic.

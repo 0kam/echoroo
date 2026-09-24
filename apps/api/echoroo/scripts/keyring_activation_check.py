@@ -10,7 +10,12 @@ import httpx
 celery_app: Any | None = None
 
 
-def compare_states(api_state: str | None, worker_replies: dict[str, Any] | None) -> list[str]:
+def compare_states(
+    api_state: str | None,
+    worker_replies: dict[str, Any] | None,
+    *,
+    expected_workers: int | None = None,
+) -> list[str]:
     """Return consumer problems found in an API/worker state comparison."""
     problems: list[str] = []
     if api_state is None:
@@ -18,6 +23,16 @@ def compare_states(api_state: str | None, worker_replies: dict[str, Any] | None)
 
     if not worker_replies:
         problems.append("workers: no workers answered")
+        worker_count = 0
+    else:
+        worker_count = len(worker_replies)
+
+    if expected_workers is not None and worker_count != expected_workers:
+        problems.append(
+            f"workers: expected {expected_workers} distinct workers, got {worker_count}"
+        )
+
+    if not worker_replies:
         return problems
 
     for hostname, reply in sorted(worker_replies.items(), key=lambda item: str(item[0])):
@@ -64,9 +79,32 @@ def _celery_application() -> Any:
 
 def _worker_replies(timeout: float) -> dict[str, Any] | None:
     """Query workers through Celery remote control."""
-    inspect = _celery_application().control.inspect(timeout=timeout)
-    replies = inspect.keyring_status()
-    return replies if isinstance(replies, dict) else None
+    replies = _celery_application().control.broadcast(
+        "keyring_status",
+        reply=True,
+        timeout=timeout,
+    )
+    if not isinstance(replies, list):
+        return None
+
+    merged: dict[str, Any] = {}
+    for worker_reply in replies:
+        if not isinstance(worker_reply, dict):
+            continue
+        for hostname, reply in worker_reply.items():
+            merged[str(hostname)] = reply
+    return merged
+
+
+def _positive_int(value: str) -> int:
+    """Parse a positive integer command-line argument."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,6 +112,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", default="http://localhost:8000")
     parser.add_argument("--timeout", type=float, default=5.0)
+    parser.add_argument(
+        "--expected-workers",
+        required=True,
+        type=_positive_int,
+        help="Expected number of distinct running Celery workers.",
+    )
     return parser
 
 
@@ -98,7 +142,11 @@ def main(argv: list[str] | None = None) -> int:
         worker_replies = None
         workers_error = True
 
-    problems = compare_states(api_state, worker_replies)
+    problems = compare_states(
+        api_state,
+        worker_replies,
+        expected_workers=args.expected_workers,
+    )
     if api_error:
         problems = [problem for problem in problems if problem != "api: missing keyring state"]
         problems.insert(0, "api: error")

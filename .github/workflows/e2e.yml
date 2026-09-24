@@ -1,7 +1,7 @@
 name: E2E (opt-in full-stack)
 
 # ---------------------------------------------------------------------------
-# WS7 Phase 4: Playwright end-to-end tests.
+# WS7 Phase 4: Playwright end-to-end tests with the real local keyring.
 #
 # Split out of ci.yml so the `run-e2e` label trigger works WITHOUT re-running
 # every ci.yml job on label events: this dedicated workflow listens for the
@@ -37,14 +37,15 @@ name: E2E (opt-in full-stack)
 #   TIER 2 — this `e2e-full` job: a full-stack, seeded smoke run. It is OPT-IN
 #   so it never flakes a normal PR — it executes ONLY on `workflow_dispatch` or
 #   when the `run-e2e` label is attached to a PR. It provisions Postgres +
-#   Redis, creates a local keyring, runs alembic, provisions the storage tree,
-#   boots the FastAPI backend on :8002 (matching the SvelteKit BFF default
-#   ECHOROO_API_URL), seeds deterministic permission fixtures via
-#   `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,
-#   stable subset of specs that use the TEST_MODE shared-TOTP login helper
+#   Redis, creates a local keyring (no LocalStack), runs alembic, provisions
+#   the storage tree, boots the FastAPI backend on :8002 (matching the
+#   SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
+#   fixtures via `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,
+#   stable subset of specs plus a real per-user keyring 2FA enrollment/login
+#   spec. The seeded specs use the TEST_MODE shared-TOTP login helper
 #   (helpers/spec011-auth.ts → loginWithSharedTotp). TEST_MODE=true +
 #   TEST_TOTP_SECRET_BASE32 lets any seeded e2e-* account log in with the one
-#   shared secret, so no per-user TOTP plumbing is needed.
+#   shared secret; the keyring spec deliberately uses its enrolled secret.
 #
 # Security note: no untrusted `github.event.*` inputs are interpolated into
 # any `run:` block. The `run-e2e` label gate appears only inside the `if:`
@@ -313,7 +314,14 @@ jobs:
             tests/e2e/banner-stack.spec.ts \
             tests/e2e/permissions/seeded-vote-comment.spec.ts \
             tests/e2e/upload-resumable.spec.ts \
+            tests/e2e/keyring-2fa.spec.ts \
             --reporter=line
+
+      - name: Verify audit chains and deleted-row detection
+        working-directory: apps/api
+        run: |
+          uv run python -m echoroo.scripts.verify_audit_chain \
+            --check-detects-deleted-row
 
       # --- Artifacts on failure -----------------------------------------------
       - name: Upload Playwright report
