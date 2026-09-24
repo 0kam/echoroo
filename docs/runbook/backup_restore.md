@@ -114,12 +114,12 @@ be regenerated; the storage tree itself must be backed up.
 In the development stack, `/data/storage` exists inside the Compose
 `backend-data` named volume; `/data/storage` is not a host directory. Run the
 following on the Docker host from the directory where the backup should be
-written. Replace `echoroo` with the Compose project name if it differs.
+written. The volume is named `echoroo-dev-data` (`volumes.backend-data.name`
+in `compose.dev.yaml`), independent of the Compose project name.
 
 ```bash
-PROJECT=echoroo
 docker run --rm \
-  -v "${PROJECT}_backend-data:/data:ro" \
+  -v "echoroo-dev-data:/data:ro" \
   -v "$PWD:/backup" \
   alpine:3.20 tar -C /data/storage --numeric-owner -czf \
   /backup/echoroo-storage-$(date +%F_%H%M%S).tar.gz .
@@ -150,13 +150,12 @@ storage key that does not exist yet if these are captured independently.
 #### Development named volume
 
 Stop the backend and workers on the Docker host first. Then, still on the
-Docker host, restore into the Compose project's named volume; the archive
+Docker host, restore into the named volume `echoroo-dev-data` (`volumes.backend-data.name` in `compose.dev.yaml`); the archive
 contents become `/data/storage` inside the containers.
 
 ```bash
-PROJECT=echoroo
 docker run --rm \
-  -v "${PROJECT}_backend-data:/data" \
+  -v "echoroo-dev-data:/data" \
   -v "$PWD:/backup" \
   alpine:3.20 sh -c \
   'mkdir -p /data/storage && tar -xzf /backup/echoroo-storage-2026-07-06_120000.tar.gz -C /data/storage'
@@ -181,7 +180,7 @@ readiness probe after confirming that the marker is present. Run this on the
 Docker host:
 
 ```bash
-docker compose run --rm backend uv run python -m \
+docker compose -f compose.dev.yaml run --rm backend uv run python -m \
   echoroo.scripts.provision_storage /data/storage
 ```
 

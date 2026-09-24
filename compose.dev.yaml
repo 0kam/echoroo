@@ -86,7 +86,9 @@ services:
       # Healthy only after the ready.d init script (KMS keys and aliases) has
       # finished: /_localstack/health turns green before it, and a backend
       # started in that window fails every KMS call until the aliases exist.
-      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true'"]
+      # "completed" is also set when a script fails, so require the KMS
+      # script itself to have succeeded.
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true' && curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"name\": \"init-kms.sh\", \"state\": \"SUCCESSFUL\"'"]
       interval: 5s
       timeout: 5s
       retries: 24

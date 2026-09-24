@@ -93,7 +93,7 @@ window opens.
   readiness probe:
 
   ```bash
-  docker compose run --rm backend uv run python -m \
+  docker compose -f compose.dev.yaml run --rm backend uv run python -m \
     echoroo.scripts.provision_storage /data/storage
   ```
 

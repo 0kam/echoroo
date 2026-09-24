@@ -11,12 +11,15 @@ storage tree.
 
 ## Cutover
 
+All `docker compose` commands below run on the Docker host from the
+repository root, where `compose.dev.yaml` lives.
+
 1. Schedule a maintenance window and, on the Docker host, stop the frontend,
    API, Celery workers, beat, Redis, PostgreSQL, and LocalStack explicitly. Do
    not start the new version while old processes can write.
 
    ```bash
-   docker compose stop frontend backend worker worker-cpu beat redis db localstack
+   docker compose -f compose.dev.yaml stop frontend backend worker worker-cpu beat redis db localstack
    ```
 
 2. Confirm that any required pre-cutover records have been handled according
@@ -26,9 +29,9 @@ storage tree.
    copied.
 
    ```bash
-   docker compose down --remove-orphans
-   docker volume rm <project>_db-data
-   rm -rf ./.data/localstack
+   docker compose -f compose.dev.yaml down --remove-orphans
+   docker volume rm echoroo-dev-db
+   rm -rf "${ECHOROO_LOCALSTACK_DATA:-./.data/localstack}"
    ```
 
 3. Mount the host's Lustre filesystem and create the production storage-tree
@@ -39,7 +42,7 @@ storage tree.
    it runs as the container's UID/GID 1000 against the mounted path:
 
    ```bash
-   docker compose run --rm backend uv run python -m \
+   docker compose -f compose.dev.yaml run --rm backend uv run python -m \
      echoroo.scripts.provision_storage /data/storage
    ```
 

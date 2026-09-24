@@ -119,7 +119,7 @@ Docker host, run the provisioner inside the backend container so it runs as
 UID/GID 1000 against that mounted path:
 
 ```bash
-docker compose run --rm backend uv run python -m \
+docker compose -f compose.dev.yaml run --rm backend uv run python -m \
   echoroo.scripts.provision_storage /data/storage
 ```
 
