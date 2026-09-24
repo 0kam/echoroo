@@ -76,10 +76,10 @@ Alembic state before applying DB schema changes.
 | `backend` | `8002` | FastAPI server with hot reload |
 | `db` | `5432` | PostgreSQL with pgvector |
 | `redis` | `6379` | Redis for queues and cache |
-| `localstack` | `4566` | Local AWS-compatible services |
 | `worker` | - | GPU Celery worker |
 | `worker-cpu` | - | CPU/default Celery worker |
 | `beat` | - | Celery beat scheduler |
+| `keyring-admin` | - | Admin-only local keyring provisioning (Compose `admin` profile) |
 
 ## Source Layout
 
@@ -158,11 +158,9 @@ Uploaded recordings and application artifacts live in the Compose
 containers. The development stack provisions this tree automatically before
 the backend starts; no host audio directory is required.
 
-LocalStack data defaults to `./.data/localstack` and can be customized with:
-
-```bash
-ECHOROO_LOCALSTACK_DATA=/path/to/localstack-data
-```
+The local keyring is stored outside the application storage tree. Follow
+[the keyring runbook](docs/runbook/keyring.md) to provision it, back it up
+offline, and activate it for the backend and workers.
 
 ## Troubleshooting
 
@@ -202,14 +200,15 @@ A production deployment is expected to provide, at minimum:
 
 - **TLS termination** at a reverse proxy in front of the API and frontend
   (the dev stack serves plain HTTP).
-- **POSIX storage and KMS** — a production POSIX/Lustre tree bind-mounted at
-  `/data/storage` plus AWS KMS instead of LocalStack. The KMS CMKs are the root
-  of the app's envelope encryption;
-  see [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md).
+- **POSIX storage and local keyring** — a production POSIX/Lustre tree
+  bind-mounted at `/data/storage` plus the file-backed keyring mounted
+  read-only into the API and workers. See
+  [docs/runbook/keyring.md](docs/runbook/keyring.md) and
+  [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md).
 - **Managed PostgreSQL** with backups, PITR, and connection limits sized
   for your load, rather than the single-container `pgvector` image.
 - **Secrets management** — inject `POSTGRES_PASSWORD`, `JWT_SECRET_KEY`,
-  `INVITATION_TOKEN_HMAC_KEY`, and the KMS/AWS credentials from a secrets
+  `INVITATION_TOKEN_HMAC_KEY`, and the keyring selectors from a secrets
   manager, not from a committed `.env`.
 - **Resource limits, restart policy, and health-based orchestration** —
   wire orchestrators to the cheap `/health` liveness probe and the
@@ -217,7 +216,7 @@ A production deployment is expected to provide, at minimum:
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full environment variable
 reference and [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md)
-for backup, restore, and the KMS key-material caveat.
+for backup and restore guidance.
 
 ## Environment Variables
 

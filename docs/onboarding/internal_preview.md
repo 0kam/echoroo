@@ -11,16 +11,9 @@ The spec/006 [quickstart](../../specs/006-permissions-redesign/quickstart.md) is
 - Docker and Docker Compose are installed.
 - The repository is cloned locally.
 - `.env` is copied from `.env.example`.
-- LocalStack KMS values are filled in `.env` for dev:
-
-```bash
-AWS_KMS_ENDPOINT=http://localstack:4566
-AWS_KMS_REGION=us-east-1
-AWS_KMS_CMK_2FA_ALIAS=alias/echoroo-2fa-dev
-AWS_KMS_CMK_PII_HASH_ALIAS=alias/echoroo-pii-hash-dev
-AWS_KMS_CMK_AUDIT_CHAIN_ALIAS=alias/echoroo-audit-chain-dev
-AWS_KMS_CMK_INVITATION_HMAC_ALIAS=alias/echoroo-invitation-hmac-dev
-```
+- A local keyring is provisioned before the stack starts. Follow
+  [the keyring runbook](../runbook/keyring.md) for the admin service command,
+  selectors, offline backup, and activation check.
 
 ## 2. Start Services
 

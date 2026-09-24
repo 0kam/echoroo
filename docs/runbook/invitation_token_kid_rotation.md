@@ -11,9 +11,9 @@
 signing key for invitation tokens, either as planned hygiene or as an
 emergency response to a suspected key compromise.
 
-> **Superseded in part:** legacy key-management references in this runbook
-> are not the current stack procedure. See [keyring.md](keyring.md) for the
-> local keyring and its TOTP, PII, and audit-key operations.
+The invitation-token secret remains an environment secret. It is not stored
+in the local keyring; TOTP, PII, and audit-key operations are documented in
+`docs/runbook/keyring.md`.
 
 ---
 
@@ -315,8 +315,8 @@ boot-time co-presence guards. Run them before AND after any rotation.
 
 - `docs/runbook/two_factor_confirmation_key_rotation.md` — Phase 17
   A-12 (the pattern this runbook mirrors)
-- `docs/runbook/cmk_rotation.md` — KMS CMK rotation
-- `docs/runbook/dek_rewrap.md` — DEK rewrap for envelope encryption
+- `docs/runbook/keyring.md` — local keyring operations for TOTP, PII, and
+  audit keys
 - `docs/runbook/zero-email-deployment-secret-rotation.md` — full
   spec/011 secret inventory
 

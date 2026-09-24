@@ -4,15 +4,12 @@
 **Scope**: storage migration slice 4b
 **Owner**: release driver and operations
 
-> **Superseded in part:** the key-management and LocalStack steps below
-> predate the local keyring. See [keyring.md](keyring.md) for current keyring
-> provisioning and recovery; the full storage-runbook rewrite is scheduled
-> for slice 3.
-
 This is a destructive, empty-deployment cutover. Per decision 9, existing
-LocalStack objects are not migrated. Existing dev, preview, and ninjin
+application data is not migrated. Existing dev, preview, and ninjin
 deployments are recreated with an empty database and an empty application
-storage tree.
+storage tree. The local keyring is a separate protected input: preserve the
+matching file and selectors, or provision and back it up according to
+[keyring.md](keyring.md).
 
 ## Cutover
 
@@ -20,30 +17,22 @@ All `docker compose` commands below run on the Docker host from the
 repository root, where `compose.dev.yaml` lives.
 
 1. Schedule a maintenance window and, on the Docker host, stop the frontend,
-   API, Celery workers, beat, Redis, PostgreSQL, and LocalStack explicitly. Do
-   not start the new version while old processes can write.
+   API, Celery workers, beat, Redis, and PostgreSQL explicitly. Do not start
+   the new version while old processes can write.
 
    ```bash
-   docker compose -f compose.dev.yaml stop frontend backend worker worker-cpu beat redis db localstack
+   docker compose -f compose.dev.yaml stop frontend backend worker worker-cpu beat redis db
    ```
 
 2. Confirm that any required pre-cutover records have been handled according
    to the deployment decision. On the Docker host, discard the existing
-   PostgreSQL database volume and LocalStack data directory. LocalStack is
-   retained only for KMS in the new stack; no old application objects are
-   copied.
-
-   Read the LocalStack data directory from the stopped container before
-   removing it (Compose may take it from `ECHOROO_LOCALSTACK_DATA` in `.env`,
-   which the shell does not see):
+   PostgreSQL database volume and application storage volume. No old
+   application objects are copied. Keep the keyring outside those volumes;
+   it is restored and checked separately before runtime consumers start.
 
    ```bash
-   LOCALSTACK_DATA="$(docker inspect echoroo-localstack \
-     --format '{{range .Mounts}}{{if eq .Destination "/var/lib/localstack"}}{{.Source}}{{end}}{{end}}')"
-   test -n "$LOCALSTACK_DATA" || { echo "LocalStack data directory not found"; exit 1; }
    docker compose -f compose.dev.yaml down --remove-orphans
-   docker volume rm echoroo-dev-db
-   rm -rf "$LOCALSTACK_DATA"
+   docker volume rm echoroo-dev-db echoroo-dev-data
    ```
 
 3. Mount the host's Lustre filesystem and create the production storage-tree
@@ -64,6 +53,8 @@ repository root, where `compose.dev.yaml` lives.
    local disk.
 5. Start the new version. Run migrations and the normal initial setup again,
    including creation of the first administrator and its TOTP enrollment.
+   Restore or provision the keyring before starting the backend and workers,
+   then run the activation check from [keyring.md](keyring.md).
 6. Check `/health/ready` and confirm that its component is named `storage`.
    Then test login, upload/import, recording playback, search-reference audio,
    and audit-log export before ending the maintenance window.

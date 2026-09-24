@@ -18,7 +18,8 @@ specs/      # Feature specifications
 ## Development setup
 
 The recommended way to run the full stack (Postgres + pgvector, Redis,
-LocalStack, backend, frontend, Celery workers) is via Docker:
+backend, frontend, Celery workers) is via Docker. Provision the local keyring
+first as described in [the keyring runbook](docs/runbook/keyring.md):
 
 ```bash
 cp .env.example .env          # then edit the required values (see README)

@@ -34,7 +34,7 @@ Echoroo is built for wildlife surveyors — NPOs, local governments, and researc
 
 ## Quick Start
 
-`./echoroo.sh` is **the supported install and management path** for Echoroo. It runs the full stack (PostgreSQL + pgvector, Redis, LocalStack, backend, frontend, Celery ML workers) with Docker.
+`./echoroo.sh` is **the supported install and management path** for Echoroo. It runs the full stack (PostgreSQL + pgvector, Redis, backend, frontend, Celery ML workers) with Docker. Provision the local keyring first as described in [the keyring runbook](docs/runbook/keyring.md).
 
 **Prerequisites:** [Docker](https://docs.docker.com/get-docker/) 24.0+ with [Docker Compose](https://docs.docker.com/compose/install/) 2.0+.
 
