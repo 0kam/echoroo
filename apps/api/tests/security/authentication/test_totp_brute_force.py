@@ -118,9 +118,9 @@ class _FastBackupHasher:
 
 @pytest.fixture(autouse=True)
 def _patch_kms_and_audit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bypass KMS and audit-log writes — they are unrelated to brute force.
+    """Bypass keyring and audit-log writes — unrelated to brute force.
 
-    Without these patches the service would attempt real ``boto3`` /
+    Without these patches the service would perform real keyring /
     Postgres I/O on every verification, which would dominate the test
     runtime and pollute the audit chain in CI.
     """
@@ -176,9 +176,7 @@ async def test_five_totp_failures_in_window_then_sixth_raises_rate_limited() -> 
 
     for attempt in range(TOTP_FAIL_LIMIT):
         result = await service.verify_totp(user, "000000")
-        assert result is False, (
-            f"failure #{attempt + 1} should return False, not raise"
-        )
+        assert result is False, f"failure #{attempt + 1} should return False, not raise"
 
     # 6th failure crosses the rolling-window threshold.
     with pytest.raises(TwoFactorRateLimitedError):

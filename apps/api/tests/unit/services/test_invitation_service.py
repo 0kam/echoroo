@@ -200,10 +200,10 @@ async def test_create_invitation_outcome_does_not_expose_plain_token_at_top_leve
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Phase 17 §C PR-A: this unit test exercises the outcome surface
-    # only — the KMS-backed PII dual-write helper invoked transitively
+    # only — the keyring-backed PII dual-write helper invoked transitively
     # by ``create_invitation`` is incidental machinery here. Stubbing
     # ``hash_email_dual`` to a deterministic single-key result keeps the
-    # test purely unit-scoped (no moto roundtrip, no AWS env wiring) and
+    # test purely unit-scoped (no external roundtrip or cloud env wiring) and
     # mirrors the explicit-stub culture of the rest of ``tests/unit/``.
     monkeypatch.setattr(
         "echoroo.services.invitation.create.hash_email_dual",
@@ -478,9 +478,7 @@ async def test_accept_invitation_member_reuse_requires_token_match(
     # Seed a stale record under the key, but with a *different*
     # token_hash — this matches the real-world stolen-key threat.
     fake_redis.values[invitation_service._idempotency_redis_key(key)] = (
-        '{"invitation_id": "'
-        + str(uuid4())
-        + '", "token_hash": "different-token-hash", '
+        '{"invitation_id": "' + str(uuid4()) + '", "token_hash": "different-token-hash", '
         '"created_at": "2026-01-01T00:00:00+00:00"}'
     )
 

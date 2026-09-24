@@ -5,8 +5,8 @@ TOTP secret envelope layout in ``users.two_factor_secret_encrypted``:
     len(wrapped_dek):4LE | wrapped_dek | nonce:12 | ciphertext
 
 The ciphertext is AES-256-GCM over the UTF-8 bytes of the TOTP base32
-secret. Each record gets a fresh 32-byte DEK, wrapped by KMS before
-storage and zeroized after use.
+secret. Each record gets a fresh 32-byte DEK, wrapped by the local keyring
+before storage and zeroized after use.
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core import kms
+from echoroo.core import keyring, kms
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.redis import get_redis_connection
-from echoroo.core.settings import Settings, get_settings
+from echoroo.core.settings import get_settings
 from echoroo.models.user import User
 from echoroo.services.audit_service import AuditLogService
 from echoroo.services.trusted_device_service import TrustedDeviceService
@@ -172,67 +172,57 @@ def _totp(secret: str) -> pyotp.TOTP:
 def _current_dek_version() -> int:
     """Return the DEK version stamped onto newly encrypted TOTP secrets.
 
-    Reads :data:`Settings.two_factor_dek_kid_new` so a CMK rotation can
-    flip the version (and the matching alias) via env vars only — no
-    source change required.
+    The selected version is loaded with the keyring configuration so the
+    version and wrapping key always come from one validated selection.
     """
-    return int(get_settings().two_factor_dek_kid_new)
+    return keyring.get_selectors().totp_version
 
 
-def _resolve_dek_alias_for_version(version: int, settings: Settings) -> str | None:
-    """Map a stored DEK version → CMK alias (env-driven A-12 pattern).
+def _resolve_dek_key_id_for_version(version: int, selectors: keyring.Selectors) -> str | None:
+    """Map a stored DEK version to its configured key id.
 
     Returns ``None`` when the version is not configured, signalling that
     the operator must run ``scripts/rewrap_dek.py`` before serving any
     request that would touch a record carrying that version.
     """
-    if version == settings.two_factor_dek_kid_new:
-        return settings.two_factor_dek_cmk_alias_new
-    if (
-        settings.two_factor_dek_kid_old is not None
-        and version == settings.two_factor_dek_kid_old
-        and settings.two_factor_dek_cmk_alias_old is not None
-    ):
-        return settings.two_factor_dek_cmk_alias_old
+    if version == selectors.totp_version:
+        return selectors.totp_key
+    if selectors.totp_version_old is not None and version == selectors.totp_version_old:
+        return selectors.totp_key_old
     return None
 
 
 def _encrypt_totp_secret(secret: str) -> bytes:
-    """Envelope-encrypt a TOTP base32 secret under the current CMK.
+    """Envelope-encrypt a TOTP base32 secret under the current keyring key.
 
-    The DEK is wrapped under :data:`Settings.two_factor_dek_cmk_alias_new`
-    so the surrounding caller can stamp the matching
+    The DEK is wrapped under the selected current TOTP key so the surrounding
+    caller can stamp the matching
     :func:`_current_dek_version` onto ``users.two_factor_secret_dek_version``
     without referencing a hard-coded constant.
     """
-    settings = get_settings()
+    selectors = keyring.get_selectors()
+    if selectors.totp_key is None:
+        raise keyring.KeyringConfigError("TOTP key selector is missing")
     dek = bytearray(os.urandom(AES_256_KEY_BYTES))
     try:
         nonce = os.urandom(AES_GCM_NONCE_BYTES)
-        wrapped_dek = kms.wrap_dek(
-            bytes(dek), alias=settings.two_factor_dek_cmk_alias_new
-        )
+        wrapped_dek = kms.wrap_dek(bytes(dek), key_id=selectors.totp_key)
         ciphertext = AESGCM(bytes(dek)).encrypt(nonce, secret.encode("utf-8"), None)
-        return (
-            struct.pack("<I", len(wrapped_dek))
-            + wrapped_dek
-            + nonce
-            + ciphertext
-        )
+        return struct.pack("<I", len(wrapped_dek)) + wrapped_dek + nonce + ciphertext
     finally:
         _zeroize(dek)
         del dek
 
 
 def _decrypt_totp_secret(payload: bytes, *, dek_version: int | None = None) -> str:
-    """Envelope-decrypt a TOTP secret with DEK-version aware CMK routing.
+    """Envelope-decrypt a TOTP secret with DEK-version aware key routing.
 
-    ``dek_version`` selects the CMK alias via
-    :func:`_resolve_dek_alias_for_version`. When ``None`` (the historical
-    test fixture default) the current ``kid_new`` is assumed — production
+    ``dek_version`` selects the key id via
+    :func:`_resolve_dek_key_id_for_version`. When ``None`` (the historical
+    test fixture default) the current version is assumed — production
     callers MUST always pass ``user.two_factor_secret_dek_version``
     explicitly so a record stamped with the previous version is routed to
-    the ``..._OLD`` alias during the rotation grace window.
+    the old key during the rotation grace window.
     """
     if len(payload) < WRAPPED_DEK_LEN_BYTES + AES_GCM_NONCE_BYTES:
         raise TwoFactorError("encrypted TOTP secret payload is malformed")
@@ -244,21 +234,21 @@ def _decrypt_totp_secret(payload: bytes, *, dek_version: int | None = None) -> s
     if wrapped_len <= 0 or len(payload) <= nonce_end:
         raise TwoFactorError("encrypted TOTP secret payload is malformed")
 
-    settings = get_settings()
-    effective_version = dek_version if dek_version is not None else settings.two_factor_dek_kid_new
-    alias = _resolve_dek_alias_for_version(effective_version, settings)
-    if alias is None:
+    selectors = keyring.get_selectors()
+    effective_version = dek_version if dek_version is not None else selectors.totp_version
+    key_id = _resolve_dek_key_id_for_version(effective_version, selectors)
+    if key_id is None:
         raise TwoFactorError(
             f"DEK version {effective_version} is not configured for "
             "decryption — operator must run scripts/rewrap_dek.py before "
-            "removing the prior CMK alias from settings"
+            "removing the prior key id from settings"
         )
 
     wrapped_dek = payload[wrapped_start:wrapped_end]
     nonce = payload[wrapped_end:nonce_end]
     ciphertext = payload[nonce_end:]
 
-    dek = bytearray(kms.unwrap_dek(wrapped_dek, alias=alias))
+    dek = kms.unwrap_dek(wrapped_dek, key_id=key_id)
     try:
         plaintext = AESGCM(bytes(dek)).decrypt(nonce, ciphertext, None)
         return plaintext.decode("utf-8")
@@ -371,7 +361,9 @@ class TwoFactorService:
 
         await self._take_setup_lock(user.id)
 
-        if not _totp(secret).verify(_normalize_totp_code(totp_code), valid_window=TOTP_VALID_WINDOW):
+        if not _totp(secret).verify(
+            _normalize_totp_code(totp_code), valid_window=TOTP_VALID_WINDOW
+        ):
             if commit:
                 await self.db.commit()
             await self._record_audit_event(
@@ -426,9 +418,7 @@ class TwoFactorService:
             return True
 
         settings = get_settings()
-        test_mode_shared_secret = (
-            settings.TEST_TOTP_SECRET_BASE32 if settings.TEST_MODE else None
-        )
+        test_mode_shared_secret = settings.TEST_TOTP_SECRET_BASE32 if settings.TEST_MODE else None
         if test_mode_shared_secret and _totp(test_mode_shared_secret).verify(
             normalized_code,
             valid_window=TOTP_VALID_WINDOW,

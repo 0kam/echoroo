@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.sql.dml import Update
 from sqlalchemy.sql.selectable import Select
 
+from echoroo.core.keyring import KeyringAuthError
 from echoroo.core.settings import Settings
 from echoroo.models.user import User
 from echoroo.services import two_factor_service as two_factor_module
@@ -28,6 +29,23 @@ from echoroo.services.two_factor_service import (
 )
 
 SHARED_TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
+
+
+def _stub_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    test_mode: bool = False,
+    test_totp_secret_base32: str | None = None,
+    environment: str = "development",
+) -> None:
+    """Patch the non-keyring settings used by verification tests."""
+
+    class _StubSettings:
+        TEST_MODE = test_mode
+        TEST_TOTP_SECRET_BASE32 = test_totp_secret_base32
+        ENVIRONMENT = environment
+
+    monkeypatch.setattr(two_factor_module, "get_settings", lambda: _StubSettings())
 
 
 class _Result:
@@ -101,9 +119,8 @@ def _mock_slow_or_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None
     async def no_audit(self: TwoFactorService, **_kwargs: Any) -> None:
         return None
 
-    # Phase 17 A-8: kms.wrap_dek / unwrap_dek now accept an optional
-    # ``alias`` kwarg so the service layer can route DEK envelope ops to
-    # the rotation grace alias. The mocks accept and discard it.
+    # The service passes explicit key ids to the keyring-backed KMS adapter.
+    # These unit-test doubles accept and discard those routing kwargs.
     monkeypatch.setattr(
         two_factor_module.kms,
         "wrap_dek",
@@ -224,12 +241,51 @@ async def test_confirm_enrollment_rejects_wrong_code_and_accepts_correct_code() 
 
 
 @pytest.mark.asyncio
+async def test_enrollment_fails_closed_on_keyring_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service = _service(user)
+    artifacts = await service.begin_enrollment(user)
+
+    def fail_wrap(*_args: Any, **_kwargs: Any) -> bytes:
+        raise KeyringAuthError("test authentication failure")
+
+    monkeypatch.setattr(two_factor_module.kms, "wrap_dek", fail_wrap)
+    with pytest.raises(KeyringAuthError):
+        await service.confirm_enrollment(
+            user,
+            artifacts.secret,
+            pyotp.TOTP(artifacts.secret).now(),
+        )
+    assert user.two_factor_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_verification_fails_closed_on_keyring_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    service, _backup_codes = await _confirmed_user(user)
+
+    def fail_unwrap(*_args: Any, **_kwargs: Any) -> bytearray:
+        raise KeyringAuthError("test authentication failure")
+
+    monkeypatch.setattr(two_factor_module.kms, "unwrap_dek", fail_unwrap)
+    with pytest.raises(KeyringAuthError):
+        await service.verify_totp(user, "123456")
+
+
+@pytest.mark.asyncio
 async def test_totp_verify_accepts_valid_code_and_rejects_invalid_code() -> None:
     user = _user()
     service, _backup_codes = await _confirmed_user(user)
     assert user.two_factor_secret_encrypted is not None
 
-    assert await service.verify_totp(user, pyotp.TOTP(two_factor_module._decrypt_totp_secret(user.two_factor_secret_encrypted)).now())
+    assert await service.verify_totp(
+        user,
+        pyotp.TOTP(two_factor_module._decrypt_totp_secret(user.two_factor_secret_encrypted)).now(),
+    )
     assert await service.verify_totp(user, "not-a-code") is False
 
 
@@ -465,7 +521,7 @@ async def test_security_stamp_changes_on_enrollment_confirm_and_reset() -> None:
 #   plus identity of the first hash) breaks if we accidentally rotate the
 #   list during consumption.
 # * :meth:`reset_user_two_factor` MUST clear ``two_factor_secret_dek_version``
-#   to ``None`` so a stale CMK rotation hint cannot point at a no-longer-
+#   to ``None`` so a stale rotation hint cannot point at a no-longer-
 #   present secret. The original test only asserted that the secret bytes
 #   are cleared.
 # * AES-GCM nonces are randomised per encryption call. Two encryptions of
@@ -509,9 +565,7 @@ async def test_backup_code_consumption_preserves_order_of_remaining_codes() -> N
     original_hashes = list(user.two_factor_backup_codes_hashed)
     # Sanity-check: hashes are issued in the same order as the plaintext
     # codes returned to the user.
-    assert [
-        f"test-hash:{code}" for code in backup_codes
-    ] == original_hashes
+    assert [f"test-hash:{code}" for code in backup_codes] == original_hashes
 
     # Consume the *third* code and verify the remaining hashes preserve
     # their original ordering (i.e. we drop element 2 only — we do not
@@ -519,9 +573,7 @@ async def test_backup_code_consumption_preserves_order_of_remaining_codes() -> N
     consumed_index = 2
     assert await service.verify_backup_code(user, backup_codes[consumed_index]) is True
 
-    expected_remaining = (
-        original_hashes[:consumed_index] + original_hashes[consumed_index + 1 :]
-    )
+    expected_remaining = original_hashes[:consumed_index] + original_hashes[consumed_index + 1 :]
     assert user.two_factor_backup_codes_hashed == expected_remaining
 
 
@@ -529,7 +581,7 @@ async def test_backup_code_consumption_preserves_order_of_remaining_codes() -> N
 async def test_reset_clears_two_factor_secret_dek_version_to_none() -> None:
     user = _user()
     # Pre-condition: a confirmed enrollment populates the dek_version
-    # column (Phase 6 CMK rotation hint).
+    # column.
     _service_, _backup = await _confirmed_user(user)
     assert user.two_factor_secret_dek_version is not None
 
@@ -541,7 +593,7 @@ async def test_reset_clears_two_factor_secret_dek_version_to_none() -> None:
     )
 
     # FR-068 contract: the dek_version slot is cleared so a future
-    # CMK-rotation reader does not mis-route the (now-empty) secret bytes.
+    # rotation reader does not mis-route the (now-empty) secret bytes.
     assert user.two_factor_secret_dek_version is None
     assert user.two_factor_secret_encrypted is None
     assert user.two_factor_backup_codes_hashed is None
@@ -562,129 +614,3 @@ def test_encrypt_totp_secret_produces_distinct_ciphertexts_for_same_plaintext() 
     # plaintext — distinctness without correctness is not enough.
     assert two_factor_module._decrypt_totp_secret(blob_a) == plaintext_secret
     assert two_factor_module._decrypt_totp_secret(blob_b) == plaintext_secret
-
-
-# ---------------------------------------------------------------------------
-# Phase 17 A-8: DEK version routing for ``_decrypt_totp_secret``.
-#
-# The settings-driven routing is exercised here through pure unit tests
-# that monkeypatch ``get_settings`` so the test does not need a live KMS
-# (the encrypt/decrypt path falls back to the existing test-time KMS
-# fixture). The behavioural contract being asserted:
-#
-#   * a record stamped with kid_new decrypts under alias_new (default path)
-#   * a record stamped with kid_old decrypts under alias_old during the
-#     rotation grace window
-#   * a record carrying any other version is rejected with TwoFactorError
-#     instructing the operator to run scripts/rewrap_dek.py
-# ---------------------------------------------------------------------------
-
-
-def _stub_settings(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    kid_new: int = 1,
-    alias_new: str = "alias/echoroo-totp-dek",
-    kid_old: int | None = None,
-    alias_old: str | None = None,
-    test_mode: bool = False,
-    test_totp_secret_base32: str | None = None,
-    environment: str = "development",
-) -> None:
-    """Return a Settings-like stub from ``two_factor_service.get_settings``."""
-
-    class _StubSettings:
-        two_factor_dek_kid_new = kid_new
-        two_factor_dek_cmk_alias_new = alias_new
-        two_factor_dek_kid_old = kid_old
-        two_factor_dek_cmk_alias_old = alias_old
-        TEST_MODE = test_mode
-        TEST_TOTP_SECRET_BASE32 = test_totp_secret_base32
-        ENVIRONMENT = environment
-
-    monkeypatch.setattr(
-        two_factor_module, "get_settings", lambda: _StubSettings()
-    )
-
-
-def test_resolve_dek_alias_for_version_routes_to_new(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new")
-    settings = two_factor_module.get_settings()
-    assert (
-        two_factor_module._resolve_dek_alias_for_version(2, settings) == "alias/new"
-    )
-
-
-def test_resolve_dek_alias_for_version_routes_to_old_during_grace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _stub_settings(
-        monkeypatch,
-        kid_new=2,
-        alias_new="alias/new",
-        kid_old=1,
-        alias_old="alias/old",
-    )
-    settings = two_factor_module.get_settings()
-    assert (
-        two_factor_module._resolve_dek_alias_for_version(1, settings) == "alias/old"
-    )
-
-
-def test_resolve_dek_alias_for_version_rejects_unsupported(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # No old configured: only kid_new is valid.
-    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new")
-    settings = two_factor_module.get_settings()
-    assert two_factor_module._resolve_dek_alias_for_version(99, settings) is None
-    # Old kid configured but alias_old missing → still unsupported.
-    _stub_settings(monkeypatch, kid_new=2, alias_new="alias/new", kid_old=1)
-    settings = two_factor_module.get_settings()
-    # alias_old is None so the version=1 path fails the second guard.
-    assert two_factor_module._resolve_dek_alias_for_version(1, settings) is None
-
-
-def test_decrypt_totp_secret_rejects_unsupported_version(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Encrypt a payload with the current setup (kid_new=1 by default), then
-    # ask the decryptor to interpret it as version=99 — the routing helper
-    # returns None and the decrypt path raises TwoFactorError before any
-    # KMS call, instructing the operator to run the rewrap script.
-    payload = two_factor_module._encrypt_totp_secret("JBSWY3DPEHPK3PXP")
-    with pytest.raises(TwoFactorError, match="not configured for decryption"):
-        two_factor_module._decrypt_totp_secret(payload, dek_version=99)
-
-
-def test_decrypt_totp_secret_routes_to_old_alias_during_grace(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A record stamped with kid_old decrypts under alias_old.
-
-    We do not exercise the full KMS round-trip here (the
-    tests/security/crypto suite covers that with moto). What this unit
-    test guards is the *routing*: a payload encrypted under the current
-    alias still resolves to that alias when its stored version equals
-    kid_old AND alias_old maps to the same physical alias. The dummy
-    rotation here treats kid_new=1 as the post-rotation version and
-    kid_old=1 as the pre-rotation version pointed at the same alias —
-    proving the routing helper picks alias_old based on version match.
-    """
-    # Configure: post-rotation has kid_new=2 / alias_new=A, but the
-    # historical record uses kid_old=1 / alias_old=A (same physical
-    # alias because the rotation only renamed the version stamp). The
-    # decrypt path must successfully recover plaintext.
-    plaintext = "JBSWY3DPEHPK3PXP"
-    payload = two_factor_module._encrypt_totp_secret(plaintext)
-    _stub_settings(
-        monkeypatch,
-        kid_new=2,
-        alias_new="alias/echoroo-totp-dek-v2-fake",
-        kid_old=1,
-        alias_old="alias/echoroo-totp-dek",  # the alias the payload was wrapped under
-    )
-    recovered = two_factor_module._decrypt_totp_secret(payload, dek_version=1)
-    assert recovered == plaintext

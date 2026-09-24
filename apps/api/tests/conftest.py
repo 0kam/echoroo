@@ -4,7 +4,9 @@
 # ruff: noqa: E402
 
 import atexit
+import base64
 import importlib
+import json
 import os
 import shutil
 import tempfile
@@ -43,9 +45,7 @@ os.environ.setdefault("ECHOROO_SKIP_BOOT_CHECKS", "1")
 if "STORAGE_ROOT" in os.environ and "ECHOROO_LIVE_STORAGE_ROOT" not in os.environ:
     os.environ["ECHOROO_LIVE_STORAGE_ROOT"] = os.environ["STORAGE_ROOT"]
 
-_TEST_STORAGE_RUN_ID = os.environ.setdefault(
-    "ECHOROO_TEST_STORAGE_RUN_ID", uuid4().hex
-)
+_TEST_STORAGE_RUN_ID = os.environ.setdefault("ECHOROO_TEST_STORAGE_RUN_ID", uuid4().hex)
 _TEST_STORAGE_WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "main")
 _TEST_STORAGE_BASE = (
     Path(tempfile.gettempdir())
@@ -55,9 +55,53 @@ _TEST_STORAGE_BASE = (
 _TEST_STORAGE_ROOT = _TEST_STORAGE_BASE / "storage"
 _TEST_UPLOAD_STAGING_DIR = _TEST_STORAGE_BASE / "upload-staging"
 _TEST_COMPRESSED_CACHE_DIR = _TEST_STORAGE_BASE / "compressed-cache"
+_TEST_STORAGE_BASE.mkdir(parents=True, exist_ok=True)
+_TEST_STORAGE_BASE.chmod(0o700)
+_TEST_KEYRING_FILE = _TEST_STORAGE_BASE / "keyring.json"
+_TEST_KEYRING_KEYS = {
+    "test-totp-wrap": "totp-wrap",
+    "test-totp-wrap-old": "totp-wrap",
+    "test-pii-hmac": "pii-hmac",
+    "test-pii-hmac-v2": "pii-hmac",
+    "test-audit-hmac": "audit-hmac",
+}
+_TEST_KEYRING_DOCUMENT = {
+    "format": 1,
+    "keys": {
+        key_id: {
+            "purpose": purpose,
+            "material": base64.b64encode(os.urandom(32)).decode("ascii"),
+            "created": "2026-09-24",
+        }
+        for key_id, purpose in _TEST_KEYRING_KEYS.items()
+    },
+}
+if _TEST_KEYRING_FILE.exists():
+    _TEST_KEYRING_FILE.chmod(0o600)
+_TEST_KEYRING_FILE.write_text(
+    json.dumps(_TEST_KEYRING_DOCUMENT, separators=(",", ":")), encoding="utf-8"
+)
+_TEST_KEYRING_FILE.chmod(0o400)
 os.environ["STORAGE_ROOT"] = str(_TEST_STORAGE_ROOT)
 os.environ["UPLOAD_STAGING_DIR"] = str(_TEST_UPLOAD_STAGING_DIR)
 os.environ["COMPRESSED_CACHE_DIR"] = str(_TEST_COMPRESSED_CACHE_DIR)
+_removed_cloud_prefix = "AWS_" + "KMS_CMK_"
+for _variable in tuple(os.environ):
+    if _variable.startswith(_removed_cloud_prefix) or _variable == (
+        "ECHOROO_PII_HASH_ROTATION_COMPLETE"
+    ):
+        os.environ.pop(_variable, None)
+os.environ["KEYRING_FILE"] = str(_TEST_KEYRING_FILE)
+os.environ["KEYRING_TOTP_KEY"] = "test-totp-wrap"
+os.environ["KEYRING_TOTP_KEY_VERSION"] = "1"
+os.environ["KEYRING_PII_KEY"] = "test-pii-hmac"
+os.environ["KEYRING_AUDIT_KEY"] = "test-audit-hmac"
+for _variable in (
+    "KEYRING_TOTP_KEY_OLD",
+    "KEYRING_TOTP_KEY_VERSION_OLD",
+    "KEYRING_PII_KEY_V2",
+):
+    os.environ.pop(_variable, None)
 _TEST_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 (_TEST_STORAGE_ROOT / ".echoroo-storage").touch(exist_ok=True)
 
@@ -86,6 +130,33 @@ from echoroo.core.database import get_db
 from echoroo.core.settings import get_settings
 from echoroo.main import create_app
 from echoroo.models.base import Base
+
+
+@pytest.fixture(autouse=True)
+def _reset_keyring_cache() -> Any:
+    """Reset the process-local keyring selection around every test."""
+    from echoroo.core import keyring
+
+    keyring.reset_cache()
+    yield
+    keyring.reset_cache()
+
+
+@pytest.fixture
+def select_keys(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Return a helper for selecting alternate test keyring roles."""
+    settings = get_settings()
+
+    def _select_keys(**settings_overrides: object) -> None:
+        for name, value in settings_overrides.items():
+            if not name.startswith("KEYRING_"):
+                raise ValueError("select_keys accepts only KEYRING_* settings")
+            monkeypatch.setattr(settings, name, value)
+        from echoroo.core import keyring
+
+        keyring.reset_cache()
+
+    return _select_keys
 
 
 @pytest.fixture
@@ -301,10 +372,7 @@ def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001
                 for attempt in range(5):
                     try:
                         await conn.execute(
-                            sa.text(
-                                f'CREATE DATABASE "{worker_db_name}" '
-                                f'TEMPLATE "{base_db_name}"'
-                            )
+                            sa.text(f'CREATE DATABASE "{worker_db_name}" TEMPLATE "{base_db_name}"')
                         )
                         last_error = None
                         break
@@ -319,9 +387,7 @@ def pytest_configure(config: pytest.Config) -> None:  # noqa: ARG001
         # Defensive no-op: the TEMPLATE clone already carries the ``vector``
         # extension from the base database, but re-assert it idempotently
         # in case a future base database is ever provisioned without it.
-        worker_engine = create_async_engine(
-            worker_url, echo=False, poolclass=NullPool
-        )
+        worker_engine = create_async_engine(worker_url, echo=False, poolclass=NullPool)
         try:
             async with worker_engine.begin() as conn:
                 await conn.execute(sa.text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -412,9 +478,7 @@ async def _sync_0023_license_schema(engine: AsyncEngine) -> None:
             list(CANONICAL_TEST_LICENSES),
         )
         await conn.execute(
-            sa.text(
-                "ALTER TABLE projects ADD COLUMN IF NOT EXISTS license_id VARCHAR(50) NULL"
-            )
+            sa.text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS license_id VARCHAR(50) NULL")
         )
         await conn.execute(
             sa.text(
@@ -507,10 +571,7 @@ async def _sync_0023_license_schema(engine: AsyncEngine) -> None:
             )
         )
         await conn.execute(
-            sa.text(
-                "CREATE INDEX IF NOT EXISTS ix_projects_license_id "
-                "ON projects (license_id)"
-            )
+            sa.text("CREATE INDEX IF NOT EXISTS ix_projects_license_id ON projects (license_id)")
         )
         await conn.execute(sa.text("ALTER TABLE projects DROP COLUMN IF EXISTS license"))
         await conn.execute(
@@ -683,9 +744,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " WHERE table_name = 'superuser_approval_requests')"
             )
         )
-        approval_requests_exists = bool(
-            approval_requests_exists_result.scalar()
-        )
+        approval_requests_exists = bool(approval_requests_exists_result.scalar())
 
         # Phase 16 Batch 6g-2: ``platform_audit_log`` and ``project_audit_log``
         # are created by Alembic 0001 (no ORM model). The T993/T993a performance
@@ -738,9 +797,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " WHERE tgname = 'project_audit_log_project_exists')"
             )
         )
-        project_exists_trigger_exists = bool(
-            project_exists_trigger_exists_result.scalar()
-        )
+        project_exists_trigger_exists = bool(project_exists_trigger_exists_result.scalar())
 
         project_audit_log_fk_exists_result = await conn.execute(
             sa.text(
@@ -749,9 +806,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " AND conname = 'project_audit_log_project_id_fkey')"
             )
         )
-        project_audit_log_fk_exists = bool(
-            project_audit_log_fk_exists_result.scalar()
-        )
+        project_audit_log_fk_exists = bool(project_audit_log_fk_exists_result.scalar())
 
         # Phase 17 A-11: ``two_factor_reset_requests`` and companions are
         # created by Alembic 0014 and via ORM Base.metadata. Probe them
@@ -801,9 +856,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " AND column_name = 'email_hash_v2')"
             )
         )
-        invitation_v2_col_exists = bool(
-            invitation_v2_col_exists_result.scalar()
-        )
+        invitation_v2_col_exists = bool(invitation_v2_col_exists_result.scalar())
         audit_v2_col_exists_result = await conn.execute(
             sa.text(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.columns"
@@ -826,9 +879,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " AND column_name = 'gbif_accepted_usage_key')"
             )
         )
-        taxa_reconciliation_col_exists = bool(
-            taxa_reconciliation_col_exists_result.scalar()
-        )
+        taxa_reconciliation_col_exists = bool(taxa_reconciliation_col_exists_result.scalar())
 
         # WS-A v2 slice 3 (Alembic 0035): probe the Catalogue of Life XR
         # identity columns added to ``taxa``. Same rationale as the 0027 probe
@@ -857,9 +908,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " WHERE table_name = 'taxon_identity_history')"
             )
         )
-        taxon_identity_history_exists = bool(
-            taxon_identity_history_exists_result.scalar()
-        )
+        taxon_identity_history_exists = bool(taxon_identity_history_exists_result.scalar())
 
         taxon_concept_relations_exists_result = await conn.execute(
             sa.text(
@@ -867,9 +916,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " WHERE table_name = 'taxon_concept_relations')"
             )
         )
-        taxon_concept_relations_exists = bool(
-            taxon_concept_relations_exists_result.scalar()
-        )
+        taxon_concept_relations_exists = bool(taxon_concept_relations_exists_result.scalar())
 
         # W1-4 (Alembic 0032): probe the new ``detection_runs.run_type`` column.
         # ``Base.metadata.create_all`` never alters an existing table, so a
@@ -882,9 +929,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " AND column_name = 'run_type')"
             )
         )
-        detection_run_type_col_exists = bool(
-            detection_run_type_col_exists_result.scalar()
-        )
+        detection_run_type_col_exists = bool(detection_run_type_col_exists_result.scalar())
 
         # Alembic 0038: probe the first resumable-upload column. The ORM
         # ``create_all`` call below never alters an existing ``upload_files``
@@ -905,9 +950,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 " WHERE t.typname = 'uploadfilestatus' AND e.enumlabel = 'skipped')"
             )
         )
-        upload_resumable_cols_exist = bool(
-            upload_resumable_cols_exist_result.scalar()
-        )
+        upload_resumable_cols_exist = bool(upload_resumable_cols_exist_result.scalar())
 
         # Existing test DBs may still carry the pre-0017 project_id FK. We
         # drop it below before any early return so hard-deleted projects do
@@ -1076,10 +1119,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         sampling_round_items_table_exists = bool(
             (
                 await _conn.execute(
-                    sa.text(
-                        "SELECT to_regclass('public.sampling_round_items')"
-                        " IS NOT NULL"
-                    )
+                    sa.text("SELECT to_regclass('public.sampling_round_items') IS NOT NULL")
                 )
             ).scalar()
         )
@@ -1127,10 +1167,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         table_exists = bool(
             (
                 await conn.execute(
-                    sa.text(
-                        "SELECT to_regclass('public.recording_annotations')"
-                        " IS NOT NULL"
-                    )
+                    sa.text("SELECT to_regclass('public.recording_annotations') IS NOT NULL")
                 )
             ).scalar()
         )
@@ -1163,10 +1200,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ):
                 # Drifted definition — drop so the canonical CREATE below wins.
                 await conn.execute(
-                    sa.text(
-                        "DROP INDEX IF EXISTS"
-                        " uq_recording_annotations_custom_svm"
-                    )
+                    sa.text("DROP INDEX IF EXISTS uq_recording_annotations_custom_svm")
                 )
 
             await conn.execute(
@@ -1203,22 +1237,14 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # exist, e.g. local dev without the security-suite role provisioned).
     async with engine.begin() as conn:
         echoroo_app_role_exists = (
-            await conn.execute(
-                sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app'")
-            )
+            await conn.execute(sa.text("SELECT 1 FROM pg_roles WHERE rolname = 'echoroo_app'"))
         ).scalar()
         if echoroo_app_role_exists:
             await conn.execute(
-                sa.text(
-                    "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public"
-                    " TO echoroo_app"
-                )
+                sa.text("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO echoroo_app")
             )
             await conn.execute(
-                sa.text(
-                    "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public"
-                    " TO echoroo_app"
-                )
+                sa.text("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app")
             )
 
     non_license_schema_current = (
@@ -1354,11 +1380,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # so this legacy heal must not run before that table exists.
     async with engine.connect() as _conn:
         _taxa_table_exists = bool(
-            (
-                await _conn.execute(
-                    sa.text("SELECT to_regclass('public.taxa') IS NOT NULL")
-                )
-            ).scalar()
+            (await _conn.execute(sa.text("SELECT to_regclass('public.taxa') IS NOT NULL"))).scalar()
         )
     if _taxa_table_exists and not taxa_reconciliation_col_exists:
         async with engine.begin() as conn:
@@ -1398,10 +1420,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
                 )
             )
             await conn.execute(
-                sa.text(
-                    "CREATE INDEX IF NOT EXISTS ix_taxa_col_xr_id "
-                    "ON taxa (col_xr_id)"
-                )
+                sa.text("CREATE INDEX IF NOT EXISTS ix_taxa_col_xr_id ON taxa (col_xr_id)")
             )
             await conn.execute(
                 sa.text(
@@ -1439,8 +1458,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             (
                 "detectionsource",
                 [
-                    "birdnet", "perch", "perch_search", "similarity_search",
-                    "custom_svm", "human", "sampling_round",
+                    "birdnet",
+                    "perch",
+                    "perch_search",
+                    "similarity_search",
+                    "custom_svm",
+                    "human",
+                    "sampling_round",
                 ],
             ),
             ("detectionstatus", ["unreviewed", "confirmed", "rejected"]),
@@ -1448,9 +1472,20 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             ("detectionruntype", ["detection", "embedding", "custom"]),
             (
                 "uploadsessionstatus",
-                ["issued", "uploaded", "validating", "validated", "importing", "imported", "failed"],
+                [
+                    "issued",
+                    "uploaded",
+                    "validating",
+                    "validated",
+                    "importing",
+                    "imported",
+                    "failed",
+                ],
             ),
-            ("uploadfilestatus", ["pending", "uploaded", "valid", "invalid", "imported", "skipped"]),
+            (
+                "uploadfilestatus",
+                ["pending", "uploaded", "valid", "invalid", "imported", "skipped"],
+            ),
             ("searchsessionstatus", ["pending", "running", "completed", "failed"]),
             ("votetype", ["agree", "disagree", "unsure"]),
             (
@@ -1482,9 +1517,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
 
         # (b) Create ``users`` (ORM table) + raw ``superusers`` upfront.
         users_table = Base.metadata.tables["users"]
-        await conn.run_sync(
-            lambda c: users_table.create(c, checkfirst=True)
-        )
+        await conn.run_sync(lambda c: users_table.create(c, checkfirst=True))
         await conn.execute(
             sa.text(
                 """
@@ -1509,14 +1542,10 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         # (unsorted; sort still happens internally inside ``create_all``
         # but it can now resolve the stub FK).
         _tables_to_create = [
-            t
-            for t in Base.metadata.tables.values()
-            if not t.info.get("_phase13_stub")
+            t for t in Base.metadata.tables.values() if not t.info.get("_phase13_stub")
         ]
         await conn.run_sync(
-            lambda c: Base.metadata.create_all(
-                c, tables=_tables_to_create, checkfirst=True
-            )
+            lambda c: Base.metadata.create_all(c, tables=_tables_to_create, checkfirst=True)
         )
 
         # W1-4 (Alembic 0032): ``detection_runs.run_type`` is a new NOT NULL
@@ -1551,21 +1580,13 @@ async def setup_test_database(engine: AsyncEngine) -> None:
             )
         )
         await conn.execute(
-            sa.text(
-                "ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS declared_size "
-                "BIGINT"
-            )
+            sa.text("ALTER TABLE upload_files ADD COLUMN IF NOT EXISTS declared_size BIGINT")
         )
         await conn.execute(
-            sa.text(
-                "UPDATE upload_files SET declared_size = file_size "
-                "WHERE declared_size IS NULL"
-            )
+            sa.text("UPDATE upload_files SET declared_size = file_size WHERE declared_size IS NULL")
         )
         await conn.execute(
-            sa.text(
-                "ALTER TABLE upload_files ALTER COLUMN declared_size SET NOT NULL"
-            )
+            sa.text("ALTER TABLE upload_files ALTER COLUMN declared_size SET NOT NULL")
         )
         await conn.execute(
             sa.text(
@@ -1702,8 +1723,7 @@ async def setup_test_database(engine: AsyncEngine) -> None:
         )
         await conn.execute(
             sa.text(
-                "CREATE INDEX IF NOT EXISTS ix_token_families_user_id "
-                "ON token_families (user_id)"
+                "CREATE INDEX IF NOT EXISTS ix_token_families_user_id ON token_families (user_id)"
             )
         )
         await conn.execute(
@@ -1950,17 +1970,12 @@ async def setup_test_database(engine: AsyncEngine) -> None:
     # PostgreSQL cannot add an enum label in the transaction that creates or
     # uses it. Run this on AUTOCOMMIT for both fresh and reused databases.
     async with engine.connect() as conn:
-        await (
-            await conn.execution_options(isolation_level="AUTOCOMMIT")
-        ).execute(
-            sa.text(
-                "ALTER TYPE uploadfilestatus ADD VALUE IF NOT EXISTS 'skipped'"
-            )
+        await (await conn.execution_options(isolation_level="AUTOCOMMIT")).execute(
+            sa.text("ALTER TYPE uploadfilestatus ADD VALUE IF NOT EXISTS 'skipped'")
         )
 
     await _sync_0023_license_schema(engine)
     return
-
 
 
 async def cleanup_test_data(session: AsyncSession) -> None:
@@ -2252,9 +2267,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
     _original_authenticate_api_key = AuthRouterMiddleware._authenticate_api_key
 
-    async def _patched_authenticate_api_key(
-        self: AuthRouterMiddleware, request: Any
-    ) -> Any:
+    async def _patched_authenticate_api_key(self: AuthRouterMiddleware, request: Any) -> Any:
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.lower().startswith("bearer "):
             # Reuse production legacy-fallback behaviour.
@@ -2388,9 +2401,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     # hand-rolled list+reversed loop maintained, but tied to pytest's
     # canonical cleanup machinery rather than ad-hoc ``setattr`` calls.
     _session_monkeypatch = pytest.MonkeyPatch()
-    _session_monkeypatch.setattr(
-        _db_mod, "AsyncSessionLocal", session_maker, raising=True
-    )
+    _session_monkeypatch.setattr(_db_mod, "AsyncSessionLocal", session_maker, raising=True)
     for _modname in _direct_session_local_modules:
         # ``import_module`` is allowed to raise — a missing entry in this
         # tuple means the production module was renamed/removed and the
@@ -2402,9 +2413,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         # MUST expose ``AsyncSessionLocal`` at import time; if a module
         # legitimately stops needing the rebind it should be removed
         # from ``_direct_session_local_modules`` rather than tolerated.
-        _session_monkeypatch.setattr(
-            _mod, "AsyncSessionLocal", session_maker, raising=True
-        )
+        _session_monkeypatch.setattr(_mod, "AsyncSessionLocal", session_maker, raising=True)
 
     # Override get_db dependency
     async def override_get_db() -> AsyncGenerator[AsyncSession, None]:

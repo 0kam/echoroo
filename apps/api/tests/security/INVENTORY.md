@@ -36,7 +36,7 @@ update), 2026-05-01.
 | 8 | Trusted-user gating (allowlist + runtime) | `tests/security/authorization/test_trusted_allowlist_runtime.py`, `test_trusted_gate_runtime_http.py` | 16 | A01, A04 |
 | 9 | Superuser break-glass / last protection | `tests/security/race_conditions/test_superuser_break_glass_mode.py`, `test_superuser_last_protection.py` | 13 | A01, A04 |
 | 10 | Replay protection (security_stamp, refresh families, actor binding) | `tests/security/authentication/test_jwt_replay_across_security_stamp.py`, `test_refresh_token_family_reuse.py`, `test_security_stamp_revocation.py`, `tests/security/authorization/test_replay_actor_binding.py` | 19 | A07, A09 |
-| 11 | KMS / envelope encryption / HMAC | `tests/unit/core/test_kms.py`, `tests/security/audit_log/test_chain_integrity_serialize.py` | 22 | A02 (Cryptographic Failures), A08 |
+| 11 | Local keyring / envelope encryption / HMAC | `tests/unit/core/test_kms.py`, `tests/security/audit_log/test_chain_integrity_serialize.py` | 13 | A02 (Cryptographic Failures), A08 |
 
 ## Detailed file listing
 
@@ -88,9 +88,9 @@ update), 2026-05-01.
 - `tests/security/search_leak/test_restricted_search_exclusion.py` — 14
 - `tests/security/search_leak/test_search_gate_isolation.py` — 14
 
-### 11. KMS / envelope encryption (cross-listed)
-- `tests/unit/core/test_kms.py` — 18 (TOTP DEK wrap/unwrap, PII keyed HMAC, audit chain HMAC, invitation HMAC dual-key)
-- `tests/security/audit_log/test_chain_integrity_serialize.py` — 4 (audit chain tamper-evident)
+### 11. Local keyring / envelope encryption (cross-listed)
+- `tests/unit/core/test_kms.py` — 8 (TOTP DEK wrap/unwrap, PII keyed HMAC, audit chain HMAC)
+- `tests/security/audit_log/test_chain_integrity_serialize.py` — 5 (audit chain writer and tamper-evident ordering)
 
 ## Phase 16 Batch 6f additions (T971-T979 + T979a-h, **completed 2026-04-30**)
 
@@ -101,10 +101,8 @@ Codex Phase 16 plan review で「現案では Rate limiting / Input validation /
 | T971 | `tests/security/csrf/test_samesite_strict.py` | 7 | 0 | 7 CSRF | A04, A05 |
 | T972 | `tests/security/csrf/test_api_v1_no_cookie.py` | 6 | 0 | 7 CSRF | A05, A07 |
 | T973 | `tests/security/race_conditions/test_streaming_permission_change.py` | 3 | 1 (per-chunk guard) | 5 Race | A01, A04 |
-| T974 | `tests/security/key_rotation/test_hmac_dual_key.py` | 6 | 0 | 11 Crypto | A02 |
-| T975 | `tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py` | 5 | 4 (helpers未実装) | 11 Crypto | A02, A09 |
+| T975 | `tests/security/key_rotation/test_pii_hash_key_rotation_dual_write.py` | 3 | 0 | 11 Crypto | A02, A09 |
 | T976 | `tests/security/invitations/test_email_header_injection.py` | 13 | 0 (3 skip member-import) | 4 Invitations | A03, A04 |
-| T977 | `tests/security/key_rotation/test_cmk_deletion_window_guard.py` | 5 | 4 (kms_ops未実装) | 11 Crypto | A02 |
 | T978 | `tests/security/api_key/test_rotation_180d_scope_degrade.py` | 6 | 2 (180d/270d未実装) | 11 Crypto | A02, A09 |
 | T979 | `tests/security/authentication/test_clickjacking_frame_ancestors.py` | 14 | 0 | 1 Auth | A05 |
 | T979a | `tests/security/rate_limiting/test_password_reset_and_invitation_enumeration.py` | 10 | 5 (stub+event-loop) | **NEW Rate limiting** | A07 |
@@ -163,9 +161,8 @@ Combined with the 310 Phase 1-15 baseline → **~449 security tests total** (5.9
   - Step -1 universal api-key veto for `is_superuser_only` actions (Phase 15
     Batch 4 R4) DOES fire under the shim — superuser-only positive tests
     written against this `client` fixture + Bearer JWT will see a false 403.
-- KMS / moto fixtures in `tests/unit/core/test_kms.py` clear
-  `AWS_ENDPOINT_URL_KMS` / `AWS_ENDPOINT_URL` before entering `mock_aws()` so
-  the dev-container LocalStack endpoint does not bleed into unit tests.
+- Keyring fixtures in `tests/conftest.py` provision fresh per-worker key
+  material and reset the process cache around every test.
 
 ## Phase 16 Batch 6g additions (T980-T984 + T979z + T981b + T990-T994 + T992a-d + T993a + T997b, **completed 2026-04-30 / 2026-05-01**)
 

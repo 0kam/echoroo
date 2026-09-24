@@ -1,5 +1,6 @@
 """Application settings and configuration management."""
 
+import os
 import re
 from functools import lru_cache
 from typing import Annotated, Any, Literal
@@ -119,8 +120,8 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Local keyring selectors. These fields are intentionally optional and
-    # unused until the keyring is wired into the application in slice 2.
+    # Local keyring selectors. They are required at runtime and validated on
+    # first use and at boot by ``echoroo.core.keyring``, not by Pydantic.
     KEYRING_FILE: str = Field(
         default="/run/secrets/echoroo-keyring.json",
         description="Path to the local Echoroo keyring JSON file.",
@@ -510,27 +511,6 @@ class Settings(BaseSettings):
         key = (self.XENO_CANTO_API_KEY or "").strip()
         return bool(key) and key.lower() != "demo"
 
-    # Phase 17 backlog A-2 — PII hash CMK rotation (FR-091b dual-write).
-    #
-    # ``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` is opt-in: when unset the system
-    # runs in single-key mode against ``AWS_KMS_CMK_PII_HASH_ALIAS`` and
-    # behaves identically to pre-rotation deployments. When set, every
-    # new audit row + invitation row is hashed under BOTH v1 and v2;
-    # historical rows remain searchable via the v1 fallback path in
-    # :func:`echoroo.core.kms.verify_pii_hash`. Operators set this env
-    # var at the moment they want rotation to begin and unset it (along
-    # with re-pointing ``AWS_KMS_CMK_PII_HASH_ALIAS`` at the v2 CMK)
-    # once the backfill has caught up. There is intentionally no
-    # production-secret guard here: the variable is *operationally*
-    # transient, not a baseline requirement.
-    AWS_KMS_CMK_PII_HASH_ALIAS_V2: str | None = Field(
-        default=None,
-        description=(
-            "Optional v2 PII hash CMK alias. Setting this enables dual-write "
-            "rotation per FR-091b; leave unset for single-key deployments."
-        ),
-    )
-
     # Informational: the FR-091b rotation contract pegs the dual-write
     # window at 90 days. No code path consumes this setting today —
     # the daily backfill worker is unconditional, and the eventual
@@ -630,62 +610,6 @@ class Settings(BaseSettings):
             "Kid string accepted from previously issued tokens during the "
             "rotation grace window. None when no rotation is in progress. "
             "MUST be paired with TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY_OLD."
-        ),
-    )
-
-    # Phase 17 backlog A-8 — TOTP DEK CMK rotation (FR-091b).
-    #
-    # ``two_factor_dek_cmk_alias_new`` and ``two_factor_dek_kid_new`` are the
-    # currently active CMK alias / DEK version stamped onto every newly
-    # encrypted TOTP secret. ``..._alias_old`` and ``..._kid_old`` are
-    # populated ONLY during a rotation grace window so that records still
-    # carrying the previous DEK version can be decrypted (and rewrapped via
-    # ``scripts/rewrap_dek.py``) before the old CMK is retired.
-    #
-    # Routing contract (see ``_resolve_dek_alias_for_version`` in
-    # :mod:`echoroo.services.two_factor_service`):
-    #   * ``users.two_factor_secret_dek_version == kid_new`` → alias_new
-    #   * ``users.two_factor_secret_dek_version == kid_old`` (when set) → alias_old
-    #   * otherwise → reject with ``TwoFactorError`` (operator must run
-    #     ``scripts/rewrap_dek.py`` before deploying a configuration that
-    #     drops the old version).
-    #
-    # See ``docs/runbook/dek_rewrap.md`` for the operational rotation
-    # procedure (env-driven, no source code change required).
-    two_factor_dek_cmk_alias_new: str = Field(
-        default="alias/echoroo-totp-dek",
-        validation_alias="AWS_KMS_CMK_2FA_DEK_ALIAS_NEW",
-        description=(
-            "Current CMK alias used to wrap newly encrypted TOTP DEKs. "
-            "Maps to ``two_factor_dek_kid_new``. Bump this (and rotate "
-            "``..._kid_new``) when starting a CMK rotation."
-        ),
-    )
-    two_factor_dek_cmk_alias_old: str | None = Field(
-        default=None,
-        validation_alias="AWS_KMS_CMK_2FA_DEK_ALIAS_OLD",
-        description=(
-            "Previous CMK alias accepted for decrypting historical TOTP "
-            "DEKs during the rotation grace window. MUST be paired with "
-            "``two_factor_dek_kid_old``; both unset means no rotation in "
-            "progress. See docs/runbook/dek_rewrap.md."
-        ),
-    )
-    two_factor_dek_kid_new: int = Field(
-        default=1,
-        validation_alias="AWS_KMS_CMK_2FA_DEK_KID_NEW",
-        description=(
-            "DEK version stamped on newly encrypted TOTP secrets. Bump on "
-            "rotation (1 → 2 → ...). Maps to ``two_factor_dek_cmk_alias_new``."
-        ),
-    )
-    two_factor_dek_kid_old: int | None = Field(
-        default=None,
-        validation_alias="AWS_KMS_CMK_2FA_DEK_KID_OLD",
-        description=(
-            "Previous DEK version accepted from records still wrapped by "
-            "``two_factor_dek_cmk_alias_old``. None when no rotation is in "
-            "progress. MUST be paired with ``two_factor_dek_cmk_alias_old``."
         ),
     )
 
@@ -931,6 +855,11 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
         """Ensure sensitive secrets are not left at insecure default values in production/staging."""
+        for variable in sorted(os.environ):
+            if variable == "ECHOROO_PII_HASH_ROTATION_COMPLETE" or variable.startswith(
+                "AWS_KMS_CMK_"
+            ):
+                raise ValueError(f"{variable} is no longer supported; see docs/runbook/keyring.md")
         if self.ENVIRONMENT in ("production", "staging"):
             weak_defaults = [
                 "your-secret-key-change-in-production",
@@ -979,27 +908,6 @@ class Settings(BaseSettings):
                     "set during a rotation grace window, must be a "
                     "strong secret (min 32 chars) in production/staging "
                     "— see docs/runbook/two_factor_confirmation_key_rotation.md"
-                )
-            # Phase 17 A-8: TOTP DEK rotation grace window MUST configure
-            # alias_old AND kid_old together (or both unset). A
-            # half-configured pair would either leak un-rewrapped records
-            # past the rotation cutover (alias only) or route every
-            # historical record to the wrong CMK (kid only). Symmetric to
-            # the A-12 ``..._OLD`` guard above.
-            old_alias = self.two_factor_dek_cmk_alias_old
-            old_kid = self.two_factor_dek_kid_old
-            if (old_alias is None) != (old_kid is None) or (
-                old_alias is not None and old_alias == ""
-            ):
-                raise ValueError(
-                    "two_factor_dek_cmk_alias_old and two_factor_dek_kid_old "
-                    "must be set together (or both unset) — see "
-                    "docs/runbook/dek_rewrap.md"
-                )
-            if old_kid is not None and old_kid == self.two_factor_dek_kid_new:
-                raise ValueError(
-                    "two_factor_dek_kid_old must differ from "
-                    "two_factor_dek_kid_new during a rotation grace window"
                 )
             # spec/011 NFR-011-010 (prod / staging strength bar):
             # the 32-char minimum for HMAC keys only applies in

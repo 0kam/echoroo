@@ -3,7 +3,7 @@ name: CI (006-permissions-redesign)
 # This workflow adds the 006-permissions-redesign specific CI gates on top of
 # the existing `test.yml` workflow. It introduces five categories of jobs:
 #
-#   1. Permission / response / search / raw-coordinates / KMS isolation lint
+#   1. Permission / response / search / raw-coordinates / storage isolation lint
 #      scripts (T100a-T100d). These run in **warn mode** during the
 #      Foundational Phase 2 → Phase 3 migration and will be promoted to
 #      blocking by the `permissions-strict-gate` job below.
@@ -167,7 +167,7 @@ jobs:
         run: python scripts/lint_hardcoded_paraglide_strings.py --fail-on-violation
 
   # ---------------------------------------------------------------------------
-  # T100a-T100d: permission / response / search / raw-coordinate / KMS
+  # T100a-T100d: permission / response / search / raw-coordinate / storage
   # isolation lints in warn mode. Each lint exits 0 unless its strict flag is
   # set, so step-level continue-on-error is belt-and-suspenders.
   # ---------------------------------------------------------------------------
@@ -216,14 +216,6 @@ jobs:
       - name: Lint - no raw coordinates (T100d)
         continue-on-error: true
         run: python scripts/lint_no_raw_coordinates.py
-
-      # T100d (2/2) - the 4 KMS CMK aliases must remain isolated; no code
-      # path may reuse a single alias across distinct purposes (SC-019).
-      # NOTE: lint_kms_isolation.py is strict-by-default; pass --no-fail
-      # explicitly so the warn-mode job does not flip the step red.
-      - name: Lint - KMS alias isolation (T100d)
-        continue-on-error: true
-        run: python scripts/lint_kms_isolation.py --no-fail
 
       # spec/012 T055 / SC-006 - no hardcoded license short_name literals
       # (CC0 / CC-BY / CC-BY-NC / CC-BY-SA) in the API package, frontend
@@ -520,9 +512,6 @@ jobs:
       - name: Lint - no raw coordinates (strict)
         run: python scripts/lint_no_raw_coordinates.py --fail-on-violation
 
-      - name: Lint - KMS alias isolation (strict, default behaviour)
-        run: python scripts/lint_kms_isolation.py
-
       - name: Lint - S3 isolation (strict, storage migration slice 1)
         run: python scripts/lint_s3_isolation.py
 
@@ -604,7 +593,7 @@ jobs:
   #              services/superuser_service.py, services/api_key_verification.py
   #   Additional: middleware/auth.py, middleware/auth_router.py,
   #               services/webauthn_service.py, workers/dormancy_check.py
-  #   Existing:  core/response_filter.py, core/audit.py, core/kms.py
+  #   Existing:  core/response_filter.py, core/audit.py, core/keyring.py
   # ---------------------------------------------------------------------------
   mutation-testing:
     name: Mutation testing (T995, hard gate >= 80% per module)
@@ -625,7 +614,7 @@ jobs:
     #   non-zero exit from `scripts/run_mutmut.py run` will hard-fail the job.
     #
     # Final per-module scores (PR #59 run 25600683403):
-    #   core.audit 97.3% / core.kms 91.7% / core.permissions 97.2% /
+    #   core.audit 97.3% / core.keyring pending / core.permissions 97.2% /
     #   core.response_filter 100% / middleware.auth 100% /
     #   middleware.auth_router 94.9% / services.api_key_verification 87.4% /
     #   services.superuser_service 84.1% / services.webauthn_service 86.0% /
@@ -639,8 +628,8 @@ jobs:
     env:
       # mutmut reads configuration from pyproject.toml [tool.mutmut] only
       # (mutmut 3.x; apps/api/mutmut.toml was dead config and has been removed).
-      # tests/security/ requires a real Postgres/Redis (the autouse moto
-      # fixture in tests/{integration,security}/conftest.py covers AWS only).
+      # tests/security/ requires a real Postgres/Redis. The root conftest
+      # provisions the local keyring before application imports.
       # Without these env vars the baseline pytest exits non-zero and mutmut
       # reports every mutant as "not checked". This block mirrors the
       # security-tests job env.
@@ -942,7 +931,7 @@ jobs:
     # (PR #36 advisory_lock xfail and PR #37 release-readiness checklist).
     # Earlier runner-surface flakes (postgres testcontainer, redis race in
     # rate-limit suite) were fixed by PR-C0/C2/C3/C5 (junit observability,
-    # pgvector image pinning, autouse moto KMS fixture, conftest tightening).
+    # pgvector image pinning, and conftest tightening).
     # See PHASE17_BACKLOG.md §C history.
     env:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/echoroo_ci
@@ -952,34 +941,8 @@ jobs:
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
       ENVIRONMENT: development
-      # Phase 17 A-8: tests/security/crypto/test_dek_rewrap_and_kms_isolation.py
-      # walks upward from __file__ to locate scripts/rewrap_dek.py and
-      # scripts/lint_kms_isolation.py. Setting REPO_ROOT to the workspace
-      # short-circuits the search and lets the test fail loudly when the
-      # script is missing instead of silently skipping after a layout
-      # change. The fallback upward search remains for local pytest runs.
+      # Security tests use this to resolve repository-level scripts.
       REPO_ROOT: ${{ github.workspace }}
-      # PR-C5 (Phase 17 §C, 2026-05-07): minimal AWS baseline.
-      # The autouse moto fixture in tests/{integration,security}/conftest.py
-      # is the primary KMS isolation mechanism. The job-level vars below
-      # cover only the cases the fixture cannot reach: dummy credentials
-      # and a pinned region so boto3 client construction in module-import
-      # / session-scoped fixtures does not raise NoCredentialsError before
-      # the autouse fixture has a chance to run. AWS_ENDPOINT_URL_KMS is
-      # intentionally unset so moto's default endpoint discovery can
-      # interpose its in-process fake; the fixture delenvs it as well.
-      AWS_DEFAULT_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: testing
-      AWS_SECRET_ACCESS_KEY: testing
-      AWS_KMS_REGION: us-east-1
-      # Alias env vars are intentionally NOT pinned here. The autouse
-      # moto fixture in tests/{integration,security}/conftest.py always
-      # rewrites them to canonical values matching the freshly-provisioned
-      # CMKs. Pinning them at the job level would create a false sense of
-      # safety: any code path that bypasses the autouse fixture would
-      # still raise UnrecognizedClientException because no real CMK
-      # exists at the pinned alias, and we would lose the loud signal
-      # that the autouse fixture failed to load.
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -1131,23 +1094,10 @@ jobs:
       INVITATION_TOKEN_KID_NEW: ci-test-kid-001
       INVITATION_TOKEN_HMAC_KEY: ci-test-invitation-hmac-key-must-be-at-least-32-chars-long
       ENVIRONMENT: development
-      # PR-C5 (Phase 17 §C, 2026-05-07): minimal AWS baseline.
-      # See the security-tests env block above for the full rationale.
-      # The autouse moto fixture in tests/integration/conftest.py is the
-      # primary KMS isolation mechanism; these vars only cover the cases
-      # the fixture cannot reach (module-import / session-scoped paths).
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: testing
       AWS_SECRET_ACCESS_KEY: testing
       AWS_KMS_REGION: us-east-1
-      # Alias env vars are intentionally NOT pinned here. The autouse
-      # moto fixture in tests/{integration,security}/conftest.py always
-      # rewrites them to canonical values matching the freshly-provisioned
-      # CMKs. Pinning them at the job level would create a false sense of
-      # safety: any code path that bypasses the autouse fixture would
-      # still raise UnrecognizedClientException because no real CMK
-      # exists at the pinned alias, and we would lose the loud signal
-      # that the autouse fixture failed to load.
     services:
       postgres:
         image: pgvector/pgvector:pg16

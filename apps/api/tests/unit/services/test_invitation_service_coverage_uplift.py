@@ -8,7 +8,7 @@ uplift fills the residual defensive branches:
 * Token + base64 helpers — :func:`_b64u_decode` re-padding,
   :func:`verify_invitation_token` malformed parts / bad expiry / bad
   MAC / expired / valid round-trip.
-* :func:`_email_matches_invitation` KMS-fail fallback to legacy hash
+* :func:`_email_matches_invitation` keyring-failure fallback to legacy hash
   match (drives the Round 2 R1-I3 OR-combine).
 * :func:`coerce_granted_permissions` — empty input + unknown name +
   not-in-allowlist + Permission instance pass-through.
@@ -37,6 +37,7 @@ from uuid import uuid4
 
 import pytest
 
+from echoroo.core.keyring import KeyringAuthError
 from echoroo.core.permissions import Permission
 from echoroo.models.enums import (
     ProjectInvitationKind,
@@ -91,9 +92,7 @@ class _FakeRedis:
         if "project:" in name and self.fail_on_incr_project:
             raise ConnectionError("redis project incr down")
         if name not in self.values:
-            base = (
-                self.project_initial if "project:" in name else self.actor_initial
-            )
+            base = self.project_initial if "project:" in name else self.actor_initial
             self.values[name] = base
         self.values[name] = int(self.values[name]) + 1
         return int(self.values[name])
@@ -182,7 +181,8 @@ def test_verify_invitation_token_rejects_bad_signature() -> None:
     raw = _b64u_encode(b"\x42" * 32)
     expires_at = datetime.now(UTC) + timedelta(hours=1)
     valid = sign_invitation_token(
-        raw_token_b64u=raw, expires_at=expires_at,
+        raw_token_b64u=raw,
+        expires_at=expires_at,
     )
     parts = valid.split(".")
     # spec/011 step 6: 4-part envelope — swap the last (MAC) component.
@@ -197,52 +197,60 @@ def test_verify_invitation_token_round_trip_succeeds() -> None:
     signed = sign_invitation_token(
         raw_token_b64u=raw, expires_at=expires_at, hmac_secret=HMAC_SECRET
     )
-    decoded_raw, decoded_expiry = verify_invitation_token(
-        signed, hmac_secret=HMAC_SECRET
-    )
+    decoded_raw, decoded_expiry = verify_invitation_token(signed, hmac_secret=HMAC_SECRET)
     assert decoded_raw == raw
     # Round-trip drops sub-second precision (expires_at_unix is int).
     assert int(decoded_expiry.timestamp()) == int(expires_at.timestamp())
 
 
 # ---------------------------------------------------------------------------
-# _email_matches_invitation — KMS path fallback (lines 382-389)
+# _email_matches_invitation — keyring path fallback (lines 382-389)
 # ---------------------------------------------------------------------------
 
 
-def test_email_matches_invitation_falls_back_to_legacy_when_kms_raises(
+def test_email_matches_invitation_falls_back_to_legacy_when_keyring_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When ``verify_pii_hash`` raises, the legacy HMAC compare still wins."""
     email = "alice@example.com"
 
     class _Invitation:
-        # email_hash_v2 must be truthy to exercise the KMS branch.
-        email_hash_v2 = "kms-v2-hash-deadbeef"
+        # email_hash_v2 must be truthy to exercise the keyring branch.
+        email_hash_v2 = "keyring-v2-hash-deadbeef"
         email_hash = svc.hash_email(email, hmac_secret=HMAC_SECRET)
 
     def _boom(*_args: Any, **_kwargs: Any) -> bool:
-        raise RuntimeError("KMS unavailable")
+        raise KeyringAuthError("test authentication failure")
 
     monkeypatch.setattr("echoroo.core.kms.verify_pii_hash", _boom)
 
-    assert _email_matches_invitation(
-        email, _Invitation(), hmac_secret=HMAC_SECRET  # type: ignore[arg-type]
-    ) is True
+    assert (
+        _email_matches_invitation(
+            email,
+            _Invitation(),
+            hmac_secret=HMAC_SECRET,  # type: ignore[arg-type]
+        )
+        is True
+    )
 
 
 def test_email_matches_invitation_returns_false_when_neither_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Neither KMS nor legacy match → ``False`` (the deny branch)."""
+    """Neither keyring nor legacy match → ``False`` (the deny branch)."""
 
     class _Invitation:
         email_hash_v2 = None
         email_hash = "0" * 64  # nothing matches
 
-    assert _email_matches_invitation(
-        "alice@example.com", _Invitation(), hmac_secret=HMAC_SECRET  # type: ignore[arg-type]
-    ) is False
+    assert (
+        _email_matches_invitation(
+            "alice@example.com",
+            _Invitation(),
+            hmac_secret=HMAC_SECRET,  # type: ignore[arg-type]
+        )
+        is False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +273,7 @@ def test_coerce_granted_permissions_rejects_non_trusted_permission() -> None:
     """A real permission name that is not in TRUSTED_ALLOWED_PERMISSIONS."""
     # Pick a Permission that exists but is NOT in the allowlist; we
     # filter by exclusion to remain robust to allowlist edits.
-    forbidden = [
-        p for p in Permission if p not in svc.TRUSTED_ALLOWED_PERMISSIONS
-    ]
+    forbidden = [p for p in Permission if p not in svc.TRUSTED_ALLOWED_PERMISSIONS]
     if not forbidden:
         pytest.skip("every Permission is currently allowlisted for Trusted")
     with pytest.raises(InvitationValidationError, match="not in TRUSTED_ALLOWED"):
@@ -302,9 +308,7 @@ async def test_check_rate_limits_raises_when_project_cap_exceeded() -> None:
     redis = _FakeRedis()
     project_id = uuid4()
     # Pre-load so the project counter passes its cap on first incr.
-    redis.values[f"invitation_rate:project:{project_id}"] = (
-        RATE_LIMIT_PROJECT_PER_HOUR
-    )
+    redis.values[f"invitation_rate:project:{project_id}"] = RATE_LIMIT_PROJECT_PER_HOUR
     with pytest.raises(InvitationRateLimitError, match="project"):
         await check_rate_limits(
             redis,  # type: ignore[arg-type]
@@ -615,10 +619,13 @@ async def test_write_invitation_audit_swallows_open_failure(
 ) -> None:
     failing_factory = _FailingSessionFactory(RuntimeError("audit DB unreachable"))
 
-    with patch(
-        "echoroo.services.invitation.side_effects.AsyncSessionLocal",
-        failing_factory,
-    ), caplog.at_level("WARNING"):
+    with (
+        patch(
+            "echoroo.services.invitation.side_effects.AsyncSessionLocal",
+            failing_factory,
+        ),
+        caplog.at_level("WARNING"),
+    ):
         await _write_invitation_audit(
             action="project.invitation.create",
             actor_user_id=uuid4(),
@@ -631,9 +638,7 @@ async def test_write_invitation_audit_swallows_open_failure(
             after={"status": "pending"},
         )
 
-    assert any(
-        "audit write failed" in record.getMessage() for record in caplog.records
-    )
+    assert any("audit write failed" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio

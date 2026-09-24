@@ -2,12 +2,12 @@
 
 Background
 ----------
-When operators flip on the v2 PII hash CMK by setting
-``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` (see :mod:`echoroo.core.kms`),
+When operators select a v2 PII hash key in ``KEYRING_PII_KEY_V2`` (see
+:mod:`echoroo.core.kms`),
 new audit and invitation rows immediately persist both the v1 and
 v2 hashes. Existing rows still carry only ``email_hash`` (legacy
 Python HMAC) and ``actor_user_id_hash`` / ``ip_hash`` /
-``user_agent_hash`` (KMS v1) — without backfill they would only be
+``user_agent_hash`` (keyring v1) — without backfill they would only be
 discoverable via the v1 fallback path in
 :func:`echoroo.core.kms.verify_pii_hash`, which is fine for
 correctness but defeats the purpose of the rotation.
@@ -36,7 +36,7 @@ task is a no-op once a row has been processed. Batches of 1000
 keep one transaction's lock footprint bounded; subsequent ticks
 fan out across additional batches without coordination.
 
-Single-key mode (``AWS_KMS_CMK_PII_HASH_ALIAS_V2`` unset) is a
+Single-key mode (``KEYRING_PII_KEY_V2`` unset) is a
 no-op fast-path: ``compute_pii_hash_dual`` would return only ``v1``
 and the writer below skips the UPDATE. We log the skip at DEBUG.
 """
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 #: Per-batch row cap. Tuned to keep the implicit row-level lock
 #: window inside one transaction comfortably under 1 second under
-#: production-typical KMS p99 latency (≈5 ms / row).
+#: production-typical keyring HMAC latency.
 _BATCH_SIZE: Final[int] = 1000
 
 
@@ -95,9 +95,9 @@ async def _backfill_invitation_batch(session: AsyncSession) -> int:
         email_plaintext: str = row[1]
         try:
             dual = compute_pii_hash_dual(_canonical_email(email_plaintext))
-        except Exception:  # noqa: BLE001 — KMS transient → skip row, retry tomorrow
+        except Exception:  # noqa: BLE001 — keyring transient → retry tomorrow
             logger.warning(
-                "pii_hash_backfill: KMS error for invitation_id=%s",
+                "pii_hash_backfill: keyring error for invitation_id=%s",
                 invitation_id,
                 exc_info=True,
             )
@@ -133,10 +133,7 @@ async def _run_backfill() -> dict[str, Any]:
     ``celery -A echoroo.workers.celery_app call ...``.
     """
     if get_pii_hash_version() == 1:
-        logger.debug(
-            "pii_hash_backfill: single-key mode (AWS_KMS_CMK_PII_HASH_ALIAS_V2 "
-            "unset); skipping"
-        )
+        logger.debug("pii_hash_backfill: single-key mode (KEYRING_PII_KEY_V2 unset); skipping")
         return {"status": "skipped", "reason": "single_key_mode", "updated": 0}
 
     async with AsyncSessionLocal() as session:
@@ -167,7 +164,7 @@ def pii_hash_backfill_invitations() -> dict[str, Any]:
     """Backfill ``email_hash_v2`` on invitation rows (FR-091b).
 
     Returns a summary dict with the row count. ``status='skipped'``
-    is emitted in single-key mode (no v2 alias configured) so the
+    is emitted in single-key mode (no v2 key configured) so the
     operator dashboard can distinguish "rotation not started" from
     "rotation complete (no candidates left)".
     """

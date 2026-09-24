@@ -43,6 +43,8 @@ from uuid import UUID, uuid4
 import pytest
 import sqlalchemy as sa
 
+from echoroo.core.keyring import KeyringAuthError
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -377,8 +379,7 @@ def test_select_client_ip_rejects_zone_id_ipv6_in_xff() -> None:
     # later allowlist match fails closed.
     assert _normalize_xff_hop("fe80::1%eth0") == "fe80::1%eth0"
     assert (
-        _normalize_xff_hop("[2001:4860:4860::8888%eth0]:443")
-        == "[2001:4860:4860::8888%eth0]:443"
+        _normalize_xff_hop("[2001:4860:4860::8888%eth0]:443") == "[2001:4860:4860::8888%eth0]:443"
     )
 
     # End-to-end: a trusted peer presenting a scope-id XFF must not be
@@ -403,10 +404,7 @@ def test_select_client_ip_rejects_ipv4_mapped_ipv6_in_xff() -> None:
 
     assert _normalize_xff_hop("::ffff:198.51.100.7") == "::ffff:198.51.100.7"
     assert _normalize_xff_hop("[::ffff:198.51.100.7]") == "[::ffff:198.51.100.7]"
-    assert (
-        _normalize_xff_hop("[::ffff:198.51.100.7]:443")
-        == "[::ffff:198.51.100.7]:443"
-    )
+    assert _normalize_xff_hop("[::ffff:198.51.100.7]:443") == "[::ffff:198.51.100.7]:443"
 
 
 def test_normalize_xff_hop_rejects_malformed_inputs() -> None:
@@ -468,10 +466,7 @@ def test_normalize_xff_hop_rejects_malformed_inputs() -> None:
 
     # 6. extra characters after IPv6 port — port[1:] = "443extra" is not
     #    all digits.
-    assert (
-        _normalize_xff_hop("[2001:db8::1]:443extra")
-        == "[2001:db8::1]:443extra"
-    )
+    assert _normalize_xff_hop("[2001:db8::1]:443extra") == "[2001:db8::1]:443extra"
 
     # 7. negative port — "-1" is not isdigit (the leading '-' fails the
     #    digit check), so the value is returned verbatim.
@@ -570,9 +565,7 @@ async def test_request_from_non_allowlisted_ip_returns_403(
         user_agent="pytest",
     )
 
-    assert result.allowed is False, (
-        "192.168.1.1 should be rejected by allowlist 10.0.0.0/24"
-    )
+    assert result.allowed is False, "192.168.1.1 should be rejected by allowlist 10.0.0.0/24"
     assert result.violation_count == 1, (
         f"first violation must yield count=1, got {result.violation_count}"
     )
@@ -580,10 +573,7 @@ async def test_request_from_non_allowlisted_ip_returns_403(
     # Row state matches the result.
     row = (
         await db_session.execute(
-            sa.text(
-                "SELECT ip_violation_count, revoked_at "
-                "FROM api_keys WHERE id = :id"
-            ),
+            sa.text("SELECT ip_violation_count, revoked_at FROM api_keys WHERE id = :id"),
             {"id": api_key_id},
         )
     ).first()
@@ -642,16 +632,11 @@ async def test_ip_violation_increments_counter(
         client_ip="203.0.113.5",
     )
     assert r2.allowed is False
-    assert r2.violation_count == 2, (
-        "counter must increment to 2 on the second violation"
-    )
+    assert r2.violation_count == 2, "counter must increment to 2 on the second violation"
 
     row = (
         await db_session.execute(
-            sa.text(
-                "SELECT ip_violation_count, revoked_at "
-                "FROM api_keys WHERE id = :id"
-            ),
+            sa.text("SELECT ip_violation_count, revoked_at FROM api_keys WHERE id = :id"),
             {"id": api_key_id},
         )
     ).first()
@@ -696,8 +681,7 @@ async def test_three_ip_violations_auto_revokes_key(
     row = (
         await db_session.execute(
             sa.text(
-                "SELECT ip_violation_count, revoked_at, revoked_reason "
-                "FROM api_keys WHERE id = :id"
+                "SELECT ip_violation_count, revoked_at, revoked_reason FROM api_keys WHERE id = :id"
             ),
             {"id": api_key_id},
         )
@@ -735,9 +719,7 @@ async def test_ip_violation_creates_audit_log_entry(
 
     # Stub KMS — deterministic 64-char hex outputs satisfy the column
     # widths and let the chain insert succeed without a real CMK.
-    monkeypatch.setattr(
-        audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True
-    )
+    monkeypatch.setattr(audit_service, "compute_pii_hash", lambda _v: "a" * 64, raising=True)
     monkeypatch.setattr(
         audit_service,
         "compute_audit_chain_hash",
@@ -755,10 +737,7 @@ async def test_ip_violation_creates_audit_log_entry(
     # from a previous test in the same DB.
     before_count = (
         await db_session.execute(
-            sa.text(
-                "SELECT COUNT(*) FROM platform_audit_log "
-                "WHERE action = :a"
-            ),
+            sa.text("SELECT COUNT(*) FROM platform_audit_log WHERE action = :a"),
             {"a": AUDIT_ACTION_IP_VIOLATION},
         )
     ).scalar()
@@ -776,10 +755,7 @@ async def test_ip_violation_creates_audit_log_entry(
 
     after_count = (
         await db_session.execute(
-            sa.text(
-                "SELECT COUNT(*) FROM platform_audit_log "
-                "WHERE action = :a"
-            ),
+            sa.text("SELECT COUNT(*) FROM platform_audit_log WHERE action = :a"),
             {"a": AUDIT_ACTION_IP_VIOLATION},
         )
     ).scalar()
@@ -814,6 +790,39 @@ async def test_ip_violation_creates_audit_log_entry(
     assert "203.0.113.42" not in str(detail)
     assert detail.get("violation_count") == 1
     assert detail.get("auto_revoked") is False
+
+
+@pytest.mark.asyncio
+async def test_ip_violation_still_denies_when_audit_keyring_fails(
+    db_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A keyring audit failure must not turn an IP violation into an allow."""
+    from echoroo.middleware.api_key_ip_enforcement import enforce_api_key_ip
+    from echoroo.services import audit_service
+
+    def fail_hash(_value: str) -> str:
+        raise KeyringAuthError("test authentication failure")
+
+    monkeypatch.setattr(audit_service, "compute_pii_hash", fail_hash, raising=True)
+
+    user_id = await _create_test_user(db_session)
+    api_key_id = await _create_test_api_key(
+        db_session, user_id=user_id, allowed_ip_cidrs=["10.0.0.0/24"]
+    )
+
+    result = await enforce_api_key_ip(
+        db_session,
+        api_key_id=api_key_id,
+        user_id=user_id,
+        allowed_cidrs=["10.0.0.0/24"],
+        client_ip="203.0.113.42",
+        request_id="req-keyring-failure",
+        user_agent="pytest",
+    )
+
+    assert result.allowed is False
+    assert result.violation_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -861,9 +870,10 @@ async def test_verifier_returns_record_regardless_of_allowed_ip_cidrs() -> None:
     verifier._session_factory = MagicMock(return_value=mock_cm)
 
     raw_key = f"echoroo_cidrpref_{raw_secret}"
-    with patch.object(
-        verifier, "_load_by_prefix", new=AsyncMock(return_value=row)
-    ), patch.object(verifier, "_maybe_bump_last_used", new=AsyncMock()):
+    with (
+        patch.object(verifier, "_load_by_prefix", new=AsyncMock(return_value=row)),
+        patch.object(verifier, "_maybe_bump_last_used", new=AsyncMock()),
+    ):
         record = await verifier.verify(raw_key)
 
     # The verifier returns a record — IP enforcement is the caller's job.
@@ -883,6 +893,7 @@ __all__ = [
     "test_empty_allowed_ip_cidrs_means_no_restriction",
     "test_ip_in_cidr_stdlib_logic",
     "test_ip_violation_creates_audit_log_entry",
+    "test_ip_violation_still_denies_when_audit_keyring_fails",
     "test_ip_violation_increments_counter",
     "test_new_api_key_allowed_ip_cidrs_defaults_to_none",
     "test_normalize_xff_hop_known_behaviour_out_of_range_port",

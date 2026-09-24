@@ -264,7 +264,7 @@ exclude_lines = [
 #   services/webauthn_service.py, workers/dormancy_check.py
 #
 # Existing (maintained from Phase 2):
-#   core/response_filter.py, core/audit.py, core/kms.py
+#   core/response_filter.py, core/audit.py, core/keyring.py
 #
 # Target score: >= 80% (spec PR-004, SC-012). Enforced by CI hard gate.
 # See also: apps/api/mutmut.toml (documentation reference, not read by mutmut 3.x).
@@ -273,7 +273,7 @@ paths_to_mutate = [
     "echoroo/core/actions.py",
     "echoroo/core/response_filter.py",
     "echoroo/core/audit.py",
-    "echoroo/core/kms.py",
+    "echoroo/core/keyring.py",
     "echoroo/services/superuser_service.py",
     "echoroo/services/api_key_verification.py",
     "echoroo/middleware/auth.py",

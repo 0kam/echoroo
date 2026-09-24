@@ -1,6 +1,5 @@
 """Fixtures for integration tests."""
 
-from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID
 
@@ -20,7 +19,6 @@ from echoroo.models.enums import (
 from echoroo.models.project import Project, ProjectMember
 from echoroo.models.site import Site
 from echoroo.models.user import User
-from tests._kms_moto import provision_moto_kms
 from tests.conftest import ensure_test_database_schema_sync
 
 
@@ -34,35 +32,6 @@ def _ensure_test_database_schema_for_integration() -> None:
     """
     ensure_test_database_schema_sync()
 
-
-# ---------------------------------------------------------------------------
-# PR-C5 (Phase 17 §C, 2026-05-07): autouse moto-backed KMS fixture.
-#
-# Prior to PR-C5 every integration test that hit ``compute_pii_hash`` (login,
-# password reset, invitation enumeration, ``confirm_identity``) routed boto3
-# straight at real AWS (or LocalStack via the dev-container endpoint env)
-# producing ``UnrecognizedClientException`` / ``NoCredentialsError``.
-# The autouse fixture below provisions a fresh moto KMS for every integration
-# test, mirroring :func:`tests.unit.core.test_kms.kms_env`.
-#
-# The fixture is autouse + function-scoped so test isolation is preserved
-# (each test gets fresh CMKs, no state leakage). Production code is
-# untouched — only the test environment is patched.
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True, scope="function")
-def _integration_moto_kms(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[dict[str, str]]:
-    """Provide a moto-backed KMS to every integration test.
-
-    The moto context manager + env wiring lives in
-    :func:`tests._kms_moto.provision_moto_kms`. See that module for the
-    rationale and the alias-to-keyid mapping returned via ``yield``.
-    """
-    with provision_moto_kms(monkeypatch) as ids:
-        yield ids
 
 # Phase 16 Batch 6e (2026-04-29) downstream drift fix: Phase 7 / T320
 # (FR-085) made ``license`` NOT NULL on ``projects``. Phase 11 added the
@@ -207,9 +176,7 @@ async def auth_headers_other(db_session: AsyncSession, other_user: User) -> dict
     return {"Authorization": f"Bearer {access_token}"}
 
 
-async def bff_session_headers(
-    client: AsyncClient, db: AsyncSession, user: User
-) -> dict[str, str]:
+async def bff_session_headers(client: AsyncClient, db: AsyncSession, user: User) -> dict[str, str]:
     """Build a CSRF-capable ``/web-api/v1`` session for ``user``.
 
     W2-3 unmounts the legacy ``/api/v1`` browser routes; their behaviour now
@@ -221,9 +188,7 @@ async def bff_session_headers(
     """
     from echoroo.api.web_v1.auth import _issue_web_refresh_token
 
-    token, record = _issue_web_refresh_token(
-        user_id=user.id, security_stamp=user.security_stamp
-    )
+    token, record = _issue_web_refresh_token(user_id=user.id, security_stamp=user.security_stamp)
     await db.execute(
         sa.text(
             "INSERT INTO token_families (family_id, user_id, created_at) "
@@ -325,7 +290,9 @@ async def test_project(db_session: AsyncSession, test_user: User, member_user: U
 
 
 @pytest.fixture
-async def test_member(db_session: AsyncSession, test_project: Project, member_user: User) -> ProjectMember:
+async def test_member(
+    db_session: AsyncSession, test_project: Project, member_user: User
+) -> ProjectMember:
     """Get the project member relationship for member_user.
 
     Args:
