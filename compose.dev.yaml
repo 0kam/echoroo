@@ -83,10 +83,13 @@ services:
     networks:
       - echoroo-net
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      # Healthy only after the ready.d init script (KMS keys and aliases) has
+      # finished: /_localstack/health turns green before it, and a backend
+      # started in that window fails every KMS call until the aliases exist.
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true'"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 24
 
   # Backend FastAPI Server
   backend:
