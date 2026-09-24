@@ -118,6 +118,10 @@ ECHOROO_WORKER_MEM_LIMIT=24g    # bound worker RAM (~40% of host RAM) so CPU inf
 
 CPU mode is slower but stable. It also auto-caps inference threads (`ECHOROO_ML_CPU_NUM_THREADS`) and shrinks the Perch warmup (`ECHOROO_ML_CPU_WARMUP_BATCHES`). See [Configuration Guide](CONFIGURATION.md#machine-learning-settings) for the full ML env-var list.
 
+### Shared memory for the ML worker
+
+BirdNET/Perch inference stages audio in `/dev/shm`, and Docker's default of 64 MB is too small in CPU mode (birdnet uses one inference worker per physical core, ~221 MB on a 12-core box). The run then hangs instead of failing. `compose.dev.yaml` sets `shm_size: ${ECHOROO_WORKER_SHM_SIZE:-2gb}` on the `worker` service; keep it on any container that consumes the `gpu` queue (for example a CPU consumer started with `docker compose run ... worker-cpu ... -Q gpu` needs an override that adds `shm_size`). A worker whose `/dev/shm` is too small logs a warning at startup. See [Configuration Guide](CONFIGURATION.md#machine-learning-settings) for the sizing formula.
+
 > **No NVIDIA GPU at all?** `ECHOROO_ML_USE_GPU=false` is necessary but **not sufficient**. The `worker` service still reserves an NVIDIA device via `deploy.resources.reservations.devices`, so the container fails to start on a host with no NVIDIA GPU. You must **also** remove or comment out that block in `compose.dev.yaml` (see [GPU Support](#gpu-support) above) in addition to setting `ECHOROO_ML_USE_GPU=false`.
 
 ## Common Tasks
