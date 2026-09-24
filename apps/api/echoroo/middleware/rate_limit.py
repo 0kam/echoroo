@@ -1,5 +1,6 @@
 """Rate limiting middleware using fastapi-limiter."""
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi_limiter import FastAPILimiter
@@ -101,7 +102,7 @@ def upload_session_create_rate_limiter() -> Any:
     """Rate limiter for upload session creation endpoint.
 
     Returns:
-        Rate limiter dependency (10 attempts per hour)
+        Rate limiter dependency (10 attempts per hour, per user)
 
     Example:
         ```python
@@ -116,6 +117,7 @@ def upload_session_create_rate_limiter() -> Any:
     return RateLimiterDependency(
         times=settings.RATE_LIMIT_UPLOAD_SESSION_CREATE_ATTEMPTS,
         seconds=settings.RATE_LIMIT_UPLOAD_SESSION_CREATE_WINDOW_SECONDS,
+        identifier=_upload_session_create_bucket_identifier,
     )
 
 
@@ -123,7 +125,7 @@ def upload_session_complete_rate_limiter() -> Any:
     """Rate limiter for upload session completion endpoint.
 
     Returns:
-        Rate limiter dependency (20 attempts per hour)
+        Rate limiter dependency (20 attempts per hour, per user)
 
     Example:
         ```python
@@ -138,22 +140,41 @@ def upload_session_complete_rate_limiter() -> Any:
     return RateLimiterDependency(
         times=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_ATTEMPTS,
         seconds=settings.RATE_LIMIT_UPLOAD_SESSION_COMPLETE_WINDOW_SECONDS,
+        identifier=_upload_session_complete_bucket_identifier,
     )
 
 
-async def _chunk_bucket_identifier(request: Any) -> str:
-    """One bucket per authenticated user for every chunk route.
+def _user_bucket_identifier(bucket: str) -> Callable[[Any], Awaitable[str]]:
+    """Build a limiter identifier that keys on ``bucket`` + authenticated user.
 
-    The default identifier mixes the client IP (spoofable via
-    ``X-Forwarded-For``) with the concrete path, which would give every file
-    its own budget. The principal is set by the auth middleware; anonymous
-    callers are rejected there before this runs, but fall back to the IP.
+    fastapi-limiter's default identifier is ``<X-Forwarded-For or peer IP>:<path>``.
+    Behind the SvelteKit BFF the peer is always the frontend container, so every
+    user would share one bucket, and ``X-Forwarded-For`` is caller-controlled.
+    The concrete path is not wanted either: it embeds resource ids, which would
+    hand out a fresh budget per dataset / session / file. ``bucket`` names the
+    route instead. (The limiter appends ``route_index:dep_index`` to the key,
+    but it matches route templates against the concrete path, so that suffix
+    is always ``0:0`` and cannot tell routes apart.)
+
+    The principal is set by the auth middleware; anonymous callers are rejected
+    there before this runs, but fall back to the direct peer IP (never
+    ``X-Forwarded-For``).
     """
-    principal = getattr(request.state, "principal", None)
-    user_id = getattr(principal, "user_id", None) if principal is not None else None
-    if user_id is None:
-        return f"upload-chunk:anon:{request.client.host if request.client else 'unknown'}"
-    return f"upload-chunk:user:{user_id}"
+
+    async def identifier(request: Any) -> str:
+        principal = getattr(request.state, "principal", None)
+        user_id = getattr(principal, "user_id", None) if principal is not None else None
+        if user_id is None:
+            return f"{bucket}:anon:{request.client.host if request.client else 'unknown'}"
+        return f"{bucket}:user:{user_id}"
+
+    return identifier
+
+
+_upload_session_create_bucket_identifier = _user_bucket_identifier("upload-session-create")
+_upload_session_complete_bucket_identifier = _user_bucket_identifier("upload-session-complete")
+# One bucket per user across every file and session (not per concrete path).
+_chunk_bucket_identifier = _user_bucket_identifier("upload-chunk")
 
 
 def upload_chunk_rate_limiter() -> Any:
