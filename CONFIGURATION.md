@@ -345,12 +345,14 @@ working GPU needs none of these set.
 | `ECHOROO_ML_CPU_WARMUP_BATCHES` | `1` | optional | Comma-separated Perch warmup batch sizes used **only** in CPU mode (empty = skip warmup). GPU mode always warms up `1,6,10,16`. |
 | `ECHOROO_ML_GPU_ALLOW_GROWTH` | `true` | optional | In GPU mode, set `TF_FORCE_GPU_ALLOW_GROWTH=true` so TF grows GPU memory on demand. |
 | `ECHOROO_WORKER_MEM_LIMIT` | `0` | optional | Compose-level RAM cap for the worker container (`0` = unlimited). Set e.g. `24g` on a CPU/Blackwell box. |
+| `ECHOROO_WORKER_SHM_SIZE` | `2gb` | optional | Compose-level `/dev/shm` size for the worker container. BirdNET/Perch stage audio in shared memory; Docker's 64 MB default makes detection hang. See **Shared memory** below. |
 
 **Performance Tuning:**
 
 - **GPU_BATCH_SIZE:** Higher values improve throughput but require more GPU memory. Reduce if you get `CUDA_ERROR_OUT_OF_MEMORY`.
 - **FEEDERS / WORKERS:** Must be `>= 1`; setting `0` fails at startup with an opaque pydantic validation error. To effectively disable ML work, scale the worker container down (e.g. `replicas: 0`) instead of zeroing these.
 - **CPU mode:** When `ECHOROO_ML_USE_GPU=false`, inference threads are capped to `ECHOROO_ML_CPU_NUM_THREADS` and the Perch warmup shrinks to `ECHOROO_ML_CPU_WARMUP_BATCHES`; pair with `ECHOROO_WORKER_MEM_LIMIT` to bound RAM.
+- **Shared memory (`/dev/shm`):** the `birdnet` library stages audio for every inference call in a shared-memory ring of `2 × n_workers × batch_size` float32 segments (BirdNET 576 KB, Perch 640 KB each). `n_workers` is `ECHOROO_ML_WORKERS` in GPU mode but the **physical core count** in CPU mode, so a 12-core CPU box needs ~221 MB (BirdNET) / ~246 MB (Perch) at the default batch size of 16. If the ring does not fit, detection and embedding runs hang forever (joblib `No space left on device` warnings, worker idle at 0% CPU) instead of failing. The compose file therefore sets `shm_size: ${ECHOROO_WORKER_SHM_SIZE:-2gb}` on the `worker` service, which covers up to ~100 physical cores; tmpfs pages are only charged (against `ECHOROO_WORKER_MEM_LIMIT`) when written. Any other container that consumes the `gpu` queue needs the same `shm_size`. A gpu-queue worker logs a `/dev/shm is N MiB but BirdNET/Perch inference needs at least M MiB` warning at startup when it is too small.
 
 ### External Integrations
 

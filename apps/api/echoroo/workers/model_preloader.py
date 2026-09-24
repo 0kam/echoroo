@@ -7,6 +7,8 @@ for immediate inference without per-task loading overhead.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from typing import Any
 
 from celery.signals import worker_ready
@@ -20,6 +22,15 @@ _gpu_model_store: dict[str, tuple[Any, Any]] = {}
 # Direct TF inference engine for Perch (used by search tasks for fast reference
 # audio embedding, bypassing birdnet's multiprocess pipeline).
 _direct_perch: Any | None = None
+
+# birdnet stages audio for every predict/encode session in a POSIX
+# shared-memory ring (/dev/shm) of ``2 * n_workers`` slots (prefetch_ratio=1)
+# x ``batch_size`` float32 segments. The largest segment is Perch v2's
+# (5 s @ 32 kHz; BirdNET's is 3 s @ 48 kHz = 144_000). When the ring does not
+# fit, the session hangs instead of failing, so warn at startup.
+_SHM_PATH = "/dev/shm"
+_MAX_SEGMENT_SAMPLES = 160_000
+_FLOAT32_BYTES = 4
 
 
 def preload_models() -> None:
@@ -63,6 +74,54 @@ def preload_models() -> None:
     # This is a separate lightweight path that bypasses birdnet's multiprocess
     # pipeline, providing sub-second latency for small batches.
     _preload_direct_perch()
+
+
+def _physical_cpu_count() -> int:
+    """Return the physical core count, as birdnet does for its default."""
+    try:
+        import psutil  # type: ignore[import-untyped]  # birdnet dependency
+
+        count: int | None = psutil.cpu_count(logical=False)
+    except ImportError:
+        count = os.cpu_count()
+    return count or 1
+
+
+def required_shm_bytes(*, use_gpu: bool, batch_size: int, workers: int) -> int:
+    """Return the /dev/shm bytes one birdnet inference session needs.
+
+    GPU mode passes ``workers`` to birdnet as ``n_workers``; CPU mode does not
+    pass it, so birdnet uses one worker per physical core.
+    """
+    n_workers = workers if use_gpu else _physical_cpu_count()
+    n_slots = 2 * n_workers
+    return n_slots * batch_size * _MAX_SEGMENT_SAMPLES * _FLOAT32_BYTES
+
+
+def check_shm_capacity() -> None:
+    """Log a warning when /dev/shm is too small for birdnet inference."""
+    from echoroo.core.settings import get_settings
+
+    settings = get_settings()
+    required = required_shm_bytes(
+        use_gpu=settings.ML_USE_GPU,
+        batch_size=settings.ML_GPU_BATCH_SIZE,
+        workers=settings.ML_WORKERS,
+    )
+    try:
+        available = shutil.disk_usage(_SHM_PATH).total
+    except OSError:
+        return
+    if available < required:
+        logger.warning(
+            "%s is %d MiB but BirdNET/Perch inference needs at least %d MiB "
+            "with the current ML settings; detection and embedding runs will "
+            "hang. Raise the worker container's shm_size "
+            "(ECHOROO_WORKER_SHM_SIZE, default 2gb).",
+            _SHM_PATH,
+            available // 2**20,
+            -(-required // 2**20),
+        )
 
 
 def _preload_direct_perch() -> None:
@@ -180,6 +239,7 @@ def on_worker_ready(sender: Any, **_kwargs: Any) -> None:
         queues = [q.name for q in sender.task_consumer.queues]
 
     if "gpu" in queues or not queues:
+        check_shm_capacity()
         try:
             preload_models()
         except Exception:
