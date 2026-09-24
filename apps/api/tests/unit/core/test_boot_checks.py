@@ -1,15 +1,15 @@
 """Unit tests for the startup boot probes (``echoroo.core.boot_checks``).
 
-Covers the four behaviours the W1 boot-validation feature must guarantee:
+Covers the boot-validation behaviours the storage cutover must guarantee:
 
-  1. Probes pass when Redis ping + S3 head_bucket succeed.
+  1. Probes pass when Redis ping + full storage readiness succeed.
   2. A Redis ping timeout raises ``BootCheckError`` with a clear message.
   3. The ``ECHOROO_SKIP_BOOT_CHECKS`` escape hatch skips every probe.
-  4. The S3 probe is fatal in staging / production but only logs an ERROR
+  4. The storage probe is fatal in staging / production but only logs an ERROR
      (and continues) in development.
 
-The probes are driven directly at the coroutine level; Redis and the S3
-client are stubbed so no live infrastructure is required.
+The probes are driven directly at the coroutine level; Redis and storage are
+stubbed so no live infrastructure is required.
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None
 _STRONG_PROD_SECRETS: dict[str, str] = {
     "JWT_SECRET_KEY": "prod-jwt-secret-key-strong-enough-32chars-padding",
     "web_session_secret": "prod-web-session-secret-strong-enough-32chars-pad",
+    # Kept while the parallel settings cleanup still owns the legacy field.
     "S3_SECRET_KEY": "prod-s3-secret-key-strong-enough-32chars-padding",
     "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY": (
         "prod-2fa-reset-confirmation-hmac-strong-32chars-pad"
@@ -74,7 +75,7 @@ _STRONG_PROD_SECRETS: dict[str, str] = {
 def _prod_settings(environment: str, **overrides: object) -> Settings:
     """Build a Settings instance that passes the prod/staging secret guards.
 
-    The boot-check probe policy is env-conditional (S3 failures are fatal only
+    The boot-check probe policy is env-conditional (storage failures are fatal only
     in staging / production), so these tests must construct ``Settings`` with
     ENVIRONMENT="production"/"staging". That trips
     ``validate_production_secrets``, which requires strong values for every
@@ -92,10 +93,16 @@ async def test_run_boot_checks_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _ok_redis() -> _FakeRedisOk:
         return _FakeRedisOk()
 
+    storage_probe_arguments: list[bool] = []
+
+    def _storage_ready(*, full: bool = False) -> None:
+        storage_probe_arguments.append(full)
+
     monkeypatch.setattr(boot_checks, "get_redis_connection", _ok_redis)
-    monkeypatch.setattr(boot_checks, "_head_bucket_sync", lambda: None)
+    monkeypatch.setattr(boot_checks.storage, "ensure_ready", _storage_ready)
 
     await boot_checks.run_boot_checks()
+    assert storage_probe_arguments == [True]
 
 
 @pytest.mark.asyncio
@@ -155,54 +162,54 @@ async def test_skip_flag_skips_all_probes(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_s3_failure_fatal_in_production(
+async def test_storage_failure_fatal_in_production(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S3 head_bucket failure is fatal in production."""
+    """Storage readiness failure is fatal in production."""
     settings = _prod_settings("production", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
 
-    def _broken_head_bucket() -> None:
-        raise OSError("bucket unreachable")
+    def _broken_storage() -> None:
+        raise OSError("storage unavailable")
 
-    monkeypatch.setattr(boot_checks, "_head_bucket_sync", _broken_head_bucket)
+    monkeypatch.setattr(boot_checks, "_ensure_storage_ready_sync", _broken_storage)
 
     with pytest.raises(boot_checks.BootCheckError):
-        await boot_checks._probe_s3()
+        await boot_checks._probe_storage()
 
 
 @pytest.mark.asyncio
-async def test_s3_failure_non_fatal_in_development(
+async def test_storage_failure_non_fatal_in_development(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S3 head_bucket failure only logs an ERROR (no raise) in development."""
+    """Storage readiness failure only logs an ERROR in development."""
     settings = Settings(ENVIRONMENT="development", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
 
-    def _broken_head_bucket() -> None:
-        raise OSError("bucket unreachable")
+    def _broken_storage() -> None:
+        raise OSError("storage unavailable")
 
-    monkeypatch.setattr(boot_checks, "_head_bucket_sync", _broken_head_bucket)
+    monkeypatch.setattr(boot_checks, "_ensure_storage_ready_sync", _broken_storage)
 
-    # Must not raise — dev tolerates a missing S3.
-    await boot_checks._probe_s3()
+    # Must not raise — dev tolerates unavailable storage.
+    await boot_checks._probe_storage()
 
 
 @pytest.mark.asyncio
-async def test_s3_failure_fatal_in_staging(
+async def test_storage_failure_fatal_in_staging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """S3 head_bucket failure is fatal in staging too."""
+    """Storage readiness failure is fatal in staging too."""
     settings = _prod_settings("staging", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
 
-    def _broken_head_bucket() -> None:
-        raise OSError("bucket unreachable")
+    def _broken_storage() -> None:
+        raise OSError("storage unavailable")
 
-    monkeypatch.setattr(boot_checks, "_head_bucket_sync", _broken_head_bucket)
+    monkeypatch.setattr(boot_checks, "_ensure_storage_ready_sync", _broken_storage)
 
     with pytest.raises(boot_checks.BootCheckError):
-        await boot_checks._probe_s3()
+        await boot_checks._probe_storage()
 
 
 def test_run_boot_checks_sync_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:

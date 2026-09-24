@@ -2,7 +2,7 @@
 
 The application historically deferred all infrastructure validation to the
 first request that touched a dependency, surfacing a missing / misconfigured
-Redis or S3 as a confusing generic 500 deep inside a user flow. These probes
+Redis or storage as a confusing generic 500 deep inside a user flow. These probes
 move that failure to boot time so a misconfigured deployment crashes loudly
 (in production / staging) or logs a clear ERROR (in development) before it
 ever serves traffic.
@@ -13,14 +13,14 @@ Probe policy matrix
     Probe         Timeout   dev            staging / production
     -----         -------   ------------   ---------------------
     Redis ping    2s        HARD FAIL      HARD FAIL
-    S3 head_bucket 5s       log ERROR,     HARD FAIL
+    Storage ready  5s       log ERROR,     HARD FAIL
                             continue
 
 Redis is required in every environment (rate limiting, sessions, Celery
-broker), so a Redis failure is always fatal. S3 in development is backed by
-LocalStack which should always be reachable; if it is not we log an ERROR but
-let the app boot so a developer working offline on a non-S3 feature is not
-blocked. In staging / production a missing S3 is fatal.
+broker), so a Redis failure is always fatal. Storage in development may be
+unavailable while a developer works offline on an unrelated feature, so we log
+an ERROR and let the app boot. In staging / production a storage failure is
+fatal.
 
 KMS is deliberately NOT probed at boot — production IAM policies may deny
 ``kms:DescribeKey`` even when the encrypt / decrypt / GenerateMac grants the
@@ -32,7 +32,7 @@ Escape hatch
 
 Setting ``ECHOROO_SKIP_BOOT_CHECKS=1`` (or any truthy Settings value) skips
 all probes and logs a single line saying so. Tests set this via an autouse
-fixture so app construction does not require live Redis / S3; integration
+fixture so app construction does not require live Redis / storage; integration
 tests that exercise the probes themselves unset it.
 """
 
@@ -42,19 +42,21 @@ import asyncio
 import logging
 from typing import Final
 
+from echoroo.core import storage
 from echoroo.core.redis import get_redis_connection
-from echoroo.core.s3 import head_bucket
 from echoroo.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 # Probe timeouts (seconds).
 REDIS_PING_TIMEOUT_S: Final[float] = 2.0
-S3_HEAD_BUCKET_TIMEOUT_S: Final[float] = 5.0
+STORAGE_READY_TIMEOUT_S: Final[float] = 5.0
 
-# Environments where an S3 probe failure is fatal. Development tolerates a
-# missing S3 (logs ERROR + continues) so offline / non-S3 work is unblocked.
-_S3_HARD_FAIL_ENVIRONMENTS: Final[frozenset[str]] = frozenset({"staging", "production"})
+# Environments where a storage probe failure is fatal. Development tolerates a
+# missing storage tree (logs ERROR + continues) so offline work is unblocked.
+_STORAGE_HARD_FAIL_ENVIRONMENTS: Final[frozenset[str]] = frozenset(
+    {"staging", "production"}
+)
 
 
 class BootCheckError(RuntimeError):
@@ -88,17 +90,17 @@ async def _probe_redis() -> None:
         ) from exc
 
 
-def _head_bucket_sync() -> None:
-    """Synchronous S3 ``head_bucket`` against the configured bucket.
+def _ensure_storage_ready_sync() -> None:
+    """Run the full synchronous storage readiness probe.
 
-    boto3 is blocking, so this runs in a worker thread via
-    :func:`asyncio.to_thread` inside :func:`_probe_s3`.
+    Storage probing is blocking, so this runs in a worker thread via
+    :func:`asyncio.to_thread` inside :func:`_probe_storage`.
     """
-    head_bucket()
+    storage.ensure_ready(full=True)
 
 
-async def _probe_s3() -> None:
-    """Check the configured S3 bucket is reachable with a bounded timeout.
+async def _probe_storage() -> None:
+    """Check the provisioned storage tree with a bounded timeout.
 
     Failure handling depends on ``ENVIRONMENT``:
 
@@ -112,29 +114,29 @@ async def _probe_s3() -> None:
     environment = settings.ENVIRONMENT
     try:
         await asyncio.wait_for(
-            asyncio.to_thread(_head_bucket_sync),
-            timeout=S3_HEAD_BUCKET_TIMEOUT_S,
+            asyncio.to_thread(_ensure_storage_ready_sync),
+            timeout=STORAGE_READY_TIMEOUT_S,
         )
         return
     except TimeoutError as exc:
         message = (
-            f"S3 head_bucket timed out after {S3_HEAD_BUCKET_TIMEOUT_S:g}s for "
-            f"bucket {settings.S3_BUCKET!r}. Check S3_ENDPOINT_URL / S3_BUCKET "
-            "and that the object store is reachable."
+            f"Storage readiness timed out after {STORAGE_READY_TIMEOUT_S:g}s. "
+            "Check STORAGE_ROOT and that the provisioned storage tree is "
+            "reachable."
         )
         cause: Exception = exc
     except Exception as exc:  # noqa: BLE001 — any storage / connection error
         message = (
-            f"S3 bucket {settings.S3_BUCKET!r} is not reachable at boot. "
-            "Check S3_ENDPOINT_URL, S3_BUCKET, and the S3 credentials. "
+            "The provisioned storage tree is not ready at boot. "
+            "Check STORAGE_ROOT, its provisioning marker, and its permissions. "
             f"Underlying error: {exc.__class__.__name__}: {exc}"
         )
         cause = exc
 
-    if environment in _S3_HARD_FAIL_ENVIRONMENTS:
+    if environment in _STORAGE_HARD_FAIL_ENVIRONMENTS:
         raise BootCheckError(message) from cause
     logger.error(
-        "%s (ENVIRONMENT=%s — continuing because S3 boot failures are non-fatal in development)",
+        "%s (ENVIRONMENT=%s — continuing because storage boot failures are non-fatal in development)",
         message,
         environment,
     )
@@ -143,7 +145,7 @@ async def _probe_s3() -> None:
 async def run_boot_checks() -> None:
     """Run all startup boot probes honouring the skip escape hatch.
 
-    Always probes Redis (fatal in every environment). Probes S3
+    Always probes Redis (fatal in every environment). Probes storage
     (fatal only in staging / production). Honours
     ``ECHOROO_SKIP_BOOT_CHECKS``.
 
@@ -152,12 +154,12 @@ async def run_boot_checks() -> None:
     """
     settings = get_settings()
     if settings.ECHOROO_SKIP_BOOT_CHECKS:
-        logger.info("ECHOROO_SKIP_BOOT_CHECKS is set — skipping all boot probes (Redis, S3).")
+        logger.info("ECHOROO_SKIP_BOOT_CHECKS is set — skipping all boot probes (Redis, storage).")
         return
 
-    logger.info("Running startup boot probes (Redis, S3)...")
+    logger.info("Running startup boot probes (Redis, storage)...")
     await _probe_redis()
-    await _probe_s3()
+    await _probe_storage()
     logger.info("Startup boot probes passed.")
 
 

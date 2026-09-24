@@ -1,5 +1,8 @@
 """Pytest configuration and fixtures."""
 
+# Environment isolation must run before importing the application package.
+# ruff: noqa: E402
+
 import importlib
 import os
 import tempfile
@@ -7,6 +10,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from uuid import uuid4
 
 # spec/011 NFR-011-010 — invitation token kid + HMAC defensive bootstrap.
 # ``echoroo.core.settings.Settings`` requires INVITATION_TOKEN_KID_NEW and
@@ -24,12 +28,33 @@ os.environ.setdefault(
     "test-invitation-hmac-key-32-chars-min-padding-xxxxxxxx",
 )
 
-# Startup boot probes (echoroo.core.boot_checks) ping Redis and S3 from the
+# Startup boot probes (echoroo.core.boot_checks) ping Redis and check storage from the
 # FastAPI lifespan / Celery worker_ready signal. The test suite boots the app
-# via ``create_app`` fixtures without live Redis / S3, so skip the probes by
+# via ``create_app`` fixtures without live Redis / storage, so skip the probes by
 # default. Integration tests that exercise the probes themselves unset this
 # via ``monkeypatch.delenv`` / ``monkeypatch.setenv(..., "0")``.
 os.environ.setdefault("ECHOROO_SKIP_BOOT_CHECKS", "1")
+
+# Storage isolation must be established before importing any application
+# module. The xdist controller creates one run id and passes it to workers
+# through the inherited environment; each worker then gets its own directory.
+_TEST_STORAGE_RUN_ID = os.environ.setdefault(
+    "ECHOROO_TEST_STORAGE_RUN_ID", uuid4().hex
+)
+_TEST_STORAGE_WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "main")
+_TEST_STORAGE_BASE = (
+    Path(tempfile.gettempdir())
+    / "echoroo-pytest-storage"
+    / f"{_TEST_STORAGE_RUN_ID}-{_TEST_STORAGE_WORKER_ID}"
+)
+_TEST_STORAGE_ROOT = _TEST_STORAGE_BASE / "storage"
+_TEST_UPLOAD_STAGING_DIR = _TEST_STORAGE_BASE / "upload-staging"
+_TEST_COMPRESSED_CACHE_DIR = _TEST_STORAGE_BASE / "compressed-cache"
+os.environ["STORAGE_ROOT"] = str(_TEST_STORAGE_ROOT)
+os.environ["UPLOAD_STAGING_DIR"] = str(_TEST_UPLOAD_STAGING_DIR)
+os.environ["COMPRESSED_CACHE_DIR"] = str(_TEST_COMPRESSED_CACHE_DIR)
+_TEST_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+(_TEST_STORAGE_ROOT / ".echoroo-storage").touch(exist_ok=True)
 
 import pytest
 import pytest_asyncio
@@ -44,16 +69,25 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from echoroo.api.v1.clips import get_audio_service as _get_audio_service_clips
-from echoroo.api.v1.datasets import get_audio_service as _get_audio_service_datasets
-from echoroo.api.v1.recordings import (
-    get_audio_service as _get_audio_service_recordings,
-)
 from echoroo.core.database import get_db
 from echoroo.core.settings import get_settings
 from echoroo.main import create_app
 from echoroo.models.base import Base
-from echoroo.services.audio import AudioService
+
+
+@pytest.fixture
+def storage_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Provide a fresh provisioned storage root for one test."""
+
+    from echoroo.core import storage
+
+    root = tmp_path / "storage"
+    root.mkdir(mode=0o750)
+    (root / storage.MARKER_NAME).touch(mode=0o640)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "STORAGE_ROOT", str(root))
+    return root
+
 
 # Test database URL — override via TEST_DATABASE_URL env var to allow running
 # from inside Docker containers where the DB is accessible via a service hostname
@@ -2372,28 +2406,6 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
                 await session.close()
 
     app.dependency_overrides[get_db] = override_get_db
-
-    # Phase 5 polish round 3 (重要1): override AudioService so its S3 cache
-    # directory points at a writable tmp dir rather than the hard-coded
-    # ``/data/s3_audio_cache``. Tests (especially the Guest audio surface
-    # in test_guest_public_access.py) trip over the ``/data/`` mkdir when
-    # the runner has no write permission there. We pin the override to a
-    # process-wide tmp dir so successive tests share the same cache.
-    settings = get_settings()
-    audio_cache_tmp_root = Path(tempfile.gettempdir()) / "echoroo-test-s3-audio-cache"
-    audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
-
-    def override_get_audio_service() -> AudioService:
-        return AudioService(
-            settings.AUDIO_ROOT,
-            settings.AUDIO_CACHE_DIR,
-            s3_audio_cache_dir=str(audio_cache_tmp_root),
-        )
-
-    # Register every route-local factory that constructs AudioService.
-    app.dependency_overrides[_get_audio_service_clips] = override_get_audio_service
-    app.dependency_overrides[_get_audio_service_datasets] = override_get_audio_service
-    app.dependency_overrides[_get_audio_service_recordings] = override_get_audio_service
 
     # Patch RateLimiter.__call__ with a no-op that uses correct FastAPI types
     # so they are injected rather than treated as query params

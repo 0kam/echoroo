@@ -18,7 +18,8 @@ from echoroo.core.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-_MARKER_NAME = ".echoroo-storage"
+MARKER_NAME = ".echoroo-storage"
+_MARKER_NAME = MARKER_NAME
 _PROBE_NAME = ".echoroo-probe"
 _TEMPORARY_PATTERN = re.compile(r"^\.echoroo-tmp-[0-9a-f]{32}$")
 _RANGE_CHUNK_SIZE = 64 * 1024
@@ -798,6 +799,7 @@ __all__ = [
     "exists",
     "is_temporary",
     "list_prefix",
+    "MARKER_NAME",
     "open_read",
     "path_for",
     "read_range",

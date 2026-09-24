@@ -3,14 +3,14 @@
 The cheap liveness probe (``/health``) stays static so container
 orchestrators (k8s / ECS) can hammer it without touching any dependency.
 This module backs the *readiness* surface, which verifies the three hard
-runtime dependencies — PostgreSQL, Redis, and S3 — each with a short,
+runtime dependencies — PostgreSQL, Redis, and storage — each with a short,
 bounded timeout so a hung dependency cannot wedge the probe.
 
 Security contract
 -----------------
 
 Probe results expose only a component name and ``ok`` / ``fail``. They
-MUST NOT leak endpoint URLs, bucket names, credentials, or underlying
+MUST NOT leak endpoint URLs, storage paths, credentials, or underlying
 exception text (which can echo connection strings). All failure detail is
 written to the server log; the HTTP response body carries the component
 name and status only.
@@ -20,8 +20,8 @@ Relationship to ``boot_checks``
 
 ``core.boot_checks`` runs *once* at startup and fails the process fast on
 missing infrastructure. This module runs *per request* and never raises —
-it reports status. It reuses the S3 ``head_bucket`` helper from
-``boot_checks`` so the two surfaces probe the object store identically.
+it performs the light storage readiness check so the two surfaces agree on
+whether the provisioned tree is usable.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any, Final
 
 from sqlalchemy import text
 
-from echoroo.core.boot_checks import _head_bucket_sync
+from echoroo.core import storage
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.redis import get_redis_connection
 
@@ -46,7 +46,7 @@ READINESS_PROBE_TIMEOUT_S: Final[float] = 2.0
 # dependency class only — never the concrete endpoint / host.
 COMPONENT_DATABASE: Final[str] = "database"
 COMPONENT_REDIS: Final[str] = "redis"
-COMPONENT_S3: Final[str] = "s3"
+COMPONENT_STORAGE: Final[str] = "storage"
 
 _STATUS_OK: Final[str] = "ok"
 _STATUS_FAIL: Final[str] = "fail"
@@ -85,17 +85,17 @@ async def _check_redis() -> bool:
         return False
 
 
-async def _check_s3() -> bool:
-    """Return ``True`` if ``head_bucket`` succeeds within the timeout."""
+async def _check_storage() -> bool:
+    """Return ``True`` if the light storage readiness check succeeds."""
     try:
         await asyncio.wait_for(
-            asyncio.to_thread(_head_bucket_sync),
+            asyncio.to_thread(storage.ensure_ready),
             timeout=READINESS_PROBE_TIMEOUT_S,
         )
         return True
     except Exception as exc:  # noqa: BLE001 — any failure means "not ready"
         logger.warning(
-            "Readiness probe: s3 check failed (%s: %s)",
+            "Readiness probe: storage check failed (%s: %s)",
             exc.__class__.__name__,
             exc,
         )
@@ -119,15 +119,15 @@ async def check_readiness(
     """
     factory = session_factory if session_factory is not None else AsyncSessionLocal
 
-    db_ok, redis_ok, s3_ok = await asyncio.gather(
+    db_ok, redis_ok, storage_ok = await asyncio.gather(
         _check_database(factory),
         _check_redis(),
-        _check_s3(),
+        _check_storage(),
     )
 
     checks = {
         COMPONENT_DATABASE: _STATUS_OK if db_ok else _STATUS_FAIL,
         COMPONENT_REDIS: _STATUS_OK if redis_ok else _STATUS_FAIL,
-        COMPONENT_S3: _STATUS_OK if s3_ok else _STATUS_FAIL,
+        COMPONENT_STORAGE: _STATUS_OK if storage_ok else _STATUS_FAIL,
     }
-    return (db_ok and redis_ok and s3_ok), checks
+    return (db_ok and redis_ok and storage_ok), checks

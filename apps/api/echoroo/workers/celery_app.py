@@ -159,6 +159,7 @@ app.conf.include = [
     # dispatch it by name (and the admin force-resync ``.delay()`` resolves).
     "echoroo.workers.iucn_sync",
     "echoroo.workers.audit_log_export",
+    "echoroo.workers.storage_maintenance",
 ]
 
 # Periodic tasks (beat schedule)
@@ -295,11 +296,24 @@ app.conf.beat_schedule = {
         "task": "echoroo.workers.banner_gc.gc_user_banner_dismissals",
         "schedule": crontab(hour=3, minute=30),
     },
+    # Storage maintenance runs on the default CPU queue. The first sweep
+    # removes abandoned publication / encoder temporaries before the cache
+    # sweep refreshes the remaining disk usage picture.
+    "sweep-storage-temporaries": {
+        "task": "echoroo.workers.storage_maintenance.sweep_storage_temporaries",
+        "schedule": crontab(hour=3, minute=30),
+        "options": {"queue": "default"},
+    },
+    "sweep-compressed-cache": {
+        "task": "echoroo.workers.storage_maintenance.sweep_compressed_cache",
+        "schedule": crontab(hour=3, minute=45),
+        "options": {"queue": "default"},
+    },
 }
 
 
 # ---------------------------------------------------------------------------
-# Boot probes — fail fast on missing critical infrastructure (Redis / S3)
+# Boot probes — fail fast on missing critical infrastructure (Redis / storage)
 # when a worker process becomes ready, mirroring the FastAPI lifespan probe.
 # The synchronous wrapper drives the async probes on a fresh event loop via
 # ``asyncio.run`` (acceptable inside a Celery signal handler). Honours
@@ -312,7 +326,7 @@ from celery.signals import worker_ready as _worker_ready  # noqa: E402
 def _run_boot_checks_on_worker_ready(**_kwargs: object) -> None:
     """Run startup boot probes when a Celery worker becomes ready.
 
-    A fatal probe failure (Redis unreachable, or S3 unreachable in
+    A fatal probe failure (Redis unreachable, or storage unavailable in
     staging / production) raises ``BootCheckError``, crashing the worker
     startup loudly instead of letting tasks fail one-by-one later.
     """

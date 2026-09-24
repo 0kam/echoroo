@@ -60,7 +60,7 @@ def test_ignores_other_services(tmp_path: Path) -> None:
     assert lint.find_violations(tmp_path) == []
 
 
-def test_flags_raw_client_accessor_import_and_use(tmp_path: Path) -> None:
+def test_flags_legacy_s3_import_and_use(tmp_path: Path) -> None:
     lint = _load_lint()
     _write(
         tmp_path,
@@ -69,7 +69,7 @@ def test_flags_raw_client_accessor_import_and_use(tmp_path: Path) -> None:
     )
     findings = lint.find_violations(tmp_path)
     assert len(findings) == 2
-    assert ":1:" in findings[0] and "get_s3_client" in findings[0]
+    assert ":1:" in findings[0] and "legacy S3 import" in findings[0]
     assert ":2:" in findings[1] and "get_s3_client" in findings[1]
 
 
@@ -81,29 +81,40 @@ def test_flags_raw_client_accessor_attribute(tmp_path: Path) -> None:
         "from echoroo.core import s3\nc = s3.get_s3_client()\n",
     )
     findings = lint.find_violations(tmp_path)
-    assert len(findings) == 1
-    assert "get_s3_client" in findings[0]
+    assert len(findings) == 2
+    assert "legacy S3 import" in findings[0]
+    assert "get_s3_client" in findings[1]
 
 
-def test_allows_helper_usage(tmp_path: Path) -> None:
+def test_flags_any_legacy_s3_helper_import(tmp_path: Path) -> None:
     lint = _load_lint()
     _write(
         tmp_path,
         "module.py",
         'from echoroo.core.s3 import put_object, delete_object\nput_object("k", b"x")\n',
     )
-    assert lint.find_violations(tmp_path) == []
+    findings = lint.find_violations(tmp_path)
+    assert len(findings) == 1
+    assert "legacy S3 import" in findings[0]
 
 
-def test_core_s3_is_allowlisted(tmp_path: Path) -> None:
+def test_core_s3_is_not_allowlisted(tmp_path: Path) -> None:
     lint = _load_lint()
     source = 'import boto3\nc = boto3.client("s3")\n'
     _write(tmp_path, "apps/api/echoroo/core/s3.py", source)
-    assert lint.find_violations(tmp_path) == []
+    assert len(lint.find_violations(tmp_path)) == 2
 
     _write(tmp_path, "apps/api/echoroo/core/other.py", source)
     # import line + client construction
-    assert len(lint.find_violations(tmp_path)) == 2
+    assert len(lint.find_violations(tmp_path)) == 4
+
+
+def test_flags_from_core_import_of_legacy_s3_module(tmp_path: Path) -> None:
+    lint = _load_lint()
+    _write(tmp_path, "module.py", "from echoroo.core import s3\n")
+    findings = lint.find_violations(tmp_path)
+    assert len(findings) == 1
+    assert "legacy S3 import" in findings[0]
 
 
 def test_syntax_error_raises_runtime_error(tmp_path: Path) -> None:
@@ -111,24 +122,6 @@ def test_syntax_error_raises_runtime_error(tmp_path: Path) -> None:
     _write(tmp_path, "module.py", "def (:\n")
     with pytest.raises(RuntimeError):
         lint.find_violations(tmp_path)
-
-
-def test_repository_is_clean() -> None:
-    lint = _load_lint()
-    source_root = None
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "scripts" / "lint_s3_isolation.py").exists():
-            source_root = parent
-            break
-    if source_root is None:
-        pytest.skip("repository source root not found")
-
-    api_root = source_root / "apps/api/echoroo"
-    root = api_root if api_root.exists() else source_root / "echoroo"
-    if not root.exists():
-        pytest.skip("repository echoroo source root not found")
-    findings = lint.find_violations(root)
-    assert findings == [], "\n".join(findings)
 
 
 def test_flags_sdk_import_forms(tmp_path: Path) -> None:

@@ -202,7 +202,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: ARG001
             "DO NOT use in production. ENVIRONMENT=%s",
             settings.ENVIRONMENT,
         )
-    # Fail fast on missing critical infrastructure (Redis / S3) before the
+    # Fail fast on missing critical infrastructure (Redis / storage) before the
     # app starts serving. Honours ECHOROO_SKIP_BOOT_CHECKS (set in tests).
     await run_boot_checks()
     await get_redis_connection()
@@ -468,7 +468,7 @@ def create_app(*, session_factory: Any | None = None) -> FastAPI:
     async def readiness_check(response: Response) -> dict[str, Any]:
         """Readiness probe with dependency checks.
 
-        Verifies PostgreSQL, Redis, and S3 with short bounded timeouts and
+        Verifies PostgreSQL, Redis, and storage with short bounded timeouts and
         returns per-dependency status. Returns 200 when all dependencies
         respond and 503 when any is unreachable, naming the failing
         component. The body carries component names and ``ok`` / ``fail``
