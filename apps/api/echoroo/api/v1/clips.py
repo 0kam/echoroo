@@ -19,7 +19,6 @@ from echoroo.core.actions import (
 )
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
-from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.clip import (
     ClipCreate,
@@ -36,20 +35,13 @@ from echoroo.services.clip import ClipService
 
 router = APIRouter(prefix="/projects/{project_id}/recordings/{recording_id}/clips", tags=["clips"])
 
-settings = get_settings()
-
-
 def get_audio_service() -> AudioService:
     """Get AudioService instance.
 
     Returns:
         AudioService instance
     """
-    return AudioService(
-        settings.AUDIO_ROOT,
-        settings.AUDIO_CACHE_DIR,
-        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
-    )
+    return AudioService()
 
 
 def get_clip_service(

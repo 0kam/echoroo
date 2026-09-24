@@ -32,7 +32,7 @@ the previously-only endpoint-level coverage (``test_search_writes.py``) lacked:
 that whole file is under a Phase-14 skip, so before this class there was no
 running test exercising the real rerun endpoint. This one seeds a COMPLETED
 session with a stale ``recording_annotations`` row and a stale
-``search_query_embeddings`` row, mocks the S3 client + Celery dispatch, and
+``search_query_embeddings`` row, uses the storage tree + a mocked Celery dispatch, and
 asserts the call returns **202** (not a 500 / ``UndefinedColumnError``) with
 the session flipped to PENDING and the stale rows cleared — i.e. it fails
 against the original raw ``DELETE FROM annotations`` and passes with the fix.
@@ -530,9 +530,7 @@ def _make_minimal_wav(num_frames: int = 100, sample_rate: int = 16000) -> bytes:
 # ``/data`` is read-only, so that ``mkdir`` raised
 # ``PermissionError: [Errno 13] Permission denied: '/data'`` and the rerun
 # endpoint 500'd before ``reset_for_rerun`` ever ran. This mirrors how the suite
-# already redirects the S3 audio cache off ``/data`` (see ``tests/conftest.py``
-# ``override_get_audio_service`` and the ``S3_AUDIO_CACHE_DIR`` setting comment):
-# we point the staging directory at a pytest ``tmp_path`` so the test never
+# we point the manifest directory at a pytest ``tmp_path`` so the test never
 # depends on a writable ``/data``.
 _SEARCH_TMP_PREFIX = "/data/search_tmp"
 
@@ -581,12 +579,8 @@ class TestRerunEndpointRegression:
         )
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
     async def test_rerun_endpoint_succeeds_and_clears_stale_session_state(
         self,
-        mock_delete_object: MagicMock,
-        mock_get_s3_client: MagicMock,
         mock_run_batch_search: MagicMock,
         client: AsyncClient,
         csrf_headers: dict[str, str],
@@ -611,8 +605,8 @@ class TestRerunEndpointRegression:
             (the row the buggy DELETE tried — and failed — to remove).
           * A stale ``search_query_embeddings`` row for the session.
 
-        The Celery dispatch (``run_batch_search.apply_async``) and the S3
-        client are mocked so the test needs neither a worker nor LocalStack.
+        The Celery dispatch (``run_batch_search.apply_async``) is mocked, while
+        reference audio uses the provisioned storage tree.
 
         Asserts (the key regression signals):
           * HTTP 202 — the endpoint succeeds end-to-end, i.e. NO 500 and NO
@@ -625,9 +619,6 @@ class TestRerunEndpointRegression:
         ``DELETE FROM annotations`` → 500, so the status is 500 not 202 and
         ``apply_async`` is never reached) and PASSES with the ORM-based delete.
         """
-        mock_s3 = MagicMock()
-        mock_get_s3_client.return_value = mock_s3
-
         recording = await _make_recording(db_session, test_project)
         session = await _make_completed_session(
             db_session, test_project, test_user, name="Rerun Endpoint Session"
@@ -674,18 +665,19 @@ class TestRerunEndpointRegression:
         assert body["status"] == "pending"
         assert body["session_id"] == str(session.id)
 
-        # The reference-audio staging landed in the redirected tmp dir, proving
-        # the endpoint did NOT touch the real (CI: read-only) ``/data/search_tmp``.
+        # The manifest landed in the redirected tmp dir, and no audio copy was
+        # staged there.
         staged_jobs = (
             [p for p in redirect_search_tmp.iterdir() if p.is_dir()]
             if redirect_search_tmp.exists()
             else []
         )
-        assert staged_jobs, (
-            "expected the uploaded reference audio to be staged under the "
-            f"redirected tmp dir {redirect_search_tmp}, but it was empty — the "
-            "handler may still be writing to the real /data/search_tmp"
-        )
+        assert staged_jobs
+        manifest_path = staged_jobs[0] / "manifest.json"
+        assert manifest_path.is_file()
+        assert [path.name for path in staged_jobs[0].iterdir()] == ["manifest.json"]
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["audio_files"]["source_0"].startswith("search_reference/")
 
         # The re-run was dispatched exactly once.
         mock_run_batch_search.apply_async.assert_called_once()

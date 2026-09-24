@@ -19,13 +19,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core.s3 import (
-    S3ObjectMeta,
-    delete_objects_batch,
-    delete_objects_by_prefix,
-    list_objects_paginated,
-)
+from echoroo.core import storage
 from echoroo.core.settings import get_settings
+from echoroo.core.storage import StoredObject
 from echoroo.workers.celery_app import app
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
@@ -101,12 +97,13 @@ async def _run_batch_search(
         manifest = json.load(f)
 
     # Reconstruct request data from manifest
-    # Use species_config_with_s3 when available (contains s3_keys for persisted reference audio).
+    # Use species_config_with_s3 when available (contains storage keys for
+    # persisted reference audio).
     # Fall back to manifest["request"] species for backwards compatibility.
     from echoroo.schemas.search import BatchSearchRequest, SpeciesSearchConfig
 
     batch_request = BatchSearchRequest.model_validate(manifest["request"])
-    audio_files: dict[str, str] = manifest["audio_files"]  # file_key -> relative path
+    audio_files: dict[str, str] = manifest.get("audio_files", {})  # file_key -> storage key
 
     # Override species list with enriched config (includes s3_keys) if present
     if "species_config_with_s3" in manifest:
@@ -114,12 +111,6 @@ async def _run_batch_search(
         for sp_dict in manifest["species_config_with_s3"]:
             enriched_species.append(SpeciesSearchConfig.model_validate(sp_dict))
         batch_request.species = enriched_species
-
-    # Resolve relative paths to absolute paths within tmp_dir
-    audio_files_abs: dict[str, str] = {}
-    for key, rel_path in audio_files.items():
-        abs_path = str(tmp_dir / rel_path)
-        audio_files_abs[key] = abs_path
 
     # Create DB session
     engine, session_factory = get_worker_engine_and_session_factory()
@@ -155,7 +146,7 @@ async def _run_batch_search(
                     service=service,
                     project_id=UUID(project_id),
                     request=batch_request,
-                    audio_files=audio_files_abs,
+                    audio_files=audio_files,
                     job_id=job_id,
                     search_session=search_session,
                 )
@@ -197,14 +188,14 @@ async def _run_batch_search_with_progress(
     project_id: UUID,
     request: Any,
     audio_files: dict[str, str],
-    job_id: str = "",
+    job_id: str = "",  # noqa: ARG001 - retained for task-call compatibility
     search_session: Any = None,
 ) -> dict[str, Any]:
     """Run batch search with per-species progress updates.
 
     Reuses SimilaritySearchService internals but adds Celery progress reporting.
 
-    For each species, audio preparation (download/clip) is separated from model
+    For each species, audio preparation (read/clip) is separated from model
     inference. All prepared files are passed to ``predict_files_batch()`` in a
     single call so that XLA compilation happens only once instead of once per file.
 
@@ -213,8 +204,8 @@ async def _run_batch_search_with_progress(
         service: SimilaritySearchService instance
         project_id: Project UUID
         request: BatchSearchRequest instance
-        audio_files: Mapping of file_key to absolute local file paths
-        job_id: Job ID used to locate the temp directory for S3 downloads
+        audio_files: Mapping of file_key to storage keys
+        job_id: Job ID retained for task/logging compatibility
         search_session: Optional SearchSession ORM object for persisting query embeddings
 
     Returns:
@@ -287,7 +278,7 @@ async def _run_batch_search_with_progress(
             common_name = tag.common_name
 
         # ------------------------------------------------------------------
-        # Phase 1: Download / clip ALL reference audio files for this species.
+        # Phase 1: Resolve / clip ALL reference audio files for this species.
         # Each entry in reference_paths corresponds to one source; inference
         # is deferred to Phase 2 so that all files can be submitted as a
         # single batch call.
@@ -338,34 +329,29 @@ async def _run_batch_search_with_progress(
                 source_labels.append(f"url:{source.source_url}")
                 continue
 
-            # Resolve upload / S3 source to a local file path
-            if source.s3_key and (
-                source.file_key is None or source.file_key not in audio_files
-            ):
-                from echoroo.core.s3 import download_object_to_file, ensure_configured
+            storage_key = source.s3_key
+            if storage_key is None and source.file_key is not None:
+                storage_key = audio_files.get(source.file_key)
 
-                ensure_configured()
-                _s3_tmp_dir = Path(f"/data/search_tmp/{job_id}") if job_id else Path("/tmp")
-                _local_path = _s3_tmp_dir / Path(source.s3_key).name
-                try:
-                    download_object_to_file(source.s3_key, _local_path)
-                    src_path = str(_local_path)
-                except Exception:
-                    logger.exception(
-                        "Failed to download S3 reference audio key='%s', skipping",
-                        source.s3_key,
-                    )
-                    skipped_sources.append(f"s3:{source.s3_key}")
-                    continue
-            elif source.file_key is None or source.file_key not in audio_files:
+            if storage_key is None:
                 logger.warning(
-                    "Missing audio file for key '%s', skipping source",
+                    "Missing storage key for upload field '%s', skipping source",
                     source.file_key,
                 )
                 skipped_sources.append(f"upload:{source.file_key}")
                 continue
-            else:
-                src_path = audio_files[source.file_key]
+
+            # Resolve to the shared storage path. A storage outage must not be
+            # converted into a missing-source skip.
+            storage.ensure_ready()
+            try:
+                if not storage.exists(storage_key):
+                    raise FileNotFoundError(storage_key)
+                src_path = str(storage.path_for(storage_key))
+            except FileNotFoundError:
+                logger.warning("Missing reference audio key='%s', skipping", storage_key)
+                skipped_sources.append(f"upload:{source.file_key or storage_key}")
+                continue
 
             audio_path_for_inference = src_path
             if source.start_time is not None or source.end_time is not None:
@@ -645,7 +631,7 @@ async def _run_batch_search_with_progress(
 
 
 # ---------------------------------------------------------------------------
-# Orphan S3 janitor for search_reference/ prefix
+# Orphan storage janitor for search_reference/ prefix
 # ---------------------------------------------------------------------------
 
 SEARCH_REFERENCE_PREFIX = "search_reference/"
@@ -676,7 +662,7 @@ def _parse_search_reference_key(key: str) -> tuple[UUID, str, str] | None:
 
 
 def _extract_species_config_s3_keys(species_config: Any) -> list[str]:
-    """Extract all s3_key values from a species_config JSONB structure.
+    """Extract all stored key values from a species_config JSONB structure.
 
     Expected shape: list[{"sources": [{"s3_key": "..."}, ...], ...}, ...].
     Defensive against None / non-list inputs and malformed nested shapes.
@@ -702,11 +688,11 @@ def _extract_species_config_s3_keys(species_config: Any) -> list[str]:
 async def _collect_db_reference_state(
     db: AsyncSession,
 ) -> tuple[set[str], set[tuple[UUID, str]]]:
-    """Collect known S3 keys and (project_id, celery_job_id) tuples from the DB.
+    """Collect known storage keys and (project_id, celery_job_id) tuples from the DB.
 
     Returns:
         Tuple of ``(known_keys, known_job_prefixes)`` where:
-          - ``known_keys``: all S3 keys referenced by any SearchSession (via
+          - ``known_keys``: all storage keys referenced by any SearchSession (via
             ``reference_audio_keys`` or ``species_config[*].sources[*].s3_key``).
           - ``known_job_prefixes``: ``(project_id, celery_job_id)`` pairs for
             sessions that have a celery_job_id, used to short-circuit Case A
@@ -736,11 +722,11 @@ async def _collect_db_reference_state(
 
 
 def _classify_orphans(
-    aged_objects: list[S3ObjectMeta],
+    aged_objects: list[StoredObject],
     known_keys: set[str],
     known_job_prefixes: set[tuple[UUID, str]],
-) -> tuple[dict[tuple[UUID, str], list[S3ObjectMeta]], list[S3ObjectMeta]]:
-    """Classify orphan S3 objects into prefix-level and individual deletions.
+) -> tuple[dict[tuple[UUID, str], list[StoredObject]], list[StoredObject]]:
+    """Classify orphan storage objects into prefix-level and individual deletions.
 
     Prefix-level candidates are job prefixes where:
       - ``(project_id, job_id)`` is not in ``known_job_prefixes`` (no session
@@ -754,7 +740,7 @@ def _classify_orphans(
     Keys whose prefix cannot be parsed are skipped entirely — they are not
     considered orphans and are not deleted by this janitor.
     """
-    grouped: dict[tuple[UUID, str], list[S3ObjectMeta]] = {}
+    grouped: dict[tuple[UUID, str], list[StoredObject]] = {}
     for obj in aged_objects:
         parsed = _parse_search_reference_key(obj.key)
         if parsed is None:
@@ -763,8 +749,8 @@ def _classify_orphans(
         project_id, job_id, _ = parsed
         grouped.setdefault((project_id, job_id), []).append(obj)
 
-    prefix_groups: dict[tuple[UUID, str], list[S3ObjectMeta]] = {}
-    individual: list[S3ObjectMeta] = []
+    prefix_groups: dict[tuple[UUID, str], list[StoredObject]] = {}
+    individual: list[StoredObject] = []
     for (project_id, job_id), objs in grouped.items():
         if (project_id, job_id) in known_job_prefixes:
             # A session exists for this job; delete only keys NOT referenced.
@@ -789,7 +775,7 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
     """Async implementation of the orphan janitor for search_reference/ prefix.
 
     Ordering:
-      1. List S3 objects under ``search_reference/`` BEFORE reading the DB.
+      1. List storage objects under ``search_reference/`` BEFORE reading the DB.
          This biases the race toward false NEGATIVES (miss some orphans this
          run, pick them up next run) rather than false positives (deleting
          a key that was just committed to the DB).
@@ -802,11 +788,11 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
     dry_run = settings.JANITOR_DRY_RUN
     cutoff = datetime.now(UTC) - timedelta(hours=settings.JANITOR_AGE_HOURS)
 
-    # Step 1: list S3 objects FIRST (before DB read).
-    all_objects = list(list_objects_paginated(SEARCH_REFERENCE_PREFIX))
+    # Step 1: list storage objects FIRST (before DB read).
+    all_objects = list(storage.list_prefix(SEARCH_REFERENCE_PREFIX))
     total_scanned = len(all_objects)
 
-    # Step 2: read DB reference state AFTER the S3 list has been materialised.
+    # Step 2: read DB reference state AFTER the storage list has been materialised.
     engine, session_factory = get_worker_engine_and_session_factory()
     try:
         async with session_factory() as db:
@@ -815,7 +801,7 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
         await engine.dispose()
 
     # Step 3: age filter.
-    aged = [obj for obj in all_objects if obj.last_modified < cutoff]
+    aged = [obj for obj in all_objects if obj.modified < cutoff]
 
     # Step 4: classify.
     prefix_groups, individual_orphans = _classify_orphans(
@@ -854,35 +840,17 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
     deleted_count = 0
     failed_count = 0
 
-    # Case A optimisation: prefix-level bulk delete.
-    for (pid, jid), objs in prefix_groups.items():
+    # Delete exactly the aged keys classified from the one listing. Do not
+    # re-list a prefix: a young sibling, or a key published after the listing,
+    # must survive this run.
+    eligible_objects = [obj for objs in prefix_groups.values() for obj in objs]
+    eligible_objects.extend(individual_orphans)
+    eligible_keys = [obj.key for obj in eligible_objects]
+    if eligible_keys:
         try:
-            n = delete_objects_by_prefix(f"{SEARCH_REFERENCE_PREFIX}{pid}/{jid}/")
-            deleted_count += n
-            logger.info(
-                "janitor: prefix deleted search_reference/%s/%s/ (%d keys)",
-                pid,
-                jid,
-                n,
-            )
-        except Exception as exc:  # best-effort; next run picks it up
-            failed_count += len(objs)
-            logger.warning(
-                "janitor: prefix delete failed for search_reference/%s/%s/: %s",
-                pid,
-                jid,
-                exc,
-            )
-
-    # Case B/C: individual keys, chunked to 1000 per s3:DeleteObjects call.
-    chunk_size = 1000
-    for i in range(0, len(individual_orphans), chunk_size):
-        chunk = individual_orphans[i : i + chunk_size]
-        keys = [obj.key for obj in chunk]
-        try:
-            result = delete_objects_batch(keys)
-            deleted_count += len(result.deleted)
-            failed_count += len(result.errors)
+            result = storage.delete_many(eligible_keys)
+            deleted_count = len(result.deleted)
+            failed_count = len(result.errors)
             if result.errors:
                 sample = [(e.key, e.code, e.message) for e in result.errors[:10]]
                 logger.warning(
@@ -890,8 +858,10 @@ async def _run_orphan_search_reference_cleanup() -> dict[str, Any]:
                     len(result.errors),
                     sample,
                 )
+        except storage.StorageUnavailable:
+            raise
         except Exception as exc:
-            failed_count += len(chunk)
+            failed_count = len(eligible_keys)
             logger.warning("janitor: batch delete raised: %s", exc)
 
     logger.info(
@@ -969,7 +939,7 @@ def rebuild_search_index_for_project(
 
 @app.task(name="echoroo.workers.search_tasks.cleanup_orphan_search_reference")  # type: ignore[untyped-decorator]
 def cleanup_orphan_search_reference() -> dict[str, Any]:
-    """Remove orphan S3 objects under the ``search_reference/`` prefix.
+    """Remove orphan storage objects under the ``search_reference/`` prefix.
 
     Detects keys that:
       - match ``search_reference/{valid_project_uuid}/{job_id}/{file}``
@@ -978,10 +948,8 @@ def cleanup_orphan_search_reference() -> dict[str, Any]:
         or ``species_config[*].sources[*].s3_key``) AND whose
         ``(project_id, job_id)`` is not present in the known_job_prefixes set.
 
-    For job prefixes where no key is DB-referenced AND celery_job_id is
-    unknown, deletes the entire prefix in one batch (Case A optimisation).
-    Otherwise deletes individual orphan keys via s3:DeleteObjects (chunked
-    to 1000 keys per call).
+    Deletes only the aged orphan keys from the initial storage listing. This
+    preserves young siblings and keys published after the listing.
 
     Honours ``JANITOR_DRY_RUN`` (default true) to log candidates without
     deleting.

@@ -38,7 +38,6 @@ from echoroo.core.actions import (
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import Permission, gate_action
 from echoroo.core.response_filter import apply_response_filter
-from echoroo.core.settings import get_settings
 from echoroo.core.stream_guard import (
     AUDIO_RECHECK_INTERVAL,
     PermissionRevokedMidStream,
@@ -59,8 +58,6 @@ from echoroo.services.recording import RecordingService
 from echoroo.services.token import TokenService
 
 router = APIRouter(prefix="/projects/{project_id}/recordings", tags=["Programmatic API — Recordings"])
-
-settings = get_settings()
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -154,19 +151,9 @@ def get_audio_service() -> AudioService:
     """Get AudioService instance.
 
     Returns:
-        AudioService instance configured with S3 audio cache support.
-
-    Phase 5 polish round 3 (重要1): the S3 audio cache directory is now
-    sourced from :class:`Settings` instead of a hard-coded ``/data/`` path.
-    Tests and CI runners that cannot write to ``/data/`` may override
-    ``S3_AUDIO_CACHE_DIR`` via the environment or via FastAPI's
-    ``app.dependency_overrides`` against this function.
+        AudioService instance backed by the shared storage tree.
     """
-    return AudioService(
-        settings.AUDIO_ROOT,
-        settings.AUDIO_CACHE_DIR,
-        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
-    )
+    return AudioService()
 
 
 def get_recording_service(
@@ -600,8 +587,8 @@ async def stream_audio(
     This endpoint streams the raw bytes through FastAPI; it does NOT generate
     a presigned S3 URL on the response. Even if a future maintainer wires the
     response to a presigned URL, ``recording.path`` is built upstream as
-    ``recordings/{project_id}/{dataset_id}/{recording_id}{ext}`` (see
-    :func:`echoroo.workers.upload_tasks.recording_object_key`) — a UUID-only
+    ``recordings/{project_id}/{dataset_id}/{recording_id}{ext}`` (keys are
+    built in :mod:`echoroo.services.upload`) — a UUID-only
     object key with no species identifier. H-8 therefore holds by construction.
 
     Supports efficient streaming of long PAM recordings by honouring the
@@ -695,8 +682,30 @@ async def stream_audio(
             )
             compressed_path = None
 
+        compressed_handle = None
         if compressed_path is not None:
-            ogg_size = compressed_path.stat().st_size
+            try:
+                compressed_handle = compressed_path.open("rb")
+            except FileNotFoundError:
+                # A cache sweep may remove the file between lookup and open.
+                # Re-encode once, then use the newly opened handle.
+                try:
+                    compressed_path = service.audio_service.get_compressed_for_playback(
+                        recording.path
+                    )
+                    compressed_handle = compressed_path.open("rb")
+                except Exception as exc:
+                    _logger.warning(
+                        "OGG cache disappeared and re-encoding failed for %s: %s",
+                        recording.path,
+                        exc,
+                    )
+                    compressed_path = None
+
+        if compressed_path is not None and compressed_handle is not None:
+            compressed_handle.seek(0, 2)
+            ogg_size = compressed_handle.tell()
+            compressed_handle.seek(0)
 
             if range is None:
                 # No Range header: stream the full compressed file.
@@ -718,7 +727,8 @@ async def stream_audio(
                         user_agent = request.headers.get("user-agent", "") or ""
                     except Exception:  # noqa: BLE001
                         user_agent = ""
-                    with open(compressed_path, "rb") as f:
+                    f = compressed_handle
+                    try:
                         while chunk := f.read(65536):
                             chunk_count += 1
                             if chunk_count > 1 and chunk_count % AUDIO_RECHECK_INTERVAL == 0:
@@ -742,6 +752,8 @@ async def stream_audio(
                                     )
                                     return
                             yield chunk
+                    finally:
+                        f.close()
 
                 # Phase 17 backlog A-5 Round 2 R1-C1 fix: do NOT advertise
                 # ``Content-Length`` for the guarded full-file stream. A
@@ -771,9 +783,11 @@ async def stream_audio(
             req_end = max(req_start, min(req_end, ogg_size - 1))
             chunk_size = req_end - req_start + 1
 
-            with open(compressed_path, "rb") as f:
-                f.seek(req_start)
-                chunk = f.read(chunk_size)
+            try:
+                compressed_handle.seek(req_start)
+                chunk = compressed_handle.read(chunk_size)
+            finally:
+                compressed_handle.close()
 
             return Response(
                 content=chunk,

@@ -19,7 +19,6 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import DetectionRunStatus
@@ -70,7 +69,6 @@ async def _run_embedding_generation(
         Summary dict with detection_run_id, recordings_processed,
         total_embeddings, status.
     """
-    settings = get_settings()
     engine, session_factory = get_worker_engine_and_session_factory()
 
     dataset_uuid = UUID(dataset_id)
@@ -124,10 +122,7 @@ async def _run_embedding_generation(
         # ------------------------------------------------------------------
         # Step 3: Initialize AudioService and load the inference engine
         # ------------------------------------------------------------------
-        audio_service = AudioService(
-            audio_root=settings.AUDIO_ROOT,
-            s3_audio_cache_dir="/data/s3_audio_cache",
-        )
+        audio_service = AudioService()
 
         from echoroo.workers.model_preloader import get_model
 
@@ -138,7 +133,7 @@ async def _run_embedding_generation(
         recordings_failed = 0
 
         # ------------------------------------------------------------------
-        # Step 4: Download all files from S3 and collect local paths
+        # Step 4: Resolve storage keys and collect local paths
         # ------------------------------------------------------------------
         recording_paths, download_failures = _download_recordings_to_local(
             recordings, audio_service

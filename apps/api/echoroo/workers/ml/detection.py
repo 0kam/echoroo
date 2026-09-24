@@ -18,7 +18,6 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DetectionRunStatus, DetectionSource, DetectionStatus
 from echoroo.models.recording import Recording
@@ -73,7 +72,6 @@ async def _run_detection(
         Summary dict with detection_run_id, recordings_processed,
         total_annotations, status.
     """
-    settings = get_settings()
     engine, session_factory = get_worker_engine_and_session_factory()
 
     dataset_uuid = UUID(dataset_id)
@@ -149,10 +147,7 @@ async def _run_detection(
         # ------------------------------------------------------------------
         # Step 4: Initialize AudioService and load the inference engine
         # ------------------------------------------------------------------
-        audio_service = AudioService(
-            audio_root=settings.AUDIO_ROOT,
-            s3_audio_cache_dir="/data/s3_audio_cache",
-        )
+        audio_service = AudioService()
 
         from echoroo.workers.model_preloader import get_model
 
@@ -204,7 +199,7 @@ async def _run_detection(
         pending_annotation_dicts: list[dict[str, Any]] = []
 
         # ------------------------------------------------------------------
-        # Step 5: Download all files from S3 and collect local paths
+        # Step 5: Resolve storage keys and collect local paths
         # ------------------------------------------------------------------
         recording_paths, download_failures = _download_recordings_to_local(
             recordings, audio_service

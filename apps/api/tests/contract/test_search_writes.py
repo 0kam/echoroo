@@ -16,6 +16,10 @@ Routes covered:
   8  POST  /annotations (annotations_router)            (annotations.py) — DB write
 """
 
+# The module-level Phase 14 skip intentionally precedes these imports so the
+# stale deferred suite remains importable without running application setup.
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 # Phase 13 P1.5 R2 (Codex follow-up — Fatal): this suite exercises the
@@ -707,7 +711,7 @@ class TestBatchSearch:
     """Smoke tests for POST /batch."""
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.get_s3_client")
+    @patch("echoroo.core.storage.write_bytes")
     async def test_happy_path_creates_session_and_dispatches(
         self,
         mock_get_s3_client: MagicMock,
@@ -969,7 +973,7 @@ class TestDeleteSession:
 
         Patches ``echoroo.api.v1.search.sessions.crud.delete_object`` (the
         module-level binding bound at import time via ``from ... import``)
-        rather than ``echoroo.core.s3.delete_object`` — the latter would
+        rather than the old S3 module delete helper — the latter would
         not be seen by the route.
 
         Args:
@@ -1094,8 +1098,8 @@ class TestRerunSession:
     """Smoke tests for PUT /sessions/{session_id}/rerun."""
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
+    @patch("echoroo.core.storage.write_bytes")
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete")
     async def test_happy_path_reruns_and_clears_annotations(
         self,
         mock_delete_object: MagicMock,
@@ -1283,9 +1287,9 @@ class TestRerunSession:
         assert resp.status_code == 404
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_objects_by_prefix")
-    @patch("echoroo.core.s3.get_s3_client")
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete")
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete_prefix")
+    @patch("echoroo.core.storage.write_bytes")
     async def test_rerun_commit_failure_cleans_up_new_s3_and_keeps_old(
         self,
         mock_get_s3_client: MagicMock,
@@ -1418,7 +1422,7 @@ class TestRerunSession:
 class TestStreamReferenceAudio:
     """Smoke tests for GET /sessions/{session_id}/reference-audio/{source_index}."""
 
-    @patch("echoroo.core.s3.get_s3_client")
+    @patch("echoroo.core.storage.write_bytes")
     async def test_happy_path_200(
         self,
         mock_get_s3_client: MagicMock,
@@ -1455,7 +1459,7 @@ class TestStreamReferenceAudio:
         assert len(resp.content) > 0
         mock_s3.get_object.assert_called_once()
 
-    @patch("echoroo.core.s3.get_s3_client")
+    @patch("echoroo.core.storage.write_bytes")
     async def test_range_header_returns_206(
         self,
         mock_get_s3_client: MagicMock,
