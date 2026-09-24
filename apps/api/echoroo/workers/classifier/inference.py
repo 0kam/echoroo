@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,7 +16,7 @@ import numpy as np
 from sqlalchemy import text
 
 from echoroo.workers.celery_app import app
-from echoroo.workers.classifier.utils import _download_model_from_s3
+from echoroo.workers.classifier.utils import _stored_model_path
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
 logger = logging.getLogger(__name__)
@@ -45,7 +43,7 @@ def run_custom_model_inference(
 ) -> dict[str, Any]:
     """Apply a trained custom SVM model to all Perch embeddings in a dataset.
 
-    Loads the SVM artifact from S3, fetches all Perch embeddings for the given
+    Loads the SVM artifact from storage, fetches all Perch embeddings for the given
     dataset in batches, runs predict_proba(), and creates Annotation records
     for every clip whose probability meets the threshold. The DetectionRun
     status is updated from PENDING -> RUNNING -> COMPLETED (or FAILED).
@@ -140,21 +138,15 @@ async def _run_custom_model_inference(
             embedding_model_name = custom_model.embedding_model_name
 
             # ------------------------------------------------------------------
-            # Step 3: Download model artifact from S3 and load classifier
+            # Step 3: Resolve the stored model artifact and load the classifier
             # ------------------------------------------------------------------
             from echoroo.ml.classifiers import UnifiedClassifier
 
-            with tempfile.NamedTemporaryFile(suffix=".joblib", delete=False) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-
-            try:
-                await _download_model_from_s3(artifact_key, tmp_path)
-                classifier = UnifiedClassifier.load(tmp_path)
-            finally:
-                tmp_path.unlink(missing_ok=True)
+            model_path = await asyncio.to_thread(_stored_model_path, artifact_key)
+            classifier = UnifiedClassifier.load(model_path)
 
             logger.info(
-                "Loaded classifier from S3 artifact: key=%s (model_id=%s)",
+                "Loaded classifier from stored artifact: key=%s (model_id=%s)",
                 artifact_key,
                 model_id,
             )
@@ -387,4 +379,3 @@ async def _run_custom_model_inference(
 
     finally:
         await engine.dispose()
-

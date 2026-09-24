@@ -24,7 +24,6 @@ import struct
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -33,7 +32,7 @@ import pyotp
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core import s3
+from echoroo.core import storage
 from echoroo.core.database import AsyncSessionLocal
 from echoroo.core.permissions import Permission
 from echoroo.core.redis import get_redis_connection
@@ -350,84 +349,35 @@ def _fixture_wav_sha256() -> str:
     return hashlib.sha256(_fixture_wav_bytes()).hexdigest()
 
 
-def _write_local_media_fixture(path: str, payload: bytes) -> None:
-    """Write the fixture under AUDIO_ROOT so AudioService can find it locally."""
-    settings = get_settings()
-    destination = Path(settings.AUDIO_ROOT) / path
-    resolved_root = Path(settings.AUDIO_ROOT).resolve()
-    resolved_destination = destination.resolve()
-    if not resolved_destination.is_relative_to(resolved_root):
-        raise ValueError(f"Path traversal detected for fixture media path: {path}")
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() and destination.read_bytes() == payload:
-        return
-    destination.write_bytes(payload)
+def _stored_fixture_matches(path: str, payload: bytes, expected_sha256: str) -> bool:
+    """Verify one stored fixture using its size and SHA-256 digest."""
+    try:
+        with storage.open_read(path) as stream:
+            digest = hashlib.sha256()
+            size = 0
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+    except FileNotFoundError:
+        return False
+    return size == len(payload) and digest.hexdigest() == expected_sha256
 
 
 def _ensure_recording_media_fixture(path: str) -> str:
-    """Ensure the seeded recording path resolves through AudioService.
-
-    Prefer S3 so ``AudioService.ensure_file_local()`` exercises its production
-    lookup path. Write below ``AUDIO_ROOT`` only as a fallback when S3 seeding
-    is unavailable.
-    """
+    """Ensure the seeded recording path resolves through AudioService."""
     payload = _fixture_wav_bytes()
     expected_sha256 = hashlib.sha256(payload).hexdigest()
-
-    try:
-        s3.ensure_bucket_exists()
-        existing = s3.verify_object_exists(
-            path,
-            expected_size=len(payload),
-            expected_sha256=expected_sha256,
-        )
-        if existing["exists"] and existing["size_match"] and existing["sha256_match"]:
-            return "s3"
-
-        s3.put_object(
-            path,
-            payload,
-            content_type="audio/wav",
-            metadata={
-                "source": "seed_e2e_permissions",
-                "sha256": expected_sha256,
-            },
-        )
-        return "s3"
-    except Exception as exc:  # noqa: BLE001 - seeding supports local fallback.
-        logger.warning(
-            "Unable to seed media fixture %s to S3; using AUDIO_ROOT fixture: %s",
-            path,
-            exc,
-        )
-        _write_local_media_fixture(path, payload)
-        return "local"
+    if not _stored_fixture_matches(path, payload, expected_sha256):
+        storage.write_bytes(path, payload)
+    return "storage"
 
 
 def _ensure_reference_audio_fixture(path: str) -> None:
-    """Ensure an exportable search session reference audio object exists in S3."""
+    """Ensure an exportable search session reference audio object exists in storage."""
     payload = _fixture_wav_bytes()
     expected_sha256 = hashlib.sha256(payload).hexdigest()
-    s3.ensure_bucket_exists()
-
-    existing = s3.verify_object_exists(
-        path,
-        expected_size=len(payload),
-        expected_sha256=expected_sha256,
-    )
-    if existing["exists"] and existing["size_match"] and existing["sha256_match"]:
-        return
-
-    s3.put_object(
-        path,
-        payload,
-        content_type="audio/wav",
-        metadata={
-            "source": "seed_e2e_permissions",
-            "sha256": expected_sha256,
-        },
-    )
+    if not _stored_fixture_matches(path, payload, expected_sha256):
+        storage.write_bytes(path, payload)
 
 
 async def _upsert_user(

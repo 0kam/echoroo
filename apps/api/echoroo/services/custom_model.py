@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core import storage
 from echoroo.core.pagination import MAX_PAGE_SIZE
 from echoroo.models.custom_model import CustomModel, CustomModelStatus
 from echoroo.models.detection_run import DetectionRun
@@ -205,7 +206,7 @@ class CustomModelService:
         self,
         model: CustomModel,
     ) -> None:
-        """Delete a CustomModel, also cleaning up its S3 artifact if present.
+        """Delete a CustomModel, also cleaning up its stored artifact if present.
 
         Args:
             model: CustomModel instance to delete
@@ -213,14 +214,14 @@ class CustomModelService:
         if model.model_artifact_key:
             deleted = False
             try:
-                from echoroo.core.s3 import delete_object  # noqa: PLC0415
-
-                deleted = delete_object(model.model_artifact_key)
+                deleted = storage.delete(model.model_artifact_key)
+            except storage.StorageUnavailable:
+                raise
             except Exception:
                 deleted = False
             if not deleted:
                 logger.warning(
-                    "Failed to delete S3 artifact for custom model %s (key=%s)",
+                    "Failed to delete stored artifact for custom model %s (key=%s)",
                     model.id,
                     model.model_artifact_key,
                 )

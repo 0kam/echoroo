@@ -13,7 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from echoroo.core import s3, upload_staging
+from echoroo.core import upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus, UploadFileStatus, UploadSessionStatus
@@ -96,11 +96,6 @@ async def _create_session(
     return body["session_id"], body["files"]
 
 
-def _mock_storage(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep contract tests independent of S3."""
-    monkeypatch.setattr(s3, "ensure_bucket_exists", lambda: None)
-
-
 def _stub_validation_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep completion tests independent of a Celery broker."""
     from echoroo.workers import upload_tasks
@@ -123,7 +118,6 @@ async def test_chunk_append_retry_checksum_and_staging_reconcile(
     db_session: AsyncSession,
 ) -> None:
     """Chunks append at the DB offset, preserve digests, and reconcile excess bytes."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
 
@@ -214,7 +208,6 @@ async def test_chunk_conflicts_limits_and_authentication(
     sessions cannot coexist as fixtures (the second would 419 the first).
     """
     csrf_headers = await bff_session_headers(client, db_session, test_user)
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "UPLOAD_CHUNK_SIZE", 8)
@@ -293,7 +286,6 @@ async def test_active_session_cancel_and_status_progress(
     db_session: AsyncSession,
 ) -> None:
     """Active resume returns staged byte counts and cancel removes staging."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     session_id, files = await _create_session(
@@ -338,7 +330,6 @@ async def test_active_exposes_chunk_digests(
     test_dataset: Dataset,
 ) -> None:
     """Active-session status exposes the digest of every staged chunk."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     session_id, files = await _create_session(
@@ -376,7 +367,6 @@ async def test_restart_resets_a_file(
     test_dataset: Dataset,
 ) -> None:
     """A digest mismatch can restart one file from offset zero."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     session_id, files = await _create_session(
@@ -429,7 +419,6 @@ async def test_active_session_is_owner_scoped(
     test_dataset: Dataset,
 ) -> None:
     """The active-session lookup never exposes another caller's session."""
-    _mock_storage(monkeypatch)
     csrf_headers = await bff_session_headers(client, db_session, test_user)
     session_id, _ = await _create_session(
         client,
@@ -468,7 +457,6 @@ async def test_create_conflicts_with_another_users_session(
     test_dataset: Dataset,
 ) -> None:
     """Only the session owner may supersede an unfinished upload."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     owner_headers = await bff_session_headers(client, db_session, test_user)
@@ -521,7 +509,6 @@ async def test_complete_skip_missing_and_preserves_missing_retry(
     db_session: AsyncSession,
 ) -> None:
     """Partial completion skips untouched files, while the default stays resumable."""
-    _mock_storage(monkeypatch)
     _stub_validation_dispatch(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
@@ -613,7 +600,6 @@ async def test_chunk_admission_limit_returns_retry_after(
     test_dataset: Dataset,
 ) -> None:
     """At most the configured number of per-user chunk calls are admitted."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER", 1)
     session_id, files = await _create_session(
@@ -650,7 +636,6 @@ async def test_upload_file_status_exposes_declared_and_received_bytes(
     test_dataset: Dataset,
 ) -> None:
     """Status polling includes the resumable transfer counters."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     session_id, files = await _create_session(
@@ -696,7 +681,6 @@ async def test_concurrent_same_offset_chunks_never_truncate_committed_bytes(
     Regression for the stale identity-map read: the loser used to re-read
     received_bytes == 0 and truncate the bytes the winner had committed.
     """
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER", 4)
@@ -729,7 +713,6 @@ async def test_chunk_body_caps_announced_and_streamed(
     test_dataset: Dataset,
 ) -> None:
     """413 from the Content-Length pre-check, and from the streaming cap when no length is announced."""
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "UPLOAD_CHUNK_SIZE", 4)
@@ -766,7 +749,6 @@ async def test_chunk_admission_limit_is_deterministic(
     """With the caller's in-flight count already at the limit, the next chunk is 429."""
     from echoroo.api.web_v1.projects import _uploads
 
-    _mock_storage(monkeypatch)
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_STAGING_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER", 1)

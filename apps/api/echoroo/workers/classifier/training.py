@@ -22,7 +22,7 @@ from echoroo.workers.celery_app import app
 from echoroo.workers.classifier.utils import (
     _fetch_training_embeddings,
     _fetch_unlabeled_embeddings,
-    _upload_model_to_s3,
+    _store_model,
 )
 from echoroo.workers.db_utils import get_worker_engine_and_session_factory
 
@@ -44,7 +44,7 @@ def train_custom_model(_self: Any, model_id: str) -> dict[str, Any]:
 
     Reads confirmed/rejected annotations from the model's sampling rounds,
     fetches corresponding Perch embedding vectors, runs cross-validated SVM
-    training, serializes the model to S3, and updates the DB record with
+    training, serializes the model to storage, and updates the DB record with
     metrics and status.
 
     Args:
@@ -142,7 +142,7 @@ async def _run_training(
     project_id: UUID,
     embedding_model_name: str,
 ) -> dict[str, Any]:
-    """Core training logic: collect data, train model, upload to S3, update DB.
+    """Core training logic: collect data, train model, store artifact, update DB.
 
     Args:
         db: Active async database session.
@@ -355,7 +355,7 @@ async def _run_training(
     )
 
     # ------------------------------------------------------------------
-    # Step 5: Serialize model to S3
+    # Step 5: Serialize model to storage
     # ------------------------------------------------------------------
     artifact_key = f"models/{project_id}/{model.id}/model.joblib"
 
@@ -364,12 +364,12 @@ async def _run_training(
 
     try:
         trained_classifier.save(tmp_path)
-        await _upload_model_to_s3(local_path=tmp_path, s3_key=artifact_key)
+        await _store_model(local_path=tmp_path, key=artifact_key)
     finally:
         tmp_path.unlink(missing_ok=True)
 
     logger.info(
-        "Model artifact uploaded to S3: key=%s (model_id=%s)", artifact_key, str(model.id)
+        "Model artifact stored: key=%s (model_id=%s)", artifact_key, str(model.id)
     )
 
     # ------------------------------------------------------------------
@@ -411,4 +411,3 @@ async def _run_training(
         "hyperparameters": model.hyperparameters,
         "training_stats": model.training_stats,
     }
-

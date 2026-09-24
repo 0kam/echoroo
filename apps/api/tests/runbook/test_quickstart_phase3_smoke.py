@@ -25,7 +25,7 @@ shared dev DB). Instead we cover three regression-prevention guarantees:
     ``initial_iucn_sync`` (for example) lights up red instead of silently
     enabling unsafe behaviour.
 
-Tests that actually drive the scripts against a live database / S3 / KMS
+Tests that actually drive the scripts against a live database / storage / KMS
 stack are gated behind the ``requires_runbook`` pytest marker. CI runs
 ``-m "not requires_runbook"`` and skips them; operators opt in locally
 with ``pytest -m requires_runbook`` against the Docker Compose dev stack
@@ -211,12 +211,12 @@ def test_wipe_database_module_importable() -> None:
 # They are intentionally minimal: a full end-to-end wipe-and-bootstrap
 # round-trip lives in tests/integration/test_baseline_migration.py and the
 # Phase 5+ scenario tests. Here we only check that the script entry points
-# reach their first real side-effect (DB connection / S3 lookup) without
+# reach their first real side-effect (DB connection / storage lookup) without
 # crashing on import or argparse.
 # ---------------------------------------------------------------------------
 @pytest.mark.requires_runbook
 def test_check_wipe_guard_runs_against_live_stack() -> None:
-    """``check_wipe_guard`` should reach S3 / DB without crashing.
+    """``check_wipe_guard`` should reach storage / DB without crashing.
 
     Exit code semantics (from ``echoroo.scripts.check_wipe_guard``):
 
@@ -225,9 +225,9 @@ def test_check_wipe_guard_runs_against_live_stack() -> None:
     * ``11`` — alembic version is not the baseline ``"0001"``. On a
       freshly migrated CI stack the head revision is well past 0001, so
       this is the typical exit code here.
-    * ``12`` — S3 Object Lock genesis marker missing. Also legitimate on
-      a fresh CI stack where we provision the bucket but not the marker.
-    * ``20`` — infrastructure error (DB / S3 unreachable). Treated as a
+    * ``12`` — storage genesis marker missing. Also legitimate on
+      a fresh CI stack where we provision the storage root but not the marker.
+    * ``20`` — infrastructure error (DB / storage unreachable). Treated as a
       test failure: it means the live-infra wiring (services block / env
       vars) is broken, not a normal "fresh stack" outcome.
 
@@ -237,7 +237,7 @@ def test_check_wipe_guard_runs_against_live_stack() -> None:
     result = _run_module("echoroo.scripts.check_wipe_guard", timeout=60.0)
     assert result.returncode in (0, 10, 11, 12), (
         f"check_wipe_guard exited with unexpected code rc={result.returncode}. "
-        "Expected one of 0/10/11/12 (script reached DB+S3 cleanly); rc=20 "
+        "Expected one of 0/10/11/12 (script reached DB+storage cleanly); rc=20 "
         "means infra unreachable, any other code means a Python traceback.\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )

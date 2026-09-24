@@ -23,8 +23,8 @@ from typing import Any
 
 from celery import shared_task
 
+from echoroo.core import storage
 from echoroo.core.kms import compute_audit_chain_hash
-from echoroo.core.s3 import get_object_stream, object_exists, put_object
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ _ARCHIVE_KEY_RE = re.compile(r"/(\d{4})/(\d{2})\.ndjson$")
 class AuditChainMismatchError(RuntimeError):
     """Raised when the recomputed row_hash does not match the stored value.
 
-    The worker aborts before any S3 upload so an on-call engineer can
+    The worker aborts before any storage publication so an on-call engineer can
     investigate. The mismatch itself is logged via ``platform_audit_log``
     before the exception propagates.
     """
@@ -192,19 +192,17 @@ def _closed_weeks(now: datetime, count: int) -> list[tuple[int, int]]:
 
 
 def _write_archive(key: str, body: bytes) -> None:
-    """Write one archive. Callers check :func:`object_exists` first (write-once)."""
-    # FR-028e: put_object routes the PutObject kwargs through the GPS-metadata
-    # sanitizer centrally.
-    put_object(key, body, content_type="application/x-ndjson")
+    """Write one archive with exclusive publication semantics."""
+    storage.write_bytes(key, body, exclusive=True)
     logger.info("audit export archived key=%s bytes=%d", key, len(body))
 
 
 def _read_archive(key: str) -> bytes | None:
     """Return the stored bytes of an archive, or None if the key does not exist."""
-    if not object_exists(key):
+    if not storage.exists(key):
         return None
-    body: bytes = get_object_stream(key).read()
-    return body
+    with storage.open_read(key) as stream:
+        return stream.read()
 
 
 def verify_archive(
@@ -305,7 +303,12 @@ def _export_week(
     expected = _serialize_ndjson(rows)
     written = stored is None
     if written:
-        _write_archive(key, expected)
+        try:
+            _write_archive(key, expected)
+        except FileExistsError:
+            # Another exporter won the exclusive publication race. Continue
+            # through the normal read-back comparison path below.
+            written = False
         stored = _read_archive(key)
     if stored != expected:
         raise AuditArchiveMismatchError(

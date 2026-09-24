@@ -1,6 +1,6 @@
 """Shared helper functions for the custom classifier worker tasks.
 
-Embedding fetch/parse helpers plus S3 model-artifact download/upload. Split
+Embedding fetch/parse helpers plus storage-backed model-artifact helpers. Split
 out of the former ``classifier_tasks`` monolith; behavior is unchanged.
 """
 
@@ -14,6 +14,8 @@ from uuid import UUID
 import numpy as np
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from echoroo.core import storage
 
 logger = logging.getLogger(__name__)
 
@@ -218,46 +220,27 @@ async def _fetch_unlabeled_embeddings(
 
     return np.array(vectors, dtype=np.float32), np.array(recording_ids)
 
-async def _download_model_from_s3(s3_key: str, local_path: Path) -> None:
-    """Download a serialized model file from S3 to a local path.
+def _stored_model_path(key: str) -> Path:
+    """Return the local path of a stored model artifact."""
 
-    Args:
-        s3_key: S3 object key (e.g. "models/{project_id}/{model_id}/model.joblib").
-        local_path: Absolute local path to write the downloaded file to.
+    if not storage.exists(key):
+        raise FileNotFoundError(key)
+    return storage.path_for(key)
 
-    Raises:
-        Exception: If the S3 download fails.
-    """
+
+async def _store_model(local_path: Path, key: str) -> None:
+    """Atomically replace a stored serialized model artifact."""
+
+    # File publication is blocking — keep it off the event loop.
     import asyncio
 
-    from echoroo.core.s3 import download_object_to_file
+    await asyncio.to_thread(storage.write_file, local_path, key)
 
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: download_object_to_file(s3_key, local_path),
-    )
 
-async def _upload_model_to_s3(local_path: Path, s3_key: str) -> None:
-    """Upload a serialized model file to S3.
-
-    Args:
-        local_path: Absolute path to the local joblib file.
-        s3_key: Target S3 object key (e.g. "models/{project_id}/{model_id}/model.joblib").
-
-    Raises:
-        Exception: If the S3 upload fails.
-    """
-    import asyncio
-
-    from echoroo.core.s3 import upload_file_to_object
-
-    # Upload is blocking — run in a thread pool to avoid blocking the event loop
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: upload_file_to_object(local_path, s3_key),
-    )
+# The package initializer still re-exports the former helper names for
+# compatibility with callers that import the classifier package directly.
+_download_model_from_s3 = _stored_model_path
+_upload_model_to_s3 = _store_model
 
 def _parse_vectors(raw_vectors: list[Any]) -> np.ndarray:
     """Parse a list of raw pgvector values into a float32 numpy array.
