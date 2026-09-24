@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _MARKER_NAME = ".echoroo-storage"
 _PROBE_NAME = ".echoroo-probe"
-_TEMPORARY_PATTERN = re.compile(r"^\..+\.tmp-[0-9a-f]{32}$")
+_TEMPORARY_PATTERN = re.compile(r"^\.echoroo-tmp-[0-9a-f]{32}$")
 _RANGE_CHUNK_SIZE = 64 * 1024
 _COPY_CHUNK_SIZE = 1024 * 1024
 
@@ -152,22 +152,31 @@ def _key_parts(key: str) -> list[str]:
     parts = key.split("/")
     if any(not part for part in parts):
         raise StorageKeyError("storage key must not contain empty components")
-    if any(part in {".", ".."} for part in parts):
-        raise StorageKeyError("storage key must not contain '.' or '..' components")
-    if parts[-1].startswith("."):
-        raise StorageKeyError("storage key's final component is reserved")
+    _validate_components(parts, "storage key")
     return parts
 
 
-def _reject_existing_symlinks(base: Path, parts: list[str]) -> None:
-    current = base
-    try:
-        base_stat = base.lstat()
-    except FileNotFoundError:
-        return
-    if stat.S_ISLNK(base_stat.st_mode):
-        raise StorageKeyError("storage root must not be a symlink")
+def _is_reserved_component(component: str) -> bool:
+    """Return whether a path component is unavailable to storage keys."""
 
+    if component.startswith("."):
+        return True
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in component):
+        return True
+    try:
+        return len(component.encode("utf-8")) > 255
+    except UnicodeEncodeError:
+        return True
+
+
+def _validate_components(parts: list[str], label: str) -> None:
+    for part in parts:
+        if _is_reserved_component(part):
+            raise StorageKeyError(f"{label} contains a reserved component")
+
+
+def _lookup_path(base: Path, parts: list[str]) -> Path:
+    current = base
     for part in parts:
         current /= part
         try:
@@ -176,15 +185,14 @@ def _reject_existing_symlinks(base: Path, parts: list[str]) -> None:
             break
         if stat.S_ISLNK(current_stat.st_mode):
             raise StorageKeyError(f"storage key contains symlink component: {part}")
+    return base.joinpath(*parts)
 
 
 def path_for(key: str) -> Path:
     """Return the safe filesystem path for a storage key."""
 
     parts = _key_parts(key)
-    storage_root = root()
-    _reject_existing_symlinks(storage_root, parts)
-    return storage_root.joinpath(*parts)
+    return _lookup_path(_check_root(), parts)
 
 
 def _unavailable(message: str, cause: BaseException | None = None) -> StorageUnavailable:
@@ -243,12 +251,20 @@ def _full_probe(storage_root: Path) -> None:
     first = probe_dir / f"probe-{token}.first"
     replaced = probe_dir / f"probe-{token}.replaced"
     linked = probe_dir / f"probe-{token}.linked"
+    original_failure: Exception | None = None
+    cleanup_failures: list[OSError] = []
     try:
         try:
             probe_stat = probe_dir.lstat()
         except FileNotFoundError:
-            os.mkdir(probe_dir, 0o750)
-            _set_directory_mode(probe_dir)
+            try:
+                os.mkdir(probe_dir, 0o750)
+            except FileExistsError as exc:
+                probe_stat = probe_dir.lstat()
+                if stat.S_ISLNK(probe_stat.st_mode) or not stat.S_ISDIR(probe_stat.st_mode):
+                    raise OSError(f"probe path is not a directory: {probe_dir}") from exc
+            else:
+                _set_directory_mode(probe_dir)
         else:
             if stat.S_ISLNK(probe_stat.st_mode) or not stat.S_ISDIR(probe_stat.st_mode):
                 raise OSError(f"probe path is not a directory: {probe_dir}")
@@ -267,11 +283,25 @@ def _full_probe(storage_root: Path) -> None:
             raise OSError("hard-link publication did not refuse a collision")
         _fsync_directory(probe_dir)
     except Exception as exc:
-        raise _unavailable(f"storage full probe failed: {storage_root}", exc) from exc
+        original_failure = exc
     finally:
         for candidate in (first, replaced, linked):
-            with suppress(OSError):
+            try:
                 candidate.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                cleanup_failures.append(exc)
+
+    if original_failure is not None:
+        detail = "storage full probe failed"
+        if cleanup_failures:
+            detail += f" during cleanup: {cleanup_failures[0]}"
+        error = _unavailable(f"{detail}: {storage_root}", original_failure)
+        raise error from original_failure
+    if cleanup_failures:
+        error = _unavailable(f"storage full probe cleanup failed: {storage_root}", cleanup_failures[0])
+        raise error from cleanup_failures[0]
 
     try:
         _fsync_directory(probe_dir)
@@ -287,11 +317,9 @@ def ensure_ready(*, full: bool = False) -> None:
         _full_probe(storage_root)
 
 
-def _ensure_destination(path: Path) -> tuple[list[Path], Path]:
-    storage_root = root()
+def _ensure_destination(storage_root: Path, path: Path) -> Path:
     parts = path.relative_to(storage_root).parts
     destination = storage_root
-    created: list[Path] = []
     for part in parts[:-1]:
         destination /= part
         try:
@@ -303,24 +331,22 @@ def _ensure_destination(path: Path) -> tuple[list[Path], Path]:
                 current_stat = destination.lstat()
             else:
                 _set_directory_mode(destination)
-                created.append(destination)
                 continue
         if stat.S_ISLNK(current_stat.st_mode):
             raise StorageKeyError(f"storage key contains symlink component: {part}")
         if not stat.S_ISDIR(current_stat.st_mode):
             raise NotADirectoryError(destination)
-    return created, path.parent
+    return path.parent
 
 
-def _publication_directories(created: list[Path], destination: Path) -> list[Path]:
-    directories: list[Path] = [destination]
-    for directory in created:
-        directories.extend((directory, directory.parent))
-    result: list[Path] = []
-    for directory in directories:
-        if directory not in result:
-            result.append(directory)
-    return result
+def _publication_directories(storage_root: Path, destination: Path) -> list[Path]:
+    directories: list[Path] = []
+    current = destination
+    while True:
+        directories.append(current)
+        if current == storage_root:
+            return directories
+        current = current.parent
 
 
 def _write_temp(
@@ -361,14 +387,15 @@ def _write_temp(
 
 
 def _write_published(
+    storage_root: Path,
     path: Path,
     *,
     data: bytes | None = None,
     source: Path | None = None,
     exclusive: bool,
 ) -> int:
-    created, destination = _ensure_destination(path)
-    temporary = destination / f".{path.name}.tmp-{uuid4().hex}"
+    destination = _ensure_destination(storage_root, path)
+    temporary = destination / f".echoroo-tmp-{uuid4().hex}"
     try:
         written = _write_temp(temporary, data=data, source=source)
         if exclusive:
@@ -376,7 +403,7 @@ def _write_published(
             os.unlink(temporary)
         else:
             os.replace(temporary, path)
-        for directory in _publication_directories(created, destination):
+        for directory in _publication_directories(storage_root, destination):
             _fsync_directory(directory)
         return written
     finally:
@@ -387,33 +414,42 @@ def _write_published(
 def write_bytes(key: str, data: bytes, *, exclusive: bool = False) -> int:
     """Write bytes atomically and return the published byte count."""
 
-    destination = path_for(key)
-    ensure_ready()
-    return _write_published(destination, data=data, exclusive=exclusive)
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    destination = _lookup_path(storage_root, parts)
+    return _write_published(storage_root, destination, data=data, exclusive=exclusive)
 
 
 def write_file(src: Path, key: str, *, exclusive: bool = False) -> int:
     """Copy a local file into storage atomically."""
 
-    destination = path_for(key)
-    ensure_ready()
-    return _write_published(destination, source=Path(src), exclusive=exclusive)
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    destination = _lookup_path(storage_root, parts)
+    return _write_published(storage_root, destination, source=Path(src), exclusive=exclusive)
 
 
 def copy(src_key: str, dst_key: str) -> int:
     """Copy one stored object to another key."""
 
-    return write_file(path_for(src_key), dst_key)
+    source_parts = _key_parts(src_key)
+    destination_parts = _key_parts(dst_key)
+    storage_root = _check_root()
+    source = _lookup_path(storage_root, source_parts)
+    destination = _lookup_path(storage_root, destination_parts)
+    return _write_published(storage_root, destination, source=source, exclusive=False)
 
 
 def exists(key: str) -> bool:
     """Return whether the key currently has a filesystem entry."""
 
-    path = path_for(key)
-    ensure_ready()
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    path = _lookup_path(storage_root, parts)
     try:
         path.stat()
     except FileNotFoundError:
+        _check_root()
         return False
     return True
 
@@ -421,19 +457,22 @@ def exists(key: str) -> bool:
 def size(key: str) -> int | None:
     """Return the key's size, or ``None`` when it is absent."""
 
-    path = path_for(key)
-    ensure_ready()
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    path = _lookup_path(storage_root, parts)
     try:
         return path.stat().st_size
     except FileNotFoundError:
+        _check_root()
         return None
 
 
 def open_read(key: str) -> BinaryIO:
     """Open a stored object for binary reading."""
 
-    path = path_for(key)
-    ensure_ready()
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    path = _lookup_path(storage_root, parts)
     return path.open("rb")
 
 
@@ -444,7 +483,7 @@ def _parse_range(
     if range_header is None or not isinstance(range_header, str):
         return 0, total - 1, False
 
-    match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header)
+    match = re.fullmatch(r"bytes=([0-9]*)-([0-9]*)", range_header)
     if match is None:
         return 0, total - 1, False
     start_text, end_text = match.groups()
@@ -454,15 +493,23 @@ def _parse_range(
         raise RangeNotSatisfiable(total)
 
     if not start_text:
-        if int(end_text) == 0:
+        normalized_end = end_text.lstrip("0") or "0"
+        if normalized_end == "0":
             return 0, total - 1, False
-        suffix_length = min(int(end_text), total)
+        suffix_length = total if len(normalized_end) > 19 else min(int(normalized_end), total)
         return total - suffix_length, total - 1, True
 
-    start = int(start_text)
+    normalized_start = start_text.lstrip("0") or "0"
+    if len(normalized_start) > 19:
+        raise RangeNotSatisfiable(total)
+    start = int(normalized_start)
     if start >= total:
         raise RangeNotSatisfiable(total)
-    end = total - 1 if not end_text else min(int(end_text), total - 1)
+    if not end_text:
+        end = total - 1
+    else:
+        normalized_end = end_text.lstrip("0") or "0"
+        end = total - 1 if len(normalized_end) > 19 else min(int(normalized_end), total - 1)
     if end < start:
         return 0, total - 1, False
     return start, end, True
@@ -492,48 +539,70 @@ def _validate_prefix(prefix: str) -> tuple[list[str], bool]:
     trailing = prefix.endswith("/")
     body = prefix[:-1] if trailing else prefix
     parts = body.split("/")
-    if any(not part for part in parts) or any(part in {".", ".."} for part in parts):
+    if any(not part for part in parts):
         raise StorageKeyError("storage prefix contains an invalid component")
+    _validate_components(parts, "storage prefix")
     return parts, trailing
 
 
-def _scan_base(storage_root: Path, parts: list[str], trailing: bool) -> Path:
+def _scan_base(storage_root: Path, parts: list[str], trailing: bool) -> Path | None:
     candidate_parts = parts if trailing else parts[:-1]
     base = storage_root
     for part in candidate_parts:
-        if part in {_MARKER_NAME, _PROBE_NAME} or is_temporary(part):
-            break
         candidate = base / part
         try:
             candidate_stat = candidate.lstat()
         except FileNotFoundError:
-            break
+            return None
         if stat.S_ISLNK(candidate_stat.st_mode) or not stat.S_ISDIR(candidate_stat.st_mode):
-            break
+            return None
         base = candidate
     return base
 
 
-def _walk_files(directory: Path) -> Iterator[tuple[Path, os.stat_result]]:
-    try:
-        entries = os.scandir(directory)
-    except FileNotFoundError:
-        return
-    with entries:
+def _prefix_can_match(path_key: str, prefix: str) -> bool:
+    return not prefix or path_key.startswith(prefix) or prefix.startswith(path_key)
+
+
+def _relative_key(storage_root: Path, path: Path) -> str:
+    relative = path.relative_to(storage_root)
+    return relative.as_posix() if relative.parts else ""
+
+
+def _walk_files(
+    storage_root: Path,
+    directory: Path,
+    prefix: str,
+) -> Iterator[tuple[Path, os.stat_result]]:
+    """Iteratively walk matching regular files with closed scandir handles."""
+
+    stack = [directory]
+    while stack:
+        current = stack.pop()
+        current_key = _relative_key(storage_root, current)
+        try:
+            with os.scandir(current) as iterator:
+                entries = list(iterator)
+        except FileNotFoundError:
+            continue
+
+        child_directories: list[Path] = []
         for entry in entries:
-            if entry.name in {_MARKER_NAME, _PROBE_NAME} or is_temporary(entry.name):
+            if _is_reserved_component(entry.name):
+                continue
+            child_key = f"{current_key}/{entry.name}" if current_key else entry.name
+            if not _prefix_can_match(child_key, prefix):
                 continue
             try:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    yield from _walk_files(Path(entry.path))
-                elif entry.name.startswith("."):
-                    continue
-                elif entry.is_file(follow_symlinks=False):
+                    child_directories.append(Path(entry.path))
+                elif child_key.startswith(prefix) and entry.is_file(follow_symlinks=False):
                     yield Path(entry.path), entry.stat(follow_symlinks=False)
             except FileNotFoundError:
                 continue
+        stack.extend(reversed(child_directories))
 
 
 def list_prefix(prefix: str) -> Iterator[StoredObject]:
@@ -542,22 +611,33 @@ def list_prefix(prefix: str) -> Iterator[StoredObject]:
     parts, trailing = _validate_prefix(prefix)
     storage_root = _check_root()
     base = _scan_base(storage_root, parts, trailing)
-    for path, metadata in _walk_files(base):
+    if base is None:
+        return
+    for path, metadata in _walk_files(storage_root, base, prefix):
         key = path.relative_to(storage_root).as_posix()
-        if key.startswith(prefix):
-            yield StoredObject(
-                key=key,
-                size=metadata.st_size,
-                modified=datetime.fromtimestamp(metadata.st_mtime, tz=UTC),
-            )
+        yield StoredObject(
+            key=key,
+            size=metadata.st_size,
+            modified=datetime.fromtimestamp(metadata.st_mtime, tz=UTC),
+        )
 
 
-def _delete_one(key: str) -> tuple[bool, OSError | None]:
-    path = path_for(key)
-    ensure_ready()
+def _delete_resolved(key: str, path: Path) -> tuple[bool, OSError | None]:
     try:
         os.unlink(path)
     except FileNotFoundError:
+        try:
+            path.parent.lstat()
+        except FileNotFoundError:
+            return True, None
+        except OSError as exc:
+            logger.warning("storage delete lookup failed for %s: %s", key, exc)
+            return False, exc
+        try:
+            _fsync_directory(path.parent)
+        except OSError as exc:
+            logger.warning("storage directory fsync failed after absent %s: %s", key, exc)
+            return False, exc
         return True, None
     except OSError as exc:
         logger.warning("storage delete failed for %s: %s", key, exc)
@@ -574,7 +654,14 @@ def _delete_one(key: str) -> tuple[bool, OSError | None]:
 def delete(key: str) -> bool:
     """Delete a file key, returning whether it is gone afterward."""
 
-    deleted, _ = _delete_one(key)
+    parts = _key_parts(key)
+    storage_root = _check_root()
+    try:
+        path = _lookup_path(storage_root, parts)
+    except OSError as exc:
+        logger.warning("storage delete lookup failed for %s: %s", key, exc)
+        return False
+    deleted, _ = _delete_resolved(key, path)
     return deleted
 
 
@@ -583,10 +670,16 @@ def delete_prefix(prefix: str) -> int:
 
     if not prefix:
         raise StorageKeyError("refusing to delete the storage root")
-    _validate_prefix(prefix)
+    parts, trailing = _validate_prefix(prefix)
+    storage_root = _check_root()
+    base = _scan_base(storage_root, parts, trailing)
+    if base is None:
+        return 0
     deleted = 0
-    for stored in list_prefix(prefix):
-        if delete(stored.key):
+    for path, _ in _walk_files(storage_root, base, prefix):
+        key = path.relative_to(storage_root).as_posix()
+        removed, _ = _delete_resolved(key, path)
+        if removed:
             deleted += 1
     return deleted
 
@@ -606,14 +699,20 @@ def delete_many(keys: Iterable[str]) -> BatchDeleteResult:
 
     deleted: list[str] = []
     errors: list[StorageDeletionError] = []
+    prepared: list[tuple[str, list[str]]] = []
     for key in keys:
         try:
-            removed, error = _delete_one(key)
-        except StorageUnavailable:
-            raise
+            prepared.append((key, _key_parts(key)))
+        except StorageKeyError as exc:
+            errors.append(_deletion_error(key, exc))
+    storage_root = _check_root()
+    for key, parts in prepared:
+        try:
+            path = _lookup_path(storage_root, parts)
         except (StorageKeyError, OSError) as exc:
             errors.append(_deletion_error(key, exc))
             continue
+        removed, error = _delete_resolved(key, path)
         if removed:
             deleted.append(key)
         elif error is not None:
@@ -644,25 +743,35 @@ def sweep_temporaries(max_age: timedelta = timedelta(hours=24)) -> int:
 def _walk_files_including_temporaries(
     directory: Path,
 ) -> Iterator[tuple[Path, os.stat_result]]:
-    """Walk regular files while retaining temporary names for the reaper."""
+    """Iteratively walk regular files while retaining generated temporaries."""
 
-    try:
-        entries = os.scandir(directory)
-    except FileNotFoundError:
-        return
-    with entries:
+    stack = [directory]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as iterator:
+                entries = list(iterator)
+        except FileNotFoundError:
+            continue
+
+        child_directories: list[Path] = []
         for entry in entries:
             if entry.name in {_MARKER_NAME, _PROBE_NAME}:
+                continue
+            temporary = is_temporary(entry.name)
+            if _is_reserved_component(entry.name) and not temporary:
                 continue
             try:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir(follow_symlinks=False):
-                    yield from _walk_files_including_temporaries(Path(entry.path))
+                    if not temporary:
+                        child_directories.append(Path(entry.path))
                 elif entry.is_file(follow_symlinks=False):
                     yield Path(entry.path), entry.stat(follow_symlinks=False)
             except FileNotFoundError:
                 continue
+        stack.extend(reversed(child_directories))
 
 
 __all__ = [

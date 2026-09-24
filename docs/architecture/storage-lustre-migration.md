@@ -350,9 +350,13 @@ the tree.
   for invalid keys; `StorageUnavailable(StorageError)` when the root is
   missing, unreadable or not the provisioned tree.
 - `root() -> Path` — `STORAGE_ROOT`, read from settings on each call.
-- `path_for(key) -> Path` — rejects empty keys, a leading `/`, `..` or `.`
-  components, empty components (`a//b`), NUL, backslash, a trailing `/`, and
-  existing symlink components; the result is `root() / key`.
+- `path_for(key) -> Path` — rejects empty keys, a leading `/`, empty
+  components (`a//b`), a trailing `/`, backslash, control characters
+  (below U+0020 and U+007F), any component that starts with `.` (covers `.`,
+  `..`, the marker, the probe directory and temps, in every position) or is
+  longer than 255 bytes in UTF-8, and existing symlink components. Syntax is
+  checked first, then the root (`StorageUnavailable`), then the lookup. The
+  result is `root() / key`.
 - `ensure_ready(*, full=False)` — `root()` is a directory owned by the tree
   and contains the provisioning marker `.echoroo-storage` (so a missing mount
   cannot silently redirect writes onto local disk); raises
@@ -360,9 +364,10 @@ the tree.
   checks, in `.echoroo-probe/`: create + fsync + replace, hard-link
   publication, collision refusal of a second link, directory fsync, cleanup.
   Any failure raises; there is no fallback to overwriting.
-- `exists(key) -> bool` — `False` only for "no such file"; permission and I/O
-  errors propagate, and a missing root raises `StorageUnavailable`, so a
-  caller never mistakes an outage for absence.
+- `exists(key) -> bool` — `False` only for "no such file" while the root is
+  still ready (re-checked before answering); permission and I/O errors
+  propagate, and a missing root raises `StorageUnavailable`, so a caller never
+  mistakes an outage for absence.
 - `size(key) -> int | None` — same error rules.
 - `open_read(key) -> BinaryIO` — `FileNotFoundError` when missing; the caller
   closes it. An open handle stays valid across a later replace.
@@ -376,25 +381,30 @@ the tree.
   turns into 416 with `Content-Range: bytes */{total}`.
 - `write_bytes(key, data, *, exclusive=False) -> int` and
   `write_file(src: Path, key, *, exclusive=False) -> int` — copy (never move;
-  the source stays) into `.{name}.tmp-{uuid}` in the destination directory,
+  the source stays) into `.echoroo-tmp-{uuid4 hex}` in the destination directory,
   flush, fsync, then publish with `os.replace`, or with `os.link` + unlink of
   the temp when `exclusive` (raises `FileExistsError` if the key exists — the
   write-once primitive). Then fsync the destination directory and every
-  directory created for this write, and its parent. The temp is removed in
+  ancestor up to the root, whoever created them (another writer may have
+  created them and not synced yet). The temp is removed in
   `finally`. Fresh mtime always. Returns the byte count. An error after
   publication may leave the object published; callers treat a write error as
   "maybe written" (they already do: upload import deletes on size mismatch,
   audit export reads back).
 - `copy(src_key, dst_key) -> int` — `write_file(path_for(src_key), dst_key)`.
 - `delete(key) -> bool` — `True` when the file is gone, including when it was
-  never there; `False` on an OS error. fsyncs the directory. Never removes
+  never there; `False` on an OS error (lookup included). fsyncs the parent
+  directory whenever it exists, also when the file was already gone (a retry
+  after a failed fsync must still make the removal durable). Never removes
   directories.
 - `delete_prefix(prefix) -> int` — S3 string-prefix semantics (a trailing `/`
   and partial final components both work); deletes files only, skips temps,
   returns the count deleted.
 - `list_prefix(prefix) -> Iterator[StoredObject]` — `StoredObject(key, size,
-  modified)` with `modified` = UTC-aware mtime; files only, temps skipped,
-  entries that vanish during the walk are skipped.
+  modified)` with `modified` = UTC-aware mtime; files only, dot entries
+  skipped, entries that vanish during the walk are skipped. The walk is
+  iterative and only descends into directories whose path is compatible with
+  the prefix.
 - `delete_many(keys) -> BatchDeleteResult(deleted: list[str], errors:
   list[StorageDeletionError(key, code, message)])` — no 1000-key limit.
 - `sweep_temporaries(max_age) -> int` — deletes temps older than `max_age`
