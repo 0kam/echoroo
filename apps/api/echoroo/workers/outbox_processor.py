@@ -1,10 +1,15 @@
 """Celery worker that drains the ``outbox_events`` table (FR-076d, NFR-005).
 
 This module owns the *processing* side of the transactional outbox
-implemented by :mod:`echoroo.services.outbox_service`. It is intended to
-be run on the ``worker-cpu`` Celery queue with ``-c 4`` (four worker
-processes) so that the documented SLO of p95 ≤ 10s and p99 ≤ 60s is met
-under expected load (data-model.md §3.18, research.md §6).
+implemented by :mod:`echoroo.services.outbox_service`. It runs on the
+``default`` Celery queue — the only queue the CPU worker container
+(service ``worker-cpu`` in ``compose.dev.yaml``, ``-Q default``)
+consumes — with enough concurrency that the documented SLO of p95 ≤ 10s
+and p99 ≤ 60s is met under expected load (data-model.md §3.18,
+research.md §6). Note the service name ``worker-cpu`` is a *container*
+name, not a queue name; declaring ``queue="worker-cpu"`` here routes the
+task to a queue no worker subscribes to and the drain silently never
+runs.
 
 Wiring strategy
 ---------------
@@ -259,7 +264,10 @@ async def _drain_batch(
 
 @shared_task(  # type: ignore[untyped-decorator]
     name="echoroo.workers.outbox_processor.process_outbox_batch",
-    queue="worker-cpu",
+    # No explicit ``queue=``: the task rides ``task_default_queue``
+    # ("default"), which is the queue the CPU worker actually consumes.
+    # See the module docstring for why naming the container's queue here
+    # breaks the beat-driven drain.
     bind=True,
     max_retries=CELERY_TASK_MAX_RETRIES,
     default_retry_delay=2,
@@ -270,7 +278,7 @@ def process_outbox_batch(self: Any, batch_size: int = DEFAULT_CLAIM_BATCH_SIZE) 
 
     Concurrency
     -----------
-    Deploy with ``celery -A echoroo.workers.celery_app worker -Q worker-cpu -c 4``
+    Deploy with ``celery -A echoroo.workers.celery_app worker -Q default -c 4``
     so that 4 worker processes poll concurrently. The
     ``SELECT ... FOR UPDATE SKIP LOCKED`` semantics in
     :func:`echoroo.services.outbox_service.claim_batch` ensure no two
