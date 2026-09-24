@@ -129,7 +129,7 @@ def _mock_slow_or_external_dependencies(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         two_factor_module.kms,
         "unwrap_dek",
-        lambda wrapped, **_kwargs: bytes(wrapped),
+        lambda wrapped, **_kwargs: bytearray(wrapped),
     )
     monkeypatch.setattr(TwoFactorService, "_record_audit_event", no_audit)
     monkeypatch.setattr(two_factor_module, "_backup_code_hasher", _FastBackupHasher())
