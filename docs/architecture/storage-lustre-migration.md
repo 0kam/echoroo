@@ -23,8 +23,8 @@ storage abstraction with two backends.
   from several VMs in the project, GPU available. The mount options cannot be
   changed by us.
 - Echoroo has not launched: no production data and no compatibility window.
-  Dev, preview and trial deployments do hold objects in LocalStack; the
-  cutover runbook copies them (slice 4, *Deployment*).
+  Existing dev, preview and trial deployments are recreated empty at cutover
+  (decision 9).
 - `Recording.path` is written as the storage key (`workers/upload_tasks.py:730`)
   and becomes a path under `STORAGE_ROOT`. The data model needs no change.
 - Reads resolve local paths in two places, not one:
@@ -99,6 +99,8 @@ recording disappears, which frees local disk rather than consuming it.
 | 3 | After a reload, can an unfinished upload be resumed? (2026-09-21) | Yes. The dataset page offers to continue the caller's unfinished session; re-selecting the same files sends only what is missing. |
 | 4 | May an upload be imported without the files that failed to transfer? (2026-09-21) | Yes. "Import without the N failed files" is offered next to "Retry". |
 | 2 | How much local disk does the VM have? | ~200 GB typical, 500 GB maximum including the OS. See *Data placement* and the embeddings risk below. |
+| 8 | Production identity on Lustre (2026-09-24) | The containers run as UID/GID 1000, which can read and write `/data` on the VM. Still verified by `ensure_ready(full=True)` on the mount before first start. |
+| 9 | Existing LocalStack objects at cutover (2026-09-24) | **Not carried over** in any deployment. Dev, preview and ninjin are recreated empty (database and LocalStack data discarded); no copy procedure. |
 
 ## Open decisions
 
@@ -107,8 +109,6 @@ recording disappears, which frees local disk rather than consuming it.
 | 3 | Which KMS backs authentication in production? | separate track | LocalStack stays in the stack for KMS until this is answered; arguably more urgent than this migration | not this migration |
 | 4 | How many hours of recordings is this deployment expected to hold? | — (fact needed) | Above roughly 10,000 hours the embeddings outgrow local disk; see Risks | nothing here; sets the deadline for the embeddings follow-up |
 | 7 | What does the Lustre service offer for the audit archive: filesystem snapshots (who can take and delete them, how often)? Can a second VM or auditor account mount read-only? | snapshots by the provider + read-only mount for auditors; else weekly `rsync --ignore-existing` to a location owned by another account | Without either, archive immutability rests on detection only (MAC chain + gaps) | the *ops* section of `docs/runbook/audit_log_archive.md`; not slice 4 |
-| 8 | On the production VM: where is Lustre mounted on the host, which numeric UID/GID will the containers run as, and can that identity create directories, files and hard links under it (root squash, quotas)? | one UID/GID owning `/data/storage` etc. on Lustre, verified by `ensure_ready(full=True)` | decides the compose mounts and the provisioning runbook | 4b deployment section, not 4a |
-| 9 | Which existing deployments' LocalStack objects must survive the cutover (dev, preview trial data, ninjin)? | copy preview and ninjin with the runbook, start dev fresh | decides where the maintenance-window copy runs | the 4b rollout, not the code |
 
 ## Risks
 
@@ -441,12 +441,10 @@ the tree.
 API and every worker, provisioned (owner, mode 0750, marker) before first
 start. All Echoroo containers run as one numeric UID/GID that owns them;
 published files are 0640, directories 0750; upload staging keeps its
-0700/0600. Existing objects move in a maintenance window: stop ingress and
-beat, drain workers, copy out of the still-running LocalStack
-(`awslocal s3 sync`), verify keys, sizes and SHA-256 digests against the
-database references, then start every process on the new version. Rollback
-before any POSIX write = restart the old version; after = not supported.
-Backup/restore and release-readiness runbooks change with it.
+0700/0600. The containers run as UID/GID 1000 (decision 8). Existing
+deployments are not migrated (decision 9): stop everything, discard the
+database and the LocalStack data, provision the storage tree, start the new
+version, re-run the initial setup. Backup/restore and release-readiness runbooks change with it.
 
 - **Out of scope** — deleting a recording's file when the recording, dataset or
   project is deleted (never done on S3 either); renaming `s3_key` / `origin:
@@ -486,4 +484,4 @@ Backup/restore and release-readiness runbooks change with it.
 | 2026-09-23 | Astra, slice 2d re-review | Choosing missing files replaced pending restarts; a queued old request could overtake the restart reset and an offset conflict was taken as its acknowledgement; creation locked dataset→session while import finalised session→dataset (deadlock); `issued` recovery trusted stale local offsets; completed server files counted as unmatched; fresh runs unguarded on destroy; partial-import enablement and exclusion count wrong | All accepted: restart re-checks after re-lock (3 tries) and is acknowledged only by `ok`; dataset→session everywhere; offsets rebuilt from `/active`; `alreadyComplete` in the resume plan; generation guard; counts from current state |
 | 2026-09-23 | Fable, slice 2e e2e run (dev stack) | The upload spec passed 5/5 twice against the real backend, Celery worker and LocalStack; recordings land at the reserved `recordings/{p}/{d}/{file_id}` key. A third pass hit 429 on session creation: the create/complete limiters key on the direct peer, which behind the BFF is the frontend container, so every user of a dataset shares 10 creations per hour | CI raises the create limit for the e2e job (Playwright retries the serial group). Per-user limiter keys for create/complete split off as a separate task (pre-existing since before slice 2) |
 | 2026-09-23 | Astra, slice 2e code review | With the presigned branches gone, a pre-2e VALID file with no staged bytes imported without any existence/size/hash check, and a staged 2d-era file published under its `uploads/` key; legacy `uploads/` objects are no longer cleaned; e2e: retries share one dataset, resume assertions pass on an empty set, origin checked by string prefix; `mismatched_files` always 0; ruff F841/ARG001 | Accepted: validation and import refuse files without staged bytes or outside the reserved key (INVALID, no Recording, no write), regression tests; each test cancels the owner's unfinished session first; resume must continue the original session at 16 MiB and every session is checked for `imported` + `recording_id`; exact origin match; `mismatched_files` removed; lint fixed. Not adopted: cleanup code for legacy `uploads/` objects — pre-launch, none in production |
-| 2026-09-23 | Astra, slice 4 design review | Named volume ≠ Lustre and no guard against an absent mount; shared identity and file modes unspecified; existence-based two-root lookup allows shadowing; "final write is a rename" breaks import retries; durability of new ancestor directories and of deletes; readiness probe did not test link/replace; parent-directory pruning races writers; range contract loose; API contract too vague for parallel implementers; live `s3 sync` is not a cutover; test isolation across xdist workers; janitor deletes young siblings; symlink trust model; orphaned temps; `search_tmp` holds audio; cache sweep races; CI could cover more without models; file ownership across the parallel split; earlier sections contradicted slice 4 | All accepted. Split into 4a (API unused) and 4b (switch); single root (directory import does not exist); copy-then-publish; fsync of every created directory and after unlink; `ensure_ready(full=True)` with link/collision/replace probe and a provisioning marker; no directory pruning; exact range contract; full API contract; maintenance-window runbook; per-run/per-worker roots in conftest; janitor deletes enumerated keys; application-owned tree without symlinks; temp sweep; manifest points at stored keys; unique encoder temps and handle-based streaming; CI integration tests without weights; earlier sections reconciled. Production mount/identity and which deployments' data to copy raised as open decisions 8 and 9 |
+| 2026-09-23 | Astra, slice 4 design review | Named volume ≠ Lustre and no guard against an absent mount; shared identity and file modes unspecified; existence-based two-root lookup allows shadowing; "final write is a rename" breaks import retries; durability of new ancestor directories and of deletes; readiness probe did not test link/replace; parent-directory pruning races writers; range contract loose; API contract too vague for parallel implementers; live `s3 sync` is not a cutover; test isolation across xdist workers; janitor deletes young siblings; symlink trust model; orphaned temps; `search_tmp` holds audio; cache sweep races; CI could cover more without models; file ownership across the parallel split; earlier sections contradicted slice 4 | All accepted. Split into 4a (API unused) and 4b (switch); single root (directory import does not exist); copy-then-publish; fsync of every created directory and after unlink; `ensure_ready(full=True)` with link/collision/replace probe and a provisioning marker; no directory pruning; exact range contract; full API contract; maintenance-window runbook; per-run/per-worker roots in conftest; janitor deletes enumerated keys; application-owned tree without symlinks; temp sweep; manifest points at stored keys; unique encoder temps and handle-based streaming; CI integration tests without weights; earlier sections reconciled. Production identity and data carry-over settled as decisions 8 and 9 (UID/GID 1000; nothing carried over) |
