@@ -70,10 +70,12 @@ def _probe_keyring() -> None:
     """Load and validate the configured keyring before serving traffic."""
     try:
         keyring.get_keyring()
-    except keyring.KeyringError:
+    except keyring.KeyringError as exc:
+        # Keyring error messages are secret-free by contract, so the reason
+        # (missing file, denylisted material, selector mismatch) is safe to show.
         raise BootCheckError(
-            "The configured local keyring is unavailable or invalid at boot. "
-            "Check the provisioned keyring and KEYRING_* settings."
+            f"The configured local keyring is unavailable or invalid at boot: {exc}. "
+            "Check the provisioned keyring and KEYRING_* settings (docs/runbook/keyring.md)."
         ) from None
 
 

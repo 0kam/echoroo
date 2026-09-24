@@ -119,13 +119,14 @@ def test_keyring_failure_is_fatal_in_every_environment(
     _patch_settings(monkeypatch, settings)
 
     def _bad_keyring() -> object:
-        raise boot_checks.keyring.KeyringConfigError("secret")
+        # Keyring messages are fixed, secret-free strings; boot names the reason.
+        raise boot_checks.keyring.KeyringConfigError("keyring contains public key material")
 
     monkeypatch.setattr(boot_checks.keyring, "get_keyring", _bad_keyring)
 
     with pytest.raises(boot_checks.BootCheckError) as exc_info:
         boot_checks._probe_keyring()
-    assert "secret" not in str(exc_info.value)
+    assert "keyring contains public key material" in str(exc_info.value)
 
 
 @pytest.mark.asyncio
