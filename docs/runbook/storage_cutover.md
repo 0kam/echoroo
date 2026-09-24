@@ -11,21 +11,36 @@ storage tree.
 
 ## Cutover
 
-1. Schedule a maintenance window and stop the frontend, API, Celery workers,
-   beat, Redis, and PostgreSQL. Do not start the new version while old
-   processes can write.
-2. Confirm that any required pre-cutover records have been handled according
-   to the deployment decision. Then discard the existing PostgreSQL database
-   volume and LocalStack data volume. LocalStack is retained only for KMS in
-   the new stack; no old application objects are copied.
-3. Mount the host's Lustre filesystem and create the production storage-tree
-   directory. The application-owned root must be owned by UID/GID `1000:1000`
-   and have mode `0750`.
-4. As UID/GID 1000, provision the empty tree. From `apps/api`:
+1. Schedule a maintenance window and, on the Docker host, stop the frontend,
+   API, Celery workers, beat, Redis, PostgreSQL, and LocalStack explicitly. Do
+   not start the new version while old processes can write.
 
    ```bash
-   STORAGE_ROOT=/data/storage \
-     uv run python -m echoroo.scripts.provision_storage /data/storage
+   docker compose stop frontend backend worker worker-cpu beat redis db localstack
+   ```
+
+2. Confirm that any required pre-cutover records have been handled according
+   to the deployment decision. On the Docker host, discard the existing
+   PostgreSQL database volume and LocalStack data directory. LocalStack is
+   retained only for KMS in the new stack; no old application objects are
+   copied.
+
+   ```bash
+   docker compose down --remove-orphans
+   docker volume rm <project>_db-data
+   rm -rf ./.data/localstack
+   ```
+
+3. Mount the host's Lustre filesystem and create the production storage-tree
+   directory. `/lustre/echoroo/storage` is the documented example host
+   directory; replace it with the actual mount point. The application-owned
+   root must be owned by UID/GID `1000:1000` and have mode `0750`.
+4. From the Docker host, run the provisioner inside the backend container so
+   it runs as the container's UID/GID 1000 against the mounted path:
+
+   ```bash
+   docker compose run --rm backend uv run python -m \
+     echoroo.scripts.provision_storage /data/storage
    ```
 
    The provisioner writes `.echoroo-storage` and runs the full
@@ -41,15 +56,15 @@ storage tree.
 ## Production bind-mount layout
 
 Use directories on the same Lustre mount and bind-mount the same container
-paths in the API and every Celery worker. `search_tmp` contains uploaded search
-reference audio as well as its manifest, so it is part of the shared layout.
+paths in the API and every Celery worker. `search_tmp` contains only the job
+manifest; uploaded reference audio is stored under `STORAGE_ROOT`.
 
 | Host Lustre directory | Container path | Setting / use |
 | --- | --- | --- |
 | `/lustre/echoroo/storage` | `/data/storage` | `STORAGE_ROOT`; recordings, models, references, audit archives |
 | `/lustre/echoroo/upload_staging` | `/data/upload_staging` | `UPLOAD_STAGING_DIR`; chunk staging |
 | `/lustre/echoroo/audio_compressed` | `/data/audio_compressed` | `COMPRESSED_CACHE_DIR`; disposable OGG cache |
-| `/lustre/echoroo/search_tmp` | `/data/search_tmp` | Shared search manifests and reference audio |
+| `/lustre/echoroo/search_tmp` | `/data/search_tmp` | Shared search job manifests only |
 
 The API and all workers must use the same values for `STORAGE_ROOT`,
 `UPLOAD_STAGING_DIR`, `COMPRESSED_CACHE_DIR`, and the `/data/search_tmp` path.

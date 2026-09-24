@@ -218,3 +218,29 @@ def test_run_boot_checks_sync_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_settings(monkeypatch, settings)
     # Skip flag set → no live infra needed; the wrapper must complete.
     boot_checks.run_boot_checks_sync()
+
+
+def test_worker_ready_fatal_probe_terminates_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Celery signal dispatch must turn a fatal boot probe into exit(1)."""
+    from echoroo.workers import celery_app
+
+    settings = _prod_settings("production", ECHOROO_SKIP_BOOT_CHECKS=False)
+    _patch_settings(monkeypatch, settings)
+
+    async def _redis_ok() -> None:
+        return None
+
+    def _storage_failure() -> None:
+        raise OSError("storage unavailable")
+
+    exit_codes: list[int] = []
+    monkeypatch.setattr(boot_checks, "_probe_redis", _redis_ok)
+    monkeypatch.setattr(boot_checks, "_ensure_storage_ready_sync", _storage_failure)
+    monkeypatch.setattr(celery_app.os, "_exit", exit_codes.append)
+    monkeypatch.setattr(celery_app.logging, "shutdown", lambda: None)
+
+    celery_app._worker_ready.send(sender="test-worker")
+
+    assert exit_codes == [1]

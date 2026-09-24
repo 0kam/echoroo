@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
+import os
 
 # Set spawn start method before any TensorFlow/BirdNET imports.
 # On Linux the default is 'fork', which copies the parent's CUDA context into
@@ -321,15 +323,23 @@ app.conf.beat_schedule = {
 # ---------------------------------------------------------------------------
 from celery.signals import worker_ready as _worker_ready  # noqa: E402
 
+_logger = logging.getLogger(__name__)
+
 
 @_worker_ready.connect  # type: ignore[untyped-decorator]
 def _run_boot_checks_on_worker_ready(**_kwargs: object) -> None:
     """Run startup boot probes when a Celery worker becomes ready.
 
-    A fatal probe failure (Redis unreachable, or storage unavailable in
-    staging / production) raises ``BootCheckError``, crashing the worker
-    startup loudly instead of letting tasks fail one-by-one later.
+    Celery catches exceptions raised by signal receivers, so a fatal probe
+    failure must terminate the worker explicitly instead of merely raising
+    ``BootCheckError``. Development storage failures remain non-fatal in the
+    probe policy and therefore never enter this handler.
     """
-    from echoroo.core.boot_checks import run_boot_checks_sync
+    from echoroo.core.boot_checks import BootCheckError, run_boot_checks_sync
 
-    run_boot_checks_sync()
+    try:
+        run_boot_checks_sync()
+    except BootCheckError:
+        _logger.exception("Celery worker boot checks failed; terminating worker")
+        logging.shutdown()
+        os._exit(1)

@@ -3,8 +3,10 @@
 # Environment isolation must run before importing the application package.
 # ruff: noqa: E402
 
+import atexit
 import importlib
 import os
+import shutil
 import tempfile
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -38,6 +40,9 @@ os.environ.setdefault("ECHOROO_SKIP_BOOT_CHECKS", "1")
 # Storage isolation must be established before importing any application
 # module. The xdist controller creates one run id and passes it to workers
 # through the inherited environment; each worker then gets its own directory.
+if "STORAGE_ROOT" in os.environ and "ECHOROO_LIVE_STORAGE_ROOT" not in os.environ:
+    os.environ["ECHOROO_LIVE_STORAGE_ROOT"] = os.environ["STORAGE_ROOT"]
+
 _TEST_STORAGE_RUN_ID = os.environ.setdefault(
     "ECHOROO_TEST_STORAGE_RUN_ID", uuid4().hex
 )
@@ -55,6 +60,14 @@ os.environ["UPLOAD_STAGING_DIR"] = str(_TEST_UPLOAD_STAGING_DIR)
 os.environ["COMPRESSED_CACHE_DIR"] = str(_TEST_COMPRESSED_CACHE_DIR)
 _TEST_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 (_TEST_STORAGE_ROOT / ".echoroo-storage").touch(exist_ok=True)
+
+
+def _cleanup_test_storage() -> None:
+    """Remove only this process's isolated storage tree at process exit."""
+    shutil.rmtree(_TEST_STORAGE_BASE, ignore_errors=True)
+
+
+atexit.register(_cleanup_test_storage)
 
 import pytest
 import pytest_asyncio

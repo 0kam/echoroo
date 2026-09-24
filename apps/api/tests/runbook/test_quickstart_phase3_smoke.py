@@ -34,6 +34,7 @@ with ``pytest -m requires_runbook`` against the Docker Compose dev stack
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -61,13 +62,19 @@ _ARGPARSE_SCRIPTS: tuple[str, ...] = (
 )
 
 
-def _run_module(*args: str, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    """Invoke ``python -m <args>`` from the api root with no extra env.
+def _run_module(
+    *args: str, timeout: float = 30.0, use_live_storage: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Invoke ``python -m <args>`` from the api root.
 
     A short timeout protects CI: even if a script accidentally tries to
     contact the network (for example a refactor that loads settings during
     ``--help``), the test fails loudly rather than hanging the suite.
     """
+    env = os.environ.copy()
+    if use_live_storage and env.get("ECHOROO_LIVE_STORAGE_ROOT"):
+        env["STORAGE_ROOT"] = env["ECHOROO_LIVE_STORAGE_ROOT"]
+
     return subprocess.run(
         [sys.executable, "-m", *args],
         cwd=str(_API_ROOT),
@@ -75,6 +82,7 @@ def _run_module(*args: str, timeout: float = 30.0) -> subprocess.CompletedProces
         text=True,
         timeout=timeout,
         check=False,
+        env=env,
     )
 
 
@@ -234,7 +242,9 @@ def test_check_wipe_guard_runs_against_live_stack() -> None:
     Anything else (e.g. unhandled traceback yielding rc=1 or rc>20) is a
     regression in the script itself and must fail the gate.
     """
-    result = _run_module("echoroo.scripts.check_wipe_guard", timeout=60.0)
+    result = _run_module(
+        "echoroo.scripts.check_wipe_guard", timeout=60.0, use_live_storage=True
+    )
     assert result.returncode in (0, 10, 11, 12), (
         f"check_wipe_guard exited with unexpected code rc={result.returncode}. "
         "Expected one of 0/10/11/12 (script reached DB+storage cleanly); rc=20 "

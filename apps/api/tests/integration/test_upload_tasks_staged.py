@@ -420,6 +420,9 @@ async def test_import_refuses_tampered_clean_file(
     await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
     clean_path = upload_staging.session_dir(session_id) / f"{file_id}.clean"
     clean_path.write_bytes(b"x" * clean_path.stat().st_size)
+    destination = staged_worker_env / "recordings" / str(staged_dataset.project_id) / str(
+        staged_dataset.id
+    ) / f"{file_id}.wav"
 
     await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
 
@@ -429,7 +432,7 @@ async def test_import_refuses_tampered_clean_file(
     )
     assert file_row[0] == UploadFileStatus.INVALID
     assert file_row[1] == "Checksum mismatch at import"
-    assert not any(path.is_file() for path in staged_worker_env.rglob("recordings/*"))
+    assert not destination.is_file()
     assert recording_count is None
 
 
@@ -607,8 +610,11 @@ async def test_import_deletes_object_when_stored_size_mismatches(
         return actual - 1 if actual is not None else None
 
     monkeypatch.setattr(upload_tasks.storage, "size", short_size)
+    destination = staged_worker_env / "recordings" / str(staged_dataset.project_id) / str(
+        staged_dataset.id
+    ) / f"{file_id}.wav"
     await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
 
     file_row = await _get_file_row(db_session, file_id)
     assert file_row[0] == UploadFileStatus.INVALID
-    assert not any(path.is_file() for path in staged_worker_env.rglob("recordings/*"))
+    assert not destination.is_file()

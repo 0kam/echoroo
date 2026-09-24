@@ -23,6 +23,14 @@ def _ensure_root(root: Path) -> None:
     else:
         if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
             raise RuntimeError(f"storage root is not a directory: {root}")
+        if stat.S_IMODE(root_stat.st_mode) != 0o750:
+            if root_stat.st_uid != os.geteuid():
+                raise RuntimeError(
+                    f"storage root has mode {stat.S_IMODE(root_stat.st_mode):04o}, "
+                    f"requires 0750, and is owned by UID {root_stat.st_uid}; "
+                    "run provisioning as the owning application user"
+                )
+            os.chmod(root, 0o750)
 
     marker = root / storage.MARKER_NAME
     try:

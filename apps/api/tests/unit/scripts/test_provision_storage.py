@@ -42,3 +42,20 @@ def test_provision_storage_reports_probe_failure(
 
     assert provision_storage.main([str(tmp_path / "storage")]) == 1
     assert "probe failed" in capsys.readouterr().err
+
+
+def test_provision_storage_normalizes_existing_root_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing root owned by the current user is tightened to 0750."""
+    root = tmp_path / "storage"
+    root.mkdir()
+    root.chmod(0o755)
+    monkeypatch.setattr(
+        provision_storage.storage,
+        "ensure_ready",
+        lambda **_kwargs: None,
+    )
+
+    assert provision_storage.main([str(root)]) == 0
+    assert stat.S_IMODE(root.stat().st_mode) == 0o750

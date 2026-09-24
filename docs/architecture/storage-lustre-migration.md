@@ -333,8 +333,8 @@ change the original scope:
   the same filesystem costs nothing).
 - The search janitor deletes whole prefixes after classifying only the aged
   keys, so young siblings go too (pre-existing). 4b deletes the enumerated keys.
-- `search_tmp/{job}` holds uploaded reference audio, not only the manifest;
-  4b makes the manifest point at stored keys and keeps only the manifest there.
+- `search_tmp/{job}` holds only the job manifest; 4b stores uploaded reference
+  audio under `STORAGE_ROOT` and makes the manifest point at those keys.
 
 **Trust model.** `STORAGE_ROOT` is an application-owned tree: only Echoroo
 processes (one numeric UID/GID, see *Deployment*) write under it, and it

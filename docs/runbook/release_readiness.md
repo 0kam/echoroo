@@ -84,16 +84,17 @@ window opens.
 
 ### 4. Lustre storage tree (recordings + audit log archive)
 
-- Mount the production Lustre filesystem on the host and choose the
-  application path `/data/storage` for `STORAGE_ROOT`.
-- Bind-mount the same path into the API and every worker. The host directory
-  must be owned by UID/GID 1000 with mode `0750`.
-- From the API checkout's `apps/api` directory, run the provisioner as
-  UID/GID 1000 so it performs the full readiness probe:
+- Mount the production Lustre filesystem on the host. Use
+  `/lustre/echoroo/storage` as the documented example host directory and
+  bind-mount it as `/data/storage` for `STORAGE_ROOT` in the API and every
+  worker. The host directory must be owned by UID/GID 1000 with mode `0750`.
+- From the deployment host, run the provisioner inside the backend container
+  so it runs as UID/GID 1000 against the mounted path and performs the full
+  readiness probe:
 
   ```bash
-  sudo -u '#1000' -g '#1000' env STORAGE_ROOT=/data/storage \
-    uv run python -m echoroo.scripts.provision_storage /data/storage
+  docker compose run --rm backend uv run python -m \
+    echoroo.scripts.provision_storage /data/storage
   ```
 
   The provisioner creates `.echoroo-storage` and runs `ensure_ready(full=True)`

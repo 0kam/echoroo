@@ -94,6 +94,10 @@ class AudioService:
         try:
             path_stat = path.stat()
         except FileNotFoundError as exc:
+            # ``path_for`` verified the mount before returning, but a bind
+            # mount can disappear before the stat. Recheck readiness so a
+            # mount outage is not misreported as a missing recording.
+            storage.ensure_ready()
             raise FileNotFoundError(f"Audio file not found: {recording_path}") from exc
         if not stat.S_ISREG(path_stat.st_mode):
             raise FileNotFoundError(f"Audio file not found: {recording_path}")
@@ -525,9 +529,15 @@ class AudioService:
         cache_path = cache_dir / f"{path_hash}.ogg"
 
         if cache_path.is_file():
-            os.utime(cache_path, None)
-            logger.debug("Compressed cache hit: %s -> %s", recording_path, cache_path)
-            return cache_path
+            try:
+                os.utime(cache_path, None)
+            except FileNotFoundError:
+                # A cache sweep may evict the file after is_file() succeeds;
+                # treat that race as a miss and encode a replacement below.
+                logger.debug("Compressed cache disappeared: %s", cache_path)
+            else:
+                logger.debug("Compressed cache hit: %s -> %s", recording_path, cache_path)
+                return cache_path
 
         # Create cache directory on first use
         cache_dir.mkdir(parents=True, exist_ok=True)

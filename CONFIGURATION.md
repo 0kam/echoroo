@@ -46,7 +46,7 @@ The **source of truth** for every setting is the code:
    INVITATION_TOKEN_KID_NEW=your-kid
    INVITATION_TOKEN_HMAC_KEY=your_generated_hex_key
 
-   # POSIX storage root (Lustre in production)
+   # Container path for the POSIX storage root
    STORAGE_ROOT=/data/storage
    ```
 
@@ -108,17 +108,23 @@ secrets marked **prod-guarded** below.
 
 | Variable | Default | Req | Description |
 |----------|---------|-----|-------------|
-| `STORAGE_ROOT` | `/data/storage` | optional | Provisioned POSIX root for recordings, model artifacts, search reference audio, and audit archives. Bind-mount the same path in the API and every worker. |
+| `STORAGE_ROOT` | `/data/storage` | optional | Provisioned POSIX root for recordings, model artifacts, search reference audio, and audit archives. Bind-mount the same path in the API and every worker. In production, `/lustre/echoroo/storage` is the documented example host directory bound to this container path. |
 | `COMPRESSED_CACHE_DIR` | `/data/audio_compressed` | optional | Lustre directory for generated OGG playback files. The cache is disposable. |
 | `COMPRESSED_CACHE_MAX_AGE_DAYS` | `30` | optional | Maximum age for generated compressed playback files before the scheduled sweep removes them. |
 | `ECHOROO_LOCALSTACK_DATA` | `./.data/localstack` | optional | Host path for LocalStack KMS persistence (compose bind-mount); it does not contain application objects. |
 
-`STORAGE_ROOT` must be provisioned before the API or workers start. Run this
-from `apps/api` as the container identity (UID/GID 1000 in production):
+`STORAGE_ROOT` must be provisioned before the API or workers start. In the dev
+stack, `/data/storage` is inside the `backend-data` named volume. From the
+Docker host, run the provisioner inside the backend container so it runs as
+UID/GID 1000 against that mounted path:
 
 ```bash
-uv run python -m echoroo.scripts.provision_storage /data/storage
+docker compose run --rm backend uv run python -m \
+  echoroo.scripts.provision_storage /data/storage
 ```
+
+For production, bind the example host directory `/lustre/echoroo/storage` to
+`/data/storage` in the API and every worker before running the same command.
 
 The provisioner creates the root with mode `0750`, writes the
 `.echoroo-storage` marker, and runs the full filesystem probe. A missing or
@@ -379,7 +385,7 @@ At startup the API (FastAPI lifespan) and each Celery worker run lightweight pro
 | Probe | Timeout | Development | Staging / Production |
 |-------|---------|-------------|----------------------|
 | Redis `ping()` | 2s | Hard fail | Hard fail |
-| Storage `ensure_ready()` | — | Hard fail | Hard fail |
+| Storage `ensure_ready()` | 5s | Log error and continue | Hard fail |
 
 KMS is intentionally **not** probed at boot (production IAM may deny `kms:DescribeKey`); first-use KMS errors are surfaced with an actionable message instead.
 

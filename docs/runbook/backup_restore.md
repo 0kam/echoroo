@@ -14,7 +14,8 @@ It is grounded in the shipped development stack (`compose.dev.yaml`):
 | Store | Service / container | Image | Volume / path | Notes |
 |-------|--------------------|-------|--------|-------|
 | PostgreSQL | `echoroo-db` | `pgvector/pgvector:pg16` | `echoroo-dev-db` | pgvector enabled |
-| POSIX storage | API + workers | Echoroo containers | Lustre host path → `/data/storage` | `STORAGE_ROOT`; recordings and artifacts |
+| POSIX storage (dev) | API + workers | Echoroo containers | Compose `backend-data` named volume → `/data/storage` | `STORAGE_ROOT`; recordings and artifacts |
+| POSIX storage (production example) | API + workers | Echoroo containers | `/lustre/echoroo/storage` → `/data/storage` | Example Lustre host directory; `STORAGE_ROOT` |
 | KMS | `echoroo-localstack` (dev) | LocalStack KMS | `./.data/localstack` (`ECHOROO_LOCALSTACK_DATA`) | AWS KMS in production |
 | Redis | `echoroo-redis` | `redis:7-alpine` | `echoroo-dev-redis` | TLS + AUTH + ACL |
 
@@ -108,15 +109,33 @@ The same relative keys are resolved below `STORAGE_ROOT` in the API and every
 worker. The OGG playback cache under `COMPRESSED_CACHE_DIR` is derived and may
 be regenerated; the storage tree itself must be backed up.
 
-### Backup — copy the Lustre tree
+### Backup — development named volume
+
+In the development stack, `/data/storage` exists inside the Compose
+`backend-data` named volume; `/data/storage` is not a host directory. Run the
+following on the Docker host from the directory where the backup should be
+written. Replace `echoroo` with the Compose project name if it differs.
+
+```bash
+PROJECT=echoroo
+docker run --rm \
+  -v "${PROJECT}_backend-data:/data:ro" \
+  -v "$PWD:/backup" \
+  alpine:3.20 tar -C /data/storage --numeric-owner -czf \
+  /backup/echoroo-storage-$(date +%F_%H%M%S).tar.gz .
+```
+
+### Backup — production Lustre host directory
 
 Quiesce API and workers, or take a filesystem snapshot that gives the
 database and storage a common point in time. Copy the complete provisioned
-storage tree, including `audit-log/`, with metadata preserved:
+storage tree, including `audit-log/`, with metadata preserved. The following
+is run on the production Docker host after the example Lustre directory has
+been mounted at `/lustre/echoroo/storage`:
 
 ```bash
 rsync -aHAX --numeric-ids \
-  /data/storage/ /backup/echoroo/storage/
+  /lustre/echoroo/storage/ /backup/echoroo/storage/
 ```
 
 Do not treat the compressed cache as the source of recordings. It can be
@@ -128,16 +147,43 @@ storage key that does not exist yet if these are captured independently.
 
 ### Restore
 
+#### Development named volume
+
+Stop the backend and workers on the Docker host first. Then, still on the
+Docker host, restore into the Compose project's named volume; the archive
+contents become `/data/storage` inside the containers.
+
+```bash
+PROJECT=echoroo
+docker run --rm \
+  -v "${PROJECT}_backend-data:/data" \
+  -v "$PWD:/backup" \
+  alpine:3.20 sh -c \
+  'mkdir -p /data/storage && tar -xzf /backup/echoroo-storage-2026-07-06_120000.tar.gz -C /data/storage'
+```
+
+#### Production Lustre host directory
+
+On the production Docker host, after the application is quiesced and the
+example Lustre directory is mounted at `/lustre/echoroo/storage`:
+
 ```bash
 rsync -aHAX --numeric-ids \
-  /backup/echoroo/storage/ /data/storage/
+  /backup/echoroo/storage/ /lustre/echoroo/storage/
 ```
 
 Before starting the application, verify that the restored tree is owned by
 UID/GID 1000, has the `.echoroo-storage` marker, and is readable and writable
-by the application identity. Run the storage provisioner on an empty tree;
-for a restored tree, use it to run the full readiness probe after confirming
-that the marker is present.
+by the application identity. Run the storage provisioner inside the backend
+container on an empty dev tree, or use the production compose service against
+the mounted Lustre path, so it runs as UID 1000 and performs the full
+readiness probe after confirming that the marker is present. Run this on the
+Docker host:
+
+```bash
+docker compose run --rm backend uv run python -m \
+  echoroo.scripts.provision_storage /data/storage
+```
 
 ---
 

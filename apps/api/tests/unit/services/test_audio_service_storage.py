@@ -71,6 +71,53 @@ def test_ogg_cache_source_path_is_resolved_from_storage(storage_root: Path, tmp_
     assert AudioService().get_compressed_for_playback(key).read_bytes() == b"ogg"
 
 
+def test_missing_recording_rechecks_storage_readiness(
+    storage_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    missing_path = storage_root / "recordings/project/dataset/missing.wav"
+    readiness_checks: list[bool] = []
+    monkeypatch.setattr(storage, "path_for", lambda _key: missing_path)
+    monkeypatch.setattr(storage, "ensure_ready", lambda: readiness_checks.append(True))
+
+    with pytest.raises(FileNotFoundError, match="missing.wav"):
+        AudioService().ensure_file_local("recordings/project/dataset/missing.wav")
+
+    assert readiness_checks == [True]
+
+
+def test_ogg_cache_evicted_between_is_file_and_utime_is_reencoded(
+    storage_root: Path, tmp_path: Path, monkeypatch
+) -> None:
+    key = "recordings/project/dataset/evicted.wav"
+    storage.write_bytes(key, _wav_bytes())
+    monkeypatch.setattr(get_settings(), "COMPRESSED_CACHE_DIR", str(tmp_path))
+    outputs: list[Path] = []
+
+    def _run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        output = Path(command[-1])
+        outputs.append(output)
+        output.write_bytes(b"ogg")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr("echoroo.services.audio.service.subprocess.run", _run)
+    service = AudioService()
+    cache_path = service.get_compressed_for_playback(key)
+    cache_path.write_bytes(b"old-ogg")
+
+    def _evict_before_utime(path: Path, _times: object) -> None:
+        assert path == cache_path
+        path.unlink()
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("echoroo.services.audio.service.os.utime", _evict_before_utime)
+
+    replacement = service.get_compressed_for_playback(key)
+
+    assert replacement == cache_path
+    assert replacement.read_bytes() == b"ogg"
+    assert len(outputs) == 2
+
+
 @pytest.mark.asyncio
 async def test_recording_route_reencodes_cache_vanished_before_open(
     storage_root: Path, tmp_path: Path, monkeypatch
