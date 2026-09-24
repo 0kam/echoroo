@@ -32,7 +32,7 @@ update), 2026-05-01.
 | 4 | Invitation flow (double-accept, email mismatch) | `tests/security/invitations/*` (2 files) | 16 | A07, A04 |
 | 5 | Race conditions (outbox, ownership transfer, superuser) | `tests/security/race_conditions/*` (6 files) | 45 | A04, A01 |
 | 6 | Search-leak prevention (raw coordinates, CSV export) | `tests/security/search_leak/*` (4 files) | 39 | A01, A03 (Injection — adjacent), A04 |
-| 7 | Upload (EXIF/S3 metadata stripping) | `tests/security/authorization/test_upload_exif_and_s3_metadata_strip.py` | 10 | A04, A08 (Software and Data Integrity Failures) |
+| 7 | Upload (EXIF/GPS stripping) | `tests/security/authorization/test_upload_exif_strip.py` | 9 | A04, A08 (Software and Data Integrity Failures) |
 | 8 | Trusted-user gating (allowlist + runtime) | `tests/security/authorization/test_trusted_allowlist_runtime.py`, `test_trusted_gate_runtime_http.py` | 16 | A01, A04 |
 | 9 | Superuser break-glass / last protection | `tests/security/race_conditions/test_superuser_break_glass_mode.py`, `test_superuser_last_protection.py` | 13 | A01, A04 |
 | 10 | Replay protection (security_stamp, refresh families, actor binding) | `tests/security/authentication/test_jwt_replay_across_security_stamp.py`, `test_refresh_token_family_reuse.py`, `test_security_stamp_revocation.py`, `tests/security/authorization/test_replay_actor_binding.py` | 19 | A07, A09 |
@@ -63,7 +63,7 @@ update), 2026-05-01.
 - `tests/security/authorization/test_superuser_response_filter_raw_forbidden.py` — 10
 - `tests/security/authorization/test_trusted_allowlist_runtime.py` — 8
 - `tests/security/authorization/test_trusted_gate_runtime_http.py` — 8
-- `tests/security/authorization/test_upload_exif_and_s3_metadata_strip.py` — 10
+- `tests/security/authorization/test_upload_exif_strip.py` — 9
 - `tests/security/authorization/test_viewer_permission_boundary.py` — 11
 - `tests/security/authorization/test_viewer_precise_location_denied.py` — 8
 

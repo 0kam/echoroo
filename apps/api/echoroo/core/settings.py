@@ -227,31 +227,6 @@ class Settings(BaseSettings):
         default=30,
         description="Maximum age in days for compressed audio cache files",
     )
-    AUDIO_ROOT: str = Field(
-        default="/data/audio",
-        description="Root directory for audio files",
-    )
-    AUDIO_CACHE_DIR: str | None = Field(
-        default=None,
-        description="Directory for caching spectrograms (optional)",
-    )
-    # Phase 5 polish round 3 (重要1): make the S3 audio cache directory
-    # configurable so tests (and CI runners that cannot write to /data) can
-    # point this at a tmp_path. Production keeps the historical /data
-    # default — overriding it through the environment is a no-op for the
-    # running deployment.
-    S3_AUDIO_CACHE_DIR: str = Field(
-        default="/data/s3_audio_cache",
-        description="Directory used by AudioService to cache files downloaded from S3",
-    )
-
-    # S3 / Object Storage
-    S3_ENDPOINT_URL: str = "http://localhost:9000"
-    S3_ACCESS_KEY: str = "echoroo"
-    S3_SECRET_KEY: str = "echoroo-dev"
-    S3_BUCKET: str = "echoroo"
-    S3_REGION: str = "us-east-1"
-
     # Upload limits
     UPLOAD_MAX_FILE_SIZE: int = 1 * 1024 * 1024 * 1024  # 1GB per file
     UPLOAD_MAX_SESSION_FILES: int = 500  # max files per upload session
@@ -261,7 +236,7 @@ class Settings(BaseSettings):
         default="/data/upload_staging",
         description=(
             "Directory where upload chunks are staged. Must be writable by the API and the "
-            "workers and must not be under the read-only AUDIO_ROOT mount."
+            "workers; may sit on a different filesystem than STORAGE_ROOT."
         ),
     )
     UPLOAD_CHUNK_SIZE: int = Field(
@@ -938,10 +913,6 @@ class Settings(BaseSettings):
             ):
                 raise ValueError(
                     "web_session_secret must be a strong secret (min 32 chars) in production/staging"
-                )
-            if self.S3_SECRET_KEY == "echoroo-dev":
-                raise ValueError(
-                    "S3_SECRET_KEY must be set to a secure value in production/staging"
                 )
             # Phase 17 A-12: dedicated 2FA reset confirmation HMAC key.
             weak_defaults_2fa = {

@@ -325,13 +325,13 @@ async def test_import_rejects_legacy_file_without_staged_bytes_or_storage_access
     upload_staging.part_path(session_id, file_id).unlink()
 
     monkeypatch.setattr(
-        upload_tasks,
-        "storage.write_file",
+        upload_tasks.storage,
+        "write_file",
         lambda *_args, **_kwargs: pytest.fail("legacy file must not be uploaded"),
     )
     monkeypatch.setattr(
-        upload_tasks,
-        "storage.size",
+        upload_tasks.storage,
+        "size",
         lambda *_args, **_kwargs: pytest.fail("legacy file must not be checked in storage"),
     )
 
