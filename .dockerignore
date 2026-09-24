@@ -1,21 +1,4 @@
-.venv/
-__pycache__/
-*.pyc
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.coverage
-coverage/
-*.egg-info/
-test_audio.wav
-celerybeat-schedule
-.git/
-Dockerfile*
-.dockerignore
-*.log*
-.env*
-.keys/
-**/.keys/
+# Local keyring material must never enter a build context.
 keyring*.json
 *keyring.json
 *.keyring.json
@@ -30,5 +13,7 @@ keyring*.json
 **/*keyring*.json.tmp-*
 **/*keyring*.json.rollback-*
 **/*keyring*.json.lock
+.keys/
+**/.keys/
 etc/echoroo/
 **/etc/echoroo/

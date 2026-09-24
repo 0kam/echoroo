@@ -119,6 +119,41 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Local keyring selectors. These fields are intentionally optional and
+    # unused until the keyring is wired into the application in slice 2.
+    KEYRING_FILE: str = Field(
+        default="/run/secrets/echoroo-keyring.json",
+        description="Path to the local Echoroo keyring JSON file.",
+    )
+    KEYRING_TOTP_KEY: str | None = Field(
+        default=None,
+        description="Active key id used to wrap TOTP data encryption keys.",
+    )
+    KEYRING_TOTP_KEY_VERSION: int = Field(
+        default=1,
+        description="Version assigned to newly wrapped TOTP data encryption keys.",
+    )
+    KEYRING_TOTP_KEY_OLD: str | None = Field(
+        default=None,
+        description="Previous TOTP wrapping key id during a rewrap window.",
+    )
+    KEYRING_TOTP_KEY_VERSION_OLD: int | None = Field(
+        default=None,
+        description="Version assigned to the previous TOTP wrapping key.",
+    )
+    KEYRING_PII_KEY: str | None = Field(
+        default=None,
+        description="Active key id used for PII HMACs.",
+    )
+    KEYRING_PII_KEY_V2: str | None = Field(
+        default=None,
+        description="Optional v2 key id used for dual-written PII HMACs.",
+    )
+    KEYRING_AUDIT_KEY: str | None = Field(
+        default=None,
+        description="Key id used for audit-chain HMACs.",
+    )
+
     # Password Hashing (Argon2id OWASP configuration)
     ARGON2_MEMORY_COST: int = 19456  # 19 MiB
     ARGON2_TIME_COST: int = 2
@@ -782,9 +817,7 @@ class Settings(BaseSettings):
         mode="before",
     )
     @classmethod
-    def _normalise_invitation_token_kid(
-        cls, value: Any, info: Any
-    ) -> Any:
+    def _normalise_invitation_token_kid(cls, value: Any, info: Any) -> Any:
         is_old = info.field_name == "invitation_token_kid_old"
         if value is None:
             return None if is_old else ""
