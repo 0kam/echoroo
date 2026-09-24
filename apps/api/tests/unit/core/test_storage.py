@@ -591,3 +591,48 @@ def test_concurrent_writers_create_nested_directories(storage_root: Path) -> Non
 
     for key, payload in results:
         assert (storage_root / key).read_bytes() == payload
+
+
+def test_delete_of_absent_key_raises_when_the_root_was_lost(
+    storage_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage.write_bytes("a/b.wav", b"x")
+    real_check_root = storage._check_root
+    calls = {"n": 0}
+
+    def check_root_then_lose_mount() -> Path:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_check_root()
+        raise storage.StorageUnavailable("mount lost")
+
+    (storage_root / "a" / "b.wav").unlink()
+    monkeypatch.setattr(storage, "_check_root", check_root_then_lose_mount)
+
+    with pytest.raises(storage.StorageUnavailable):
+        storage.delete("a/b.wav")
+
+
+def test_prefix_walk_skips_shorter_sibling_directory(
+    storage_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage.write_bytes("search_reference/p/job1/a.wav", b"1")
+    storage.write_bytes("search_reference/p/job10/b.wav", b"2")
+    visited: list[str] = []
+    real_scandir = os.scandir
+
+    def spy(path):  # type: ignore[no-untyped-def]
+        visited.append(Path(path).relative_to(storage_root).as_posix())
+        return real_scandir(path)
+
+    monkeypatch.setattr(storage.os, "scandir", spy)
+
+    keys = [item.key for item in storage.list_prefix("search_reference/p/job10")]
+
+    assert keys == ["search_reference/p/job10/b.wav"]
+    assert "search_reference/p/job1" not in visited
+    # A prefix without a slash still matches every sibling that starts with it.
+    assert sorted(item.key for item in storage.list_prefix("search_reference/p/job1")) == [
+        "search_reference/p/job1/a.wav",
+        "search_reference/p/job10/b.wav",
+    ]

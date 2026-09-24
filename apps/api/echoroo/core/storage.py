@@ -561,7 +561,11 @@ def _scan_base(storage_root: Path, parts: list[str], trailing: bool) -> Path | N
 
 
 def _prefix_can_match(path_key: str, prefix: str) -> bool:
-    return not prefix or path_key.startswith(prefix) or prefix.startswith(path_key)
+    """Whether a directory at ``path_key`` can hold a key starting with ``prefix``."""
+    if not prefix or not path_key or path_key.startswith(prefix):
+        return True
+    # Descendants of ``job1/`` never match ``job10``: require a component boundary.
+    return prefix.startswith(path_key + "/")
 
 
 def _relative_key(storage_root: Path, path: Path) -> str:
@@ -626,6 +630,9 @@ def _delete_resolved(key: str, path: Path) -> tuple[bool, OSError | None]:
     try:
         os.unlink(path)
     except FileNotFoundError:
+        # Absence only counts as deletion while the tree is still there: a
+        # lost mount must not report every key as deleted.
+        _check_root()
         try:
             path.parent.lstat()
         except FileNotFoundError:
