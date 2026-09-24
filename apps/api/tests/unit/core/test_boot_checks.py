@@ -89,6 +89,7 @@ async def test_run_boot_checks_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     """Both probes succeeding completes without raising."""
     settings = Settings(ENVIRONMENT="development", ECHOROO_SKIP_BOOT_CHECKS=False)
     _patch_settings(monkeypatch, settings)
+    monkeypatch.setattr(boot_checks.keyring, "get_keyring", lambda: object())
 
     async def _ok_redis() -> _FakeRedisOk:
         return _FakeRedisOk()
@@ -103,6 +104,28 @@ async def test_run_boot_checks_pass(monkeypatch: pytest.MonkeyPatch) -> None:
 
     await boot_checks.run_boot_checks()
     assert storage_probe_arguments == [True]
+
+
+@pytest.mark.parametrize("environment", ["development", "production"])
+def test_keyring_failure_is_fatal_in_every_environment(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+) -> None:
+    """A missing or invalid keyring cannot be bypassed by environment."""
+    settings = (
+        Settings(ENVIRONMENT="development", ECHOROO_SKIP_BOOT_CHECKS=False)
+        if environment == "development"
+        else _prod_settings("production", ECHOROO_SKIP_BOOT_CHECKS=False)
+    )
+    _patch_settings(monkeypatch, settings)
+
+    def _bad_keyring() -> object:
+        raise boot_checks.keyring.KeyringConfigError("secret")
+
+    monkeypatch.setattr(boot_checks.keyring, "get_keyring", _bad_keyring)
+
+    with pytest.raises(boot_checks.BootCheckError) as exc_info:
+        boot_checks._probe_keyring()
+    assert "secret" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -237,6 +260,7 @@ def test_worker_ready_fatal_probe_terminates_worker(
 
     exit_codes: list[int] = []
     monkeypatch.setattr(boot_checks, "_probe_redis", _redis_ok)
+    monkeypatch.setattr(boot_checks.keyring, "get_keyring", lambda: object())
     monkeypatch.setattr(boot_checks, "_ensure_storage_ready_sync", _storage_failure)
     monkeypatch.setattr(celery_app.os, "_exit", exit_codes.append)
     monkeypatch.setattr(celery_app.logging, "shutdown", lambda: None)

@@ -90,8 +90,7 @@ class MetaAuditWriteError(RuntimeError):
 
     def __init__(self, *, action: str, request_id: str, reason: str) -> None:
         super().__init__(
-            f"meta-audit write failed for action={action!r} "
-            f"request_id={request_id!r}: {reason}"
+            f"meta-audit write failed for action={action!r} request_id={request_id!r}: {reason}"
         )
         self.action = action
         self.request_id = request_id
@@ -167,10 +166,7 @@ async def _project_audit_page(
         # we treat the supplied hash as either generation and let the
         # partial index ``ix_*_actor_v2`` cover the v2 leg via a
         # bitmap-OR plan.
-        filters.append(
-            "(actor_user_id_hash = :actor_hash "
-            "OR actor_user_id_hash_v2 = :actor_hash)"
-        )
+        filters.append("(actor_user_id_hash = :actor_hash OR actor_user_id_hash_v2 = :actor_hash)")
         params["actor_hash"] = actor_user_id_hash
     if before is not None:
         filters.append("created_at < :before")
@@ -180,9 +176,7 @@ async def _project_audit_page(
         params["after"] = after
     where = " AND ".join(filters)
 
-    count_sql = sa.text(
-        f"SELECT COUNT(*) FROM project_audit_log WHERE {where}"
-    )
+    count_sql = sa.text(f"SELECT COUNT(*) FROM project_audit_log WHERE {where}")
     total_row = (await session.execute(count_sql, params)).first()
     total = int(total_row[0]) if total_row is not None else 0
 
@@ -217,10 +211,7 @@ async def _platform_audit_page(
         params["action"] = action
     if actor_user_id_hash is not None:
         # Round 2 R1-I1 — see the project-page helper for rationale.
-        filters.append(
-            "(actor_user_id_hash = :actor_hash "
-            "OR actor_user_id_hash_v2 = :actor_hash)"
-        )
+        filters.append("(actor_user_id_hash = :actor_hash OR actor_user_id_hash_v2 = :actor_hash)")
         params["actor_hash"] = actor_user_id_hash
     if request_id is not None:
         filters.append("request_id = :request_id")
@@ -475,24 +466,34 @@ async def verify_audit_chain(
     table = "project_audit_log" if target == "project" else "platform_audit_log"
     include_project_id = target == "project"
 
-    from echoroo.core.kms import compute_audit_chain_hash
     from echoroo.workers.audit_log_export import (
         _afetch_rows,
-        _canonical_row,
+        verify_chain,
     )
 
     rows = await _afetch_rows(db, table)
-    first_mismatch: UUID | None = None
-    for row in rows:
-        recomputed = compute_audit_chain_hash(
-            row["prev_hash"],
-            _canonical_row(row, include_project_id=include_project_id),
+    verification = verify_chain(
+        rows,
+        include_project_id=include_project_id,
+        expected_prev_hash="0" * 64,
+    )
+
+    if verification.reason == "key_unavailable":
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "AUDIT_KEY_UNAVAILABLE",
+                "message": "Audit chain verification is temporarily unavailable.",
+            },
         )
-        if recomputed != row["row_hash"]:
-            first_mismatch = (
-                row["id"] if isinstance(row["id"], UUID) else UUID(str(row["id"]))
-            )
-            break
+
+    first_mismatch: UUID | None = None
+    if verification.first_bad_row_id is not None:
+        first_mismatch = (
+            verification.first_bad_row_id
+            if isinstance(verification.first_bad_row_id, UUID)
+            else UUID(str(verification.first_bad_row_id))
+        )
 
     # Phase 2.11 P0-c — fail-closed on meta-audit write (FR-096): the
     # chain-verify result MUST NOT be returned without an audit row.
@@ -504,7 +505,11 @@ async def verify_audit_chain(
             request_id=_request_id(request),
             ip=_client_ip(request),
             user_agent=_user_agent(request),
-            detail={"target": target, "row_count": len(rows), "is_valid": first_mismatch is None},
+            detail={
+                "target": target,
+                "row_count": len(rows),
+                "is_valid": verification.is_valid,
+            },
         )
     except MetaAuditWriteError as exc:
         raise HTTPException(
@@ -520,8 +525,8 @@ async def verify_audit_chain(
         ) from exc
 
     return ChainVerifyResponse(
-        is_valid=first_mismatch is None,
-        verified_row_count=len(rows),
+        is_valid=verification.is_valid,
+        verified_row_count=verification.verified_row_count,
         first_mismatch_row_id=first_mismatch,
     )
 
@@ -652,9 +657,7 @@ async def _write_meta_audit_in_fresh_session(
         # for triage AND the endpoint must fail-closed (Phase 2.11
         # P0-c). The endpoint catches MetaAuditWriteError and returns
         # 503 without leaking the audit rows that were read.
-        logger.exception(
-            "meta-audit write failed (action=%s request_id=%s)", action, request_id
-        )
+        logger.exception("meta-audit write failed (action=%s request_id=%s)", action, request_id)
         raise MetaAuditWriteError(
             action=action,
             request_id=request_id,

@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 
 from echoroo.core import storage
+from echoroo.core.keyring import KeyringAuthError
 from echoroo.services.audit_service import _build_canonical_row
 from echoroo.workers import audit_log_export as mod
 
@@ -277,7 +278,9 @@ def test_exclusive_publication_race_reads_back_the_winner(
 
 
 def test_late_row_in_archived_week_fails_visibly_and_never_overwrites(env: Any) -> None:
-    rows = _chain((datetime(2026, 9, 15, tzinfo=UTC), "x.y"), (datetime(2026, 9, 16, tzinfo=UTC), "x.z"))
+    rows = _chain(
+        (datetime(2026, 9, 15, tzinfo=UTC), "x.y"), (datetime(2026, 9, 16, tzinfo=UTC), "x.z")
+    )
     env.rows_by_table["project_audit_log"] = rows[:1]
     mod.export_weekly(now_iso=NOW)
     key = "audit-log/project_audit_log/2026/38.ndjson"
@@ -353,6 +356,52 @@ def test_zero_hash_is_not_accepted_for_ordinary_actions(env: Any) -> None:
     with pytest.raises(mod.AuditChainMismatchError):
         mod.export_weekly(now_iso=NOW)
 
+    assert env.write_calls == []
+
+
+def test_verify_chain_returns_first_bad_row_and_reason(env: Any) -> None:
+    rows = _chain(
+        (datetime(2026, 9, 15, tzinfo=UTC), "a.a"),
+        (datetime(2026, 9, 16, tzinfo=UTC), "b.b"),
+        (datetime(2026, 9, 17, tzinfo=UTC), "c.c"),
+    )
+    del rows[1]
+
+    result = mod.verify_chain(
+        rows,
+        include_project_id=True,
+        expected_prev_hash="0" * 64,
+    )
+
+    assert result.is_valid is False
+    assert result.verified_row_count == 1
+    assert result.first_bad_row_id == "00000000-0000-0000-0000-000000000002"
+    assert result.reason == "link"
+
+
+def test_verify_chain_keyring_failure_is_not_valid(
+    env: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    row = _row(datetime(2026, 9, 15, tzinfo=UTC))
+
+    def _unavailable(_prev_hash: str, _canonical_row: bytes) -> str:
+        raise KeyringAuthError("key unavailable")
+
+    monkeypatch.setattr(mod, "compute_audit_chain_hash", _unavailable)
+    result = mod.verify_chain(
+        [row],
+        include_project_id=True,
+        expected_prev_hash="0" * 64,
+    )
+
+    assert result.is_valid is False
+    assert result.verified_row_count == 0
+    assert result.first_bad_row_id == row["id"]
+    assert result.reason == "key_unavailable"
+
+    env.rows_by_table["project_audit_log"] = [row]
+    with pytest.raises(mod.AuditChainMismatchError, match="key unavailable"):
+        mod.export_weekly(now_iso=NOW)
     assert env.write_calls == []
 
 
@@ -440,7 +489,9 @@ def test_db_chain_mismatch_is_never_archived(env: Any) -> None:
 
 def test_broken_week_does_not_block_clean_weeks(env: Any) -> None:
     """One bad week fails the task, but every clean week is still archived."""
-    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    rows = _chain(
+        (datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y")
+    )
     rows[0]["action"] = "x.edited"  # W37 fails its MAC; links to W38 stay intact
     env.rows_by_table["project_audit_log"] = rows
     env.rows_by_table["platform_audit_log"] = [
@@ -481,7 +532,9 @@ def test_platform_table_roundtrip(env: Any) -> None:
 
 def test_forged_bootstrap_row_cannot_replace_a_week(env: Any) -> None:
     """Zero-hash rows are only reachable at the start of the chain."""
-    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    rows = _chain(
+        (datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y")
+    )
     forged = _row(datetime(2026, 9, 15, tzinfo=UTC), action="platform.wipe_executed")
     forged["row_hash"] = "0" * 64
     env.rows_by_table["project_audit_log"] = [rows[0], forged]  # W38 replaced wholesale
@@ -529,12 +582,17 @@ def test_verify_archive_rejects_rows_outside_the_keys_week(env: Any) -> None:
 
 
 def test_verify_archive_anchors_to_the_preceding_archive(env: Any) -> None:
-    rows = _chain((datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y"))
+    rows = _chain(
+        (datetime(2026, 9, 8, tzinfo=UTC), "x.y"), (datetime(2026, 9, 15, tzinfo=UTC), "x.y")
+    )
     env.rows_by_table["project_audit_log"] = rows
     mod.export_weekly(now_iso=NOW)
     key = "audit-log/project_audit_log/2026/38.ndjson"
 
-    assert mod.verify_archive(key, include_project_id=True, expected_prev_hash=rows[0]["row_hash"]) == 1
+    assert (
+        mod.verify_archive(key, include_project_id=True, expected_prev_hash=rows[0]["row_hash"])
+        == 1
+    )
     with pytest.raises(mod.AuditArchiveMismatchError, match="chain link broken"):
         mod.verify_archive(key, include_project_id=True, expected_prev_hash="f" * 64)
 

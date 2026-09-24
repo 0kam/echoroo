@@ -9,21 +9,24 @@ live rows, so a late row or a replaced archive fails the task visibly. The
 catch-up window also lets a later run export a missed week. Immutability of
 stored files is operational (read-only mount plus snapshots; see
 ``docs/runbook/audit_log_archive.md``), while tamper evidence comes from the
-KMS MAC chain in every row.
+local keyring MAC chain in every row.
 """
 
 from __future__ import annotations
 
+import hmac
 import io
 import json
 import logging
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from celery import shared_task
 
 from echoroo.core import storage
+from echoroo.core.keyring import KeyringError
 from echoroo.core.kms import compute_audit_chain_hash
 
 logger = logging.getLogger(__name__)
@@ -47,8 +50,18 @@ _BOOTSTRAP_ACTIONS = frozenset({"genesis", "platform.wipe_executed"})
 # Every archived row carries these (project rows add ``project_id``).
 _ARCHIVE_ROW_FIELDS = frozenset(
     {
-        "id", "created_at", "actor_user_id_hash", "action", "detail", "request_id",
-        "ip_hash", "user_agent_hash", "before", "after", "prev_hash", "row_hash",
+        "id",
+        "created_at",
+        "actor_user_id_hash",
+        "action",
+        "detail",
+        "request_id",
+        "ip_hash",
+        "user_agent_hash",
+        "before",
+        "after",
+        "prev_hash",
+        "row_hash",
     }
 )
 
@@ -66,6 +79,16 @@ class AuditChainMismatchError(RuntimeError):
 
 class AuditArchiveMismatchError(RuntimeError):
     """Raised when an archive read back from storage fails chain verification."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChainVerification:
+    """Result of verifying a contiguous audit-log row sequence."""
+
+    is_valid: bool
+    verified_row_count: int
+    first_bad_row_id: object | None
+    reason: Literal["ok", "link", "mac", "bootstrap", "key_unavailable"]
 
 
 def _canonical_row(row: dict[str, Any], *, include_project_id: bool) -> bytes:
@@ -103,18 +126,23 @@ def _canonical_row(row: dict[str, Any], *, include_project_id: bool) -> bytes:
 def _is_bootstrap_row(row: dict[str, Any]) -> bool:
     return (
         row["action"] in _BOOTSTRAP_ACTIONS
-        and row["row_hash"] == _ZERO_HASH
-        and row["prev_hash"] == _ZERO_HASH
+        and _hash_matches(row["row_hash"], _ZERO_HASH)
+        and _hash_matches(row["prev_hash"], _ZERO_HASH)
     )
 
 
-def _verify_chain(
+def _hash_matches(left: object, right: object) -> bool:
+    """Compare two stored hash strings in constant time."""
+    return isinstance(left, str) and isinstance(right, str) and hmac.compare_digest(left, right)
+
+
+def verify_chain(
     rows: list[dict[str, Any]],
     *,
     include_project_id: bool,
     expected_prev_hash: str | None = None,
-) -> None:
-    """Assert every row's MAC and that consecutive rows are linked.
+) -> ChainVerification:
+    """Verify every row's MAC and that consecutive rows are linked.
 
     Rows must be in ``(created_at, id)`` order. The link check
     (``prev_hash == previous row_hash``) is what detects a removed or reordered
@@ -125,32 +153,87 @@ def _verify_chain(
     ties the batch to the rest of the chain, and it is what confines the
     unauthenticated bootstrap rows to the very start of the chain: a zero-hash
     row further along can only link to another zero-hash row.
+
+    A keyring failure is a failed verification, never a successful result.
     """
-    if rows and expected_prev_hash is not None and rows[0]["prev_hash"] != expected_prev_hash:
-        raise AuditChainMismatchError(
-            f"chain link broken before id={rows[0].get('id')!r}: "
-            f"prev_hash={rows[0]['prev_hash']!r} but the preceding row_hash is "
-            f"{expected_prev_hash!r}"
-        )
+    if (
+        rows
+        and expected_prev_hash is not None
+        and not _hash_matches(rows[0]["prev_hash"], expected_prev_hash)
+    ):
+        return ChainVerification(False, 0, rows[0].get("id"), "link")
+
     previous: dict[str, Any] | None = None
+    verified_count = 0
+    signed_row_seen = False
     for row in rows:
-        if previous is not None and row["prev_hash"] != previous["row_hash"]:
-            raise AuditChainMismatchError(
-                f"chain link broken before id={row.get('id')!r}: "
-                f"prev_hash={row['prev_hash']!r} but the preceding row "
-                f"id={previous.get('id')!r} has row_hash={previous['row_hash']!r}"
-            )
-        previous = row
+        if _is_bootstrap_row(row) and signed_row_seen:
+            return ChainVerification(False, verified_count, row.get("id"), "bootstrap")
+
+        if previous is not None and not _hash_matches(row["prev_hash"], previous["row_hash"]):
+            return ChainVerification(False, verified_count, row.get("id"), "link")
+
         if _is_bootstrap_row(row):
+            previous = row
+            verified_count += 1
             continue
-        recomputed = compute_audit_chain_hash(
-            row["prev_hash"], _canonical_row(row, include_project_id=include_project_id)
-        )
-        if recomputed != row["row_hash"]:
-            raise AuditChainMismatchError(
-                f"row_hash mismatch for id={row.get('id')!r}: "
-                f"stored={row['row_hash']!r} recomputed={recomputed!r}"
+
+        try:
+            recomputed = compute_audit_chain_hash(
+                row["prev_hash"], _canonical_row(row, include_project_id=include_project_id)
             )
+        except KeyringError:
+            return ChainVerification(False, verified_count, row.get("id"), "key_unavailable")
+
+        if not _hash_matches(recomputed, row["row_hash"]):
+            return ChainVerification(False, verified_count, row.get("id"), "mac")
+
+        signed_row_seen = True
+        previous = row
+        verified_count += 1
+
+    return ChainVerification(True, verified_count, None, "ok")
+
+
+def _chain_mismatch_error(
+    result: ChainVerification,
+    rows: list[dict[str, Any]],
+    *,
+    expected_prev_hash: str | None,
+) -> AuditChainMismatchError:
+    """Build a secret-free exception from a failed chain-verification result."""
+    index = result.verified_row_count
+    row = rows[index] if index < len(rows) else {}
+    row_id = row.get("id", result.first_bad_row_id)
+
+    if result.reason == "link":
+        if index == 0 and expected_prev_hash is not None:
+            return AuditChainMismatchError(
+                f"chain link broken before id={row_id!r}: "
+                f"prev_hash={row.get('prev_hash')!r} but the preceding row_hash is "
+                f"{expected_prev_hash!r}"
+            )
+        previous = rows[index - 1] if index > 0 else {}
+        return AuditChainMismatchError(
+            f"chain link broken before id={row_id!r}: "
+            f"prev_hash={row.get('prev_hash')!r} but the preceding row "
+            f"id={previous.get('id')!r} has row_hash={previous.get('row_hash')!r}"
+        )
+
+    if result.reason == "bootstrap":
+        return AuditChainMismatchError(
+            f"bootstrap row is not at the start of the chain for id={row_id!r}: "
+            f"prev_hash={row.get('prev_hash')!r} row_hash={row.get('row_hash')!r}"
+        )
+
+    if result.reason == "key_unavailable":
+        return AuditChainMismatchError(
+            f"audit key unavailable while verifying id={row_id!r}: stored={row.get('row_hash')!r}"
+        )
+
+    return AuditChainMismatchError(
+        f"row_hash mismatch for id={row_id!r}: stored={row.get('row_hash')!r}"
+    )
 
 
 def _serialize_ndjson(rows: list[dict[str, Any]]) -> bytes:
@@ -158,7 +241,13 @@ def _serialize_ndjson(rows: list[dict[str, Any]]) -> bytes:
     buf = io.StringIO()
     for row in rows:
         serialisable = {
-            key: (value.isoformat() if isinstance(value, datetime) else str(value) if not _json_safe(value) else value)
+            key: (
+                value.isoformat()
+                if isinstance(value, datetime)
+                else str(value)
+                if not _json_safe(value)
+                else value
+            )
             for key, value in row.items()
         }
         buf.write(json.dumps(serialisable, sort_keys=True, separators=(",", ":"), default=str))
@@ -237,7 +326,9 @@ def verify_archive(
             if not line:
                 continue
             row = json.loads(line)
-            missing = _ARCHIVE_ROW_FIELDS - set(row) if isinstance(row, dict) else _ARCHIVE_ROW_FIELDS
+            missing = (
+                _ARCHIVE_ROW_FIELDS - set(row) if isinstance(row, dict) else _ARCHIVE_ROW_FIELDS
+            )
             if missing:
                 raise ValueError(f"row is missing fields: {sorted(missing)}")
             for field in ("id", "action", "request_id", "prev_hash", "row_hash"):
@@ -258,11 +349,13 @@ def verify_archive(
                     f"row id={row['id']!r} at {row['created_at'].isoformat()} "
                     "is outside the ISO week named by the key"
                 )
-        _verify_chain(
+        result = verify_chain(
             rows,
             include_project_id=include_project_id,
             expected_prev_hash=expected_prev_hash,
         )
+        if not result.is_valid:
+            raise _chain_mismatch_error(result, rows, expected_prev_hash=expected_prev_hash)
     except AuditChainMismatchError as exc:
         raise AuditArchiveMismatchError(f"archive {key}: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 - any malformed shape is a failed verification
@@ -299,7 +392,13 @@ def _export_week(
                 "archive exists but the live table has no rows for that week"
             )
         return False
-    _verify_chain(rows, include_project_id=include_project_id, expected_prev_hash=prev_hash)
+    result = verify_chain(
+        rows,
+        include_project_id=include_project_id,
+        expected_prev_hash=prev_hash,
+    )
+    if not result.is_valid:
+        raise _chain_mismatch_error(result, rows, expected_prev_hash=prev_hash)
     expected = _serialize_ndjson(rows)
     written = stored is None
     if written:
@@ -378,9 +477,9 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
                     # Bootstrap rows are only genuine at the start of the table. The
                     # link checks cover everything from ``start`` on; this covers the
                     # history before it, including weeks outside the catch-up window.
-                    if any(_is_bootstrap_row(row) for row in rows) and await _ahas_signed_row_before(
-                        session, table, before=start
-                    ):
+                    if any(
+                        _is_bootstrap_row(row) for row in rows
+                    ) and await _ahas_signed_row_before(session, table, before=start):
                         _fail(
                             table,
                             key,
@@ -404,8 +503,10 @@ def export_weekly(now_iso: str | None = None) -> dict[str, Any]:
         # Fail the task so the weeks reach an operator. Clean weeks are already
         # archived and are only re-checked, never rewritten, on the next run.
         failed_keys = ", ".join(item["key"] for item in summary["failed"])
+        failed_details = "; ".join(f"{item['key']}: {item['error']}" for item in summary["failed"])
         raise AuditChainMismatchError(
-            f"{len(summary['failed'])} week(s) failed the audit export: {failed_keys}"
+            f"{len(summary['failed'])} week(s) failed the audit export: "
+            f"{failed_keys}; {failed_details}"
         )
     return summary
 
@@ -475,6 +576,8 @@ async def _afetch_rows(
 __all__ = [
     "AuditArchiveMismatchError",
     "AuditChainMismatchError",
+    "ChainVerification",
     "export_weekly",
+    "verify_chain",
     "verify_archive",
 ]
