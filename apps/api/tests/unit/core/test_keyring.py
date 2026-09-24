@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from echoroo.core import keyring
 
@@ -74,6 +75,24 @@ def test_hmac_known_answer_and_verification(ring: keyring.Keyring) -> None:
     assert ring.hmac_hex("pii-hmac-current", b"message", "pii-hmac")
 
 
+@pytest.mark.parametrize("expected_hex", ["é" * 64, "a" * 63, "a" * 65, "A" * 64, "g" * 64])
+def test_malformed_hmacs_are_rejected(expected_hex: str, ring: keyring.Keyring) -> None:
+    """Verification rejects non-canonical MAC strings before compare_digest."""
+
+    assert not ring.verify_hmac_hex("pii-hmac-current", b"message", expected_hex, "pii-hmac")
+
+
+def test_hmac_rejects_wrapping_purpose_for_compute_and_verify(ring: keyring.Keyring) -> None:
+    """HMAC operations accept only their two dedicated purposes."""
+
+    with pytest.raises(keyring.KeyringKeyError):
+        ring.hmac_hex("totp-wrap-current", b"message", "totp-wrap")  # type: ignore[arg-type]
+    with pytest.raises(keyring.KeyringKeyError):
+        ring.verify_hmac_hex(
+            "totp-wrap-current", b"message", "0" * 64, "totp-wrap"  # type: ignore[arg-type]
+        )
+
+
 def test_wrap_unwrap_and_rewrap(ring: keyring.Keyring) -> None:
     """Wrapped DEKs use the specified wire format and return bytearrays."""
 
@@ -82,7 +101,9 @@ def test_wrap_unwrap_and_rewrap(ring: keyring.Keyring) -> None:
     assert blob[:3] == b"EKR"
     assert blob[3] == 1
     assert blob[4] == len("totp-wrap-current")
-    assert ring.unwrap(blob, "totp-wrap-current") == bytearray(dek)
+    unwrapped = ring.unwrap(blob, "totp-wrap-current")
+    assert isinstance(unwrapped, bytearray)
+    assert unwrapped == bytearray(dek)
 
     rewrapped = ring.rewrap(blob, "totp-wrap-current", "totp-wrap-old")
     assert ring.unwrap(rewrapped, "totp-wrap-old") == bytearray(dek)
@@ -105,6 +126,36 @@ def test_document_rejects_bad_top_level(field: str, value: object) -> None:
     document[field] = value
     with pytest.raises(keyring.KeyringConfigError):
         keyring.Keyring.from_dict(document)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        '{"format":1,"format":1,"keys":{}}',
+        (
+            '{"format":1,"keys":{'
+            '"duplicate-id":{"purpose":"pii-hmac","material":"'
+            + base64.b64encode(_material("duplicate-id")).decode("ascii")
+            + '","created":"2026-09-24"},'
+            '"duplicate-id":{"purpose":"pii-hmac","material":"'
+            + base64.b64encode(_material("duplicate-id-2")).decode("ascii")
+            + '","created":"2026-09-24"}}}'
+        ),
+        (
+            '{"format":1,"keys":{"entry":{"purpose":"pii-hmac","material":"'
+            + base64.b64encode(_material("duplicate-field")).decode("ascii")
+            + '","material":"'
+            + base64.b64encode(_material("duplicate-field-2")).decode("ascii")
+            + '","created":"2026-09-24"}}}'
+        ),
+    ],
+)
+def test_json_rejects_duplicate_members_at_each_nesting_level(document: str) -> None:
+    """Duplicate top-level, key-map and entry members never get last-value wins."""
+
+    with pytest.raises(keyring.KeyringConfigError, match="duplicate") as raised:
+        keyring.Keyring.from_json(document)
+    assert "duplicate-id" not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -186,6 +237,8 @@ def test_wrapped_blob_rejections(ring: keyring.Keyring) -> None:
 
     blob = ring.wrap(b"D" * 32, "totp-wrap-current")
     with pytest.raises(keyring.KeyringAuthError):
+        ring.unwrap(blob[:-1], "totp-wrap-current")
+    with pytest.raises(keyring.KeyringAuthError):
         ring.unwrap(blob + b"trailing", "totp-wrap-current")
 
     bad_id = bytearray(blob)
@@ -193,21 +246,65 @@ def test_wrapped_blob_rejections(ring: keyring.Keyring) -> None:
     with pytest.raises(keyring.KeyringAuthError):
         ring.unwrap(bytes(bad_id), "totp-wrap-current")
 
+    oversized_id = bytearray(blob)
+    oversized_id[4] = 65
+    with pytest.raises(keyring.KeyringAuthError):
+        ring.unwrap(bytes(oversized_id), "totp-wrap-current")
+
+    invalid_id = bytearray(blob)
+    invalid_id[5] = ord("_")
+    with pytest.raises(keyring.KeyringAuthError):
+        ring.unwrap(bytes(invalid_id), "totp-wrap-current")
+
     unknown_header = bytearray(blob)
     unknown_id = b"unknown-key-12345"
     unknown_header[4] = len(unknown_id)
     unknown_header[5 : 5 + len(unknown_id)] = unknown_id
     with pytest.raises(keyring.KeyringKeyError):
-        ring.unwrap(bytes(unknown_header), "unknown-key")
+        ring.unwrap(bytes(unknown_header), unknown_id.decode("ascii"))
+
+
+def test_fixed_nonce_wire_vector_uses_literal_aad(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wire format binds the literal header and AAD and returns a bytearray."""
+
+    fixed_key = bytes(range(32))
+    nonce = bytes(range(12))
+    dek = b"D" * 32
+    vector_ring = keyring.Keyring.from_dict(
+        _document({"totp-fixed": ("totp-wrap", fixed_key, "2026-09-24")})
+    )
+    monkeypatch.setattr(keyring.os, "urandom", lambda _size: nonce)
+
+    header = b"EKR\x01\ntotp-fixed"
+    aad = b"echoroo:totp-wrap:EKR\x01\ntotp-fixed"
+    expected = bytes.fromhex(
+        "454b52010a746f74702d6669786564000102030405060708090a"
+        "0b0346925f81a1865fc905d3cff5ad3c29c792c370b43f1b387c"
+        "23a1c1592d44f6134292fedf26c6bf93c2ec05af3af48a"
+    )
+    assert expected == header + nonce + AESGCM(fixed_key).encrypt(nonce, dek, aad)
+    assert vector_ring.wrap(dek, "totp-fixed") == expected
+    unwrapped = vector_ring.unwrap(expected, "totp-fixed")
+    assert isinstance(unwrapped, bytearray)
+    assert unwrapped == bytearray(dek)
 
 
 def test_header_nonce_and_ciphertext_tamper_fail_auth(ring: keyring.Keyring) -> None:
     """Tampering with authenticated data raises the auth error."""
 
-    blob = bytearray(ring.wrap(b"D" * 32, "totp-wrap-current"))
-    blob[3] ^= 1
+    header_ring = keyring.Keyring.from_dict(
+        _document(
+            {
+                "totp-wrap-current": ("totp-wrap", _material("header-current"), None),
+                "totp-wrap-another": ("totp-wrap", _material("header-another"), None),
+            }
+        )
+    )
+    blob = bytearray(header_ring.wrap(b"D" * 32, "totp-wrap-current"))
+    replacement = b"totp-wrap-another"
+    blob[5 : 5 + len(replacement)] = replacement
     with pytest.raises(keyring.KeyringAuthError):
-        ring.unwrap(bytes(blob), "totp-wrap-current")
+        header_ring.unwrap(bytes(blob), "totp-wrap-another")
 
     nonce_tampered = bytearray(ring.wrap(b"D" * 32, "totp-wrap-current"))
     nonce_tampered[5 + len("totp-wrap-current")] ^= 1
@@ -218,6 +315,29 @@ def test_header_nonce_and_ciphertext_tamper_fail_auth(ring: keyring.Keyring) -> 
     ciphertext_tampered[-1] ^= 1
     with pytest.raises(keyring.KeyringAuthError):
         ring.unwrap(bytes(ciphertext_tampered), "totp-wrap-current")
+
+
+def test_wrap_wipes_plaintext_when_nonce_generation_fails(
+    ring: keyring.Keyring, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A nonce failure still wipes the plaintext copy allocated for the attempt."""
+
+    observed: list[tuple[int, bytes]] = []
+    original_wipe = keyring._wipe
+
+    def observe_wipe(buffer: bytearray) -> None:
+        original_wipe(buffer)
+        observed.append((len(buffer), bytes(buffer)))
+
+    def fail_nonce(_size: int) -> bytes:
+        raise OSError("injected nonce failure")
+
+    monkeypatch.setattr(keyring, "_wipe", observe_wipe)
+    monkeypatch.setattr(keyring.os, "urandom", fail_nonce)
+    with pytest.raises(OSError, match="nonce failure"):
+        ring.wrap(b"D" * 32, "totp-wrap-current")
+
+    assert (32, b"\0" * 32) in observed
 
 
 def test_wrong_key_and_purpose_are_rejected(ring: keyring.Keyring) -> None:
@@ -341,6 +461,10 @@ def test_errors_and_representations_are_secret_free(ring: keyring.Keyring) -> No
     material = _material("secret-check")
     plaintext = b"plaintext-dek-for-error-check" * 2
     encoded = base64.b64encode(material).decode("ascii")
+    secret_ring = keyring.Keyring.from_dict(
+        _document({"secret-key": ("pii-hmac", material, None)})
+    )
+    secret_entry = secret_ring.keys["secret-key"]
     errors: list[BaseException] = []
     for action in (
         lambda: keyring.Keyring.from_dict(_document({"bad_id": ("pii-hmac", material, None)})),
@@ -358,5 +482,8 @@ def test_errors_and_representations_are_secret_free(ring: keyring.Keyring) -> No
         assert encoded not in repr(error)
         assert plaintext not in str(error).encode()
         assert plaintext not in repr(error).encode()
-    assert encoded not in repr(ring)
-    assert plaintext not in repr(ring).encode()
+    for rendered in (repr(secret_ring), repr(secret_entry)):
+        assert material not in rendered.encode()
+        assert repr(material) not in rendered
+        assert material.hex() not in rendered
+        assert encoded not in rendered

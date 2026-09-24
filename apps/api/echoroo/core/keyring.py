@@ -25,10 +25,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from echoroo.core.settings import get_settings
 
 Purpose = Literal["totp-wrap", "pii-hmac", "audit-hmac"]
+HmacPurpose = Literal["pii-hmac", "audit-hmac"]
 
 _PURPOSES = frozenset(("totp-wrap", "pii-hmac", "audit-hmac"))
+_HMAC_PURPOSES = frozenset(("pii-hmac", "audit-hmac"))
 _KEY_ID_PATTERN = re.compile(r"^[a-z0-9-]{1,64}$")
 _CREATED_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_HMAC_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _DEK_SIZE = 32
 _NONCE_SIZE = 12
 _TAG_SIZE = 16
@@ -114,6 +117,12 @@ def _validate_purpose(purpose: object) -> Purpose:
     return cast(Purpose, purpose)
 
 
+def _validate_hmac_purpose(purpose: object) -> HmacPurpose:
+    if not isinstance(purpose, str) or purpose not in _HMAC_PURPOSES:
+        raise KeyringKeyError("key purpose is not valid for HMAC")
+    return cast(HmacPurpose, purpose)
+
+
 def _decode_material(value: object) -> bytes:
     if not isinstance(value, str):
         raise KeyringConfigError("key material is invalid")
@@ -124,6 +133,17 @@ def _decode_material(value: object) -> bytes:
     if len(material) != _DEK_SIZE:
         raise KeyringConfigError("key material is invalid")
     return material
+
+
+def _reject_duplicate_members(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Reject duplicate JSON object members without echoing their names."""
+
+    document: dict[str, object] = {}
+    for key, value in pairs:
+        if key in document:
+            raise KeyringConfigError("keyring JSON contains duplicate object members")
+        document[key] = value
+    return document
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -147,7 +167,7 @@ class Keyring:
         """Parse and validate a JSON keyring document."""
 
         try:
-            value = json.loads(document)
+            value = json.loads(document, object_pairs_hook=_reject_duplicate_members)
         except (TypeError, ValueError) as exc:
             raise KeyringConfigError("keyring JSON is invalid") from exc
         if not isinstance(value, Mapping):
@@ -266,9 +286,10 @@ class Keyring:
             raise KeyringAuthError("DEK must be exactly 32 bytes")
 
         plaintext = bytearray(dek)
-        nonce = bytearray(os.urandom(_NONCE_SIZE))
-        header = _header(key_id)
+        nonce = bytearray()
         try:
+            nonce = bytearray(os.urandom(_NONCE_SIZE))
+            header = _header(key_id)
             encrypted = AESGCM(entry.material).encrypt(
                 bytes(nonce), bytes(plaintext), _AAD_PREFIX + header
             )
@@ -306,21 +327,23 @@ class Keyring:
         finally:
             _wipe(dek)
 
-    def hmac_hex(self, key_id: str, message: bytes, purpose: Purpose) -> str:
+    def hmac_hex(self, key_id: str, message: bytes, purpose: HmacPurpose) -> str:
         """Compute a lowercase HMAC-SHA256 hex digest."""
 
+        purpose = _validate_hmac_purpose(purpose)
         entry = self._purpose_entry(key_id, purpose)
         if not isinstance(message, bytes):
             raise KeyringAuthError("HMAC message must be bytes")
         return hmac.new(entry.material, message, hashlib.sha256).hexdigest()
 
     def verify_hmac_hex(
-        self, key_id: str, message: bytes, expected_hex: str, purpose: Purpose
+        self, key_id: str, message: bytes, expected_hex: str, purpose: HmacPurpose
     ) -> bool:
         """Verify a lowercase HMAC-SHA256 hex digest in constant time."""
 
+        purpose = _validate_hmac_purpose(purpose)
         actual = self.hmac_hex(key_id, message, purpose)
-        if not isinstance(expected_hex, str):
+        if not isinstance(expected_hex, str) or _HMAC_HEX_PATTERN.fullmatch(expected_hex) is None:
             return False
         return hmac.compare_digest(actual, expected_hex)
 
@@ -529,6 +552,7 @@ __all__ = [
     "KeyringConfigError",
     "KeyringError",
     "KeyringKeyError",
+    "HmacPurpose",
     "Purpose",
     "Selectors",
     "get_keyring",

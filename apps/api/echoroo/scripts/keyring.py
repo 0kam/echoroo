@@ -24,6 +24,10 @@ _LOCK_MODE = 0o600
 _PREFIX_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
+class _ArgumentError(Exception):
+    """An argparse failure with no user-controlled message."""
+
+
 def _json_bytes(ring: keyring.Keyring) -> bytes:
     """Serialize a validated keyring without changing its contents."""
 
@@ -209,10 +213,17 @@ def _check(path: Path) -> None:
 class _ArgumentParser(argparse.ArgumentParser):
     """Argument parser whose usage errors use the CLI's 0/1 contract."""
 
-    def error(self, message: str) -> NoReturn:
+    def error(self, _message: str) -> NoReturn:
         """Turn parser errors into a normal command failure."""
 
-        raise ValueError(message)
+        raise _ArgumentError
+
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
+        """Keep non-zero argparse exits free of user-supplied arguments."""
+
+        if status:
+            raise _ArgumentError
+        super().exit(status, message)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -247,6 +258,9 @@ def main(argv: list[str] | None = None) -> int:
             _check(args.path)
         else:  # pragma: no cover - argparse enforces the command choices
             raise ValueError("unknown command")
+    except _ArgumentError:
+        print("invalid arguments; run with --help", file=sys.stderr)
+        return 1
     except Exception as exc:  # noqa: BLE001 - CLI must report a useful reason
         print(f"keyring command failed: {exc}", file=sys.stderr)
         return 1

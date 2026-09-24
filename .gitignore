@@ -47,7 +47,12 @@ sample_data/
 
 # Local keyring material (never commit or include in build contexts)
 keyring*.json
+*keyring.json
 *.keyring.json
+.keyring*.tmp-*
+*keyring*.json.tmp-*
+*keyring*.json.rollback-*
+*keyring*.json.lock
 .keys/
 **/.keys/
 etc/echoroo/

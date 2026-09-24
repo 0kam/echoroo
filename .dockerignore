@@ -1,6 +1,19 @@
 # Local keyring material must never enter a build context.
 keyring*.json
+*keyring.json
 *.keyring.json
+**/keyring*.json
+**/*keyring.json
+**/*.keyring.json
+.keyring*.tmp-*
+*keyring*.json.tmp-*
+*keyring*.json.rollback-*
+*keyring*.json.lock
+**/.keyring*.tmp-*
+**/*keyring*.json.tmp-*
+**/*keyring*.json.rollback-*
+**/*keyring*.json.lock
 .keys/
 **/.keys/
 etc/echoroo/
+**/etc/echoroo/
