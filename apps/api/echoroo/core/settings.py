@@ -215,6 +215,18 @@ class Settings(BaseSettings):
     API_TOKEN_LENGTH: int = 32
 
     # Audio Files
+    STORAGE_ROOT: str = Field(
+        default="/data/storage",
+        description="Root directory for POSIX object storage",
+    )
+    COMPRESSED_CACHE_DIR: str = Field(
+        default="/data/audio_compressed",
+        description="Directory for compressed audio cache files",
+    )
+    COMPRESSED_CACHE_MAX_AGE_DAYS: int = Field(
+        default=30,
+        description="Maximum age in days for compressed audio cache files",
+    )
     AUDIO_ROOT: str = Field(
         default="/data/audio",
         description="Root directory for audio files",
