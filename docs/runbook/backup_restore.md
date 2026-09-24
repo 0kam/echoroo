@@ -177,9 +177,11 @@ by the application identity. Run the storage provisioner inside the backend
 container on an empty dev tree, or use the production compose service against
 the mounted Lustre path, so it runs as UID 1000 and performs the full
 readiness probe after confirming that the marker is present. Run this on the
-Docker host:
+Docker host from the repository root (the restore above ran in the backup
+directory):
 
 ```bash
+cd /path/to/echoroo   # repository root, where compose.dev.yaml lives
 docker compose -f compose.dev.yaml run --rm backend uv run python -m \
   echoroo.scripts.provision_storage /data/storage
 ```

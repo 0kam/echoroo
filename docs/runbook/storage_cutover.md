@@ -28,10 +28,17 @@ repository root, where `compose.dev.yaml` lives.
    retained only for KMS in the new stack; no old application objects are
    copied.
 
+   Read the LocalStack data directory from the stopped container before
+   removing it (Compose may take it from `ECHOROO_LOCALSTACK_DATA` in `.env`,
+   which the shell does not see):
+
    ```bash
+   LOCALSTACK_DATA="$(docker inspect echoroo-localstack \
+     --format '{{range .Mounts}}{{if eq .Destination "/var/lib/localstack"}}{{.Source}}{{end}}{{end}}')"
+   test -n "$LOCALSTACK_DATA" || { echo "LocalStack data directory not found"; exit 1; }
    docker compose -f compose.dev.yaml down --remove-orphans
    docker volume rm echoroo-dev-db
-   rm -rf "${ECHOROO_LOCALSTACK_DATA:-./.data/localstack}"
+   rm -rf "$LOCALSTACK_DATA"
    ```
 
 3. Mount the host's Lustre filesystem and create the production storage-tree
