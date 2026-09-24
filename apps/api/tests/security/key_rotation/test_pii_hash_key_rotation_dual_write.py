@@ -42,3 +42,15 @@ def test_removed_rotation_environment_is_rejected(
     with pytest.raises(ValueError, match=variable) as exc_info:
         Settings()
     assert "configuration-value-must-not-be-echoed" not in str(exc_info.value)
+
+
+def test_blank_optional_selectors_are_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compose forwards unset optional selectors as empty strings."""
+    for variable in ("KEYRING_TOTP_KEY_OLD", "KEYRING_TOTP_KEY_VERSION_OLD", "KEYRING_PII_KEY_V2"):
+        monkeypatch.setenv(variable, "")
+
+    settings = Settings()
+
+    assert settings.KEYRING_TOTP_KEY_OLD is None
+    assert settings.KEYRING_TOTP_KEY_VERSION_OLD is None
+    assert settings.KEYRING_PII_KEY_V2 is None

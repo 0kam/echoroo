@@ -686,6 +686,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator(
+        "KEYRING_TOTP_KEY",
+        "KEYRING_TOTP_KEY_OLD",
+        "KEYRING_TOTP_KEY_VERSION_OLD",
+        "KEYRING_PII_KEY",
+        "KEYRING_PII_KEY_V2",
+        "KEYRING_AUDIT_KEY",
+        mode="before",
+    )
+    @classmethod
+    def blank_keyring_selector_is_unset(cls, value: Any) -> Any:
+        """Treat an empty selector as unset (compose forwards ``${NAME:-}``)."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("webauthn_origins", mode="before")
     @classmethod
     def parse_webauthn_origins(cls, value: Any) -> Any:
