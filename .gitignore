@@ -44,3 +44,10 @@ __pycache__/
 
 # Sample recordings fetched by scripts/fetch_sample_data.py (never vendored)
 sample_data/
+
+# Local keyring material (never commit or include in build contexts)
+keyring*.json
+*.keyring.json
+.keys/
+**/.keys/
+etc/echoroo/

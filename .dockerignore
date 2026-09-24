@@ -1,0 +1,6 @@
+# Local keyring material must never enter a build context.
+keyring*.json
+*.keyring.json
+.keys/
+**/.keys/
+etc/echoroo/
