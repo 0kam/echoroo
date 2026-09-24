@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Lint that S3 client access is isolated in ``core/s3.py``.
+"""Lint that AWS SDK and legacy S3 imports stay out of application code.
 
-The two detection rules are:
+The detection rules are:
 
 1. Flag calls to ``client`` or ``resource`` on any receiver when the literal
    service name ``"s3"`` is first positional argument or the
@@ -11,8 +11,11 @@ The two detection rules are:
    ``aioboto3``, ``aiobotocore``, ``s3fs``). This closes
    ``from boto3 import client`` and aliased imports, which rule 1 cannot see.
    ``core/kms.py`` is exempt from this rule only: it owns the KMS client.
+4. Flag imports of the legacy ``echoroo.core.s3`` module, including
+   ``from echoroo.core import s3``.
 
-The rules apply outside ``apps/api/echoroo/core/s3.py``.
+The rules apply to every scanned Python file. The legacy ``core/s3.py``
+module is intentionally not exempt because it is being removed.
 
 This is a guard against accidental regressions, not a sandbox: like
 ``lint_kms_isolation.py`` it does no data-flow analysis, so deliberately
@@ -34,12 +37,13 @@ import ast
 import sys
 from pathlib import Path
 
-ALLOWLISTED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/s3.py",)
 TARGET_SERVICE = "s3"
 CLIENT_FACTORY_METHODS = frozenset({"client", "resource"})
 RAW_CLIENT_ACCESSORS = frozenset({"get_s3_client"})
 SDK_PACKAGES = frozenset({"boto3", "botocore", "aioboto3", "aiobotocore", "s3fs"})
 SDK_IMPORT_ALLOWED_PATHS: tuple[str, ...] = ("apps/api/echoroo/core/kms.py",)
+LEGACY_S3_MODULE = "echoroo.core.s3"
+CORE_MODULE = "echoroo.core"
 
 
 class _S3IsolationVisitor(ast.NodeVisitor):
@@ -55,12 +59,17 @@ class _S3IsolationVisitor(ast.NodeVisitor):
         package = module.split(".", 1)[0]
         if package in SDK_PACKAGES:
             self.violations.append(
-                (lineno, f"AWS SDK import '{module}' outside core/s3.py")
+                (lineno, f"AWS SDK import '{module}' outside core/kms.py")
             )
+
+    def _check_legacy_s3_import(self, lineno: int, module: str | None) -> None:
+        if module == LEGACY_S3_MODULE or module and module.startswith(f"{LEGACY_S3_MODULE}."):
+            self.violations.append((lineno, f"legacy S3 import '{module}'"))
 
     def visit_Import(self, node: ast.Import) -> None:  # noqa: N802 — ast API
         for alias in node.names:
             self._check_sdk_import(node.lineno, alias.name)
+            self._check_legacy_s3_import(node.lineno, alias.name)
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:  # noqa: N802 — ast API
@@ -79,14 +88,23 @@ class _S3IsolationVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # noqa: N802
+        legacy_module = node.level == 0 and (
+            node.module == LEGACY_S3_MODULE
+            or node.module and node.module.startswith(f"{LEGACY_S3_MODULE}.")
+        )
         if node.level == 0:
             self._check_sdk_import(node.lineno, node.module)
+            self._check_legacy_s3_import(node.lineno, node.module)
         for alias in node.names:
+            if node.level == 0 and node.module == CORE_MODULE and alias.name == "s3":
+                self.violations.append(
+                    (node.lineno, "legacy S3 import 'echoroo.core.s3'")
+                )
             if alias.name in SDK_PACKAGES:
                 # e.g. ``from echoroo.core.kms import boto3`` — an SDK module
                 # re-exported through a wrapper.
                 self._check_sdk_import(node.lineno, alias.name)
-            if alias.name in RAW_CLIENT_ACCESSORS:
+            if alias.name in RAW_CLIENT_ACCESSORS and not legacy_module:
                 self.violations.append(
                     (
                         node.lineno,
@@ -136,11 +154,6 @@ def _has_suffix(py_file: Path, suffixes: tuple[str, ...]) -> bool:
     return any(posix.endswith(suffix) for suffix in suffixes)
 
 
-def _is_allowlisted(py_file: Path) -> bool:
-    """Return True when ``py_file`` has an allowlisted POSIX suffix."""
-    return _has_suffix(py_file, ALLOWLISTED_PATHS)
-
-
 def find_violations(root: Path) -> list[str]:
     """Return S3 isolation violations found below ``root``."""
     if not root.is_dir():
@@ -149,8 +162,6 @@ def find_violations(root: Path) -> list[str]:
 
     findings: list[str] = []
     for py_file in sorted(root.rglob("*.py")):
-        if _is_allowlisted(py_file):
-            continue
         try:
             source = py_file.read_text(encoding="utf-8")
         except OSError as exc:
@@ -196,7 +207,7 @@ def main() -> int:
     if violations and not args.no_fail:
         print(
             f"[lint_s3_isolation] {len(violations)} violation(s); "
-            "route S3 access through apps/api/echoroo/core/s3.py",
+            "remove direct AWS SDK and legacy core.s3 imports",
             file=sys.stderr,
         )
         return 1

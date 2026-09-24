@@ -11,14 +11,20 @@ from __future__ import annotations
 import hashlib
 import io
 import math
+import os
+import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 import soundfile as sf
 import torch
 from torchaudio import functional as taF
 
+from echoroo.core import storage
+from echoroo.core.settings import get_settings
 from echoroo.services.audio._spectrogram import (
     _apply_colormap,
     _apply_pcen,
@@ -74,122 +80,47 @@ class AudioService:
         "twilight",
     ]
 
-    def __init__(
-        self,
-        audio_root: str,
-        cache_dir: str | None = None,
-        s3_audio_cache_dir: str | None = None,
-    ) -> None:
-        """Initialize AudioService.
-
-        Args:
-            audio_root: Root directory for audio files.
-            cache_dir: Optional directory for caching spectrograms.
-            s3_audio_cache_dir: Optional directory to cache files downloaded
-                from S3. Falls back to /tmp/echoroo-s3-audio when not set.
-        """
-        self.audio_root = Path(audio_root)
-        self.cache_dir = Path(cache_dir) if cache_dir else None
-        self.s3_audio_cache = Path(s3_audio_cache_dir) if s3_audio_cache_dir else None
-        if self.cache_dir:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-        if self.s3_audio_cache:
-            self.s3_audio_cache.mkdir(parents=True, exist_ok=True)
+    def __init__(self) -> None:
+        """Initialize an audio service backed by the storage tree."""
 
     # ------------------------------------------------------------------
     # Path helpers
     # ------------------------------------------------------------------
 
+    def _resolve_recording_path(self, recording_path: str) -> Path:
+        """Resolve a recording storage key and require a regular file."""
+
+        path = storage.path_for(recording_path)
+        try:
+            path_stat = path.stat()
+        except FileNotFoundError as exc:
+            # ``path_for`` verified the mount before returning, but a bind
+            # mount can disappear before the stat. Recheck readiness so a
+            # mount outage is not misreported as a missing recording.
+            storage.ensure_ready()
+            raise FileNotFoundError(f"Audio file not found: {recording_path}") from exc
+        if not stat.S_ISREG(path_stat.st_mode):
+            raise FileNotFoundError(f"Audio file not found: {recording_path}")
+        return path
+
     def get_absolute_path(self, relative_path: str) -> Path:
-        """Get absolute path from relative path.
+        """Resolve a recording path as a storage key."""
 
-        Checks the primary audio_root first. If the file does not exist there,
-        also checks the S3 audio cache directory (when configured). Returns the
-        primary path if the file is found in neither location so that callers
-        can still surface a meaningful missing-file error.
-
-        Args:
-            relative_path: Path relative to audio_root.
-
-        Returns:
-            Absolute path to the file (may not exist if file is in S3 only).
-
-        Raises:
-            ValueError: If a path traversal attempt is detected.
-        """
-        result = self.audio_root / relative_path
-        resolved = result.resolve()
-        if not resolved.is_relative_to(self.audio_root.resolve()):
-            raise ValueError(f"Path traversal detected: {relative_path}")
-
-        if result.exists():
-            return result
-
-        # Check the S3 audio cache as a secondary location
-        if self.s3_audio_cache:
-            cached = self.s3_audio_cache / relative_path
-            # Guard against path traversal in the cache directory as well
-            if cached.resolve().is_relative_to(self.s3_audio_cache.resolve()) and cached.exists():
-                return cached
-
-        # Return the primary path so callers can report a consistent error
-        return result
+        return self._resolve_recording_path(relative_path)
 
     def ensure_file_local(self, relative_path: str) -> Path:
-        """Ensure audio file is available locally, downloading from S3 if needed.
-
-        Checks the primary audio_root first, then the S3 audio cache. If not
-        found in either location, downloads the file from S3 to the cache.
+        """Resolve a recording storage key to its shared local path.
 
         Args:
-            relative_path: Path relative to audio_root (also used as S3 key).
+            relative_path: Recording storage key.
 
         Returns:
             Local path to the audio file.
 
         Raises:
-            FileNotFoundError: If the file cannot be found or downloaded.
-            ValueError: If a path traversal attempt is detected.
+            FileNotFoundError: If the stored file is missing.
         """
-        # Guard against path traversal in the primary root
-        primary = self.audio_root / relative_path
-        if not primary.resolve().is_relative_to(self.audio_root.resolve()):
-            raise ValueError(f"Path traversal detected: {relative_path}")
-
-        if primary.exists():
-            return primary
-
-        # Determine cache base directory
-        cache_base = self.s3_audio_cache or Path("/tmp/echoroo-s3-audio")
-        cached = cache_base / relative_path
-
-        # Guard against path traversal in the cache directory
-        if not cached.resolve().is_relative_to(cache_base.resolve()):
-            raise ValueError(f"Path traversal detected in cache path: {relative_path}")
-
-        if cached.exists():
-            return cached
-
-        # Download from S3 to local cache
-        from echoroo.core.s3 import ensure_configured, get_object_stream
-
-        ensure_configured()
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            body = get_object_stream(relative_path)
-            with open(cached, "wb") as f:
-                while True:
-                    chunk = body.read(65536)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-            return cached
-        except Exception as exc:
-            # Clean up any partial download before propagating the error
-            cached.unlink(missing_ok=True)
-            raise FileNotFoundError(
-                f"Audio file not found locally or in S3: {relative_path}"
-            ) from exc
+        return self._resolve_recording_path(relative_path)
 
     def is_supported_format(self, filename: str) -> bool:
         """Check if file format is supported.
@@ -569,17 +500,15 @@ class AudioService:
     # Compressed audio cache for browser playback
     # ------------------------------------------------------------------
 
-    COMPRESSED_CACHE_DIR = Path("/data/audio_compressed")
-
     def get_compressed_for_playback(self, recording_path: str) -> Path:
         """Return a compressed OGG/Vorbis version of the audio file, creating it if needed.
 
         Uses ffmpeg to encode the source WAV to OGG Vorbis at quality 4 (~128 kbps).
-        The output is cached under COMPRESSED_CACHE_DIR keyed by the SHA-256 hash of
-        the source file path so that repeated requests incur no I/O overhead.
+        The output is cached under ``settings.COMPRESSED_CACHE_DIR`` keyed by the
+        SHA-256 hash of the storage key.
 
         Args:
-            recording_path: Path relative to audio_root (also the S3 key).
+            recording_path: Recording storage key.
 
         Returns:
             Path to the local OGG file ready for streaming.
@@ -589,27 +518,33 @@ class AudioService:
             RuntimeError: If ffmpeg encoding fails.
         """
         import logging
-        import subprocess
 
         logger = logging.getLogger(__name__)
 
-        # Ensure the source file is available locally (download from S3 if needed)
+        # Ensure the source file is available in the shared storage tree.
         source_path = self.ensure_file_local(recording_path)
 
-        # Build a stable cache key from the source path
+        cache_dir = Path(get_settings().COMPRESSED_CACHE_DIR)
         path_hash = hashlib.sha256(recording_path.encode()).hexdigest()[:16]
-        cache_path = self.COMPRESSED_CACHE_DIR / f"{path_hash}.ogg"
+        cache_path = cache_dir / f"{path_hash}.ogg"
 
-        if cache_path.exists():
-            logger.debug("Compressed cache hit: %s -> %s", recording_path, cache_path)
-            return cache_path
+        if cache_path.is_file():
+            try:
+                os.utime(cache_path, None)
+            except FileNotFoundError:
+                # A cache sweep may evict the file after is_file() succeeds;
+                # treat that race as a miss and encode a replacement below.
+                logger.debug("Compressed cache disappeared: %s", cache_path)
+            else:
+                logger.debug("Compressed cache hit: %s -> %s", recording_path, cache_path)
+                return cache_path
 
         # Create cache directory on first use
-        self.COMPRESSED_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("Encoding compressed audio: %s -> %s", source_path, cache_path)
 
-        tmp_path = cache_path.with_suffix(".tmp.ogg")
+        tmp_path = cache_dir / f".echoroo-tmp-{uuid4().hex}"
         try:
             result = subprocess.run(
                 [
@@ -630,7 +565,7 @@ class AudioService:
                     f"ffmpeg failed (exit {result.returncode}): "
                     f"{result.stderr.decode(errors='replace')[-500:]}"
                 )
-            tmp_path.rename(cache_path)
+            os.replace(tmp_path, cache_path)
             logger.info(
                 "Compressed audio ready: %s (%.1f MB)",
                 cache_path,

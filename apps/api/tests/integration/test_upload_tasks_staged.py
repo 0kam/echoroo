@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import io
 import struct
 import threading
 from datetime import UTC, datetime, timedelta
@@ -13,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import pytest
-from botocore.exceptions import ClientError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -23,7 +21,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from echoroo.core import upload_staging
+from echoroo.core import storage, upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import DatasetStatus, UploadFileStatus, UploadSessionStatus
@@ -36,69 +34,6 @@ from tests.conftest import TEST_DATABASE_URL
 
 if TYPE_CHECKING:
     from echoroo.models.project import Project
-
-
-class _FakeS3:
-    """In-memory S3 client implementing the methods used by upload helpers."""
-
-    def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}
-        self.upload_calls: list[dict[str, str]] = []
-
-    def upload_file(self, Filename: str, Bucket: str, Key: str) -> None:  # noqa: N803
-        del Bucket
-        self.upload_calls.append({"Filename": Filename, "Key": Key})
-        self.objects[Key] = Path(Filename).read_bytes()
-
-    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:  # noqa: N803
-        del Bucket
-        if Key not in self.objects:
-            raise ClientError(
-                {"Error": {"Code": "404", "Message": "Not Found"}},
-                "HeadObject",
-            )
-        return {"ContentLength": len(self.objects[Key])}
-
-    def get_object(self, *, Bucket: str, Key: str, **_: Any) -> dict[str, Any]:  # noqa: N803
-        del Bucket
-        return {"Body": io.BytesIO(self.objects[Key])}
-
-    def copy_object(
-        self,
-        *,
-        Bucket: str,
-        CopySource: dict[str, str],
-        Key: str,
-    ) -> None:  # noqa: N803
-        del Bucket
-        self.objects[Key] = self.objects[CopySource["Key"]]
-
-    def delete_object(self, *, Bucket: str, Key: str) -> None:  # noqa: N803
-        del Bucket
-        self.objects.pop(Key, None)
-
-    def get_paginator(self, name: str) -> _FakeS3:
-        assert name == "list_objects_v2"
-        return self
-
-    def paginate(self, *, Bucket: str, Prefix: str) -> list[dict[str, list[dict[str, str]]]]:
-        del Bucket
-        contents = [{"Key": key} for key in self.objects if key.startswith(Prefix)]
-        return [{"Contents": contents}]
-
-    def delete_objects(
-        self,
-        *,
-        Bucket: str,
-        Delete: dict[str, list[dict[str, str]]],
-    ) -> dict[str, list[dict[str, str]]]:  # noqa: N803
-        del Bucket
-        deleted: list[dict[str, str]] = []
-        for item in Delete["Objects"]:
-            key = item["Key"]
-            self.objects.pop(key, None)
-            deleted.append({"Key": key})
-        return {"Deleted": deleted}
 
 
 def _worker_engine_and_session_factory() -> tuple[
@@ -170,18 +105,17 @@ async def staged_dataset(
 def staged_worker_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> _FakeS3:
-    """Use a temporary staging root and an in-memory S3 client."""
+    storage_root: Path,
+) -> Path:
+    """Use the shared storage root and a temporary upload staging root."""
     monkeypatch.setattr(get_settings(), "UPLOAD_STAGING_DIR", str(tmp_path))
-    fake_s3 = _FakeS3()
-    monkeypatch.setattr("echoroo.core.s3.get_s3_client", lambda: fake_s3)
     monkeypatch.setattr(
         upload_tasks,
         "get_worker_engine_and_session_factory",
         _worker_engine_and_session_factory,
     )
     monkeypatch.setattr(upload_tasks, "_run_ffprobe", lambda _path: _normal_probe())
-    return fake_s3
+    return storage_root
 
 
 async def _create_staged_upload(
@@ -256,7 +190,7 @@ async def test_validate_staged_wav_strips_gps_and_records_clean_metadata(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     """Validation writes clean staged bytes and persists their metadata."""
     del staged_worker_env
@@ -292,7 +226,7 @@ async def test_validate_staged_missing_file_is_invalid_and_session_still_validat
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     """A missing staged part is counted by the validation heartbeat."""
     del staged_worker_env
@@ -322,7 +256,7 @@ async def test_validate_rejects_legacy_object_key_without_hashing_or_sanitising(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Validation rejects staged bytes stored under the legacy object key."""
@@ -361,11 +295,11 @@ async def test_validate_rejects_legacy_object_key_without_hashing_or_sanitising(
 
 
 @pytest.mark.asyncio
-async def test_import_rejects_legacy_file_without_staged_bytes_or_s3_access(
+async def test_import_rejects_legacy_file_without_staged_bytes_or_storage_access(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Import invalidates a pre-slice-2e file instead of creating a recording."""
@@ -391,14 +325,14 @@ async def test_import_rejects_legacy_file_without_staged_bytes_or_s3_access(
     upload_staging.part_path(session_id, file_id).unlink()
 
     monkeypatch.setattr(
-        upload_tasks,
-        "upload_file_to_object",
+        upload_tasks.storage,
+        "write_file",
         lambda *_args, **_kwargs: pytest.fail("legacy file must not be uploaded"),
     )
     monkeypatch.setattr(
-        upload_tasks,
-        "head_object",
-        lambda *_args, **_kwargs: pytest.fail("legacy file must not be checked in S3"),
+        upload_tasks.storage,
+        "size",
+        lambda *_args, **_kwargs: pytest.fail("legacy file must not be checked in storage"),
     )
 
     result = await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
@@ -411,14 +345,14 @@ async def test_import_rejects_legacy_file_without_staged_bytes_or_s3_access(
     assert row[0] == UploadFileStatus.INVALID
     assert row[1] == "No staged bytes; upload the file again"
     assert recording_count is None
-    assert staged_worker_env.upload_calls == []
+    assert not any(path.is_file() for path in staged_worker_env.glob("recordings/**/*"))
 
 
 async def test_import_staged_file_publishes_once_and_removes_staging(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     """Import uploads the clean staged file once and removes its directory."""
     raw = _build_wav_with_fake_gps_chunk()
@@ -431,17 +365,15 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
 
     await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
 
-    assert len(staged_worker_env.upload_calls) == 1
-    upload_call = staged_worker_env.upload_calls[0]
     object_key_result = await db_session.execute(
         select(UploadFile.object_key).where(UploadFile.id == file_id)
     )
     file_object_key = object_key_result.scalar_one()
-    assert upload_call["Key"].startswith(
+    assert file_object_key.startswith(
         f"recordings/{staged_dataset.project_id}/{staged_dataset.id}/"
     )
-    assert upload_call["Key"].endswith(".wav")
-    assert len(staged_worker_env.objects[upload_call["Key"]]) == clean_size
+    assert file_object_key.endswith(".wav")
+    assert storage.path_for(file_object_key).stat().st_size == clean_size
 
     file_row = await _get_file_row(db_session, file_id)
     recording_result = await db_session.execute(
@@ -452,14 +384,14 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
         select(UploadSession.status).where(UploadSession.id == session_id)
     )
     assert len(paths) == 1
-    assert paths[0] == upload_call["Key"]
+    assert paths[0] == file_object_key
     assert file_row[0] == UploadFileStatus.IMPORTED
     assert file_row[6] is not None
     assert session_result.scalar_one() == UploadSessionStatus.IMPORTED
     assert not upload_staging.session_dir(session_id).exists()
     # Deterministic destination: the recording id is the upload file id, so a
     # republish after a crash would overwrite the same key.
-    assert upload_call["Key"] == file_object_key
+    assert paths[0] == file_object_key
 
     # Duplicate deliveries after completion are harmless: the terminal state,
     # the dataset and the published object are left alone.
@@ -471,14 +403,14 @@ async def test_import_staged_file_publishes_once_and_removes_staging(
     status_after, error_after = session_result.one()
     assert status_after == UploadSessionStatus.IMPORTED
     assert error_after is None
-    assert len(staged_worker_env.upload_calls) == 1
+    assert storage.path_for(file_object_key).exists()
 
 
 async def test_import_refuses_tampered_clean_file(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     """Import rejects a clean staged file whose same-length bytes were changed."""
     raw = _build_wav_with_fake_gps_chunk()
@@ -488,6 +420,9 @@ async def test_import_refuses_tampered_clean_file(
     await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
     clean_path = upload_staging.session_dir(session_id) / f"{file_id}.clean"
     clean_path.write_bytes(b"x" * clean_path.stat().st_size)
+    destination = staged_worker_env / "recordings" / str(staged_dataset.project_id) / str(
+        staged_dataset.id
+    ) / f"{file_id}.wav"
 
     await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
 
@@ -497,7 +432,7 @@ async def test_import_refuses_tampered_clean_file(
     )
     assert file_row[0] == UploadFileStatus.INVALID
     assert file_row[1] == "Checksum mismatch at import"
-    assert staged_worker_env.upload_calls == []
+    assert not destination.is_file()
     assert recording_count is None
 
 
@@ -505,7 +440,7 @@ async def test_validate_does_not_resurrect_force_failed_session(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A force-fail during validation wins over the worker's final CAS."""
@@ -553,7 +488,7 @@ async def test_cleanup_removes_staging_of_terminal_and_unknown_sessions(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     """The staging janitor removes terminal/unknown directories only."""
     del staged_worker_env
@@ -592,7 +527,7 @@ async def test_cleanup_does_not_reap_a_session_that_came_back_to_life(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A stale candidate whose heartbeat moved after selection is left alone."""
@@ -637,7 +572,7 @@ async def test_duplicate_validate_after_validated_is_harmless(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
 ) -> None:
     raw = _build_wav_with_fake_gps_chunk()
     session_id, _file_id = await _create_staged_upload(
@@ -659,7 +594,8 @@ async def test_import_deletes_object_when_stored_size_mismatches(
     db_session: AsyncSession,
     test_project: Project,
     staged_dataset: Dataset,
-    staged_worker_env: _FakeS3,
+    staged_worker_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw = _build_wav_with_fake_gps_chunk()
     session_id, file_id = await _create_staged_upload(
@@ -667,15 +603,18 @@ async def test_import_deletes_object_when_stored_size_mismatches(
     )
     await _run_task_in_thread(upload_tasks.validate_upload_session, session_id)
 
-    real_head = staged_worker_env.head_object
+    real_size = storage.size
 
-    def short_head(**kwargs: Any) -> dict[str, Any]:
-        response = real_head(**kwargs)
-        return {**response, "ContentLength": response["ContentLength"] - 1}
+    def short_size(key: str) -> int | None:
+        actual = real_size(key)
+        return actual - 1 if actual is not None else None
 
-    staged_worker_env.head_object = short_head  # type: ignore[method-assign]
+    monkeypatch.setattr(upload_tasks.storage, "size", short_size)
+    destination = staged_worker_env / "recordings" / str(staged_dataset.project_id) / str(
+        staged_dataset.id
+    ) / f"{file_id}.wav"
     await _run_task_in_thread(upload_tasks.import_from_upload_session, session_id)
 
     file_row = await _get_file_row(db_session, file_id)
     assert file_row[0] == UploadFileStatus.INVALID
-    assert not any(key.startswith("recordings/") for key in staged_worker_env.objects)
+    assert not destination.is_file()

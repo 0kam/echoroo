@@ -2,7 +2,7 @@
 
 Contains helper functions used by both detection and embedding pipelines:
 - Embedding manipulation (padding, extraction, masking)
-- S3 download helpers
+- Storage path resolution helpers
 - Species collection and DB cache building
 - Bulk annotation insertion
 - DetectionRun failure marking
@@ -22,6 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core.storage import StorageUnavailable
 from echoroo.models.enums import DetectionRunStatus
 from echoroo.models.recording_annotation import (
     CUSTOM_SVM_DEDUP_INDEX_ELEMENTS,
@@ -196,7 +197,7 @@ def _apply_embedding_mask(
 
 
 # ---------------------------------------------------------------------------
-# S3 download helper
+# Storage path resolution helper
 # ---------------------------------------------------------------------------
 
 
@@ -204,19 +205,19 @@ def _download_recordings_to_local(
     recordings: list[Any],
     audio_service: AudioService,
 ) -> tuple[list[tuple[Any, Path]], int]:
-    """Download recording files from S3 and return list of (recording, local_path) tuples.
+    """Resolve recording storage keys to shared paths.
 
-    Skips recordings whose files cannot be downloaded, logging warnings for
+    Skips recordings whose files cannot be resolved, logging warnings for
     each failure.
 
     Args:
         recordings: List of Recording ORM objects.
-        audio_service: AudioService instance for file access.
+        audio_service: AudioService instance for storage-key resolution.
 
     Returns:
         Tuple of (recording_paths, failed_count) where *recording_paths* is
         a list of ``(recording_orm, local_path)`` pairs and *failed_count*
-        is the number of recordings that could not be downloaded.
+        is the number of recordings that could not be resolved.
     """
     recording_paths: list[tuple[Any, Path]] = []
     failed = 0
@@ -232,9 +233,11 @@ def _download_recordings_to_local(
                     recording.filename,
                 )
                 failed += 1
+        except StorageUnavailable:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Failed to download audio for recording %s (%s): %s",
+                "Failed to resolve audio for recording %s (%s): %s",
                 recording.id,
                 recording.filename,
                 exc,

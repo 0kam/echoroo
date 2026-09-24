@@ -149,11 +149,10 @@ CPU mode is slower but stable. It also auto-caps inference threads (`ECHOROO_ML_
 
 ## Data
 
-Audio files are mounted read-only from the host path configured by `ECHOROO_AUDIO_DIR`:
-
-```bash
-ECHOROO_AUDIO_DIR=/path/to/audio/files
-```
+Uploaded recordings and application artifacts live in the Compose
+`backend-data` named volume at `/data/storage` inside the backend and worker
+containers. The development stack provisions this tree automatically before
+the backend starts; no host audio directory is required.
 
 LocalStack data defaults to `./.data/localstack` and can be customized with:
 
@@ -199,8 +198,9 @@ A production deployment is expected to provide, at minimum:
 
 - **TLS termination** at a reverse proxy in front of the API and frontend
   (the dev stack serves plain HTTP).
-- **Real object storage and KMS** — managed S3 + AWS KMS instead of
-  LocalStack. The KMS CMKs are the root of the app's envelope encryption;
+- **POSIX storage and KMS** — a production POSIX/Lustre tree bind-mounted at
+  `/data/storage` plus AWS KMS instead of LocalStack. The KMS CMKs are the root
+  of the app's envelope encryption;
   see [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md).
 - **Managed PostgreSQL** with backups, PITR, and connection limits sized
   for your load, rather than the single-container `pgvector` image.
@@ -209,7 +209,7 @@ A production deployment is expected to provide, at minimum:
   manager, not from a committed `.env`.
 - **Resource limits, restart policy, and health-based orchestration** —
   wire orchestrators to the cheap `/health` liveness probe and the
-  `/health/ready` readiness probe (DB/Redis/S3 checks) to gate traffic.
+  `/health/ready` readiness probe (DB/Redis/storage checks) to gate traffic.
 
 See [CONFIGURATION.md](CONFIGURATION.md) for the full environment variable
 reference and [docs/runbook/backup_restore.md](docs/runbook/backup_restore.md)

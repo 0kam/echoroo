@@ -63,36 +63,45 @@ services:
     networks:
       - echoroo-net
 
-  # LocalStack (S3-compatible object storage for development)
+  # LocalStack KMS for development
   localstack:
     # LocalStack >= 2026.03.0 requires an auth token (container exits with
     # code 55 "License activation failed"). `community-archive` (2026-03-18)
-    # is the final token-free community build (4.14.x line); S3 + KMS work
+    # is the final token-free community build (4.14.x line); KMS works
     # token-free in it.
     image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
     container_name: echoroo-localstack
     restart: unless-stopped
     environment:
-      - SERVICES=s3,kms
+      - SERVICES=kms
       - PERSISTENCE=1
     ports:
       - "4566:4566"
     volumes:
       - ${ECHOROO_LOCALSTACK_DATA:-./.data/localstack}:/var/lib/localstack
-      - ./scripts/init-localstack.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
+      - ./scripts/init-localstack.sh:/etc/localstack/init/ready.d/init-kms.sh:ro
     networks:
       - echoroo-net
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      # Healthy only after the ready.d init script (KMS keys and aliases) has
+      # finished: /_localstack/health turns green before it, and a backend
+      # started in that window fails every KMS call until the aliases exist.
+      # "completed" is also set when a script fails, so require the KMS
+      # script itself to have succeeded.
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true' && curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"name\": \"init-kms.sh\", \"state\": \"SUCCESSFUL\"'"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 24
 
   # Backend FastAPI Server
   backend:
     build:
       context: apps/api
       dockerfile: Dockerfile.dev
+    command:
+      - sh
+      - -c
+      - uv run python -m echoroo.scripts.provision_storage /data/storage && exec uv run uvicorn echoroo.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/echoroo
     container_name: echoroo-backend
     restart: unless-stopped
     depends_on:
@@ -114,8 +123,6 @@ services:
       # CPython silently skips bytecode writes on read-only dirs, and the pytest
       # cache lives under /app (writable), not /app/tests.
       - ./apps/api/tests:/app/tests:ro
-      # Audio files directory (read-only)
-      - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       # Persistent data
       - backend-data:/data
       # ML model cache (shared with worker)
@@ -140,7 +147,7 @@ services:
       # container-internal http://frontend:5173 entry stays. When PUBLIC_HOST
       # is localhost the public entry duplicates the first one — harmless.
       - ALLOWED_ORIGINS=["http://localhost:${ECHOROO_FRONTEND_PORT:-5173}","http://localhost:3000","http://frontend:5173","http://${ECHOROO_PUBLIC_HOST:-localhost}:${ECHOROO_FRONTEND_PORT:-5173}"]
-      - AUDIO_ROOT=/data/audio
+      - STORAGE_ROOT=/data/storage
       # spec/011 NFR-011-010 — invitation token signing (KID + HMAC).
       # Required at every boot (dev + staging + prod). The 32-char minimum
       # only applies in prod/staging, but we keep the default strong so the
@@ -149,10 +156,6 @@ services:
       - INVITATION_TOKEN_HMAC_KEY=${INVITATION_TOKEN_HMAC_KEY:-dev-invitation-hmac-key-please-rotate-in-production-32+chars}
       - TEST_MODE=${TEST_MODE:-false}
       - TEST_TOTP_SECRET_BASE32=${TEST_TOTP_SECRET_BASE32:-}
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - S3_ACCESS_KEY=echoroo
-      - S3_SECRET_KEY=echoroo-dev
-      - S3_BUCKET=echoroo
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
       - XENO_CANTO_API_KEY=${XENO_CANTO_API_KEY:-}
@@ -207,11 +210,7 @@ services:
       - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - S3_ACCESS_KEY=echoroo
-      - S3_SECRET_KEY=echoroo-dev
-      - S3_BUCKET=echoroo
-      - AUDIO_ROOT=/data/audio
+      - STORAGE_ROOT=/data/storage
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # AWS / KMS — see backend service for rationale.
@@ -241,7 +240,6 @@ services:
     volumes:
       - ./apps/api:/app
       - backend-data:/data
-      - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       - ml-models-data:/home/appuser/.local/share/birdnet
       - ./config/redis/tls:/etc/redis/tls:ro
     depends_on:
@@ -249,6 +247,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      backend:
+        condition: service_healthy
       localstack:
         condition: service_healthy
     networks:
@@ -273,11 +273,7 @@ services:
       - REDIS_TLS_CA_FILE=/etc/redis/tls/ca.crt
       - CELERY_BROKER_URL=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/0?ssl_ca_certs=/etc/redis/tls/ca.crt
       - CELERY_RESULT_BACKEND=rediss://${REDIS_USERNAME:-echoroo}:${REDIS_PASSWORD:-echoroo-dev-redis-password}@redis:6379/1?ssl_ca_certs=/etc/redis/tls/ca.crt
-      - S3_ENDPOINT_URL=http://localstack:4566
-      - S3_ACCESS_KEY=echoroo
-      - S3_SECRET_KEY=echoroo-dev
-      - S3_BUCKET=echoroo
-      - AUDIO_ROOT=/data/audio
+      - STORAGE_ROOT=/data/storage
       # AWS / KMS — see backend service for rationale.
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
@@ -304,7 +300,6 @@ services:
     volumes:
       - ./apps/api:/app
       - backend-data:/data
-      - ${ECHOROO_AUDIO_DIR:-/tmp/echoroo-audio}:/data/audio:ro
       - ml-models-data:/home/appuser/.local/share/birdnet
       - ./config/redis/tls:/etc/redis/tls:ro
     depends_on:
@@ -312,6 +307,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      backend:
+        condition: service_healthy
       localstack:
         condition: service_healthy
     networks:

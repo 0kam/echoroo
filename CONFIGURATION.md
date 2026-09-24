@@ -16,7 +16,7 @@ The **source of truth** for every setting is the code:
 > how each field is declared:
 >
 > - **UPPERCASE fields** (`JWT_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`,
->   `S3_*`, `TEST_MODE`, `RATE_LIMIT_*`, …) are set with that exact
+>   `TEST_MODE`, `RATE_LIMIT_*`, …) are set with that exact
 >   UPPERCASE name.
 > - **Fields with a `validation_alias`** are set with the alias exactly as
 >   written — almost always UPPERCASE and usually `ECHOROO_*`-prefixed
@@ -46,8 +46,8 @@ The **source of truth** for every setting is the code:
    INVITATION_TOKEN_KID_NEW=your-kid
    INVITATION_TOKEN_HMAC_KEY=your_generated_hex_key
 
-   # Required: path to your audio files on the host (bind-mounted)
-   ECHOROO_AUDIO_DIR=/path/to/your/audio/files
+   # Container path for the POSIX storage root
+   STORAGE_ROOT=/data/storage
    ```
 
 3. **Validate and start Echoroo:**
@@ -67,7 +67,6 @@ Access the application at http://localhost:5173.
 | `POSTGRES_PASSWORD` | Database password (choose a secure password) |
 | `INVITATION_TOKEN_KID_NEW` | Active kid stamped on new invitation tokens. Required at **every** boot in every environment. |
 | `INVITATION_TOKEN_HMAC_KEY` | HMAC key for invitation tokens. Required at **every** boot. Generate with `openssl rand -hex 32` (≥32 chars enforced in production/staging). |
-| `ECHOROO_AUDIO_DIR` | Path on the HOST where audio files are stored (bind-mounted into the containers). |
 
 The dev Docker stack (`compose.dev.yaml`) supplies working defaults for
 everything else. Production/staging additionally require strong values for the
@@ -105,20 +104,32 @@ secrets marked **prod-guarded** below.
 | `REDIS_PASSWORD` | `echoroo-dev-redis-password` | optional | ACL password used to build the compose `rediss://` URL. Change in production. |
 | `REDIS_TLS_CA_FILE` | `/etc/redis/tls/ca.crt` | optional | CA bundle for the Redis TLS handshake (compose / container path). |
 
-### S3 / Object Storage
+### POSIX storage (Lustre in production)
 
 | Variable | Default | Req | Description |
 |----------|---------|-----|-------------|
-| `S3_ENDPOINT_URL` | `http://localhost:9000` | optional | Object-store endpoint (compose → `http://localstack:4566`). |
-| `S3_ACCESS_KEY` | `echoroo` | optional | Access key ID. |
-| `S3_SECRET_KEY` | `echoroo-dev` | **prod-guarded** | Secret access key. Must be changed away from `echoroo-dev` in production/staging. |
-| `S3_BUCKET` | `echoroo` | optional | Bucket name. |
-| `S3_REGION` | `us-east-1` | optional | Bucket region. |
-| `AUDIO_ROOT` | `/data/audio` | optional | In-container root for audio files. |
-| `AUDIO_CACHE_DIR` | *(unset)* | optional | Optional spectrogram cache directory. |
-| `S3_AUDIO_CACHE_DIR` | `/data/s3_audio_cache` | optional | Local cache dir `AudioService` downloads S3 objects into. |
-| `ECHOROO_AUDIO_DIR` | *required* | **required** | HOST path bind-mounted to `AUDIO_ROOT` (compose). |
-| `ECHOROO_LOCALSTACK_DATA` | `./.data/localstack` | optional | Host path for LocalStack S3/KMS persistence (compose bind-mount). |
+| `STORAGE_ROOT` | `/data/storage` | optional | Provisioned POSIX root for recordings, model artifacts, search reference audio, and audit archives. Bind-mount the same path in the API and every worker. In production, `/lustre/echoroo/storage` is the documented example host directory bound to this container path. |
+| `COMPRESSED_CACHE_DIR` | `/data/audio_compressed` | optional | Lustre directory for generated OGG playback files. The cache is disposable. |
+| `COMPRESSED_CACHE_MAX_AGE_DAYS` | `30` | optional | Maximum age for generated compressed playback files before the scheduled sweep removes them. |
+| `ECHOROO_LOCALSTACK_DATA` | `./.data/localstack` | optional | Host path for LocalStack KMS persistence (compose bind-mount); it does not contain application objects. |
+
+`STORAGE_ROOT` must be provisioned before the API or workers start. In the dev
+stack, `/data/storage` is inside the `backend-data` named volume. From the
+Docker host, run the provisioner inside the backend container so it runs as
+UID/GID 1000 against that mounted path:
+
+```bash
+docker compose -f compose.dev.yaml run --rm backend uv run python -m \
+  echoroo.scripts.provision_storage /data/storage
+```
+
+For production, bind the example host directory `/lustre/echoroo/storage` to
+`/data/storage` in the API and every worker before running the same command.
+
+The provisioner creates the root with mode `0750`, writes the
+`.echoroo-storage` marker, and runs the full filesystem probe. A missing or
+unprovisioned root is an infrastructure error, not an empty store. The health
+and readiness component is named `storage`.
 
 ### Uploads / Quota / Janitor
 
@@ -133,7 +144,7 @@ secrets marked **prod-guarded** below.
 | `UPLOAD_MAX_CONCURRENT_CHUNKS_PER_USER` | `6` | optional | Maximum chunk requests one user may have in flight at once. |
 | `UPLOAD_RETENTION_SECONDS` | `86400` | optional | Inactivity window before unfinished uploads are removed (seconds). |
 | `DEFAULT_STORAGE_QUOTA` | `107374182400` (100 GB) | optional | Default per-project storage quota (bytes). |
-| `JANITOR_DRY_RUN` | `true` | optional | Orphan-S3 cleanup dry-run switch; flip to `false` after prod monitoring. |
+| `JANITOR_DRY_RUN` | `true` | optional | Orphan-storage cleanup dry-run switch; flip to `false` after prod monitoring. |
 | `JANITOR_AGE_HOURS` | `24` | optional | Orphan age threshold (hours). |
 
 ### JWT / API Tokens (legacy Bearer auth)
@@ -374,13 +385,13 @@ At startup the API (FastAPI lifespan) and each Celery worker run lightweight pro
 | Probe | Timeout | Development | Staging / Production |
 |-------|---------|-------------|----------------------|
 | Redis `ping()` | 2s | Hard fail | Hard fail |
-| S3 `head_bucket` | 5s | Log ERROR, continue | Hard fail |
+| Storage `ensure_ready()` | 5s | Log error and continue | Hard fail |
 
 KMS is intentionally **not** probed at boot (production IAM may deny `kms:DescribeKey`); first-use KMS errors are surfaced with an actionable message instead.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ECHOROO_SKIP_BOOT_CHECKS` | Skip all boot probes (Redis ping, S3 head_bucket). Intended for offline tooling / tests. | `0` |
+| `ECHOROO_SKIP_BOOT_CHECKS` | Skip all boot probes (Redis ping, storage readiness). Intended for offline tooling / tests. | `0` |
 
 ### Security Fail-Closed Switches (W4-2)
 
@@ -409,7 +420,7 @@ Perfect for development on your laptop/desktop using Docker.
 POSTGRES_PASSWORD=dev_password
 INVITATION_TOKEN_KID_NEW=dev-kid-001
 INVITATION_TOKEN_HMAC_KEY=replace_with_openssl_rand_hex_32_output
-ECHOROO_AUDIO_DIR=/home/user/audio
+STORAGE_ROOT=/data/storage
 ECHOROO_PUBLIC_HOST=localhost
 ```
 
@@ -482,7 +493,7 @@ For deployment on a remote server accessed by IP address.
 POSTGRES_PASSWORD=secure_password
 INVITATION_TOKEN_KID_NEW=prod-kid-001
 INVITATION_TOKEN_HMAC_KEY=$(openssl rand -hex 32)
-ECHOROO_AUDIO_DIR=/data/audio
+STORAGE_ROOT=/data/storage
 ECHOROO_PUBLIC_HOST=192.168.1.100
 ```
 
@@ -500,7 +511,7 @@ A production compose file is not currently present in this repository.
 `./echoroo.sh prod ...` exits with an unsupported-environment error until a
 production stack is added. When you build one, set `ENVIRONMENT=production` and
 provide strong values for every **prod-guarded** secret above
-(`JWT_SECRET_KEY`, `web_session_secret`, `S3_SECRET_KEY`,
+(`JWT_SECRET_KEY`, `web_session_secret`,
 `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY`, `INVITATION_TOKEN_HMAC_KEY` ≥32
 chars), and point the `AWS_KMS_*` aliases at real AWS KMS CMKs.
 
@@ -562,20 +573,21 @@ Not currently defined in this repository. Add a production stack before document
    ./echoroo.sh db
    ```
 
-### Audio files not accessible
+### Storage files not accessible
 
-1. **Verify `ECHOROO_AUDIO_DIR` path exists:**
+1. **Verify `STORAGE_ROOT` is the provisioned path:**
    ```bash
-   ls -la $ECHOROO_AUDIO_DIR
+   ls -la $STORAGE_ROOT
+   test -f "$STORAGE_ROOT/.echoroo-storage"
    ```
 
 2. **Check the path is absolute, not relative:**
    ```bash
    # Correct
-   ECHOROO_AUDIO_DIR=/home/user/audio
+   STORAGE_ROOT=/data/storage
 
    # Wrong
-   ECHOROO_AUDIO_DIR=./audio
+   STORAGE_ROOT=./storage
    ```
 
 ### Container build fails
@@ -595,10 +607,10 @@ Not currently defined in this repository. Add a production stack before document
 **What you must configure for a fresh deployment:**
 - `POSTGRES_PASSWORD` (database password)
 - `INVITATION_TOKEN_KID_NEW` + `INVITATION_TOKEN_HMAC_KEY` (required at every boot)
-- `ECHOROO_AUDIO_DIR` (path to audio files)
+- `STORAGE_ROOT` (provisioned Lustre/POSIX storage tree; `/data/storage` by default)
 
 **Additionally for production/staging (`ENVIRONMENT`):**
-- Strong `JWT_SECRET_KEY`, `web_session_secret`, `S3_SECRET_KEY`,
+- Strong `JWT_SECRET_KEY`, `web_session_secret`,
   `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY` (≥32 chars)
 - Real `AWS_KMS_*` CMK aliases pointing at AWS KMS
 

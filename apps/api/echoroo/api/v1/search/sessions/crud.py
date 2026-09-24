@@ -25,8 +25,8 @@ from fastapi import (
 
 from echoroo.api.v1.search.batch import _prepare_batch_job
 from echoroo.api.v1.search.deps import AuthorizedSearchSessionServiceDep
+from echoroo.core import storage
 from echoroo.core.database import DbSession
-from echoroo.core.s3 import delete_object, delete_objects_by_prefix
 from echoroo.middleware.auth import CurrentUser
 from echoroo.schemas.search import (
     BatchSearchResponse,
@@ -173,7 +173,7 @@ async def delete_search_session(
     db: DbSession,
     session_service: AuthorizedSearchSessionServiceDep,
 ) -> Response:
-    """Delete a search session and attempt S3 cleanup of reference audio.
+    """Delete a search session and attempt storage cleanup of reference audio.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -194,7 +194,7 @@ async def delete_search_session(
             status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
         )
 
-    # Snapshot old reference-audio S3 keys BEFORE the service mutates the ORM
+    # Snapshot old reference-audio storage keys BEFORE the service mutates the ORM
     # instance. reference_audio_keys is a JSON column; a value copy ensures the
     # post-commit cleanup sees the pre-delete key set regardless of what the
     # service does to the attribute (or ORM state) before commit.
@@ -205,10 +205,10 @@ async def delete_search_session(
 
     # Post-commit: best-effort cleanup of reference audio. If the commit raised,
     # we never reach this block, so the session (still referencing stale_keys)
-    # remains consistent with S3.
+    # remains consistent with storage.
     for key in stale_keys:
         try:
-            delete_object(key)
+            storage.delete(key)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup
             logger.warning("Failed to delete reference audio %s after session delete: %s", key, exc)
 
@@ -295,7 +295,7 @@ async def rerun_search_session(
             status_code=status.HTTP_404_NOT_FOUND, detail="Search session not found"
         )
 
-    # Validate input, stage S3 reference audio, and build the job manifest.
+    # Validate input, persist reference audio, and build the job manifest.
     # Any validation / upload failure is already cleaned up inside the helper.
     artifacts = await _prepare_batch_job(
         db=db,
@@ -306,7 +306,7 @@ async def rerun_search_session(
         log_tag="rerun job",
     )
 
-    # Snapshot old reference-audio S3 keys BEFORE the service mutates the ORM
+    # Snapshot old reference-audio storage keys BEFORE the service mutates the ORM
     # instance. reference_audio_keys is a JSON column; taking a value copy
     # ensures the post-commit cleanup sees the pre-rerun key set regardless of
     # how the service later assigns the attribute.
@@ -319,7 +319,7 @@ async def rerun_search_session(
     }
 
     # Delegate annotation DELETE + session field reset + name regeneration to
-    # the service. The service stays S3-free, so cleanup of old reference
+    # the service. The service stays storage-free, so cleanup of old reference
     # audio is orchestrated here (after commit succeeds).
     await session_service.reset_for_rerun(
         session=session,
@@ -330,13 +330,13 @@ async def rerun_search_session(
         reference_audio_keys=artifacts.all_s3_keys if artifacts.all_s3_keys else None,
     )
 
-    # Commit first; if it fails, roll back the newly uploaded S3 objects and
+    # Commit first; if it fails, roll back the newly written storage objects and
     # tmp dir so we don't leak storage. This mirrors the POST /batch path.
     try:
         await db.commit()
     except Exception:
         with contextlib.suppress(Exception):
-            delete_objects_by_prefix(artifacts.s3_prefix)
+            storage.delete_prefix(artifacts.s3_prefix)
         shutil.rmtree(Path(f"/data/search_tmp/{artifacts.job_id}"), ignore_errors=True)
         raise
 
@@ -346,7 +346,7 @@ async def rerun_search_session(
     keys_to_delete = [k for k in stale_keys if k not in new_keys_set]
     for key in keys_to_delete:
         try:
-            delete_object(key)
+            storage.delete(key)
         except Exception as exc:  # noqa: BLE001 - best-effort cleanup
             logger.warning("Failed to delete stale reference audio %s after rerun: %s", key, exc)
 

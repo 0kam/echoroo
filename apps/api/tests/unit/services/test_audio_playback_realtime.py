@@ -49,7 +49,7 @@ def _write_wav(
     return rel
 
 
-def test_ultrasonic_default_is_realtime_resampled(tmp_path: Path) -> None:
+def test_ultrasonic_default_is_realtime_resampled(storage_root: Path) -> None:
     """Ultrasonic + default: header ~48 kHz AND original duration preserved.
 
     This mirrors the endpoint default branch: target_samplerate=48000,
@@ -57,8 +57,8 @@ def test_ultrasonic_default_is_realtime_resampled(tmp_path: Path) -> None:
     """
     samplerate = 192_000
     duration_s = 2.0
-    rel = _write_wav(tmp_path, "recordings/us.wav", samplerate=samplerate, duration_s=duration_s)
-    service = AudioService(audio_root=str(tmp_path))
+    rel = _write_wav(storage_root, "recordings/us.wav", samplerate=samplerate, duration_s=duration_s)
+    service = AudioService()
 
     audio_bytes, _start, _end, _total = service.load_clip_bytes(
         relative_path=rel,
@@ -88,7 +88,7 @@ def test_ultrasonic_default_is_realtime_resampled(tmp_path: Path) -> None:
     assert out_duration < duration_s * 1.5
 
 
-def test_ultrasonic_default_ignores_stored_time_expansion(tmp_path: Path) -> None:
+def test_ultrasonic_default_ignores_stored_time_expansion(storage_root: Path) -> None:
     """Ultrasonic + default + stored time_expansion != 1.0: still real-time 48 kHz.
 
     A recording may carry BOTH ``samplerate > 96 kHz`` AND a stored
@@ -106,9 +106,9 @@ def test_ultrasonic_default_ignores_stored_time_expansion(tmp_path: Path) -> Non
     samplerate = 192_000
     duration_s = 2.0
     rel = _write_wav(
-        tmp_path, "recordings/us_te.wav", samplerate=samplerate, duration_s=duration_s
+        storage_root, "recordings/us_te.wav", samplerate=samplerate, duration_s=duration_s
     )
-    service = AudioService(audio_root=str(tmp_path))
+    service = AudioService()
 
     # The stored time_expansion (e.g. 10.0) is NOT forwarded by the real-time
     # branch — it forces time_expansion=1.0 — so the load_clip_bytes call is
@@ -140,7 +140,7 @@ def test_ultrasonic_default_ignores_stored_time_expansion(tmp_path: Path) -> Non
     assert out_duration < duration_s * 1.5
 
 
-def test_ultrasonic_explicit_slow_is_time_expanded(tmp_path: Path) -> None:
+def test_ultrasonic_explicit_slow_is_time_expanded(storage_root: Path) -> None:
     """Ultrasonic + explicit slow: low header rate, no resampling (time-expansion).
 
     Mirrors the endpoint slow branch: target_samplerate=None, speed<1.0,
@@ -149,8 +149,8 @@ def test_ultrasonic_explicit_slow_is_time_expanded(tmp_path: Path) -> None:
     """
     samplerate = 192_000
     duration_s = 1.0
-    rel = _write_wav(tmp_path, "recordings/us_slow.wav", samplerate=samplerate, duration_s=duration_s)
-    service = AudioService(audio_root=str(tmp_path))
+    rel = _write_wav(storage_root, "recordings/us_slow.wav", samplerate=samplerate, duration_s=duration_s)
+    service = AudioService()
 
     speed = 0.25  # explicit slow-down requested by the client
     audio_bytes, _start, _end, _total = service.load_clip_bytes(
@@ -179,12 +179,12 @@ def test_ultrasonic_explicit_slow_is_time_expanded(tmp_path: Path) -> None:
     assert played_duration > duration_s * 2  # ~4x longer at speed 0.25
 
 
-def test_non_ultrasonic_passthrough_unchanged(tmp_path: Path) -> None:
+def test_non_ultrasonic_passthrough_unchanged(storage_root: Path) -> None:
     """Non-ultrasonic at speed 1.0 / te 1.0: passthrough, raw bytes unchanged."""
     samplerate = 48_000
     duration_s = 0.5
-    rel = _write_wav(tmp_path, "recordings/normal.wav", samplerate=samplerate, duration_s=duration_s)
-    service = AudioService(audio_root=str(tmp_path))
+    rel = _write_wav(storage_root, "recordings/normal.wav", samplerate=samplerate, duration_s=duration_s)
+    service = AudioService()
 
     audio_bytes, start, _end, total = service.load_clip_bytes(
         relative_path=rel,
@@ -196,7 +196,7 @@ def test_non_ultrasonic_passthrough_unchanged(tmp_path: Path) -> None:
     )
 
     # Passthrough streams the raw file bytes verbatim (header byte-identical).
-    abs_path = tmp_path / rel
+    abs_path = storage_root / rel
     raw = abs_path.read_bytes()
     assert start == 0
     assert total == abs_path.stat().st_size

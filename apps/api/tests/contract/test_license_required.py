@@ -69,7 +69,6 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from echoroo.core.jwt import create_access_token
-from echoroo.core.settings import get_settings
 from echoroo.models.enums import (
     ProjectMemberRole,
 )
@@ -973,21 +972,8 @@ async def web_client(
 
     app.dependency_overrides[get_db] = override_get_db
 
-    settings = get_settings()
-    import tempfile  # local — only the web_client path needs it
-    from pathlib import Path
-
-    audio_cache_tmp_root = (
-        Path(tempfile.gettempdir()) / "echoroo-test-s3-audio-cache"
-    )
-    audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
-
     def override_get_audio_service() -> AudioService:
-        return AudioService(
-            settings.AUDIO_ROOT,
-            settings.AUDIO_CACHE_DIR,
-            s3_audio_cache_dir=str(audio_cache_tmp_root),
-        )
+        return AudioService()
 
     app.dependency_overrides[get_audio_service] = override_get_audio_service
 
@@ -1426,21 +1412,8 @@ async def prod_web_client(
 
     app.dependency_overrides[get_db] = override_get_db
 
-    settings = get_settings()
-    import tempfile  # local — only the prod chain path needs it
-    from pathlib import Path
-
-    audio_cache_tmp_root = (
-        Path(tempfile.gettempdir()) / "echoroo-test-s3-audio-cache-prod"
-    )
-    audio_cache_tmp_root.mkdir(parents=True, exist_ok=True)
-
     def override_get_audio_service() -> AudioService:
-        return AudioService(
-            settings.AUDIO_ROOT,
-            settings.AUDIO_CACHE_DIR,
-            s3_audio_cache_dir=str(audio_cache_tmp_root),
-        )
+        return AudioService()
 
     app.dependency_overrides[get_audio_service] = override_get_audio_service
 

@@ -4,24 +4,26 @@
 **Status**: pre-launch — development / evaluation stack
 **Owner**: release driver (human action required for every item below)
 
-This runbook covers backing up and restoring the three stateful stores in
-the Echoroo stack: **PostgreSQL** (all relational data), **S3 / object
-storage** (audio recordings), and the **KMS key material** that those two
-depend on. Redis is covered last because it is (almost entirely) ephemeral.
+This runbook covers backing up and restoring the stateful stores in the
+Echoroo stack: **PostgreSQL** (all relational data), the **POSIX storage tree**
+(recordings and artifacts), and the **KMS key material** those two depend on.
+Redis is covered last because it is (almost entirely) ephemeral.
 
 It is grounded in the shipped development stack (`compose.dev.yaml`):
 
-| Store | Service / container | Image | Volume | Notes |
+| Store | Service / container | Image | Volume / path | Notes |
 |-------|--------------------|-------|--------|-------|
 | PostgreSQL | `echoroo-db` | `pgvector/pgvector:pg16` | `echoroo-dev-db` | pgvector enabled |
-| Object storage | `echoroo-localstack` | LocalStack (S3 + KMS) | `./.data/localstack` (`ECHOROO_LOCALSTACK_DATA`) | bucket `echoroo` |
+| POSIX storage (dev) | API + workers | Echoroo containers | Compose `backend-data` named volume → `/data/storage` | `STORAGE_ROOT`; recordings and artifacts |
+| POSIX storage (production example) | API + workers | Echoroo containers | `/lustre/echoroo/storage` → `/data/storage` | Example Lustre host directory; `STORAGE_ROOT` |
+| KMS | `echoroo-localstack` (dev) | LocalStack KMS | `./.data/localstack` (`ECHOROO_LOCALSTACK_DATA`) | AWS KMS in production |
 | Redis | `echoroo-redis` | `redis:7-alpine` | `echoroo-dev-redis` | TLS + AUTH + ACL |
 
-> **The three stores are NOT independent.** A Postgres snapshot taken at
-> time *T* is only restorable together with the S3 objects and the **KMS
-> key material** that existed at *T*. Read the "KMS caveat" section before
+> **The durable stores are NOT independent.** A Postgres snapshot taken at
+> time *T* is only restorable together with the storage tree and the **KMS key
+> material** that existed at *T*. Read the "KMS caveat" section before
 > planning any restore — restoring Postgres alone will silently break 2FA,
-> audit-chain verification, and invitation tokens.
+> audit-chain verification, invitation tokens, and recording playback.
 
 ---
 
@@ -91,55 +93,98 @@ rest.
 
 ---
 
-## 2. S3 / object storage (audio recordings)
+## 2. POSIX storage tree (recordings and artifacts)
 
-### What lives in S3
+### What lives under `STORAGE_ROOT`
 
-Uploaded audio is stored in S3, **not** on the local filesystem. Each
-recording's `path` column in Postgres is the S3 object key, shaped as:
+Uploaded audio and other large application files live on the Lustre-backed
+POSIX tree. Each recording's `path` column in Postgres is the storage key,
+shaped as:
 
 ```
 recordings/{project_id}/{dataset_id}/{recording_id}.wav
 ```
 
-In the dev stack this is LocalStack bucket `echoroo` at
-`http://localhost:4566`. `AudioService.ensure_file_local()` lazily
-downloads objects from S3 to a local cache; the cache is **derived** and
-does not need backing up — only the bucket does.
+The same relative keys are resolved below `STORAGE_ROOT` in the API and every
+worker. The OGG playback cache under `COMPRESSED_CACHE_DIR` is derived and may
+be regenerated; the storage tree itself must be backed up.
 
-### Backup — `aws s3 sync`
+### Backup — development named volume
 
-Point the AWS CLI at the configured endpoint. Dev credentials are
-`echoroo` / `echoroo-dev` (`S3_ACCESS_KEY` / `S3_SECRET_KEY`); real AWS
-uses your IAM credentials and drops `--endpoint-url`.
+In the development stack, `/data/storage` exists inside the Compose
+`backend-data` named volume; `/data/storage` is not a host directory. Run the
+following on the Docker host from the directory where the backup should be
+written. The volume is named `echoroo-dev-data` (`volumes.backend-data.name`
+in `compose.dev.yaml`), independent of the Compose project name.
 
 ```bash
-AWS_ACCESS_KEY_ID=echoroo AWS_SECRET_ACCESS_KEY=echoroo-dev \
-aws --endpoint-url http://localhost:4566 \
-  s3 sync s3://echoroo ./backup/s3/echoroo
+docker run --rm \
+  -v "echoroo-dev-data:/data:ro" \
+  -v "$PWD:/backup" \
+  alpine:3.20 tar -C /data/storage --numeric-owner -czf \
+  /backup/echoroo-storage-$(date +%F_%H%M%S).tar.gz .
 ```
 
-Alternatively, back up the LocalStack persistence volume directly
-(`PERSISTENCE=1` writes to `./.data/localstack`, overridable via
-`ECHOROO_LOCALSTACK_DATA`). **Important:** that same directory also holds
-the LocalStack **KMS** key material — backing it up as a whole unit keeps
-S3 objects and KMS keys consistent (see caveat). Stop LocalStack or quiesce
-writes before copying the volume to get a consistent snapshot.
+### Backup — production Lustre host directory
+
+Quiesce API and workers, or take a filesystem snapshot that gives the
+database and storage a common point in time. Copy the complete provisioned
+storage tree, including `audit-log/`, with metadata preserved. The following
+is run on the production Docker host after the example Lustre directory has
+been mounted at `/lustre/echoroo/storage`:
+
+```bash
+rsync -aHAX --numeric-ids \
+  /lustre/echoroo/storage/ /backup/echoroo/storage/
+```
+
+Do not treat the compressed cache as the source of recordings. It can be
+omitted from the backup or copied separately as a disposable cache.
+
+The PostgreSQL dump, storage-tree copy, and KMS backup must be labelled and
+retained as one set from the same point in time. The database can reference a
+storage key that does not exist yet if these are captured independently.
 
 ### Restore
 
+#### Development named volume
+
+Stop the backend and workers on the Docker host first. Then, still on the
+Docker host, restore into the named volume `echoroo-dev-data` (`volumes.backend-data.name` in `compose.dev.yaml`); the archive
+contents become `/data/storage` inside the containers.
+
 ```bash
-AWS_ACCESS_KEY_ID=echoroo AWS_SECRET_ACCESS_KEY=echoroo-dev \
-aws --endpoint-url http://localhost:4566 \
-  s3 sync ./backup/s3/echoroo s3://echoroo
+docker run --rm \
+  -v "echoroo-dev-data:/data" \
+  -v "$PWD:/backup" \
+  alpine:3.20 sh -c \
+  'mkdir -p /data/storage && tar -xzf /backup/echoroo-storage-2026-07-06_120000.tar.gz -C /data/storage'
 ```
 
-The bucket is created idempotently by `scripts/init-localstack.sh` on
-LocalStack boot; create it manually (`aws s3 mb s3://echoroo`) if restoring
-into a fresh instance before the init hook runs.
+#### Production Lustre host directory
 
-For real AWS S3, prefer **bucket versioning** + lifecycle rules and/or
-cross-region replication over ad-hoc syncs.
+On the production Docker host, after the application is quiesced and the
+example Lustre directory is mounted at `/lustre/echoroo/storage`:
+
+```bash
+rsync -aHAX --numeric-ids \
+  /backup/echoroo/storage/ /lustre/echoroo/storage/
+```
+
+Before starting the application, verify that the restored tree is owned by
+UID/GID 1000, has the `.echoroo-storage` marker, and is readable and writable
+by the application identity. Run the storage provisioner inside the backend
+container on an empty dev tree, or use the production compose service against
+the mounted Lustre path, so it runs as UID 1000 and performs the full
+readiness probe after confirming that the marker is present. Run this on the
+Docker host from the repository root (the restore above ran in the backup
+directory):
+
+```bash
+cd /path/to/echoroo   # repository root, where compose.dev.yaml lives
+docker compose -f compose.dev.yaml run --rm backend uv run python -m \
+  echoroo.scripts.provision_storage /data/storage
+```
 
 ---
 
@@ -166,14 +211,13 @@ with the **same** KMS key material that was live when the data was written.
 > - The audit-log chain no longer verifies.
 > - Invitation tokens signed under the old key fail validation.
 
-In dev, LocalStack re-runs `init-localstack.sh` on a fresh volume and
-creates **brand-new CMKs with new key IDs** — these cannot decrypt data
-written under the previous keys. This exact failure happened once when the
-LocalStack KMS DEKs were wiped and took the whole app down. Therefore:
+In dev, LocalStack stores the KMS material in the separate
+`ECHOROO_LOCALSTACK_DATA` volume. A fresh KMS volume must not be paired with
+an old database: newly created keys cannot decrypt data written under the
+previous keys. Therefore:
 
-- **Back up the LocalStack KMS material together with Postgres and S3**, as
-  one consistent set. It lives in the same `./.data/localstack`
-  (`ECHOROO_LOCALSTACK_DATA`) volume as the S3 objects.
+- **Back up the LocalStack KMS material together with Postgres and the
+  storage tree**, as one consistent set.
 - **Never wipe `./.data/localstack` without a matching Postgres reset.**
 - In **production**, use real AWS KMS: the CMKs are managed AWS resources
   and survive a Postgres restore automatically. Guard them with deletion
@@ -224,16 +268,16 @@ container is up"):
    browser. A successful TOTP challenge proves the wrapped TOTP DEK
    decrypted against the restored KMS key material. If login fails at the
    2FA step, the KMS keys and Postgres are out of sync (see §3).
-4. **A recording plays (exercises S3)** — open a project, open a recording,
-   confirm audio streams and the spectrogram renders. This proves the S3
-   object key in Postgres resolves to a real object in the restored bucket.
+4. **A recording plays (exercises storage)** — open a project, open a
+   recording, confirm audio streams and the spectrogram renders. This proves
+   the storage key in Postgres resolves to a real file in the restored tree.
 5. **Audit chain verifies** — perform one audited action (e.g. an
    annotation) and confirm it is written without a chain error, proving the
    audit-chain HMAC key restored correctly.
 
 If steps 3–5 fail while step 1 passes, the most likely cause is a
-Postgres / S3 / KMS snapshot mismatch — restore all three from the **same
-point in time**.
+Postgres / storage / KMS snapshot mismatch — restore all three from the
+**same point in time**.
 
 ---
 

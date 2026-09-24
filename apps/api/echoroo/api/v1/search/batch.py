@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from echoroo.api.v1.search.utils import _clamp_similarity_in_raw, _enrich_search_results_with_locale
+from echoroo.core import storage
 from echoroo.core.actions import (
     SEARCH_BATCH_CREATE_ACTION,
     SEARCH_BATCH_JOB_GET_ACTION,
@@ -87,7 +88,7 @@ async def _prepare_batch_job(
     *,
     log_tag: str,
 ) -> BatchJobArtifacts:
-    """Validate multipart input, stage reference audio to S3, write a manifest.
+    """Validate multipart input, persist reference audio, and write a manifest.
 
     Performs the mechanical batch-job setup shared by ``POST /batch`` and
     ``PUT /sessions/{session_id}/rerun``:
@@ -96,18 +97,18 @@ async def _prepare_batch_job(
     2. Strips any client-injected ``s3_key`` values (security invariant —
        ``s3_key`` is server-internal only).
     3. Validates species/sources/file-size/extension constraints.
-    4. Copies S3 sources from ``source_session_id`` (if set) into the new
-       job's S3 prefix.
+    4. Copies stored sources from ``source_session_id`` (if set) into the new
+       job's storage prefix.
     5. Reads uploaded files from the multipart form, validates them, and
-       persists them to ``/data/search_tmp/{job_id}/``.
-    6. Uploads the files to S3 under ``search_reference/{project_id}/{job_id}``.
-    7. Collects the final ``s3_keys`` list and builds the enriched
+       persists them directly to storage under
+       ``search_reference/{project_id}/{job_id}/``.
+    6. Collects the final storage-key list and builds the enriched
        ``species_config_with_s3`` manifest, writing ``manifest.json`` to the
-       temp dir.
+       temp dir. The temp dir contains only that manifest.
 
-    On mid-upload failure the partial S3 uploads under the job's prefix are
-    cleaned up via ``delete_objects_by_prefix``, the temp directory is
-    removed, and an HTTPException is re-raised.
+    On mid-upload failure the partial stored objects under the job's prefix are
+    cleaned up via ``storage.delete_prefix``, the temp directory is removed,
+    and an HTTPException is re-raised.
 
     Args:
         db: Async DB session (used for parent session lookup when
@@ -128,10 +129,8 @@ async def _prepare_batch_job(
         HTTPException: 400 for malformed metadata / bad ``source_session_id``
             / unsupported file extension; 404 for missing parent session;
             413 for oversized files; 422 for constraint violations; 500 for
-            S3 upload failures.
+            storage failures.
     """
-    from echoroo.core.s3 import copy_object, delete_objects_by_prefix
-
     # Parse the metadata JSON field
     try:
         batch_request = BatchSearchRequest.model_validate(json.loads(metadata))
@@ -171,10 +170,11 @@ async def _prepare_batch_job(
                     ),
                 )
 
-    # Generate job ID and create temp directory
+    # Generate job ID and create the manifest directory.
     job_id = str(uuid_module.uuid4())
     tmp_dir = Path(f"/data/search_tmp/{job_id}")
     tmp_dir.mkdir(parents=True, exist_ok=True)
+    storage_prefix = f"search_reference/{project_id}/{job_id}/"
 
     # Handle re-execution: copy sources from parent session if source_session_id is set
     if batch_request.source_session_id:
@@ -211,7 +211,7 @@ async def _prepare_batch_job(
                 if not parent_sci_name:
                     continue
 
-                # Copy each parent source with s3_key to the new job's S3 prefix
+                # Copy each parent source with its storage key to the new job prefix.
                 parent_sources_with_keys: list[SourceConfig] = []
                 raw_sources = parent_sp_dict.get("sources", [])
                 sources_list: list[dict[str, object]] = raw_sources  # type: ignore[assignment]
@@ -220,15 +220,19 @@ async def _prepare_batch_job(
                     if not old_s3_key:
                         continue
                     old_s3_key_str = str(old_s3_key)
-                    # Derive new key: replace old job prefix with new job prefix
-                    # old key format: search_reference/{project_id}/{old_job_id}/{file}
+                    # Derive a new key while preserving the original filename.
                     old_file_part = Path(old_s3_key_str).name
-                    new_s3_key = f"search_reference/{project_id}/{job_id}/{old_file_part}"
+                    new_s3_key = f"{storage_prefix}{old_file_part}"
                     try:
-                        copy_object(old_s3_key_str, new_s3_key)
+                        storage.copy(old_s3_key_str, new_s3_key)
+                    except storage.StorageUnavailable:
+                        with contextlib.suppress(Exception):
+                            storage.delete_prefix(storage_prefix)
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
+                        raise
                     except Exception:
                         logger.warning(
-                            "Failed to copy S3 object %s -> %s for %s, skipping",
+                            "Failed to copy stored object %s -> %s for %s, skipping",
                             old_s3_key_str,
                             new_s3_key,
                             log_tag,
@@ -264,11 +268,12 @@ async def _prepare_batch_job(
                     )
                     batch_request.species.append(merged_sp)
 
-    # Read and persist all uploaded audio files to the job temp directory
+    # Read all uploaded audio files. They are written directly to storage below;
+    # the search temp directory retains only the manifest.
     form = await request.form()
-    audio_files: dict[str, str] = {}  # file_key -> relative path within tmp_dir
+    audio_files: dict[str, str] = {}  # file_key -> storage key
 
-    # Track uploaded file contents for S3 upload (key -> bytes)
+    # Track uploaded file contents for the storage write (key -> bytes)
     uploaded_file_bytes: dict[str, bytes] = {}
     uploaded_file_suffixes: dict[str, str] = {}
 
@@ -300,66 +305,60 @@ async def _prepare_batch_job(
                     ),
                 )
 
-            # Save file with field_name as filename (e.g. source_0.wav)
-            file_name = f"{field_name}{suffix}"
-            dest_path = tmp_dir / file_name
-            dest_path.write_bytes(content)
-            audio_files[field_name] = file_name  # relative path
-
-            # Store bytes for S3 upload
+            # Keep the bytes in memory until the storage write. This avoids
+            # publishing a second copy under /data/search_tmp.
             uploaded_file_bytes[field_name] = content
             uploaded_file_suffixes[field_name] = suffix
 
     except HTTPException:
         # Clean up temp dir on validation error
+        with contextlib.suppress(Exception):
+            storage.delete_prefix(storage_prefix)
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
-    # Upload new files to S3 and set s3_key on each matching source
-    s3_prefix = f"search_reference/{project_id}/{job_id}"
+    # Persist new files and set their storage keys on matching sources.
     try:
-        from echoroo.core.s3 import ensure_configured, put_object
-
         # Fail with 500 on a broken storage configuration even when this
         # request carries no new uploads (parent-reference copies above skip
         # their own failures).
-        ensure_configured()
+        storage.ensure_ready()
         for field_name, content in uploaded_file_bytes.items():
             suffix = uploaded_file_suffixes[field_name]
-            s3_key = f"{s3_prefix}/{field_name}{suffix}"
-            # FR-028e: put_object routes the PutObject kwargs through the GPS
-            # metadata sanitizer centrally.
-            put_object(s3_key, content)
+            storage_key = f"{storage_prefix}{field_name}{suffix}"
+            storage.write_bytes(storage_key, content)
+            audio_files[field_name] = storage_key
 
-            # Assign s3_key to all matching sources across species
+            # Assign the storage key to all matching sources across species.
             for sp in batch_request.species:
                 for src in sp.sources:
                     if src.file_key == field_name and src.s3_key is None:
-                        src.s3_key = s3_key
+                        src.s3_key = storage_key
 
-    except Exception as _s3_exc:
-        logger.exception("Failed to upload reference audio to S3 for %s %s", log_tag, job_id)
-        # Roll back S3 uploads
+    except Exception as _storage_exc:
+        logger.exception("Failed to persist reference audio for %s %s", log_tag, job_id)
+        # Roll back objects written for this job.
         with contextlib.suppress(Exception):
-            delete_objects_by_prefix(s3_prefix)
+            storage.delete_prefix(storage_prefix)
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist reference audio to storage",
-        ) from _s3_exc
+        ) from _storage_exc
 
-    # Collect all s3_keys (newly uploaded + copied from parent)
+    # Collect all storage keys (newly uploaded + copied from parent).
     all_s3_keys: list[str] = []
     for sp in batch_request.species:
         for src in sp.sources:
             if src.s3_key and src.s3_key not in all_s3_keys:
                 all_s3_keys.append(src.s3_key)
 
-    # Build enriched species config list (with s3_keys) for worker manifest and DB storage
+    # Build enriched species config list (with storage keys) for the worker
+    # manifest and DB storage.
     species_config_with_s3: list[dict[str, Any]] = [sp.model_dump() for sp in batch_request.species]
 
     # Write manifest JSON for the worker
-    # species_config_with_s3 is stored separately so the worker gets s3_keys intact
+    # species_config_with_s3 is stored separately so the worker gets keys intact
     # (BatchSearchRequest validator would strip them if parsed via model_validate)
     manifest = {
         "request": batch_request.model_dump(exclude={"source_session_id"}),
@@ -375,7 +374,7 @@ async def _prepare_batch_job(
         batch_request=batch_request,
         all_s3_keys=all_s3_keys,
         species_config_with_s3=species_config_with_s3,
-        s3_prefix=s3_prefix,
+        s3_prefix=storage_prefix,
     )
 
 
@@ -423,8 +422,6 @@ async def batch_search(
         db=db,
     )
 
-    from echoroo.core.s3 import delete_objects_by_prefix
-
     artifacts = await _prepare_batch_job(
         db=db,
         project_id=project_id,
@@ -436,7 +433,7 @@ async def batch_search(
 
     # Create SearchSession DB record and commit before dispatching the Celery task.
     # This ensures the session row exists in the DB before the worker starts, so
-    # the worker can reliably update it.  If the commit fails the S3 objects are
+    # the worker can reliably update it. If the commit fails the stored objects are
     # cleaned up and no task is dispatched.
     session_service = SearchSessionService(db)
     parameters: dict[str, object] = {
@@ -457,11 +454,11 @@ async def batch_search(
         await db.commit()
     except Exception as _db_exc:
         logger.exception(
-            "Failed to persist search session for job %s; rolling back S3 uploads",
+            "Failed to persist search session for job %s; rolling back stored audio",
             artifacts.job_id,
         )
         with contextlib.suppress(Exception):
-            delete_objects_by_prefix(artifacts.s3_prefix)
+            storage.delete_prefix(artifacts.s3_prefix)
         shutil.rmtree(Path(f"/data/search_tmp/{artifacts.job_id}"), ignore_errors=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

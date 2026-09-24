@@ -7,8 +7,8 @@ three are in the expected state before the wipe is permitted:
 1. **Database**: a row in the ``wipe_guard`` table means a wipe already ran.
 2. **Alembic**: the ``alembic_version`` table pinning must equal the baseline
    revision ``0001``. Any other state means the DB has drifted.
-3. **Audit-log genesis marker in object storage**: a genesis marker file in
-   the audit-log export bucket is the cryptographic anchor for the
+3. **Audit-log genesis marker in storage**: a genesis marker file in
+   the audit-log storage tree is the cryptographic anchor for the
    append-only audit log. If absent, the platform has not been bootstrapped.
 
 Exit codes:
@@ -16,18 +16,18 @@ Exit codes:
 - ``0`` — all three markers are in the expected state; wipe is safe.
 - ``10`` — ``wipe_guard`` row exists (wipe already happened).
 - ``11`` — alembic version is not ``0001``.
-- ``12`` — audit-log genesis marker in object storage is missing or incorrect.
-- ``20`` — infrastructure error (DB/S3 unreachable).
+- ``12`` — audit-log genesis marker in storage is missing or incorrect.
+- ``20`` — infrastructure error (DB/storage unreachable).
 
 The checker is invoked twice during the wipe ritual:
 
-- **pre-wipe**: expects an empty guard + baseline alembic + S3 marker absent.
+- **pre-wipe**: expects an empty guard + baseline alembic + storage marker absent.
   Any failure aborts the wipe.
-- **post-wipe** (sanity): expects a guard row + baseline alembic + S3 marker
+- **post-wipe** (sanity): expects a guard row + baseline alembic + storage marker
   present.
 
 This module intentionally has zero runtime dependencies beyond the settings
-layer already used by the app (boto3, SQLAlchemy). It is designed to be
+layer already used by the app (SQLAlchemy). It is designed to be
 runnable from a minimal image during on-call incident response.
 """
 
@@ -65,7 +65,7 @@ class WipeGuardStatus:
 
     @property
     def all_post_wipe(self) -> bool:
-        """True iff post-wipe state is valid (DB row + baseline + S3 marker)."""
+        """True iff post-wipe state is valid (DB row + baseline + storage marker)."""
 
         return (
             self.db_guard_row_present
@@ -116,22 +116,22 @@ def _check_db(database_url: str) -> tuple[bool, bool]:
 
 
 def _check_s3_marker() -> bool:
-    """Return True if the audit-log genesis marker exists in object storage."""
+    """Return True if the audit-log genesis marker exists in storage."""
 
-    from echoroo.core.s3 import object_exists
+    from echoroo.core import storage
 
-    return object_exists(S3_GENESIS_KEY)
+    return storage.exists(S3_GENESIS_KEY)
 
 
 def check(database_url: str) -> WipeGuardStatus:
     """Run the full three-point check and return a :class:`WipeGuardStatus`."""
 
     db_guard_row_present, alembic_version_is_baseline = _check_db(database_url)
-    s3_marker_present = _check_s3_marker()
+    marker_present = _check_s3_marker()
     return WipeGuardStatus(
         db_guard_row_present=db_guard_row_present,
         alembic_version_is_baseline=alembic_version_is_baseline,
-        s3_genesis_marker_present=s3_marker_present,
+        s3_genesis_marker_present=marker_present,
     )
 
 
@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
         return 20
 
     logger.info(
-        "Wipe guard status: db_row=%s, alembic_baseline=%s, s3_marker=%s",
+        "Wipe guard status: db_row=%s, alembic_baseline=%s, storage_marker=%s",
         status.db_guard_row_present,
         status.alembic_version_is_baseline,
         status.s3_genesis_marker_present,

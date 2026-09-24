@@ -37,8 +37,8 @@ name: E2E (opt-in full-stack)
 #   TIER 2 — this `e2e-full` job: a full-stack, seeded smoke run. It is OPT-IN
 #   so it never flakes a normal PR — it executes ONLY on `workflow_dispatch` or
 #   when the `run-e2e` label is attached to a PR. It provisions Postgres +
-#   Redis + LocalStack (S3 + KMS), runs alembic, provisions the dev S3 bucket
-#   and the 4 isolated KMS CMK aliases via the existing
+#   Redis + LocalStack KMS, runs alembic, provisions the storage tree and the
+#   4 isolated KMS CMK aliases via the existing
 #   scripts/init-localstack.sh, boots the FastAPI backend on :8002 (matching
 #   the SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
 #   fixtures via `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,
@@ -77,7 +77,8 @@ jobs:
     timeout-minutes: 45
     env:
       # Backend env — mirrors the backend-tests job for Postgres/Redis plus the
-      # LocalStack S3 + KMS wiring and the TEST_MODE shared-TOTP contract that
+      # LocalStack KMS wiring, the POSIX storage tree, and the TEST_MODE
+      # shared-TOTP contract that
       # the e2e login helper depends on. The backend listens on :8002 (host)
       # which is the SvelteKit BFF default (ECHOROO_API_URL fallback in
       # apps/web/src/hooks.server.ts), so the frontend needs no override.
@@ -95,12 +96,8 @@ jobs:
       # JBSWY3DPEHPK3PXP here.
       TEST_MODE: "true"
       TEST_TOTP_SECRET_BASE32: VUO4R45DU5RTBODG63FN7KOE6OOCKCJE
-      # S3 / LocalStack. S3_ENDPOINT_URL is the API↔S3 path.
-      S3_ENDPOINT_URL: http://localhost:4566
-      S3_ACCESS_KEY: echoroo
-      S3_SECRET_KEY: echoroo-dev
-      S3_BUCKET: echoroo
-      AUDIO_ROOT: /tmp/echoroo-audio
+      STORAGE_ROOT: /tmp/echoroo-storage
+      COMPRESSED_CACHE_DIR: /tmp/echoroo-audio-compressed
       UPLOAD_STAGING_DIR: /tmp/echoroo-staging
       # upload-resumable.spec.ts creates 4 sessions per pass as e2e-owner and
       # Playwright retries the whole serial group (retries: 2 on CI), which
@@ -144,14 +141,13 @@ jobs:
         # Pinned: LocalStack >= 2026.03.0 needs an auth token (exit 55); community-archive is the last token-free build (matches compose.dev.yaml).
         image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
         env:
-          SERVICES: s3,kms
+          SERVICES: kms
           DEFAULT_REGION: us-east-1
-        # Stricter probe than a bare gateway ping: assert BOTH s3 AND kms are
-        # `available` (mirrors the proven LocalStack probe in ci.yml). KMS is
-        # login-critical and cold-starts slower than s3, so a gateway-only
+        # Stricter probe than a bare gateway ping: assert KMS is `available`.
+        # KMS is login-critical and cold-starts slowly, so a gateway-only
         # health check could mark the service ready before KMS is usable.
         options: >-
-          --health-cmd "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; s=json.load(sys.stdin).get('services',{}); sys.exit(0 if s.get('s3')=='available' and s.get('kms')=='available' else 1)\" || exit 1"
+          --health-cmd "curl -sf http://localhost:4566/_localstack/health | python3 -c \"import sys,json; s=json.load(sys.stdin).get('services',{}); sys.exit(0 if s.get('kms')=='available' else 1)\" || exit 1"
           --health-interval 15s
           --health-timeout 10s
           --health-retries 12
@@ -232,17 +228,17 @@ jobs:
             GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO echoroo_app;
           "
 
-      # --- LocalStack S3 bucket + KMS aliases ---------------------------------
+      # --- LocalStack KMS aliases ----------------------------------------------
       # Reuse the existing dev bootstrap script verbatim. It is idempotent and
-      # provisions the `echoroo` S3 bucket (+ CORS) and the four isolated KMS
-      # CMK aliases (alias/echoroo-totp-dek, alias/echoroo-invitation-hmac,
+      # provisions the four isolated KMS CMK aliases
+      # (alias/echoroo-totp-dek, alias/echoroo-invitation-hmac,
       # alias/echoroo-pii-hash-hmac, alias/echoroo-audit-chain-hmac) that the
       # backend needs at login / seed time. The script invokes `awslocal`, so
       # install awscli-local and point it at the CI LocalStack endpoint.
       - name: Install awscli-local
         run: pip install awscli-local==0.22.0
 
-      - name: Provision LocalStack S3 bucket + KMS aliases
+      - name: Provision LocalStack KMS aliases
         env:
           # awslocal honours AWS_ENDPOINT_URL / region; LocalStack is on :4566.
           AWS_ENDPOINT_URL: http://localhost:4566
@@ -264,14 +260,19 @@ jobs:
           awslocal kms list-aliases | grep -q 'alias/echoroo-totp-dek' \
             || { echo "::error::KMS alias alias/echoroo-totp-dek missing — login will 500"; awslocal kms list-aliases; exit 1; }
 
+      - name: Provision POSIX storage tree
+        working-directory: apps/api
+        run: uv run python -m echoroo.scripts.provision_storage /tmp/echoroo-storage
+
       # --- Boot the FastAPI backend on :8002 ----------------------------------
       # Port 8002 matches the SvelteKit BFF default (ECHOROO_API_URL fallback in
       # apps/web/src/hooks.server.ts), so the Playwright dev server reaches it
-      # without an override. AUDIO_ROOT must exist for the seed media fallback.
+      # without an override. The storage tree was provisioned above for seeded
+      # recordings and imported uploads.
       - name: Start backend (uvicorn :8002)
         working-directory: apps/api
         run: |
-          mkdir -p /tmp/echoroo-audio /tmp/echoroo-staging
+          mkdir -p /tmp/echoroo-audio-compressed /tmp/echoroo-staging
           nohup uv run uvicorn echoroo.main:app \
             --host 0.0.0.0 --port 8002 \
             > /tmp/backend.log 2>&1 &

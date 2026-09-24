@@ -333,8 +333,8 @@ change the original scope:
   the same filesystem costs nothing).
 - The search janitor deletes whole prefixes after classifying only the aged
   keys, so young siblings go too (pre-existing). 4b deletes the enumerated keys.
-- `search_tmp/{job}` holds uploaded reference audio, not only the manifest;
-  4b makes the manifest point at stored keys and keeps only the manifest there.
+- `search_tmp/{job}` holds only the job manifest; 4b stores uploaded reference
+  audio under `STORAGE_ROOT` and makes the manifest point at those keys.
 
 **Trust model.** `STORAGE_ROOT` is an application-owned tree: only Echoroo
 processes (one numeric UID/GID, see *Deployment*) write under it, and it
@@ -469,6 +469,15 @@ version, re-run the initial setup. Backup/restore and release-readiness runbooks
   embedding, search and training. On the production VM: `ensure_ready(full=True)`
   on the Lustre mount.
 - **Depends on** — slices 1, 2, 3. **UX preview needed** — no.
+- **Status** — 4a merged (#278). 4b verified on the dev stack with LocalStack
+  reduced to KMS: resumable upload and playback (e2e 5/5), BirdNET detection,
+  Perch embeddings, search by reference audio with reference and result
+  playback, dataset export with audio; recordings from before the cutover have
+  no file and are reported per recording (decision 9). Custom-model training
+  was not exercised in the UI (no labelled data); the integration test covers
+  train, save and load through the storage tree. Found on the way, outside
+  this slice: BirdNET needs more `/dev/shm` than Docker's 64 MB default, and
+  the upload session limiter keys on the BFF's address.
 
 ## Review log
 
@@ -496,3 +505,5 @@ version, re-run the initial setup. Backup/restore and release-readiness runbooks
 | 2026-09-23 | Astra, slice 2e code review | With the presigned branches gone, a pre-2e VALID file with no staged bytes imported without any existence/size/hash check, and a staged 2d-era file published under its `uploads/` key; legacy `uploads/` objects are no longer cleaned; e2e: retries share one dataset, resume assertions pass on an empty set, origin checked by string prefix; `mismatched_files` always 0; ruff F841/ARG001 | Accepted: validation and import refuse files without staged bytes or outside the reserved key (INVALID, no Recording, no write), regression tests; each test cancels the owner's unfinished session first; resume must continue the original session at 16 MiB and every session is checked for `imported` + `recording_id`; exact origin match; `mismatched_files` removed; lint fixed. Not adopted: cleanup code for legacy `uploads/` objects — pre-launch, none in production |
 | 2026-09-23 | Astra, slice 4 design review | Named volume ≠ Lustre and no guard against an absent mount; shared identity and file modes unspecified; existence-based two-root lookup allows shadowing; "final write is a rename" breaks import retries; durability of new ancestor directories and of deletes; readiness probe did not test link/replace; parent-directory pruning races writers; range contract loose; API contract too vague for parallel implementers; live `s3 sync` is not a cutover; test isolation across xdist workers; janitor deletes young siblings; symlink trust model; orphaned temps; `search_tmp` holds audio; cache sweep races; CI could cover more without models; file ownership across the parallel split; earlier sections contradicted slice 4 | All accepted. Split into 4a (API unused) and 4b (switch); single root (directory import does not exist); copy-then-publish; fsync of every created directory and after unlink; `ensure_ready(full=True)` with link/collision/replace probe and a provisioning marker; no directory pruning; exact range contract; full API contract; maintenance-window runbook; per-run/per-worker roots in conftest; janitor deletes enumerated keys; application-owned tree without symlinks; temp sweep; manifest points at stored keys; unique encoder temps and handle-based streaming; CI integration tests without weights; earlier sections reconciled. Production identity and data carry-over settled as decisions 8 and 9 (UID/GID 1000; nothing carried over) |
 | 2026-09-24 | Astra, slice 4a code review (3 passes) | Ancestor directories created by another writer were never synced; a delete retry after a failed fsync skipped durability; reserved names allowed as non-final components (objects invisible to maintenance); probe mkdir race on concurrent cold start and silently ignored cleanup failures; filesystem lookups before readiness misclassified outages; huge range numerals raised `ValueError`; prefix walks visited unrelated branches (also shorter siblings such as `job1` for `job10`); temp names could exceed `NAME_MAX` or escape the sweep; recursive walks; tests that did not exercise their claims; absence after a lost mount counted as deletion | All accepted except allowing non-reserved dotfiles (one rule instead: no component may start with `.`); contract text tightened accordingly |
+| 2026-09-24 | Astra, slice 4b code review (3 passes) | Launcher still required `ECHOROO_AUDIO_DIR`; Celery swallowed fatal boot-check errors in `worker_ready`; runbooks targeted the wrong volumes and omitted `-f compose.dev.yaml`; AudioService turned a lost mount into "missing"; OGG eviction between lookup and `utime`; provisioning kept an existing root's mode; conftest hid the live runbook root and leaked test trees; loose test assertions; a skipped module referenced deleted helpers; runbook discarded LocalStack data while it could still run; LocalStack "completed" also covers a failed init script | All accepted: launcher and docs without the audio directory; fatal check exits the worker; fixed volume names and explicit compose file; readiness re-check before "missing"; cache miss on eviction; root normalised to 0750; live root preserved for the runbook subprocess and per-process cleanup; exact-path assertions; healthcheck requires `init-kms.sh` SUCCESSFUL |
+| 2026-09-24 | Fable, slice 4b dev-stack verification | A recreated LocalStack reported healthy before its KMS aliases existed, so the first logins failed; BirdNET inference hung on the 64 MB `/dev/shm` | Healthcheck waits for the init script. `/dev/shm` split off as a separate task (unrelated to storage) |

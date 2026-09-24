@@ -125,7 +125,7 @@ async function expectSessionImported(
   page: Page,
   sessionId: string,
   filenames: string[],
-): Promise<void> {
+): Promise<string> {
   const bearer = await getBearerTokenAfterLogin(page);
   const response = await page.request.get(
     `/web-api/v1/projects/${projectId}/datasets/${datasetId}/upload-sessions/${sessionId}`,
@@ -142,12 +142,41 @@ async function expectSessionImported(
       recording_id: string | null;
     }>;
   };
+  let firstRecordingId: string | null = null;
   for (const filename of filenames) {
     const file = status.files.find((candidate) => candidate.original_filename === filename);
     expect(file, `missing status for ${filename}`).toBeDefined();
     expect(file?.status).toBe('imported');
     expect(file?.recording_id ?? null).not.toBeNull();
+    firstRecordingId ??= file?.recording_id ?? null;
   }
+  expect(firstRecordingId).not.toBeNull();
+  return firstRecordingId!;
+}
+
+async function expectImportedRecordingPlayback(page: Page, recordingId: string): Promise<void> {
+  const bearer = await getBearerTokenAfterLogin(page);
+  const mediaTokenResponse = await page.request.post(
+    `/web-api/v1/projects/${projectId}/recordings/${recordingId}/media-token`,
+    {
+      data: { scope: 'playback' },
+      headers: { Authorization: `Bearer ${bearer}`, ...(await csrfHeader(page)) },
+      failOnStatusCode: false,
+    },
+  );
+  expect(mediaTokenResponse.ok()).toBe(true);
+  const { token } = (await mediaTokenResponse.json()) as { token: string };
+
+  const audioResponse = await page.request.get(
+    `/web-api/v1/projects/${projectId}/recordings/${recordingId}/playback?media_token=${encodeURIComponent(token)}`,
+    {
+      headers: { Range: 'bytes=0-65535' },
+      failOnStatusCode: false,
+    },
+  );
+  expect([200, 206]).toContain(audioResponse.status());
+  expect(audioResponse.headers()['content-type'] ?? '').toMatch(/^audio\//);
+  expect((await audioResponse.body()).length).toBeGreaterThan(0);
 }
 
 test.describe.serial('resumable uploads (storage slice 2)', () => {
@@ -186,7 +215,11 @@ test.describe.serial('resumable uploads (storage slice 2)', () => {
 
     const chunks = chunkUrls(page);
     expect(chunks.length).toBeGreaterThanOrEqual(4);
-    await expectSessionImported(page, sessionIdFromChunkUrl(chunks[0]), ['a.wav', 'b.wav']);
+    const recordingId = await expectSessionImported(page, sessionIdFromChunkUrl(chunks[0]), [
+      'a.wav',
+      'b.wav',
+    ]);
+    await expectImportedRecordingPlayback(page, recordingId);
   });
 
   test('interrupt and automatic retry', async ({ page }) => {

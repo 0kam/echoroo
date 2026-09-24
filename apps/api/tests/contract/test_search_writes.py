@@ -1,20 +1,23 @@
 """Smoke tests for write-side search router endpoints (Phase 2).
 
-Covers routes that have S3 / Celery / multipart side-effects, deferred from
-Phase 1 (test_search_smoke.py).  External dependencies (S3 client, Celery
-task) are intercepted with unittest.mock so the tests run without LocalStack
-or a Celery broker.
+Covers routes that have POSIX storage / Celery / multipart side-effects,
+deferred from Phase 1 (test_search_smoke.py). Celery and selected storage
+helpers are intercepted with unittest.mock so the tests run without a broker.
 
 Routes covered:
   1  POST  /similar                                     (similarity.py)
   2  POST  /similar-by-audio                            (similarity.py) — multipart
-  3  POST  /batch                                       (batch.py)    — S3 + Celery
+  3  POST  /batch                                       (batch.py)    — storage + Celery
   4  GET   /jobs/{job_id}                               (batch.py)    — Celery result
-  5  DELETE /sessions/{session_id}                      (sessions.py) — S3 cleanup
-  6  PUT   /sessions/{session_id}/rerun                 (sessions.py) — S3 + Celery
-  7  GET   /sessions/{session_id}/reference-audio/{idx} (sessions.py) — S3 streaming
+  5  DELETE /sessions/{session_id}                      (sessions.py) — storage cleanup
+  6  PUT   /sessions/{session_id}/rerun                 (sessions.py) — storage + Celery
+  7  GET   /sessions/{session_id}/reference-audio/{idx} (sessions.py) — storage streaming
   8  POST  /annotations (annotations_router)            (annotations.py) — DB write
 """
+
+# The module-level Phase 14 skip intentionally precedes these imports so the
+# stale deferred suite remains importable without running application setup.
+# ruff: noqa: E402
 
 from __future__ import annotations
 
@@ -44,6 +47,7 @@ pytestmark = _pytest_phase14_skip.mark.skip(
 import json
 import struct
 import uuid
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -52,6 +56,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from echoroo.core import storage
 from echoroo.models.dataset import Dataset
 from echoroo.models.embedding import Embedding
 from echoroo.models.enums import (
@@ -707,10 +712,10 @@ class TestBatchSearch:
     """Smoke tests for POST /batch."""
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.get_s3_client")
+    @patch("echoroo.core.storage.write_bytes")
     async def test_happy_path_creates_session_and_dispatches(
         self,
-        mock_get_s3_client: MagicMock,
+        mock_write_bytes: MagicMock,
         mock_run_batch_search: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
@@ -721,7 +726,7 @@ class TestBatchSearch:
         """POST /batch → 202, SearchSession row created, Celery task dispatched.
 
         Args:
-            mock_get_s3_client: Patched S3 client factory
+            mock_write_bytes: Patched POSIX storage writer
             mock_run_batch_search: Patched Celery task
             client: Test HTTP client
             auth_headers: Auth headers for test_user
@@ -729,9 +734,6 @@ class TestBatchSearch:
             db_session: DB session for post-assertion queries
             test_project: Project to check session membership
         """
-        mock_s3 = MagicMock()
-        mock_get_s3_client.return_value = mock_s3
-
         wav_bytes = _make_minimal_wav()
         metadata = json.dumps(
             {
@@ -772,6 +774,7 @@ class TestBatchSearch:
 
         # Verify Celery task was dispatched exactly once
         mock_run_batch_search.apply_async.assert_called_once()
+        mock_write_bytes.assert_called_once()
         call_kwargs = mock_run_batch_search.apply_async.call_args
         dispatched_job_id = call_kwargs[1]["task_id"] if call_kwargs[1] else call_kwargs[0][0]
         assert dispatched_job_id == body["job_id"]
@@ -955,25 +958,20 @@ class TestGetSearchJob:
 class TestDeleteSession:
     """Smoke tests for DELETE /sessions/{session_id}."""
 
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
-    async def test_happy_path_deletes_row_and_s3(
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete")
+    async def test_happy_path_deletes_row_and_storage(
         self,
-        mock_delete_object: MagicMock,
+        mock_delete: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
         completed_session: SearchSession,
         db_session: AsyncSession,
     ) -> None:
-        """DELETE /sessions/{session_id} → 204, DB row gone, S3 delete called.
-
-        Patches ``echoroo.api.v1.search.sessions.crud.delete_object`` (the
-        module-level binding bound at import time via ``from ... import``)
-        rather than ``echoroo.core.s3.delete_object`` — the latter would
-        not be seen by the route.
+        """DELETE /sessions/{session_id} → 204, DB row gone, storage deleted.
 
         Args:
-            mock_delete_object: Patched S3 delete_object function
+            mock_delete: Patched POSIX storage delete function
             client: Test HTTP client
             auth_headers: Auth headers for test_user
             test_project_id: Project UUID string
@@ -1002,16 +1000,16 @@ class TestDeleteSession:
         )
         assert result.scalar_one_or_none() is None
 
-        # Verify S3 delete_object was called once per stale reference key,
+        # Verify storage.delete was called once per stale reference key,
         # AFTER the DB commit (the route raises before this loop if commit
         # fails, so any observed call implies commit succeeded).
         deleted_keys = {
-            call.args[0] for call in mock_delete_object.call_args_list if call.args
+            call.args[0] for call in mock_delete.call_args_list if call.args
         }
         for old_key in stale_keys_before:
             assert old_key in deleted_keys, (
                 f"expected reference audio {old_key!r} to be cleaned up "
-                f"post-commit; observed delete_object calls: "
+                f"post-commit; observed storage.delete calls: "
                 f"{sorted(deleted_keys)}"
             )
 
@@ -1094,12 +1092,12 @@ class TestRerunSession:
     """Smoke tests for PUT /sessions/{session_id}/rerun."""
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.core.s3.get_s3_client")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
+    @patch("echoroo.core.storage.write_bytes")
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete")
     async def test_happy_path_reruns_and_clears_annotations(
         self,
-        mock_delete_object: MagicMock,
-        mock_get_s3_client: MagicMock,
+        mock_delete: MagicMock,
+        mock_write_bytes: MagicMock,
         mock_run_batch_search: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
@@ -1112,11 +1110,11 @@ class TestRerunSession:
         """PUT /sessions/{session_id}/rerun → 202, annotations cleared, Celery dispatched.
 
         Seeds one annotation linked to the session so we can verify it is deleted.
-        Mocks S3 put_object and run_batch_search.apply_async.
+        Mocks the POSIX storage writer and run_batch_search.apply_async.
 
         Args:
-            mock_delete_object: Patched S3 delete_object (old reference audio cleanup)
-            mock_get_s3_client: Patched S3 client factory
+            mock_delete: Patched POSIX storage delete (old reference audio cleanup)
+            mock_write_bytes: Patched POSIX storage writer
             mock_run_batch_search: Patched Celery task
             client: Test HTTP client
             auth_headers: Auth headers for test_user
@@ -1126,9 +1124,6 @@ class TestRerunSession:
             write_tag: Tag for the seeded annotation
             db_session: DB session for pre/post assertions
         """
-        mock_s3 = MagicMock()
-        mock_get_s3_client.return_value = mock_s3
-
         # Snapshot stale reference audio keys BEFORE the rerun so we can
         # assert post-commit cleanup ran over each of them. Using a value
         # copy here guards against the ORM instance being refreshed later.
@@ -1192,19 +1187,19 @@ class TestRerunSession:
         # Verify Celery was dispatched
         mock_run_batch_search.apply_async.assert_called_once()
 
-        # Verify S3 put_object was called for the uploaded file
-        mock_s3.put_object.assert_called_once()
+        # Verify the POSIX storage writer was called for the uploaded file
+        mock_write_bytes.assert_called_once()
 
         # Verify the OLD reference audio keys were deleted AFTER commit. The
-        # fixture seeds at least one stale key; delete_object must have been
+        # fixture seeds at least one stale key; storage.delete must have been
         # invoked on each of them once the session no longer references them.
         deleted_keys = {
-            call.args[0] for call in mock_delete_object.call_args_list if call.args
+            call.args[0] for call in mock_delete.call_args_list if call.args
         }
         for old_key in stale_keys_before:
             assert old_key in deleted_keys, (
                 f"expected old reference audio {old_key!r} to be cleaned "
-                f"up post-commit; observed delete_object calls: "
+                f"up post-commit; observed storage.delete calls: "
                 f"{sorted(deleted_keys)}"
             )
 
@@ -1283,21 +1278,21 @@ class TestRerunSession:
         assert resp.status_code == 404
 
     @patch("echoroo.workers.search_tasks.run_batch_search")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_object")
-    @patch("echoroo.api.v1.search.sessions.crud.delete_objects_by_prefix")
-    @patch("echoroo.core.s3.get_s3_client")
-    async def test_rerun_commit_failure_cleans_up_new_s3_and_keeps_old(
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete")
+    @patch("echoroo.api.v1.search.sessions.crud.storage.delete_prefix")
+    @patch("echoroo.core.storage.write_bytes")
+    async def test_rerun_commit_failure_cleans_up_new_storage_and_keeps_old(
         self,
-        mock_get_s3_client: MagicMock,
+        mock_write_bytes: MagicMock,
         mock_delete_prefix: MagicMock,
-        mock_delete_object: MagicMock,
+        mock_delete: MagicMock,
         mock_run_batch_search: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
         completed_session: SearchSession,
     ) -> None:
-        """Pins the S3/DB ordering fix — commit failure must NOT touch old keys.
+        """Pins the storage/DB ordering fix — commit failure must NOT touch old keys.
 
         Patches ``AsyncSession.commit`` for the duration of the route call
         only. The patch is scoped to the PUT request so that fixture-side
@@ -1308,26 +1303,23 @@ class TestRerunSession:
         ``db_session``, so a fixture-level monkeypatch would not reach it.
 
         Expected behavior on commit failure:
-          1. ``delete_objects_by_prefix`` is called once with the new
+          1. ``storage.delete_prefix`` is called once with the new
              ``artifacts.s3_prefix`` (new-upload cleanup).
-          2. ``delete_object`` is **not** called on any stale reference
+          2. ``storage.delete`` is **not** called on any stale reference
              audio key (old files must be preserved for retry).
           3. ``run_batch_search.apply_async`` is **not** called (no Celery
              task should dispatch for a failed rerun).
 
         Args:
-            mock_get_s3_client: Patched S3 client factory
-            mock_delete_prefix: Patched S3 prefix-delete helper
-            mock_delete_object: Patched S3 single-key delete helper
+            mock_write_bytes: Patched POSIX storage writer
+            mock_delete_prefix: Patched POSIX storage prefix-delete helper
+            mock_delete: Patched POSIX storage single-key delete helper
             mock_run_batch_search: Patched Celery task module
             client: Test HTTP client
             auth_headers: Auth headers for test_user
             test_project_id: Project UUID string
             completed_session: Session with seeded reference_audio_keys
         """
-        mock_s3 = MagicMock()
-        mock_get_s3_client.return_value = mock_s3
-
         # Snapshot stale keys before the rerun so we can assert they were
         # NOT touched when the commit fails.
         old_keys = list(completed_session.reference_audio_keys or [])
@@ -1385,23 +1377,23 @@ class TestRerunSession:
         assert isinstance(raised, RuntimeError)
         assert "simulated commit failure" in str(raised)
 
-        # Old reference-audio keys must be preserved: delete_object must NOT
+        # Old reference-audio keys must be preserved: storage.delete must NOT
         # have been called on any of them.
         deleted_keys = {
             call.args[0]
-            for call in mock_delete_object.call_args_list
+            for call in mock_delete.call_args_list
             if call.args
         }
         for old_key in old_keys:
             assert old_key not in deleted_keys, (
                 f"stale reference audio {old_key!r} must be preserved when "
-                f"commit fails; observed delete_object calls: "
+                f"commit fails; observed storage.delete calls: "
                 f"{sorted(deleted_keys)}"
             )
 
-        # New S3 prefix must be cleaned up exactly once.
+        # New storage prefix must be cleaned up exactly once.
         assert mock_delete_prefix.called, (
-            "new S3 prefix must be cleaned up on commit failure (mirrors "
+            "new storage prefix must be cleaned up on commit failure (mirrors "
             "the POST /batch rollback path)"
         )
 
@@ -1418,72 +1410,52 @@ class TestRerunSession:
 class TestStreamReferenceAudio:
     """Smoke tests for GET /sessions/{session_id}/reference-audio/{source_index}."""
 
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_happy_path_200(
         self,
-        mock_get_s3_client: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
         completed_session: SearchSession,
+        storage_root: Path,
     ) -> None:
-        """GET /reference-audio/0 → 200 with audio bytes from mocked S3.
+        """GET /reference-audio/0 → 200 with audio bytes from storage.
 
         Args:
-            mock_get_s3_client: Patched S3 client factory
             client: Test HTTP client
             auth_headers: Auth headers for test_user
             test_project_id: Project UUID string
             completed_session: Session with reference_audio_keys
         """
+        assert storage_root.is_dir()
         wav_bytes = _make_minimal_wav()
-        mock_body = MagicMock()
-        mock_body.read.side_effect = [wav_bytes, b""]
-        mock_body.close.return_value = None
-        mock_s3 = MagicMock()
-        mock_s3.get_object.return_value = {
-            "Body": mock_body,
-            "ContentLength": len(wav_bytes),
-        }
-        mock_get_s3_client.return_value = mock_s3
+        storage.write_bytes(completed_session.reference_audio_keys[0], wav_bytes)
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{completed_session.id}/reference-audio/0",
             headers=auth_headers,
         )
         assert resp.status_code == 200
-        assert len(resp.content) > 0
-        mock_s3.get_object.assert_called_once()
+        assert resp.content == wav_bytes
 
-    @patch("echoroo.core.s3.get_s3_client")
     async def test_range_header_returns_206(
         self,
-        mock_get_s3_client: MagicMock,
         client: AsyncClient,
         auth_headers: dict[str, str],
         test_project_id: str,
         completed_session: SearchSession,
+        storage_root: Path,
     ) -> None:
         """GET /reference-audio/0 with Range header → 206 partial content.
 
         Args:
-            mock_get_s3_client: Patched S3 client factory
             client: Test HTTP client
             auth_headers: Auth headers for test_user
             test_project_id: Project UUID string
             completed_session: Session with reference_audio_keys
         """
-        partial_bytes = b"\x00" * 100
-        mock_body = MagicMock()
-        mock_body.read.side_effect = [partial_bytes, b""]
-        mock_body.close.return_value = None
-        mock_s3 = MagicMock()
-        mock_s3.get_object.return_value = {
-            "Body": mock_body,
-            "ContentLength": 100,
-            "ContentRange": "bytes 0-99/244",
-        }
-        mock_get_s3_client.return_value = mock_s3
+        assert storage_root.is_dir()
+        partial_bytes = _make_minimal_wav()
+        storage.write_bytes(completed_session.reference_audio_keys[0], partial_bytes)
 
         resp = await client.get(
             f"{_search_base(test_project_id)}/sessions/{completed_session.id}/reference-audio/0",

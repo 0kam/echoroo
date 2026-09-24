@@ -18,6 +18,7 @@ from fastapi import Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from echoroo.api.v1.search.deps import AuthorizedSearchSessionServiceDep
+from echoroo.core import storage
 from echoroo.core.database import DbSession
 from echoroo.middleware.auth import CurrentUser
 
@@ -34,7 +35,7 @@ async def stream_reference_audio(
     session_service: AuthorizedSearchSessionServiceDep,
     range: str | None = Header(None),
 ) -> StreamingResponse:
-    """Stream a reference audio file stored in S3 for a search session.
+    """Stream a reference audio file stored in the storage tree.
 
     Args:
         project_id: Project UUID (path parameter)
@@ -52,7 +53,8 @@ async def stream_reference_audio(
     Raises:
         403: Access denied to project
         404: Session not found or source_index out of bounds
-        500: S3 retrieval error
+        416: Requested byte range is not satisfiable
+        500: Storage retrieval error
     """
     import mimetypes
 
@@ -84,46 +86,51 @@ async def stream_reference_audio(
             detail="Invalid source index",
         )
 
-    s3_key = session.reference_audio_keys[source_index]
+    storage_key = session.reference_audio_keys[source_index]
 
     try:
-        from echoroo.core.s3 import get_object_response
-
-        s3_response = get_object_response(s3_key, byte_range=range)
-    except Exception as exc:
-        logger.exception("Failed to stream reference audio key=%s", s3_key)
+        range_read = storage.read_range(storage_key, range)
+    except storage.RangeNotSatisfiable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Requested byte range is not satisfiable",
+            headers={"Content-Range": f"bytes */{exc.total}"},
+        ) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reference audio not found",
+        ) from exc
+    except (storage.StorageUnavailable, OSError, storage.StorageError) as exc:
+        logger.exception("Failed to stream reference audio key=%s", storage_key)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve reference audio from storage",
         ) from exc
 
-    body = s3_response["Body"]
-    content_length = s3_response.get("ContentLength")
-
     # Determine content type from file extension
-    suffix = Path(s3_key).suffix.lower()
+    suffix = Path(storage_key).suffix.lower()
     content_type, _ = mimetypes.guess_type(f"file{suffix}")
     if not content_type:
         content_type = "audio/wav"
 
     def _iter_stream() -> collections.abc.Iterator[bytes]:
         try:
-            while True:
-                chunk = body.read(65536)
-                if not chunk:
-                    break
-                yield chunk
+            yield from range_read.stream
         finally:
-            body.close()
+            range_read.close()
 
-    response_headers: dict[str, str] = {}
-    if content_length is not None:
-        response_headers["Content-Length"] = str(content_length)
-    response_headers["Accept-Ranges"] = "bytes"
-
-    response_status = 206 if range else 200
-    if range and "ContentRange" in s3_response:
-        response_headers["Content-Range"] = s3_response["ContentRange"]
+    response_headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(
+            range_read.end - range_read.start + 1 if range_read.partial else range_read.total
+        ),
+    }
+    response_status = status.HTTP_206_PARTIAL_CONTENT if range_read.partial else status.HTTP_200_OK
+    if range_read.partial:
+        response_headers["Content-Range"] = (
+            f"bytes {range_read.start}-{range_read.end}/{range_read.total}"
+        )
 
     return StreamingResponse(
         _iter_stream(),

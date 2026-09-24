@@ -44,7 +44,6 @@ from starlette.background import BackgroundTask
 from echoroo.core.actions import ANNOTATION_SET_GET_ACTION
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
-from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
 from echoroo.services.annotation_set_dataset_export import (
     AnnotationSetDatasetExportService,
@@ -170,13 +169,8 @@ async def export_annotation_set_csv(
 
 
 def _build_audio_service() -> AudioService:
-    """Build an :class:`AudioService` from settings (mirrors clips.py)."""
-    settings = get_settings()
-    return AudioService(
-        settings.AUDIO_ROOT,
-        settings.AUDIO_CACHE_DIR,
-        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
-    )
+    """Build an :class:`AudioService` backed by shared storage."""
+    return AudioService()
 
 
 @router.get(

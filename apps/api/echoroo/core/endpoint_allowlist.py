@@ -503,7 +503,7 @@ ALLOWLIST: list[AllowlistEntry] = [
         methods=frozenset({"GET"}),
         category=AllowlistCategory.INFRA_HEALTH,
         reason=(
-            "Readiness probe (DB/Redis/S3 dependency checks) consumed by "
+            "Readiness probe (DB/Redis/storage dependency checks) consumed by "
             "container orchestrator (k8s/ECS); returns 503 when a dependency "
             "is unreachable"
         ),

@@ -239,24 +239,21 @@ check_env_values() {
   ensure_env_file
 
   local failures=0
-  local postgres_password invitation_key invitation_kid audio_dir
+  local postgres_password invitation_key invitation_kid
   local invitation_kid_old invitation_key_old
   local environment test_mode test_totp
-  local database_url redis_url s3_endpoint s3_bucket jwt_secret
+  local database_url redis_url jwt_secret
   local web_session_secret two_factor_hmac
   postgres_password="$(env_value POSTGRES_PASSWORD)"
   invitation_key="$(env_value INVITATION_TOKEN_HMAC_KEY)"
   invitation_kid="$(env_value INVITATION_TOKEN_KID_NEW)"
   invitation_kid_old="$(env_value INVITATION_TOKEN_KID_OLD)"
   invitation_key_old="$(env_value INVITATION_TOKEN_HMAC_KEY_OLD)"
-  audio_dir="$(env_value ECHOROO_AUDIO_DIR)"
   environment="$(env_value ENVIRONMENT)"
   test_mode="$(env_value TEST_MODE)"
   test_totp="$(env_value TEST_TOTP_SECRET_BASE32)"
   database_url="$(env_value DATABASE_URL)"
   redis_url="$(env_value REDIS_URL)"
-  s3_endpoint="$(env_value S3_ENDPOINT_URL)"
-  s3_bucket="$(env_value S3_BUCKET)"
   jwt_secret="$(env_value JWT_SECRET_KEY)"
   web_session_secret="$(env_value web_session_secret)"
   two_factor_hmac="$(env_value TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY)"
@@ -283,19 +280,6 @@ check_env_values() {
     failures=1
   fi
 
-  case "${audio_dir}" in
-    ""|"/path/to/your/audio/files"|"CHANGE_ME"*|"changeme"*|"TODO"*|"todo"*|"placeholder"*|"/tmp/echoroo-audio")
-      err "ECHOROO_AUDIO_DIR must be set to a real host audio directory, not '${audio_dir:-<empty>}'."
-      failures=1
-      ;;
-    *)
-      if [[ ! -d "${audio_dir}" ]]; then
-        err "ECHOROO_AUDIO_DIR does not exist or is not a directory: ${audio_dir}"
-        failures=1
-      fi
-      ;;
-  esac
-
   # TEST_MODE is a dev-only 2FA bypass; when enabled the shared TOTP secret
   # is mandatory (mirrors the settings.py model_validator).
   if [[ "${test_mode,,}" == "true" || "${test_mode}" == "1" ]]; then
@@ -320,17 +304,6 @@ check_env_values() {
     err "REDIS_URL must start with redis:// or rediss://, got: ${redis_url}"
     failures=1
   fi
-  # Object storage — only format-check when overridden (compose supplies the
-  # dev defaults). Both must be non-empty together to be usable.
-  if [[ -n "${s3_endpoint}" && "${s3_endpoint}" != http://* && "${s3_endpoint}" != https://* ]]; then
-    err "S3_ENDPOINT_URL must be an http(s):// URL, got: ${s3_endpoint}"
-    failures=1
-  fi
-  if [[ -n "${s3_endpoint}" && -z "${s3_bucket}" ]]; then
-    err "S3_ENDPOINT_URL is set but S3_BUCKET is empty."
-    failures=1
-  fi
-
   # Production/staging secret-strength gate — mirrors the settings.py
   # validate_production_secrets guard so a bad .env fails here (fast, offline)
   # rather than at container boot. KMS aliases default to the LocalStack
@@ -344,12 +317,6 @@ check_env_values() {
     require_strong_secret "TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY" "${two_factor_hmac}" \
       "dev-two-factor-confirmation-hmac-change-in-production" failures
     require_strong_secret "INVITATION_TOKEN_HMAC_KEY" "${invitation_key}" "" failures
-    local s3_secret
-    s3_secret="$(env_value S3_SECRET_KEY)"
-    if [[ "${s3_secret}" == "echoroo-dev" ]]; then
-      err "S3_SECRET_KEY must be changed from the dev default in production/staging."
-      failures=1
-    fi
     check_kms_alias_format failures
   fi
 

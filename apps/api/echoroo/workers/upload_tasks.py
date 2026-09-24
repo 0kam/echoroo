@@ -25,13 +25,7 @@ from uuid import UUID
 from celery.exceptions import Ignore
 from sqlalchemy import select
 
-from echoroo.core import upload_staging
-from echoroo.core.s3 import (
-    delete_object,
-    ensure_configured,
-    head_object,
-    upload_file_to_object,
-)
+from echoroo.core import storage, upload_staging
 from echoroo.core.settings import get_settings
 from echoroo.models.dataset import Dataset
 from echoroo.models.enums import (
@@ -306,7 +300,7 @@ def _parse_datetime_from_filename(
 async def _run_validate(session_id: str) -> dict[str, Any]:
     """Async implementation of upload session validation."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    ensure_configured()
+    storage.ensure_ready()
 
     try:
         async with session_factory() as db:
@@ -534,7 +528,7 @@ async def _run_import(
 ) -> dict[str, Any]:
     """Async implementation of import from upload session."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    ensure_configured()
+    storage.ensure_ready()
 
     try:
         async with session_factory() as db:
@@ -611,7 +605,9 @@ async def _run_import(
                     leftover = False
                     for rec in pending_recordings:
                         try:
-                            leftover |= not delete_object(rec.path)
+                            leftover |= not storage.delete(rec.path)
+                        except storage.StorageUnavailable:
+                            raise
                         except Exception:  # noqa: BLE001
                             leftover = True
                     if leftover:
@@ -690,16 +686,22 @@ async def _run_import(
                     return
 
                 await _with_heartbeat(
-                    session_factory, session_uuid, upload_file_to_object, clean, dest_key
+                    session_factory, session_uuid, storage.write_file, clean, dest_key
                 )
                 try:
-                    stored_size = head_object(dest_key)["ContentLength"]
+                    stored_size = storage.size(dest_key)
+                except storage.StorageUnavailable:
+                    raise
                 except Exception:  # noqa: BLE001
                     stored_size = None
                 if stored_size != file.file_size:
                     # Never leave an unlinked object behind.
-                    with contextlib.suppress(Exception):
-                        delete_object(dest_key)
+                    try:
+                        storage.delete(dest_key)
+                    except storage.StorageUnavailable:
+                        raise
+                    except Exception:
+                        pass
                     await file_repo.update_status(
                         file.id,
                         UploadFileStatus.INVALID,
@@ -825,8 +827,8 @@ async def _run_import(
 async def _delete_unlinked_publications(db: Any, session_id: UUID) -> bool:
     """Delete staged files' deterministic destinations that never got a Recording.
 
-    A crash between ``upload_file_to_object`` and the batch commit, or a HEAD
-    size mismatch whose delete failed, leaves an object under
+    A crash between publication and the batch commit, or a size mismatch
+    whose delete failed, leaves an object under
     ``recordings/…/{file_id}`` with the file unlinked. Returns True only when
     nothing is left; callers keep the staging directory otherwise so the next
     sweep retries.
@@ -837,8 +839,10 @@ async def _delete_unlinked_publications(db: Any, session_id: UUID) -> bool:
             continue
         key = file.object_key
         try:
-            if not delete_object(key):
+            if not storage.delete(key):
                 all_gone = False
+        except storage.StorageUnavailable:
+            raise
         except Exception:  # noqa: BLE001
             all_gone = False
     return all_gone
@@ -855,7 +859,7 @@ _STALE_STATUSES_FOR_REAPER = (
 async def _run_cleanup() -> dict[str, Any]:
     """Async implementation of orphan upload cleanup."""
     engine, session_factory = get_worker_engine_and_session_factory()
-    ensure_configured()
+    storage.ensure_ready()
 
     try:
         async with session_factory() as db:

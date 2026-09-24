@@ -128,25 +128,6 @@ export async function startImport(
 }
 
 /**
- * Rescan a dataset for new files.
- *
- * NOTE: the backend route `/datasets/{id}/rescan` is not yet implemented;
- * the path migrated to `/web-api/v1` as part of spec/009 PR 2 so when the
- * backend handler lands it will already live on the first-party surface.
- * Until then the call returns HTTP 404 (same as before the migration).
- */
-export async function rescanDataset(
-  projectId: string,
-  datasetId: string
-): Promise<ImportStatusResponse> {
-  return apiClient.post<ImportStatusResponse>(
-    `${WEB_API_BASE}/projects/${projectId}/datasets/${datasetId}/rescan`,
-    undefined,
-    { headers: csrfHeaders() }
-  );
-}
-
-/**
  * Get import status for a dataset.
  */
 export async function fetchImportStatus(

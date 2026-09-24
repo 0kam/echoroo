@@ -48,7 +48,8 @@ cp .env.example .env
 # Edit .env to set:
 #   - POSTGRES_PASSWORD (required)
 #   - INVITATION_TOKEN_HMAC_KEY (required)
-#   - ECHOROO_AUDIO_DIR (required - path to your audio files)
+# Audio and application files use the Compose backend-data volume; no host
+# audio directory setting is required.
 # Generate a value for INVITATION_TOKEN_HMAC_KEY with:
 openssl rand -hex 32
 

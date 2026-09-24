@@ -1,7 +1,7 @@
 """Unit tests for the readiness probes (``echoroo.core.health``) and the
 ``/health/ready`` endpoint wiring.
 
-The three dependency probes (DB, Redis, S3) are stubbed so no live
+The three dependency probes (DB, Redis, storage) are stubbed so no live
 infrastructure is required. The endpoint tests drive the FastAPI app via
 ``ASGITransport`` with ``check_readiness`` patched, asserting the 200 / 503
 contract and that the body never leaks anything beyond component names and
@@ -86,18 +86,24 @@ async def test_check_redis_failure_returns_false(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_check_s3_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(health, "_head_bucket_sync", lambda: None)
-    assert await health._check_s3() is True
+async def test_check_storage_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    storage_probe_arguments: list[bool] = []
+
+    def _storage_ready(*, full: bool = False) -> None:
+        storage_probe_arguments.append(full)
+
+    monkeypatch.setattr(health.storage, "ensure_ready", _storage_ready)
+    assert await health._check_storage() is True
+    assert storage_probe_arguments == [False]
 
 
 @pytest.mark.asyncio
-async def test_check_s3_failure_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_check_storage_failure_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom() -> None:
-        raise RuntimeError("no bucket")
+        raise RuntimeError("storage unavailable")
 
-    monkeypatch.setattr(health, "_head_bucket_sync", _boom)
-    assert await health._check_s3() is False
+    monkeypatch.setattr(health.storage, "ensure_ready", _boom)
+    assert await health._check_storage() is False
 
 
 @pytest.mark.asyncio
@@ -129,11 +135,11 @@ async def test_check_readiness_all_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(health, "_check_database", lambda _f: _true())
     monkeypatch.setattr(health, "_check_redis", _true)
-    monkeypatch.setattr(health, "_check_s3", _true)
+    monkeypatch.setattr(health, "_check_storage", _true)
 
     ready, checks = await health.check_readiness(session_factory=_session_factory())
     assert ready is True
-    assert checks == {"database": "ok", "redis": "ok", "s3": "ok"}
+    assert checks == {"database": "ok", "redis": "ok", "storage": "ok"}
 
 
 @pytest.mark.asyncio
@@ -148,13 +154,13 @@ async def test_check_readiness_names_failing_component(
 
     monkeypatch.setattr(health, "_check_database", lambda _f: _true())
     monkeypatch.setattr(health, "_check_redis", _false)  # redis is the failure
-    monkeypatch.setattr(health, "_check_s3", _true)
+    monkeypatch.setattr(health, "_check_storage", _true)
 
     ready, checks = await health.check_readiness(session_factory=_session_factory())
     assert ready is False
     assert checks["redis"] == "fail"
     assert checks["database"] == "ok"
-    assert checks["s3"] == "ok"
+    assert checks["storage"] == "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +173,7 @@ async def test_readiness_endpoint_returns_200_when_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _ready(session_factory: Any = None) -> tuple[bool, dict[str, str]]:
-        return True, {"database": "ok", "redis": "ok", "s3": "ok"}
+        return True, {"database": "ok", "redis": "ok", "storage": "ok"}
 
     monkeypatch.setattr("echoroo.main.check_readiness", _ready)
     app = create_app()
@@ -180,7 +186,7 @@ async def test_readiness_endpoint_returns_200_when_ready(
     body = resp.json()
     assert body == {
         "status": "ready",
-        "checks": {"database": "ok", "redis": "ok", "s3": "ok"},
+        "checks": {"database": "ok", "redis": "ok", "storage": "ok"},
     }
 
 
@@ -189,7 +195,7 @@ async def test_readiness_endpoint_returns_503_when_not_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def _not_ready(session_factory: Any = None) -> tuple[bool, dict[str, str]]:
-        return False, {"database": "ok", "redis": "fail", "s3": "ok"}
+        return False, {"database": "ok", "redis": "fail", "storage": "ok"}
 
     monkeypatch.setattr("echoroo.main.check_readiness", _not_ready)
     app = create_app()
@@ -203,7 +209,7 @@ async def test_readiness_endpoint_returns_503_when_not_ready(
     assert body["status"] == "not_ready"
     assert body["checks"]["redis"] == "fail"
     # No config detail leaks: only the three component keys, values in {ok, fail}.
-    assert set(body["checks"]) == {"database", "redis", "s3"}
+    assert set(body["checks"]) == {"database", "redis", "storage"}
     assert set(body["checks"].values()) <= {"ok", "fail"}
 
 

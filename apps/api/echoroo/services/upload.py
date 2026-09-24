@@ -56,9 +56,8 @@ class AudioGpsStripError(RuntimeError):
 # ---------------------------------------------------------------------------
 #
 # This helper removes GPS / coordinate / location metadata from audio file
-# byte streams *before* they are persisted to long-term object storage. It
-# is the upload-side complement to ``s3_upload_sanitizer.sanitize_put_object_kwargs``
-# (FR-028e), which strips raw lat/lng entries from S3 user-defined metadata.
+# byte streams *before* they are persisted to long-term storage. Stored files
+# carry no separate metadata channel, so this is the only GPS strip needed.
 #
 # Supported formats are detected from header magic bytes:
 #

@@ -24,7 +24,6 @@ from echoroo.core.actions import (
 )
 from echoroo.core.database import DbSession
 from echoroo.core.permissions import gate_action
-from echoroo.core.settings import get_settings
 from echoroo.middleware.auth import CurrentUser
 from echoroo.models.enums import DatasetStatus, DatasetVisibility, UploadSessionStatus
 from echoroo.repositories.dataset import DatasetRepository
@@ -55,20 +54,13 @@ from echoroo.services.export import ExportService
 
 router = APIRouter(prefix="/projects/{project_id}/datasets", tags=["Programmatic API — Datasets"])
 
-settings = get_settings()
-
-
 def get_audio_service() -> AudioService:
     """Get AudioService instance.
 
     Returns:
         AudioService instance
     """
-    return AudioService(
-        settings.AUDIO_ROOT,
-        settings.AUDIO_CACHE_DIR,
-        s3_audio_cache_dir=settings.S3_AUDIO_CACHE_DIR,
-    )
+    return AudioService()
 
 
 def get_dataset_service(db: DbSession) -> DatasetService:

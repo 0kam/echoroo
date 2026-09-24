@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { fetchImportStatus, startImport, rescanDataset } from '$lib/api/datasets';
+  import { fetchImportStatus, startImport } from '$lib/api/datasets';
   import type { DatasetStatus } from '$lib/types/data';
   import { getDatasetStatusClass, getDatasetStatusMessage } from '$lib/utils/statusFormatters';
   import * as m from '$lib/paraglide/messages';
@@ -52,16 +52,6 @@
     },
     onError: (err: Error) => {
       mutationError = err.message || 'Failed to start import';
-    },
-  });
-
-  const rescanMutation = createMutation({
-    mutationFn: () => rescanDataset(projectId, datasetId),
-    // eslint-disable-next-line svelte/valid-compile
-    meta: { projectId },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['dataset', projectId, datasetId] });
-      queryClient.invalidateQueries({ queryKey: ['import-status', projectId, datasetId] });
     },
   });
 
@@ -139,14 +129,6 @@
         class="rounded-md bg-primary-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-primary-500 dark:text-stone-50 dark:hover:bg-primary-400"
       >
         {$startImportMutation.isPending ? 'Starting...' : 'Start Import'}
-      </button>
-    {:else if currentStatus === 'completed' || currentStatus === 'failed'}
-      <button
-        onclick={() => $rescanMutation.mutate()}
-        disabled={$rescanMutation.isPending}
-        class="rounded-md border border-stone-300 bg-surface-card px-4 py-2 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {$rescanMutation.isPending ? 'Rescanning...' : 'Rescan Directory'}
       </button>
     {/if}
   </div>
