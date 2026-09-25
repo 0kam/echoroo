@@ -37,7 +37,7 @@ name: E2E (opt-in full-stack)
 #   TIER 2 — this `e2e-full` job: a full-stack, seeded smoke run. It is OPT-IN
 #   so it never flakes a normal PR — it executes ONLY on `workflow_dispatch` or
 #   when the `run-e2e` label is attached to a PR. It provisions Postgres +
-#   Redis, creates a local keyring (no LocalStack), runs alembic, provisions
+#   Redis, creates a local keyring, runs alembic, provisions
 #   the storage tree, boots the FastAPI backend on :8002 (matching the
 #   SvelteKit BFF default ECHOROO_API_URL), seeds deterministic permission
 #   fixtures via `echoroo.scripts.seed_e2e_permissions`, then runs a SMALL,

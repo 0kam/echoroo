@@ -63,37 +63,6 @@ services:
     networks:
       - echoroo-net
 
-  # Legacy LocalStack service retained for slice 2 compatibility. Nothing
-  # depends on it any more; slice 3 removes it.
-  localstack:
-    # LocalStack >= 2026.03.0 requires an auth token (container exits with
-    # code 55 "License activation failed"). `community-archive` (2026-03-18)
-    # is the final token-free community build (4.14.x line); KMS works
-    # token-free in it.
-    image: localstack/localstack:community-archive@sha256:6b6172cfceb04b4fbc35097a55f717c365a35fafa572be49f7341771cf9023ed
-    container_name: echoroo-localstack
-    restart: unless-stopped
-    environment:
-      - SERVICES=kms
-      - PERSISTENCE=1
-    ports:
-      - "4566:4566"
-    volumes:
-      - ${ECHOROO_LOCALSTACK_DATA:-./.data/localstack}:/var/lib/localstack
-      - ./scripts/init-localstack.sh:/etc/localstack/init/ready.d/init-kms.sh:ro
-    networks:
-      - echoroo-net
-    healthcheck:
-      # Healthy only after the ready.d init script (KMS keys and aliases) has
-      # finished: /_localstack/health turns green before it, and a backend
-      # started in that window fails every KMS call until the aliases exist.
-      # "completed" is also set when a script fails, so require the KMS
-      # script itself to have succeeded.
-      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true' && curl -sf http://localhost:4566/_localstack/init/ready | grep -q '\"name\": \"init-kms.sh\", \"state\": \"SUCCESSFUL\"'"]
-      interval: 5s
-      timeout: 5s
-      retries: 24
-
   # Backend FastAPI Server
   backend:
     build:

@@ -4,15 +4,11 @@
 **Status**: pre-launch — development / evaluation stack
 **Owner**: release driver (human action required for every item below)
 
-> **Superseded in part:** the key-management and restore guidance below
-> predates the local keyring. Use [keyring.md](keyring.md) for the current
-> keyring backup, restore, and loss procedure; the full rewrite is scheduled
-> for slice 3.
-
 This runbook covers backing up and restoring the stateful stores in the
 Echoroo stack: **PostgreSQL** (all relational data), the **POSIX storage tree**
-(recordings and artifacts), and the **KMS key material** those two depend on.
-Redis is covered last because it is (almost entirely) ephemeral.
+(recordings and artifacts), and the **local keyring** used to decrypt and
+authenticate protected data. Redis is covered last because it is almost
+entirely ephemeral.
 
 It is grounded in the shipped development stack (`compose.dev.yaml`):
 
@@ -21,14 +17,14 @@ It is grounded in the shipped development stack (`compose.dev.yaml`):
 | PostgreSQL | `echoroo-db` | `pgvector/pgvector:pg16` | `echoroo-dev-db` | pgvector enabled |
 | POSIX storage (dev) | API + workers | Echoroo containers | Compose `backend-data` named volume → `/data/storage` | `STORAGE_ROOT`; recordings and artifacts |
 | POSIX storage (production example) | API + workers | Echoroo containers | `/lustre/echoroo/storage` → `/data/storage` | Example Lustre host directory; `STORAGE_ROOT` |
-| KMS | `echoroo-localstack` (dev) | LocalStack KMS | `./.data/localstack` (`ECHOROO_LOCALSTACK_DATA`) | AWS KMS in production |
+| Local keyring | `keyring-admin` plus runtime consumers | Echoroo API image | `/etc/echoroo/echoroo-keyring.json` on the host | Backed up offline, never with the database |
 | Redis | `echoroo-redis` | `redis:7-alpine` | `echoroo-dev-redis` | TLS + AUTH + ACL |
 
-> **The durable stores are NOT independent.** A Postgres snapshot taken at
-> time *T* is only restorable together with the storage tree and the **KMS key
-> material** that existed at *T*. Read the "KMS caveat" section before
-> planning any restore — restoring Postgres alone will silently break 2FA,
-> audit-chain verification, invitation tokens, and recording playback.
+> **The durable stores are related but are not backed up identically.** The
+> PostgreSQL dump and POSIX storage tree must describe the same point in time.
+> The matching keyring file and selector configuration are retrieved separately
+> from the maintainer's offline password manager. Never place the keyring in a
+> database backup, storage archive, or routine VM backup.
 
 ---
 
@@ -37,7 +33,7 @@ It is grounded in the shipped development stack (`compose.dev.yaml`):
 All relational data lives in the `echoroo` database on the `echoroo-db`
 container: users, projects, datasets, recordings metadata, annotations,
 detections, embeddings (pgvector), audit log, and the **wrapped TOTP DEKs**
-(encrypted per-user 2FA secrets — see the KMS caveat).
+(encrypted per-user 2FA secrets).
 
 Defaults come from `.env`: `POSTGRES_USER` (default `postgres`),
 `POSTGRES_DB` (default `echoroo`), `POSTGRES_PASSWORD` (required).
@@ -94,7 +90,8 @@ Nightly dump at 02:30, retaining 14 days, on the Docker host:
 ```
 
 Store backups off-host (they contain PII and wrapped secrets). Encrypt at
-rest.
+rest. Label the dump with the matching POSIX storage-tree snapshot time, but
+keep the keyring backup in the maintainer's password manager.
 
 ---
 
@@ -134,9 +131,7 @@ docker run --rm \
 
 Quiesce API and workers, or take a filesystem snapshot that gives the
 database and storage a common point in time. Copy the complete provisioned
-storage tree, including `audit-log/`, with metadata preserved. The following
-is run on the production Docker host after the example Lustre directory has
-been mounted at `/lustre/echoroo/storage`:
+storage tree, including `audit-log/`, with metadata preserved:
 
 ```bash
 rsync -aHAX --numeric-ids \
@@ -146,17 +141,18 @@ rsync -aHAX --numeric-ids \
 Do not treat the compressed cache as the source of recordings. It can be
 omitted from the backup or copied separately as a disposable cache.
 
-The PostgreSQL dump, storage-tree copy, and KMS backup must be labelled and
-retained as one set from the same point in time. The database can reference a
-storage key that does not exist yet if these are captured independently.
+The PostgreSQL dump and storage-tree copy must be labelled and retained as one
+set from the same point in time. The matching keyring epoch is restored from
+the offline password-manager copy, never from that set.
 
 ### Restore
 
 #### Development named volume
 
 Stop the backend and workers on the Docker host first. Then, still on the
-Docker host, restore into the named volume `echoroo-dev-data` (`volumes.backend-data.name` in `compose.dev.yaml`); the archive
-contents become `/data/storage` inside the containers.
+Docker host, restore into the named volume `echoroo-dev-data`
+(`volumes.backend-data.name` in `compose.dev.yaml`); the archive contents
+become `/data/storage` inside the containers.
 
 ```bash
 docker run --rm \
@@ -181,55 +177,53 @@ UID/GID 1000, has the `.echoroo-storage` marker, and is readable and writable
 by the application identity. Run the storage provisioner inside the backend
 container on an empty dev tree, or use the production compose service against
 the mounted Lustre path, so it runs as UID 1000 and performs the full
-readiness probe after confirming that the marker is present. Run this on the
-Docker host from the repository root (the restore above ran in the backup
-directory):
+readiness probe after confirming that the marker is present:
 
 ```bash
-cd /path/to/echoroo   # repository root, where compose.dev.yaml lives
+cd /path/to/echoroo
 docker compose -f compose.dev.yaml run --rm backend uv run python -m \
   echoroo.scripts.provision_storage /data/storage
 ```
 
 ---
 
-## 3. KMS key material — read this before restoring (CRITICAL)
+## 3. Local keyring — read this before restoring (CRITICAL)
 
-Encryption is wired through **envelope encryption backed by KMS**. Four
-isolated CMKs are provisioned by `scripts/init-localstack.sh`:
+The local keyring contains the selected material for TOTP wrapping, PII HMACs,
+and the audit chain. The database stores wrapped TOTP DEKs, keyed hashes, and
+audit MACs that depend on the matching key epochs. Read
+[keyring.md](keyring.md) for provisioning, selectors, rotation, activation,
+loss handling, and the complete restore procedure.
 
-- `alias/echoroo-totp-dek` — wraps each user's TOTP **data encryption key
-  (DEK)**. The *wrapped* DEK is stored in **Postgres**; the *unwrapping
-  key* lives only in KMS.
-- `alias/echoroo-pii-hash-hmac` — keyed HMAC for PII hashing.
-- `alias/echoroo-audit-chain-hmac` — keyed HMAC for audit-log tamper chain.
-- `alias/echoroo-invitation-hmac` — signs invitation tokens.
+The backup rule is deliberately separate from the database and storage rules:
 
-**Why this matters for restore:** Postgres holds ciphertext (wrapped TOTP
-DEKs, PII hashes, audit-chain MACs) that can only be decrypted / verified
-with the **same** KMS key material that was live when the data was written.
+- Back up the **whole** `echoroo-keyring.json` file together with its selector
+  configuration (`KEYRING_*` and `ECHOROO_KEYRING_DIR`) to the maintainer's
+  offline password manager.
+- Make that offline copy before activating a new key or selector. Keep old
+  key material while any database backup or archive can contain data that
+  needs it.
+- Never copy the keyring into the PostgreSQL backup, POSIX storage archive,
+  normal host file backup, or a VM/disk snapshot. File-level backup jobs must
+  exclude `/etc/echoroo`.
+- During restore, retrieve the matching keyring epoch and selectors from the
+  password manager before recreating the API or workers. Do not generate new
+  keys to make an old database appear usable.
 
-> **If the KMS keys are lost or re-created, a Postgres restore is
-> useless for the encrypted columns:**
-> - Every user's TOTP secret becomes undecryptable → **2FA breaks for
->   everyone** (and 2FA is mandatory).
-> - The audit-log chain no longer verifies.
-> - Invitation tokens signed under the old key fail validation.
+After restoring the database, storage tree, keyring file, and selectors, run
+the activation check from [keyring.md](keyring.md). Then test the restored
+cryptographic state by decrypting one known TOTP secret and completing its 2FA
+check, followed by the audit-chain verifier:
 
-In dev, LocalStack stores the KMS material in the separate
-`ECHOROO_LOCALSTACK_DATA` volume. A fresh KMS volume must not be paired with
-an old database: newly created keys cannot decrypt data written under the
-previous keys. Therefore:
+```bash
+docker compose -f compose.dev.yaml exec backend \
+  uv run python -m echoroo.scripts.verify_audit_chain \
+  --table both --check-detects-deleted-row
+```
 
-- **Back up the LocalStack KMS material together with Postgres and the
-  storage tree**, as one consistent set.
-- **Never wipe `./.data/localstack` without a matching Postgres reset.**
-- In **production**, use real AWS KMS: the CMKs are managed AWS resources
-  and survive a Postgres restore automatically. Guard them with deletion
-  protection and a strict key policy; do NOT schedule key deletion. Key
-  rotation is handled by the dedicated runbooks
-  (`docs/runbook/cmk_rotation.md`, `docs/runbook/dek_rewrap.md`) — do not
-  improvise it during a restore.
+If the TOTP check or audit verification fails, stop traffic and restore the
+matching keyring epoch and selectors. A new keyring cannot decrypt or verify
+data written under a previous epoch.
 
 ---
 
@@ -269,26 +263,27 @@ container is up"):
    every dependency `"ok"`.
 2. **Migrations current** — `./echoroo.sh migrate` reports no pending
    revisions (schema matches code).
-3. **Login works (exercises KMS)** — log in with a real 2FA account in the
-   browser. A successful TOTP challenge proves the wrapped TOTP DEK
-   decrypted against the restored KMS key material. If login fails at the
-   2FA step, the KMS keys and Postgres are out of sync (see §3).
-4. **A recording plays (exercises storage)** — open a project, open a
-   recording, confirm audio streams and the spectrogram renders. This proves
-   the storage key in Postgres resolves to a real file in the restored tree.
-5. **Audit chain verifies** — perform one audited action (e.g. an
-   annotation) and confirm it is written without a chain error, proving the
-   audit-chain HMAC key restored correctly.
+3. **Keyring activation passes** — run the activation check from
+   [keyring.md](keyring.md) with one expected count per running Celery worker.
+4. **Login works** — log in with a real 2FA account in the browser. A
+   successful TOTP challenge proves a restored wrapped DEK was decrypted with
+   the matching keyring epoch.
+5. **A recording plays** — open a project, open a recording, confirm audio
+   streams and the spectrogram renders. This proves the storage key in
+   Postgres resolves to a real file in the restored tree.
+6. **Audit chain verifies** — run
+   `python -m echoroo.scripts.verify_audit_chain` as shown in §3, including
+   deleted-row detection, and confirm the restored chain is valid.
 
-If steps 3–5 fail while step 1 passes, the most likely cause is a
-Postgres / storage / KMS snapshot mismatch — restore all three from the
-**same point in time**.
+If steps 3–6 fail while step 1 passes, restore the PostgreSQL dump and storage
+tree from the same point in time and retrieve the matching keyring epoch and
+selectors from the offline password manager.
 
 ---
 
 ## Related runbooks
 
+- `docs/runbook/keyring.md` — provision, activate, back up, restore, and
+  rotate the local keyring.
 - `docs/runbook/release_readiness.md` — pre-launch provisioning checklist.
-- `docs/runbook/cmk_rotation.md` — rotating the KMS CMKs.
-- `docs/runbook/dek_rewrap.md` — re-wrapping DEKs after key rotation.
 - `CONFIGURATION.md` — environment variable reference.

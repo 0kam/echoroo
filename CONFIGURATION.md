@@ -48,9 +48,29 @@ The **source of truth** for every setting is the code:
 
    # Container path for the POSIX storage root
    STORAGE_ROOT=/data/storage
+
+   # Host directory containing the local keyring file
+   ECHOROO_KEYRING_DIR=/etc/echoroo
    ```
 
-3. **Validate and start Echoroo:**
+3. **Provision and validate the local keyring:**
+   ```bash
+   sudo install -d -o 1000 -g 1000 -m 0750 /etc/echoroo
+   docker compose -f compose.dev.yaml run --rm keyring-admin \
+     create /keyring/echoroo-keyring.json --prefix 2026-01
+   docker compose -f compose.dev.yaml run --rm keyring-admin \
+     check /keyring/echoroo-keyring.json
+   ```
+
+   Add the IDs created by that command to `.env`:
+   ```dotenv
+   KEYRING_TOTP_KEY=totp-wrap-2026-01
+   KEYRING_TOTP_KEY_VERSION=1
+   KEYRING_PII_KEY=pii-hmac-2026-01
+   KEYRING_AUDIT_KEY=audit-hmac-2026-01
+   ```
+
+4. **Validate and start Echoroo:**
    ```bash
    ./echoroo.sh checkenv
    ./echoroo.sh start
@@ -67,9 +87,14 @@ Access the application at http://localhost:5173.
 | `POSTGRES_PASSWORD` | Database password (choose a secure password) |
 | `INVITATION_TOKEN_KID_NEW` | Active kid stamped on new invitation tokens. Required at **every** boot in every environment. |
 | `INVITATION_TOKEN_HMAC_KEY` | HMAC key for invitation tokens. Required at **every** boot. Generate with `openssl rand -hex 32` (≥32 chars enforced in production/staging). |
+| `ECHOROO_KEYRING_DIR` | Host directory containing the provisioned `echoroo-keyring.json` bind source (default `/etc/echoroo`). |
+| `KEYRING_TOTP_KEY`, `KEYRING_TOTP_KEY_VERSION` | Selected `totp-wrap` key ID and positive version for new TOTP DEKs. |
+| `KEYRING_PII_KEY` | Selected `pii-hmac` key ID for PII hashes. |
+| `KEYRING_AUDIT_KEY` | Selected `audit-hmac` key ID for audit-chain MACs. |
 
-The dev Docker stack (`compose.dev.yaml`) supplies working defaults for
-everything else. Production/staging additionally require strong values for the
+The dev Docker stack (`compose.dev.yaml`) supplies working defaults for the
+remaining non-keyring settings. It does not create the keyring or choose its
+selectors. Production/staging additionally require strong values for the
 secrets marked **prod-guarded** below.
 
 ### Core / Application
@@ -111,7 +136,6 @@ secrets marked **prod-guarded** below.
 | `STORAGE_ROOT` | `/data/storage` | optional | Provisioned POSIX root for recordings, model artifacts, search reference audio, and audit archives. Bind-mount the same path in the API and every worker. In production, `/lustre/echoroo/storage` is the documented example host directory bound to this container path. |
 | `COMPRESSED_CACHE_DIR` | `/data/audio_compressed` | optional | Lustre directory for generated OGG playback files. The cache is disposable. |
 | `COMPRESSED_CACHE_MAX_AGE_DAYS` | `30` | optional | Maximum age for generated compressed playback files before the scheduled sweep removes them. |
-| `ECHOROO_LOCALSTACK_DATA` | `./.data/localstack` | optional | Host path for LocalStack KMS persistence (compose bind-mount); it does not contain application objects. |
 
 `STORAGE_ROOT` must be provisioned before the API or workers start. In the dev
 stack, `/data/storage` is inside the `backend-data` named volume. From the
@@ -305,7 +329,7 @@ validated against the file at boot and on first use; an empty value means unset.
 | `KEYRING_PII_KEY_V2` | *(unset)* | optional | Second PII key; setting it enables v1+v2 dual-write. |
 | `KEYRING_AUDIT_KEY` | *(none)* | required | Key id (purpose `audit-hmac`) for the audit chain; pinned for the data's lifetime. |
 
-The removed `AWS_KMS_CMK_*` variables and `ECHOROO_PII_HASH_ROTATION_COMPLETE`
+Legacy cloud key-selector variables and `ECHOROO_PII_HASH_ROTATION_COMPLETE`
 are rejected at startup if still present.
 
 ### PII-hash / API-key lifecycle (Phase 17 backlog)
@@ -411,6 +435,9 @@ INVITATION_TOKEN_HMAC_KEY=replace_with_openssl_rand_hex_32_output
 STORAGE_ROOT=/data/storage
 ECHOROO_PUBLIC_HOST=localhost
 ```
+
+Provision the keyring and add its selectors as shown in the Quick Start before
+running the commands below.
 
 ```bash
 ./echoroo.sh checkenv

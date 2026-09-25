@@ -4,10 +4,10 @@
 **Status**: pre-launch
 **Owner**: operations (human action required for the items marked **ops**)
 
-> **Superseded in part:** the key-management references below predate the
-> local keyring. See [keyring.md](keyring.md) for keyring backup, restore, and
-> audit-key handling; the rest of this archive procedure is retained pending
-> the slice 3 rewrite.
+The audit-chain HMAC key is the selected `audit-hmac` entry in the local
+keyring. The API and workers load that keyring read-only; see
+[keyring.md](keyring.md) for provisioning, backup, restore, and audit-key
+handling.
 
 The audit tables (`project_audit_log`, `platform_audit_log`) are exported
 weekly to the POSIX storage tree as NDJSON archives (FR-095). This runbook says what
@@ -21,7 +21,7 @@ Design background: `docs/architecture/storage-lustre-migration.md`
 
 | Property | How |
 | --- | --- |
-| Tamper **evidence** | Every audit row carries `row_hash = HMAC-SHA256(KMS audit-chain key, prev_hash ‖ canonical row)` and `prev_hash` = the previous row's `row_hash`. Verification checks both: a changed row fails its MAC, a removed or reordered row breaks a link. The key never leaves KMS. |
+| Tamper **evidence** | Every audit row carries `row_hash = HMAC-SHA256(local keyring audit-hmac key, prev_hash ‖ canonical row)` and `prev_hash` = the previous row's `row_hash`. Verification checks both: a changed row fails its MAC, a removed or reordered row breaks a link. The keyring is mounted read-only, and its key material is held in the application process while it is used. |
 | One archive per closed ISO week | `audit-log/<table>/<ISO year>/<ISO week>.ndjson` holds exactly the rows with `Monday 00:00 UTC <= created_at < next Monday 00:00 UTC`. The current week is never exported, so the contents of a key are deterministic. |
 | Write-once | The export never overwrites or deletes an archive. Runs are serialised by a PostgreSQL advisory lock, so two runs cannot race on a key. |
 | Verified on write, re-audited weekly | Rows are verified against the chain before writing and the stored bytes are compared with them afterwards. On every later run, each archive still inside the 8-week window is compared byte for byte with the live table again. A row that lands in a week after it was archived (late commit, backdated timestamp) or an archive replaced in storage **fails the task** instead of passing unnoticed. |
@@ -79,7 +79,8 @@ link at the final path; an existing final path is never overwritten.
 
 ## Verifying an archive
 
-From a worker container (needs KMS access):
+From a worker container with the local keyring mounted and the matching
+`KEYRING_AUDIT_KEY` selected:
 
 ```bash
 docker exec echoroo-worker-cpu-1 uv run python -c "
@@ -92,9 +93,28 @@ Prints the number of verified rows, or raises `AuditArchiveMismatchError`
 naming the first bad row or broken link. Use `include_project_id=False` for
 `platform_audit_log`.
 
-To verify the live tables instead of an archive:
+To verify the live tables instead of an archive, use the shared verifier via
 `POST /web-api/v1/admin/audit-log/chain-verify?target=project` (or
-`target=platform`), as a platform admin. There is no UI for it yet.
+`target=platform`), as an authorized superuser. The endpoint delegates to
+`echoroo.workers.audit_log_export.verify_chain`, the same helper used by the
+weekly export, so bootstrap rows are handled identically. There is no UI for
+it yet.
+
+The worker-container CLI uses the same shared verifier and verifies one table
+or both (`both` is the default):
+
+```bash
+docker exec echoroo-worker-cpu-1 uv run python -m \
+  echoroo.scripts.verify_audit_chain --table both \
+  --check-detects-deleted-row
+```
+
+Exit `0` means the selected chain(s) verified and, when requested, the
+deletion probe passed. Two cases exit `0` without proving everything: the
+deletion probe is skipped for a table with fewer than three rows (the output
+says so), and an empty or bootstrap-only chain verifies without touching the
+audit key. Exit `1` means a chain is invalid or verification could not
+complete, including an unavailable audit key while checking a signed row.
 
 ## Running the export by hand
 
@@ -132,10 +152,10 @@ broken for more than 8 weeks falls out of the catch-up window and must be
 exported by hand once resolved (`export_weekly(now_iso=...)` with a `now`
 inside the window).
 
-Known benign cause in **development only**: rows written while the KMS key
-differed — LocalStack key regeneration before 2026-07-07 (PR #246), or a
-pytest run inside the dev container whose fresh-session audit writers reach
-the dev database with the test KMS key. Production has neither.
+Known benign cause in **development only**: rows written while a different
+local keyring audit key was selected, for example after replacing a development
+keyring or pointing a fresh test session at an existing database. Production
+must keep the selected audit key pinned for the lifetime of the audit data.
 
 ## When verification fails
 
@@ -147,16 +167,23 @@ the dev database with the test KMS key. Production has neither.
    then treat it as a security incident: the database was modified outside the
    application.
 
-Bootstrap rows are not failures: the baseline migration's `genesis` rows and
-the `platform.wipe_executed` row are inserted before the keyed hashers exist,
-with all-zero hashes by design. The export accepts exactly those two actions
-without a MAC, and only at the start of the chain (every week's first row must
-link to the row before it, so a zero-hash row further along cannot link). Their
-*contents* are not authenticated — that is inherent to bootstrap rows. The `chain-verify` endpoint does not know this exception and
-reports them as mismatches.
+Bootstrap rows are not failures. The shared
+`echoroo.workers.audit_log_export.verify_chain` helper accepts the baseline
+`genesis` rows and the `platform.wipe_executed` row with all-zero hashes before
+any signed row. It still requires every `prev_hash` to match the immediately
+preceding `row_hash`, including the first row's link to the supplied expected
+previous hash, so a zero-hash bootstrap row after signed history is invalid.
+Hash comparisons use constant-time comparison. A missing, unknown, or otherwise
+unusable keyring key returns a failed verification as soon as a signed row
+must be checked (the endpoint reports the key-unavailable case as HTTP 503);
+it can never produce a valid result for signed rows. Empty and bootstrap-only
+chains need no key and verify without one. The
+bootstrap row contents themselves are not authenticated.
 
 ## Wipe guard
 
-`python -m echoroo.scripts.check_wipe_guard` looks for the genesis marker at
-`audit-log/genesis/marker.json` in the same storage the export writes to, so
-the marker is covered by the same read-only view and snapshots.
+The separate wipe ritual uses `python -m echoroo.scripts.check_wipe_guard` to
+inspect the `wipe_guard` row, the Alembic baseline, and the storage marker at
+`audit-log/genesis/marker.json`. It is a wipe-operation guard, not the
+current-schema or audit-chain release check; its baseline-specific behavior is
+documented in [release_readiness.md](release_readiness.md).

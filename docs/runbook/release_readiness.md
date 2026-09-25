@@ -4,10 +4,6 @@
 **Status**: pre-launch — no external users yet
 **Owner**: release driver (human action required for every item below)
 
-> **Superseded in part:** the key-management checklist below predates the
-> local keyring. Follow [keyring.md](keyring.md) for provisioning, backup,
-> activation, and restore checks; the full rewrite is scheduled for slice 3.
-
 This document is the operator-facing checklist that must be completed
 before the first production release. Every item requires real
 credentials, cost decisions, or a human-in-the-loop call that an
@@ -35,36 +31,25 @@ blockers.
 ## Live-infrastructure provisioning (HUMAN ACTION REQUIRED)
 
 The application code reads every external dependency from environment
-variables; provisioning the actual resources is **not** automated.
-This is the step that requires real cost decisions and AWS / DNS
-access.
+variables; provisioning the actual resources is **not** automated. This is the
+step that requires real deployment access and operator decisions.
 
-### 1. AWS KMS — four CMKs
+### 1. Local keyring
 
-The application requires four distinct CMKs (alias-isolated per
-`scripts/lint_kms_isolation.py` strict mode). All in the same region.
+Provision the file-backed keyring before starting the API or workers. Follow
+[docs/runbook/keyring.md](keyring.md) for the admin service commands, file
+permissions, selectors, activation barrier, offline backup, and rotation
+procedures.
 
-- `alias/echoroo-totp-dek` — `KeyUsage=ENCRYPT_DECRYPT`,
-  `KeySpec=SYMMETRIC_DEFAULT`. Wraps each user's TOTP DEK.
-- `alias/echoroo-pii-hash-hmac` — `KeyUsage=GENERATE_VERIFY_MAC`,
-  `KeySpec=HMAC_256`. Keyed PII hash for audit lookups (FR-091a/b).
-- `alias/echoroo-audit-chain-hmac` — `KeyUsage=GENERATE_VERIFY_MAC`,
-  `KeySpec=HMAC_256`. Hash chain for project / platform audit tables.
-- `alias/echoroo-invitation-hmac` — `KeyUsage=GENERATE_VERIFY_MAC`,
-  `KeySpec=HMAC_256`. Token signing for project invitations and the
-  2FA reset confirmation flow.
-
-Rotation runbooks already exist:
-[docs/runbook/cmk_rotation.md](cmk_rotation.md),
-[docs/runbook/dek_rewrap.md](dek_rewrap.md),
-[docs/runbook/two_factor_confirmation_key_rotation.md](two_factor_confirmation_key_rotation.md).
-
-Wire the alias names into the deployment env via
-`AWS_KMS_CMK_2FA_ALIAS`, `AWS_KMS_CMK_PII_HASH_ALIAS`,
-`AWS_KMS_CMK_AUDIT_CHAIN_ALIAS`,
-`AWS_KMS_CMK_INVITATION_HMAC_ALIAS`. Rotation-grace pairs
-(`*_NEW` / `*_OLD`) are runtime-only; leave unset until a rotation
-window opens.
+- Create the ring outside the application storage tree and select one key for
+  TOTP wrapping, one for PII HMACs, and one for the audit chain.
+- Copy the whole keyring file and selector configuration to the maintainer's
+  offline password manager before activating it. Never store that copy with a
+  database or storage backup.
+- Exclude `/etc/echoroo` from file-level and VM backups, and confirm the host
+  snapshot policy does not capture the keyring unexpectedly.
+- Recreate `backend`, `worker`, and `worker-cpu`, then run
+  `keyring_activation_check --expected-workers N` before opening traffic.
 
 ### 2. PostgreSQL (managed RDS or equivalent)
 
@@ -74,9 +59,9 @@ window opens.
   sequence privileges. The DDL trigger
   `prevent_last_superuser_deletion` (alembic 0013) gates against
   this role specifically.
-- Backup policy: at minimum point-in-time recovery for 30 days.
-  The DEK rewrap runbook explicitly assumes a recent snapshot exists
-  before rotating CMKs.
+- Backup policy: at minimum point-in-time recovery for 30 days. The keyring
+  runbook requires a recent database and storage snapshot before a TOTP
+  rewrap.
 - `DATABASE_URL` in deployment env is `postgresql+asyncpg://...`.
 
 ### 3. Redis (managed ElastiCache or equivalent)
@@ -154,8 +139,8 @@ Operational references:
   - request latency p95 (`tests/performance/test_auth_permission_p95.py`
     pins the target)
   - audit log write throughput (chain-hash advisory lock contention)
-  - KMS error rate per CMK (a spike here usually means a rotation
-    misconfig — see `docs/runbook/cmk_rotation.md`)
+  - keyring load and activation failures (a mismatch usually means a
+    selector or rotation configuration error — see `docs/runbook/keyring.md`)
   - Celery queue depth (worker / worker-cpu queues)
 - Alert on:
   - any 5xx > 1% sustained
@@ -171,13 +156,52 @@ Operational references:
 
 ### 9. Bootstrap
 
-- Run `apps/api/echoroo/scripts/init_superuser.py` against the
-  production DB to seed the first superuser. The script is
-  idempotent and writes a TOTP DEK under the live KMS alias.
-- Verify `scripts/check_wipe_guard.py` returns exit 0 (clear for
-  wipe) — exit 1 means the genesis rows are present and a wipe was
-  performed; exit > 1 is a misconfiguration (including an unavailable
-  storage tree).
+- Apply the current migration set with `./echoroo.sh migrate`. Then compare
+  the output of these commands; the current revision must equal the head
+  reported by the second command:
+
+  ```bash
+  docker compose -f compose.dev.yaml exec -T backend uv run alembic current
+  docker compose -f compose.dev.yaml exec -T backend uv run alembic heads
+  ```
+
+  Do not require revision `0001` here. That is the wipe guard's baseline,
+  while a normally migrated deployment is at the current head (currently
+  `0038` in this repository).
+- Only after the migrations are at head, run
+  `python -m echoroo.scripts.init_superuser --confirm` in the API container
+  against the production DB to seed the first superuser. The command writes a
+  TOTP DEK under the selected keyring key.
+- Verify both bootstrap rows and the signed audit history with the shared
+  verifier:
+
+  ```bash
+  docker compose -f compose.dev.yaml exec -T backend \
+    uv run python -m echoroo.scripts.verify_audit_chain \
+    --table both --check-detects-deleted-row
+  ```
+
+  Require exit `0`; exit `1` means the chain is invalid or verification could
+  not complete, including an unavailable audit key. The deletion probe is
+  skipped (still exit `0`) for a table with fewer than three rows, and a chain
+  holding only bootstrap rows verifies without using the audit key, so run this
+  after the superuser bootstrap has written signed rows.
+
+### Wipe-only guard (not a release gate)
+
+The actual wipe checker is the module
+`python -m echoroo.scripts.check_wipe_guard`. It is only for the destructive
+wipe ritual, and its Alembic check is intentionally hard-coded to baseline
+revision `0001`; do not use its exit `0` as evidence that a normally migrated
+database is current.
+
+Its CLI exit codes are:
+
+- `0` — the checker passed its wipe-state checks.
+- `10` — a `wipe_guard` row already exists.
+- `11` — `alembic_version` is not `0001`.
+- `12` — `audit-log/genesis/marker.json` is missing or incorrect.
+- `20` — settings, database, or storage infrastructure error.
 
 ## CI / observability hardening (NOT release-blocking)
 
@@ -188,7 +212,7 @@ These improve operational quality but do not block first launch:
   permission-critical modules.
 - **E-Runbook E2E**: PHASE17_BACKLOG §E — provision a CI job that
   boots the live compose stack and runs `wipe_database` / `init_iucn_sync`
-  / `seed_moe_rdb` end-to-end against real KMS / storage / IUCN.
+  / `seed_moe_rdb` end-to-end against real storage / IUCN dependencies.
 - **F-Traceability orphan**: PHASE17_BACKLOG §F — decide whether
   FR-011a is retired or renamed; trace doc currently has 1 orphan.
 - **Hard gate promotion**: once the 5-test residual cluster lands
@@ -206,9 +230,8 @@ These improve operational quality but do not block first launch:
 4. Open signups (toggle `restricted_config.allow_*` per project as
    needed; the platform-level signup gate lives in the auth router
    and is `True` by default in production env).
-5. Schedule a rotation window for each CMK at +30d (the rotation
-   runbooks bake the calendar reminder into their checklist
-   templates).
+5. Schedule the first keyring rotation review at +30d (the keyring runbook
+   defines the maintenance-window and offline-backup procedure).
 
 ---
 

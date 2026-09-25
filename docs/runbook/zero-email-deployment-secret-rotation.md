@@ -3,11 +3,6 @@
 **Spec**: `specs/011-zero-email-deployment/spec.md` §Removal Plan
 §settings, §NFR-011-001 (post-removal CI guard).
 
-> **Superseded in part:** the legacy key-management inventory below predates
-> the local keyring. See [keyring.md](keyring.md) for current keyring
-> provisioning, rotation, backup, and recovery; the full inventory rewrite is
-> scheduled for slice 3.
-
 **Audience**: Echoroo deployment operators auditing the spec/011 cutover
 for residual email-subsystem secrets, and operators preparing for
 periodic key rotation.
@@ -17,8 +12,7 @@ runbooks (each of which owns its own dual-key procedure):
 
 - `docs/runbook/invitation_token_kid_rotation.md`
 - `docs/runbook/two_factor_confirmation_key_rotation.md`
-- `docs/runbook/cmk_rotation.md`
-- `docs/runbook/dek_rewrap.md`
+- `docs/runbook/keyring.md`
 
 ---
 
@@ -64,10 +58,11 @@ therefore impossible to revoke through normal "log out" channels.
 ### Verification command
 
 ```bash
-# From the repo root.
-docker exec echoroo-backend sh -c \
-  'cd /app && /opt/venv/bin/python -m pytest --no-cov \
-   apps/api/tests/contract/test_no_email_subsystem_traces.py -v'
+# From the repo root on the host checkout: the scan needs the full repository
+# layout (apps/, scripts/), which the backend container does not mount under
+# /app — inside the container the test skips instead of scanning.
+cd apps/api && uv run --extra dev pytest --no-cov \
+  tests/contract/test_no_email_subsystem_traces.py -v
 ```
 
 Expected: **passed** (0 violations).
@@ -100,10 +95,13 @@ a glance.
 | `INVITATION_TOKEN_KID_NEW` / `_OLD` | Kid stamp + dual-verify routing | Same | Same |
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY` / `_OLD` | Sign 2FA reset confirmation token (Phase 17 A-12) | `two_factor_confirmation_key_rotation.md` | Annually |
 | `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KID_NEW` / `_OLD` | Kid stamp + dual-verify routing | Same | Same |
-| `AWS_KMS_CMK_PII_HASH_ALIAS` (+ `_V2` for rotation) | PII-hash KMS CMK | `cmk_rotation.md` | KMS-managed (annual auto-rotate) + manual `_V2` dual-key when re-keying |
-| `AWS_KMS_CMK_2FA_DEK_ALIAS_NEW` / `_OLD` | 2FA secret DEK envelope encryption | `cmk_rotation.md` + `dek_rewrap.md` | Annually + on key compromise |
 | `JWT_SECRET_KEY` | API session JWT signing key | Manual (no automated runbook yet) | Annually (downtime: in-flight sessions invalidated) |
-| `web_session_secret` (`WEB_SESSION_SECRET`) | Web session cookie + step-up token signing key | Manual | Annually |
+| `web_session_secret` | Web session cookie + step-up token signing key | Manual | Annually |
+
+TOTP wrapping, PII HMAC, and audit-chain keys are file-backed keyring
+material, not environment secrets. Provision, back up, restore, and rotate
+them with [`docs/runbook/keyring.md`](keyring.md); keep the selector
+configuration with the offline keyring copy.
 
 ### Strength requirements (prod / staging)
 
@@ -140,7 +138,7 @@ as one for hygiene.
 ```bash
 docker exec echoroo-backend sh -c \
   'cd /app && /opt/venv/bin/python -m pytest --no-cov \
-   apps/api/tests/security/test_telemetry_scrubs_sensitive_fields.py -v'
+   tests/security/test_telemetry_scrubs_sensitive_fields.py -v'
 ```
 
 Expected: every assertion passes — the four `SENSITIVE_FIELDS` plus
@@ -200,7 +198,7 @@ docker compose -f compose.dev.yaml ps
 | **On suspected compromise** | Emergency rotate the affected key (see per-key runbook); revoke outstanding artifacts; forensic sweep |
 | **Quarterly** | Run `test_no_email_subsystem_traces.py` to catch any drift; review Sentry redaction test; audit GitHub Actions secrets |
 | **Annually** | Rotate `INVITATION_TOKEN_HMAC_KEY` (planned); rotate `TWO_FACTOR_RESET_CONFIRMATION_HMAC_KEY`; rotate `JWT_SECRET_KEY` (during a maintenance window — in-flight sessions invalidated); rotate `web_session_secret` (same caveat) |
-| **KMS-managed** | `AWS_KMS_CMK_PII_HASH_ALIAS` and `AWS_KMS_CMK_2FA_DEK_ALIAS_NEW` auto-rotate via AWS KMS annual rotation; trigger a dual-key window via `_V2` / `_OLD` slot if you re-key under operator control |
+| **Keyring review** | Review keyring epochs, offline copies, selectors, and restore-test evidence using `docs/runbook/keyring.md` |
 
 ---
 
@@ -213,7 +211,5 @@ docker compose -f compose.dev.yaml ps
 - spec/011 §NFR-011-010 — invitation token kid rotation pattern
 - spec/011 §FR-011-206 — step-up token / `web_session_secret`
   rotation policy
-- Phase 17 A-2 — PII hash key dual-write rotation
-- Phase 17 A-8 — DEK rewrap + KMS isolation
 - Phase 17 A-12 — env-driven kid rotation pattern (the canonical
   template followed by spec/011)

@@ -22,8 +22,8 @@ so that:
 * Unit tests can drive the same helper against a real ``AsyncSession``
   without spinning up an HTTP stack.
 
-The audit write is tolerant of KMS unavailability: if the keyed PII
-hashing call fails (e.g. moto KMS not provisioned in a unit test) the
+The audit write is tolerant of keyring unavailability: if the keyed PII
+hashing call fails (e.g. the test keyring is not provisioned) the
 helper logs a warning and proceeds — the *enforcement* outcome (403 +
 counter + revoke) is the security-critical contract; audit completeness
 is monitored separately.
@@ -440,8 +440,8 @@ async def _write_ip_violation_audit(
     """Append the ``api_key.ip_violation`` row to ``platform_audit_log``.
 
     Imports :class:`AuditLogService` lazily to avoid pulling in the
-    KMS-backed dependency tree on every middleware import (and to
-    keep the helper testable in environments where moto KMS is not
+    keyring-backed dependency tree on every middleware import (and to
+    keep the helper testable in environments where the keyring is not
     provisioned — the caller catches any raise from this function).
     """
     from echoroo.services.audit_service import AuditLogService

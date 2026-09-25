@@ -1,9 +1,5 @@
 # Runbook: 2FA Reset Confirmation HMAC Key Rotation (Phase 17 A-12)
 
-> **Superseded in part:** legacy key-management references in this runbook
-> are not the current stack procedure. See [keyring.md](keyring.md) for the
-> local keyring and its TOTP, PII, and audit-key operations.
-
 This runbook documents the operational procedure for rotating the
 dedicated HMAC signing key used by the admin two-factor reset
 confirmation token (`POST /web-api/v1/admin/users/{userId}/reset-2fa`,
@@ -186,6 +182,5 @@ Source code is never touched.
 
 ## Related runbooks
 
-- `cmk_rotation.md` — KMS CMK rotation (audit chain, PII hash, TOTP DEK,
-  invitation HMAC). Different key management substrate (KMS vs local
-  HMAC) but identical operational pattern.
+- `docs/runbook/keyring.md` — local keyring operations for TOTP, PII, and
+  audit keys. This confirmation-token secret remains an environment secret.
